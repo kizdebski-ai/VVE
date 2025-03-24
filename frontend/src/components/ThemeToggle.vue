@@ -3,7 +3,7 @@
     <button 
       class="theme-btn" 
       @click="$emit('toggle')" 
-      :title="darkMode ? 'Switch to Light Mode' : 'Switch to Dark Mode'">
+      :title="darkMode ? 'Przełącz na jasny motyw' : 'Przełącz na ciemny motyw'">
       <svg v-if="darkMode" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <circle cx="12" cy="12" r="5"></circle>
         <line x1="12" y1="1" x2="12" y2="3"></line>
@@ -36,37 +36,47 @@ export default {
 
 <style scoped>
 .theme-switch {
-  position: absolute;
-  bottom: 20px;
-  right: 20px;
-  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .theme-btn {
-  width: 40px;
-  height: 40px;
+  width: 44px;
+  height: 44px;
   border: none;
   border-radius: 50%;
-  background-color: white;
-  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+  background-color: rgba(0, 0, 0, 0.5);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #333;
+  color: #fff;
+  padding: 0;
+  transition: all 0.3s ease;
 }
 
 .theme-btn:hover {
-  background-color: #f0f0f0;
+  transform: scale(1.1);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
 }
 
 :deep(.dark-mode) .theme-btn {
-  background-color: #333;
-  color: #f0f0f0;
-  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.4);
+  background-color: rgba(255, 255, 255, 0.3);
+  color: #fff;
 }
 
 :deep(.dark-mode) .theme-btn:hover {
-  background-color: #444;
+  background-color: rgba(255, 255, 255, 0.4);
+}
+
+:deep(:not(.dark-mode)) .theme-btn {
+  background-color: rgba(0, 0, 0, 0.3);
+  color: #fff;
+}
+
+:deep(:not(.dark-mode)) .theme-btn:hover {
+  background-color: rgba(0, 0, 0, 0.5);
 }
 </style>

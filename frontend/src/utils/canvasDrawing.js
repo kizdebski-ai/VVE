@@ -95,10 +95,12 @@ const drawPath = (context, element, smoothingFactor) => {
       context.lineTo(p2.x, p2.y);
       context.stroke();
     } else {
+      // Zaawansowane wygładzanie krzywych z adaptacyjną kontrolą
+      
       // Start from the first point
       context.moveTo(element.points[0].x, element.points[0].y);
 
-      // If we have precomputed smoothed points, use them
+      // Jeśli element ma już obliczone punkty kontrolne, użyj ich
       if (element.smoothedPoints && element.smoothedPoints.length > 0) {
         for (let i = 1; i < element.points.length - 1; i++) {
           if (element.smoothedPoints[i]) {
@@ -109,24 +111,42 @@ const drawPath = (context, element, smoothingFactor) => {
               element.points[i+1].x, element.points[i+1].y
             );
           } else {
-            // Fallback if no control points
+            // Fallback jeśli brak punktów kontrolnych
             context.lineTo(element.points[i+1].x, element.points[i+1].y);
           }
         }
       } else {
-        // Compute smooth curves on the fly
-        for (let i = 1; i < element.points.length - 1; i++) {
+        // Oblicz krzywe w locie z adaptacyjnym wygładzaniem
+        
+        // Użyj wyższej wartości smoothingFactor dla większej płynności
+        const adaptiveSmoothingFactor = Math.min(0.4, smoothingFactor * 2);
+        
+        // Przepuść przez wszystkie punkty z większą precyzją
+        for (let i = 0; i < element.points.length - 1; i++) {
           const p0 = i > 0 ? element.points[i-1] : element.points[i];
           const p1 = element.points[i];
           const p2 = element.points[i+1];
           const p3 = i < element.points.length - 2 ? element.points[i+2] : p2;
 
-          // Catmull-Rom to Bezier conversion
-          const cp1x = p1.x + (p2.x - p0.x) / 6 * smoothingFactor;
-          const cp1y = p1.y + (p2.y - p0.y) / 6 * smoothingFactor;
-          const cp2x = p2.x - (p3.x - p1.x) / 6 * smoothingFactor;
-          const cp2y = p2.y - (p3.y - p1.y) / 6 * smoothingFactor;
+          // Usprawniona konwersja Catmull-Rom do krzywej Beziera
+          const d1 = Math.sqrt(Math.pow(p1.x - p0.x, 2) + Math.pow(p1.y - p0.y, 2));
+          const d2 = Math.sqrt(Math.pow(p2.x - p1.x, 2) + Math.pow(p2.y - p1.y, 2));
+          const d3a = Math.sqrt(Math.pow(p3.x - p2.x, 2) + Math.pow(p3.y - p2.y, 2));
+          
+          // Dostosuj współczynnik wygładzania w zależności od odległości punktów
+          const tensionFactor = Math.min(d1, d2, d3a) / Math.max(d1, d2, d3a);
+          const tension = adaptiveSmoothingFactor * (0.5 + tensionFactor / 2);
 
+          // Punkty kontrolne z adaptacyjną tensją
+          const cp1x = p1.x + (p2.x - p0.x) / 6 * tension;
+          const cp1y = p1.y + (p2.y - p0.y) / 6 * tension;
+          const cp2x = p2.x - (p3.x - p1.x) / 6 * tension;
+          const cp2y = p2.y - (p3.y - p1.y) / 6 * tension;
+
+          // Dodaj krzywą Beziera
+          if (i === 0) {
+            context.lineTo(p1.x, p1.y);
+          }
           context.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, p2.x, p2.y);
         }
       }
@@ -169,11 +189,23 @@ const drawCircle = (context, element) => {
   context.beginPath();
   const centerX = (element.start.x + element.end.x) / 2;
   const centerY = (element.start.y + element.end.y) / 2;
-  const radius = Math.sqrt(
-    Math.pow(element.end.x - element.start.x, 2) +
-    Math.pow(element.end.y - element.start.y, 2)
-  ) / 2;
-  context.arc(centerX, centerY, radius, 0, Math.PI * 2);
+  
+  // Użyj niezależnych średnic dla X i Y, aby zapewnić dokładne okręgi
+  // nawet przy różnych proporcjach ekranu i skali
+  const radiusX = Math.abs(element.end.x - element.start.x) / 2;
+  const radiusY = Math.abs(element.end.y - element.start.y) / 2;
+  
+  // Użyj ellipse zamiast arc dla lepszej obsługi różnych proporcji
+  context.ellipse(
+    centerX, 
+    centerY, 
+    radiusX, 
+    radiusY, 
+    0, // rotacja
+    0, // początkowy kąt
+    Math.PI * 2 // pełny okrąg
+  );
+  
   context.stroke();
 };
 

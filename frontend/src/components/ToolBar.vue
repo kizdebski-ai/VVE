@@ -273,39 +273,18 @@ export default {
   mounted() {
     // Set up keyboard shortcuts
     window.addEventListener('keydown', this.handleKeyDown);
+    
+    // Upewnij się, że początkowe wartości są emitowane do komponentu nadrzędnego
+    this.$nextTick(() => {
+      this.$emit('tool-changed', this.currentTool);
+      this.$emit('color-changed', this.currentColor);
+      this.$emit('line-width-changed', parseInt(this.currentLineWidth));
+    });
   },
   beforeDestroy() {
     window.removeEventListener('keydown', this.handleKeyDown);
   },
   methods: {
-
-    toggleLineWidthDropdown() {
-      this.showLineWidthDropdown = !this.showLineWidthDropdown;
-
-      if (this.showLineWidthDropdown) {
-        // Add event listener to close dropdown when clicking outside
-        document.addEventListener('click', this.closeLineWidthDropdown);
-      }
-    },
-
-    closeLineWidthDropdown(event) {
-      if (!this.$refs.lineWidthContainer || !this.$refs.lineWidthContainer.contains(event.target)) {
-        this.showLineWidthDropdown = false;
-        document.removeEventListener('click', this.closeLineWidthDropdown);
-      }
-    },
-
-    selectLineWidth(width) {
-      this.currentLineWidth = width;
-      this.updateLineWidth();
-      this.showLineWidthDropdown = false;
-      document.removeEventListener('click', this.closeLineWidthDropdown);
-    },
-
-    getLineWidthName(width) {
-      const option = this.lineWidthOptions.find(opt => opt.value == width);
-      return option ? option.name : '';
-    },
     handleKeyDown(event) {
       // Skip if user is typing in an input field
       if (event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA') {
@@ -349,15 +328,20 @@ export default {
       if (tool === 'eraser') {
         this.updateCursor();
       }
+      
+      console.log('Narzędzie zmienione na:', tool);
     },
 
     setColor(color) {
       this.currentColor = color;
       this.$emit('color-changed', color);
+      console.log('Kolor zmieniony na:', color);
     },
 
     updateLineWidth() {
-      this.$emit('line-width-changed', parseInt(this.currentLineWidth));
+      const width = parseInt(this.currentLineWidth);
+      this.$emit('line-width-changed', width);
+      console.log('Grubość linii zmieniona na:', width);
     },
 
     updateCursor() {
@@ -438,68 +422,123 @@ export default {
 .toolbar {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 10px;
-  background: var(--color-background-soft);
-  border-radius: 8px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  gap: 15px;
+  padding: 5px 0;
+  width: 100%;
+  height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: none; /* Firefox */
 }
 
-.tool-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 40px;
-  height: 40px;
-  padding: 8px;
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  background: var(--color-background);
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-
-.tool-btn:hover {
-  background: var(--color-background-mute);
-  border-color: var(--color-border-hover);
-}
-
-.tool-btn.active {
-  background: var(--color-border-hover);
-  border-color: var(--color-border-hover);
-}
-
-.tool-btn svg {
-  width: 20px;
-  height: 20px;
-  stroke: currentColor;
+.toolbar::-webkit-scrollbar {
+  width: 0;
+  background: transparent;
+  display: none;
 }
 
 .tool-group {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
+  width: 100%;
+  align-items: center;
 }
 
-.drawing-tools {
-  border-right: 1px solid #444;
-  padding-right: 15px;
+.tool-btn {
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  background-color: var(--btn-bg);
+  color: var(--btn-color);
+  border: none;
+  padding: 0;
+  margin: 0 auto;
 }
 
-.action-tools {
-  margin-left: auto;
+.tool-btn:hover {
+  background-color: var(--btn-hover-bg);
+  transform: translateY(-2px);
 }
 
-@media (max-width: 768px) {
-  .action-tools {
-    margin-left: 0;
-    margin-top: 10px;
-  }
+.tool-btn.active {
+  background-color: var(--btn-active-bg);
+  color: var(--btn-active-color);
 }
 
 .tool-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+  transform: none;
+}
+
+.line-width-selector {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: center;
+  margin: 5px 0;
+  width: 100%;
+}
+
+.line-width-preview {
+  width: 40px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: var(--btn-bg);
+  border-radius: 4px;
+}
+
+.line-preview {
+  width: 20px;
+  background-color: currentColor;
+  border-radius: 4px;
+}
+
+.line-width-select {
+  width: 90%;
+  padding: 4px;
+  border-radius: 4px;
+  background-color: var(--btn-bg);
+  color: var(--btn-color);
+  border: 1px solid var(--border-color);
+  font-size: 12px;
+}
+
+.export-import-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: auto;
+  width: 100%;
+  align-items: center;
+}
+
+.export-btn, .import-btn, .share-btn, .keyboard-shortcuts-btn {
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  background-color: var(--btn-bg);
+  color: var(--btn-color);
+  border: none;
+  margin: 0 auto;
+}
+
+.export-btn:hover, .import-btn:hover, .share-btn:hover, .keyboard-shortcuts-btn:hover {
+  background-color: var(--btn-hover-bg);
+  transform: translateY(-2px);
 }
 
 .tool-btn.danger {
@@ -507,225 +546,79 @@ export default {
 }
 
 .tool-btn.danger:hover {
-  background-color: #ff4d4f;
-  color: white;
-}
-
-/* Line Width Selector */
-.line-width-selector {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.line-width-preview {
-  width: 36px;
-  height: 36px;
-  background-color: #333;
-  border-radius: 4px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.line-preview {
-  width: 20px;
-  border-radius: 2px;
-}
-
-.line-width-select {
-  height: 36px;
-  border: none;
-  border-radius: 4px;
-  padding: 0 10px;
-  background-color: #333;
-  color: #ccc;
-  font-size: 14px;
-  outline: none;
-}
-
-.line-width-select:hover {
-  background-color: #444;
-}
-
-.export-import-group {
-  display: flex;
-  gap: 5px;
-}
-
-@media (max-width: 768px) {
-  .export-import-group {
-    margin-top: 10px;
-  }
-}
-
-.export-btn, .import-btn, .share-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 36px;
-  height: 36px;
-  background-color: #4285f4;
-  border: none;
-  border-radius: 4px;
-  color: white;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.export-btn:hover, .import-btn:hover, .share-btn:hover {
-  background-color: #3367d6;
-}
-
-.keyboard-shortcuts-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 36px;
-  height: 36px;
-  background-color: #333;
-  border: none;
-  border-radius: 4px;
-  color: #ccc;
-  cursor: pointer;
-  transition: all 0.2s;
-  margin-left: 5px;
-}
-
-.keyboard-shortcuts-btn:hover {
-  background-color: #444;
-  color: white;
+  background-color: rgba(255, 77, 79, 0.1);
 }
 
 .shortcuts-dialog {
   position: absolute;
-  top: 100%;
-  right: 10px;
-  width: 320px;
-  background-color: #333;
+  top: 50%;
+  left: 70px;
+  transform: translateY(-50%);
+  background-color: var(--toolbar-bg);
   border-radius: 8px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
   z-index: 1000;
-  margin-top: 10px;
-  animation: fadeIn 0.2s ease-out;
-}
-
-@keyframes fadeIn {
-  from { opacity: 0; transform: translateY(-10px); }
-  to { opacity: 1; transform: translateY(0); }
+  max-width: 320px;
+  max-height: 80vh;
+  overflow-y: auto;
 }
 
 .shortcuts-dialog-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 12px 15px;
-  border-bottom: 1px solid #444;
+  padding: 10px 15px;
+  border-bottom: 1px solid var(--border-color);
 }
 
 .shortcuts-dialog-header h3 {
   margin: 0;
-  color: white;
   font-size: 16px;
-  font-weight: normal;
+  font-weight: 500;
 }
 
 .close-btn {
   background: none;
   border: none;
-  color: #ccc;
   font-size: 20px;
   cursor: pointer;
-}
-
-.close-btn:hover {
-  color: white;
+  color: var(--btn-color);
+  padding: 0;
+  line-height: 1;
 }
 
 .shortcuts-list {
   padding: 10px 15px;
-  max-height: 300px;
-  overflow-y: auto;
 }
 
 .shortcut-item {
   display: flex;
-  align-items: center;
   margin-bottom: 8px;
+  font-size: 13px;
 }
 
 .shortcut-key {
-  background-color: #444;
-  padding: 4px 8px;
+  background-color: rgba(0, 0, 0, 0.1);
+  padding: 2px 6px;
   border-radius: 4px;
-  font-family: monospace;
-  font-size: 12px;
-  color: white;
+  margin-right: 10px;
   min-width: 80px;
   text-align: center;
-  margin-right: 10px;
 }
 
 .shortcut-desc {
-  color: #ccc;
+  color: var(--text-color);
   font-size: 14px;
 }
-  .width-button {
-    display: flex;
-    align-items: center;
-    justify-content: center;
+
+@media (max-width: 600px) {
+  .toolbar {
+    padding: 5px;
+  }
+  
+  .tool-btn, .export-btn, .import-btn, .share-btn, .keyboard-shortcuts-btn {
     width: 36px;
     height: 36px;
-    background-color: #333;
-    border: none;
-    border-radius: 4px;
-    color: #ccc;
-    cursor: pointer;
-    position: relative;
-    padding: 0 5px;
   }
-
-  .width-button:hover {
-    background-color: #444;
-  }
-
-  .dropdown-arrow {
-    font-size: 8px;
-    position: absolute;
-    bottom: 5px;
-    right: 5px;
-  }
-
-  .line-width-dropdown {
-    position: absolute;
-    top: 100%;
-    left: 0;
-    background-color: #333;
-    border-radius: 4px;
-    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
-    z-index: 100;
-    width: 140px;
-    margin-top: 5px;
-  }
-
-  .line-width-option {
-    display: flex;
-    align-items: center;
-    padding: 8px 10px;
-    cursor: pointer;
-  }
-
-  .line-width-option:hover {
-    background-color: #444;
-  }
-
-  .line-width-option.active {
-    background-color: #4285f4;
-    color: white;
-  }
-
-  .line-option-preview {
-    width: 20px;
-    margin-right: 10px;
-  }
+}
 </style>

@@ -1,5 +1,5 @@
 <template>
-  <div id="app">
+  <div id="app" :class="{ 'dark-mode': darkMode }">
     <div class="app-header">
       <div class="logo">
         <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -40,22 +40,24 @@
       </div>
     </div>
 
-    <div class="toolbar-container">
-      <ToolBar
-        ref="toolbar"
-        @tool-changed="handleToolChange"
-        @color-changed="handleColorChange"
-        @line-width-changed="handleLineWidthChange"
-        @clear-canvas="handleClearCanvas"
-        @undo="handleUndo"
-        @redo="handleRedo"
-        @export-whiteboard="handleExportRequest"
-        @import-whiteboard="showImportDialog = true"
-        @image-selected="handleImageSelected"
-      />
-    </div>
-
     <div class="whiteboard-container">
+      <!-- Pasek narzędzi zawsze widoczny z boku płótna -->
+      <div class="toolbar-container">
+        <ToolBar
+          ref="toolbar"
+          @tool-changed="handleToolChange"
+          @color-changed="handleColorChange"
+          @line-width-changed="handleLineWidthChange"
+          @clear-canvas="handleClearCanvas"
+          @undo="handleUndo"
+          @redo="handleRedo"
+          @export-whiteboard="handleExportRequest"
+          @import-whiteboard="showImportDialog = true"
+          @image-selected="handleImageSelected"
+        />
+      </div>
+      
+      <!-- Canvas znajduje się obok paska narzędzi -->
       <WhiteboardCanvas
         ref="whiteboard"
         @state-updated="handleStateUpdate"
@@ -66,6 +68,14 @@
         :active-users-count="activeUsers.length"
         @click="showConnectionDetails = !showConnectionDetails"
       />
+      
+      <!-- Theme Toggle -->
+      <div class="theme-toggle-container">
+        <ThemeToggle 
+          :dark-mode="darkMode" 
+          @toggle="toggleDarkMode" 
+        />
+      </div>
     </div>
 
     <div class="app-footer">
@@ -120,6 +130,7 @@ import ToolBar from './components/ToolBar.vue';
 import ImportDialog from './components/ImportDialog.vue';
 import ExportDialog from './components/ExportDialog.vue';
 import ConnectionStatus from './components/ConnectionStatus.vue';
+import ThemeToggle from './components/ThemeToggle.vue';
 import websocketService from './services/websocket.js';
 import { copyToClipboard } from './utils/fileUtils.js';
 
@@ -130,7 +141,8 @@ export default {
     ToolBar,
     ImportDialog,
     ExportDialog,
-    ConnectionStatus
+    ConnectionStatus,
+    ThemeToggle
   },
   data() {
     return {
@@ -144,7 +156,8 @@ export default {
       activeUsers: [],
       statusMessage: '',
       statusTimeout: null,
-      showConnectionDetails: false
+      showConnectionDetails: false,
+      darkMode: localStorage.getItem('darkMode') === 'true'
     }
   },
   computed: {
@@ -176,6 +189,17 @@ export default {
     const savedUsername = localStorage.getItem('whiteboard_username');
     if (savedUsername) {
       this.username = savedUsername;
+    }
+    
+    // Inicjalizacja motywu z localStorage
+    const savedDarkMode = localStorage.getItem('darkMode') === 'true';
+    this.darkMode = savedDarkMode;
+    
+    // Dodaj klasę dark-mode do body jeśli potrzeba
+    if (this.darkMode) {
+      document.body.classList.add('dark-mode');
+    } else {
+      document.body.classList.remove('dark-mode');
     }
 
     // Setup WebSocket connection
@@ -501,54 +525,47 @@ export default {
           this.$refs.whiteboard.addImageFromDataUrl(file);
         }
       }
+    },
+
+    toggleDarkMode() {
+      this.darkMode = !this.darkMode;
+      localStorage.setItem('darkMode', this.darkMode);
+      
+      // Upewnij się, że klasa dark-mode jest dodawana również do elementu body
+      if (this.darkMode) {
+        document.body.classList.add('dark-mode');
+      } else {
+        document.body.classList.remove('dark-mode');
+      }
+      
+      // Wymuś odświeżenie canvas do rysowania
+      if (this.$refs.whiteboard) {
+        console.log('Wymuszenie odświeżenia tablicy po zmianie motywu');
+        // Spowoduje to ponowne narysowanie siatki i elementów z właściwymi kolorami
+        this.$nextTick(() => {
+          this.$refs.whiteboard.redrawCanvas();
+        });
+      }
+      
+      this.showStatus(this.darkMode ? 'Włączono ciemny motyw' : 'Włączono jasny motyw');
     }
   }
 }
 </script>
 
 <style>
-* {
-  box-sizing: border-box;
-  margin: 0;
-  padding: 0;
-}
-
-html, body {
-  width: 100%;
-  height: 100%;
-  overflow: hidden;
-}
-
-body {
-  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-  color: #f0f0f0;
-  background-color: #1e1e1e;
-  line-height: 1.6;
-}
-
-#app {
-  display: flex;
-  flex-direction: column;
-  height: 100vh;
-  width: 100vw;
-  overflow: hidden;
-  background-color: #1e1e1e;
-}
-
-.app-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 8px 16px;
-  background-color: #1e1e1e;
-  border-bottom: 1px solid #333;
-  height: 50px;
+/* Dodajemy klasę dla theme toggle */
+.theme-toggle-container {
+  position: absolute;
+  bottom: 20px;
+  right: 20px;
+  z-index: 50;
 }
 
 .logo {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
 }
 
 .logo svg {
@@ -556,125 +573,88 @@ body {
 }
 
 .logo h1 {
+  margin: 0;
   font-size: 18px;
   font-weight: 500;
-  color: #c0c0c0;
-  margin: 0;
+}
+
+.username-container {
+  margin-left: 20px;
+}
+
+.username-input {
+  background-color: var(--btn-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  padding: 8px 12px;
+  color: var(--text-color);
+  font-size: 14px;
+  outline: none;
+}
+
+.username-input:focus {
+  border-color: #4285f4;
 }
 
 .user-count {
   display: flex;
   align-items: center;
-  gap: 6px;
-  font-size: 14px;
+  margin-left: 15px;
+  gap: 5px;
 }
 
 .user-count-badge {
   display: flex;
   align-items: center;
   justify-content: center;
+  background-color: #4285f4;
+  color: white;
+  border-radius: 50%;
   width: 24px;
   height: 24px;
-  background-color: #4285f4;
-  border-radius: 50%;
-  color: white;
   font-size: 12px;
   font-weight: bold;
 }
 
 .user-count-label {
-  color: #999;
-}
-
-.username-container {
-  margin-right: 16px;
-}
-
-.username-input {
-  background-color: #333;
-  border: 1px solid #444;
-  border-radius: 4px;
-  color: white;
-  padding: 6px 10px;
   font-size: 14px;
-  width: 150px;
-}
-
-.username-input:focus {
-  outline: none;
-  border-color: #4285f4;
+  color: var(--text-color);
 }
 
 .actions {
+  margin-left: auto;
   display: flex;
-  align-items: center;
-  gap: 8px;
+  gap: 10px;
 }
 
 .import-export-btn {
   display: flex;
   align-items: center;
-  gap: 6px;
-  background-color: #333;
+  gap: 5px;
+  background-color: var(--btn-bg);
   border: none;
-  color: white;
-  padding: 6px 12px;
   border-radius: 4px;
-  cursor: pointer;
+  color: var(--text-color);
+  padding: 8px 12px;
   font-size: 14px;
+  cursor: pointer;
+  transition: all 0.2s;
 }
 
 .import-export-btn:hover {
-  background-color: #444;
+  background-color: var(--btn-hover-bg);
 }
 
-.toolbar-container {
-  background-color: #1e1e1e;
-  border-bottom: 1px solid #333;
-  padding: 0;
+.import-export-btn svg {
+  stroke: currentColor;
 }
 
-.whiteboard-container {
-  flex: 1;
-  position: relative;
-  overflow: hidden;
-  background-color: white;
-}
-
-.app-footer {
-  display: flex;
-  justify-content: space-between;
-  padding: 4px 10px;
-  background-color: #1e1e1e;
-  border-top: 1px solid #333;
-  font-size: 12px;
-  color: #888;
+.status-info, .version-info {
+  color: var(--text-color);
+  font-size: 13px;
 }
 
 .status-message {
   color: #4285f4;
-  font-weight: bold;
-}
-
-/* Responsive adjustments */
-@media (max-width: 768px) {
-  .app-header {
-    flex-wrap: wrap;
-    height: auto;
-    padding: 8px;
-  }
-
-  .logo {
-    flex: 1;
-  }
-
-  .username-container {
-    margin-right: 8px;
-  }
-
-  .actions {
-    flex-wrap: wrap;
-    margin-top: 8px;
-  }
 }
 </style>

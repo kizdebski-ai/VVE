@@ -29,12 +29,6 @@
       @reset-zoom="resetZoom"
     />
 
-    <!-- Theme toggle -->
-    <ThemeToggle 
-      :darkMode="darkMode"
-      @toggle="toggleTheme"
-    />
-
     <!-- Eraser mode controls -->
     <EraserModeControls 
       v-if="currentTool === 'eraser'"
@@ -59,7 +53,6 @@
 import { v4 as uuidv4 } from 'uuid';
 import Collaborators from './Collaborators.vue';
 import ZoomPanControls from './ZoomPanControls.vue';
-import ThemeToggle from './ThemeToggle.vue';
 import EraserModeControls from './EraserModeControls.vue';
 import StatusMessage from './StatusMessage.vue';
 import websocketService from '../services/websocket.js';
@@ -72,7 +65,6 @@ export default {
   components: {
     Collaborators,
     ZoomPanControls,
-    ThemeToggle,
     EraserModeControls,
     StatusMessage
   },
@@ -132,6 +124,21 @@ export default {
     window.addEventListener('keydown', this.handleKeyDown);
     this.handleResize();
 
+    // Obserwuj zmiany na body.classList dla darkMode
+    this.darkModeObserver = new MutationObserver((mutations) => {
+      mutations.forEach((mutation) => {
+        if (mutation.attributeName === 'class') {
+          const newDarkMode = document.body.classList.contains('dark-mode');
+          if (this.darkMode !== newDarkMode) {
+            this.darkMode = newDarkMode;
+            this.redrawCanvas();
+          }
+        }
+      });
+    });
+    
+    this.darkModeObserver.observe(document.body, { attributes: true });
+
     // Initialize history with empty state
     this.history.push([]);
     this.historyIndex = 0;
@@ -141,6 +148,11 @@ export default {
     window.removeEventListener('keydown', this.handleKeyDown);
     window.removeEventListener('paste', this.handlePaste);
     this.disconnectWebsocket();
+    
+    // Odłączamy observer
+    if (this.darkModeObserver) {
+      this.darkModeObserver.disconnect();
+    }
   },
   methods: {
     initCanvas() {
@@ -150,6 +162,9 @@ export default {
       this.context.lineJoin = 'round';
       this.context.strokeStyle = this.currentColor;
       this.context.lineWidth = this.currentLineWidth;
+
+      // Pobieramy aktualny motyw z rodzica
+      this.darkMode = document.body.classList.contains('dark-mode');
 
       // Initial draw
       this.redrawCanvas();
@@ -772,16 +787,28 @@ export default {
 
     setTool(tool) {
       this.currentTool = tool;
+      console.log('Narzędzie ustawione na:', tool);
       this.updateCursor();
     },
 
     setColor(color) {
       this.currentColor = color;
+      console.log('Kolor ustawiony na:', color);
+      this.context.strokeStyle = color;
+      this.context.fillStyle = color;
       this.updateCursor();
     },
 
     setLineWidth(width) {
-      this.currentLineWidth = width;
+      const numWidth = Number(width);
+      if (!isNaN(numWidth)) {
+        this.currentLineWidth = numWidth;
+        console.log('Grubość linii ustawiona na:', numWidth);
+        this.context.lineWidth = numWidth;
+        this.updateCursor();
+      } else {
+        console.error('Nieprawidłowa wartość grubości linii:', width);
+      }
     },
 
     setEraserMode(mode) {
@@ -790,19 +817,15 @@ export default {
       this.updateCursor();
     },
 
-    toggleTheme() {
-      this.darkMode = !this.darkMode;
-      this.showStatus(`Theme: ${this.darkMode ? 'Dark' : 'Light'}`);
-      this.redrawCanvas();
-    },
-
     updateCursor() {
       if (this.$refs.canvas) {
-        this.$refs.canvas.style.cursor = getCursorStyle(
+        const cursorStyle = getCursorStyle(
           this.currentTool, 
           this.currentColor, 
           this.eraserMode
         );
+        console.log('Aktualizacja kursora:', cursorStyle);
+        this.$refs.canvas.style.cursor = cursorStyle;
       }
     },
 

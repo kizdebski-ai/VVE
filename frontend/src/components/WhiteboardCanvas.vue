@@ -1,7 +1,7 @@
 <template>
   <div class="whiteboard-container" :class="{ 'dark-mode': darkMode }">
-    <canvas 
-      ref="canvas" 
+    <canvas
+      ref="canvas"
       :width="canvasWidth"
       :height="canvasHeight"
       class="whiteboard-canvas"
@@ -11,26 +11,31 @@
       @mouseleave="handleMouseLeave"
       @wheel="handleZoom"
       @contextmenu.prevent
+      @touchstart="handleTouchStart"
+      @touchmove="handleTouchMove"
+      @touchend="handleTouchEnd"
+      @touchcancel="handleTouchEnd"
     ></canvas>
 
     <!-- Cursor overlays for other users -->
     <Collaborators
-      :activeUsers="activeUsers"
-      :currentUserId="userId"
-      :username="username"
-      :cursors="cursors"
+      ref="collaborators"
+      :awareness="awareness"
+      :zoom-level="zoomLevel"
+      :pan-offset="panOffset"
+      :local-client-id="awareness?.clientID"
     />
 
     <!-- Zoom and pan controls -->
-    <ZoomPanControls 
+    <ZoomPanControls
       :zoomLevel="zoomLevel"
       @zoom-in="zoomIn"
       @zoom-out="zoomOut"
       @reset-zoom="resetZoom"
     />
 
-    <!-- Eraser mode controls -->
-    <EraserModeControls 
+    <!-- Eraser mode controls (Keep if eraser logic remains local or adapted) -->
+    <EraserModeControls
       v-if="currentTool === 'eraser'"
       :mode="eraserMode"
       @update:mode="setEraserMode"
@@ -39,26 +44,56 @@
     <!-- Status message -->
     <StatusMessage :message="statusMessage" />
 
-    <!-- Clipboard handler -->
-    <input 
+    <!-- Clipboard handler (Keep for paste functionality) -->
+    <input
       ref="clipboardInput"
-      type="text" 
+      type="text"
       class="clipboard-input"
       @paste="handlePaste"
     />
+
+    <!-- Toast powiadomień -->
+    <div class="notifications">
+      <transition-group name="fade">
+        <div
+          v-for="notification in notifications"
+          :key="notification.id"
+          class="notification"
+          :class="notification.type"
+        >
+          {{ notification.message }}
+        </div>
+      </transition-group>
+    </div>
   </div>
 </template>
 
 <script>
-import { v4 as uuidv4 } from 'uuid';
+import { ref, onMounted, onBeforeUnmount, watch, nextTick, computed } from 'vue';
+import * as Y from 'yjs';
+// import { v4 as uuidv4 } from 'uuid'; // Use Yjs mechanisms for IDs if possible
 import Collaborators from './Collaborators.vue';
 import ZoomPanControls from './ZoomPanControls.vue';
 import EraserModeControls from './EraserModeControls.vue';
 import StatusMessage from './StatusMessage.vue';
-import websocketService from '../services/websocket.js';
+// Removed old websocket service import
 import { drawElement, throttle, isPointInElement, distanceToSegment } from '../utils/canvasDrawing.js';
-import { createNewElement, createTextElement, createImageElement, getCursorStyle } from '../utils/canvasTools.js';
+import { createNewElement, createTextElement, createImageElement, getCursorStyle } from '../utils/canvasTools.js'; // Adapt these for Yjs maps
 import { drawGrid } from '../utils/canvasGrid.js';
+
+// Debounce function
+function debounce(func, wait) {
+  let timeout;
+  return function executedFunction(...args) {
+    const later = () => {
+      clearTimeout(timeout);
+      func(...args);
+    };
+    clearTimeout(timeout);
+    timeout = setTimeout(later, wait);
+  };
+}
+
 
 export default {
   name: 'WhiteboardCanvas',
@@ -69,863 +104,645 @@ export default {
     StatusMessage
   },
   props: {
-    roomId: {
-      type: String,
-      default: ''
-    }
-  },
-  data() {
-    return {
-      isDrawing: false,
-      context: null,
-      canvasWidth: 1200,
-      canvasHeight: 800,
-      currentTool: 'pen',
-      elements: [],
-      currentElement: null,
-      history: [],
-      historyIndex: -1,
-      currentColor: '#000000',
-      currentLineWidth: 2,
-      zoomLevel: 1,
-      panOffset: { x: 0, y: 0 },
-      isPanning: false,
-      lastPanPoint: null,
-      statusMessage: '',
-      statusTimeout: null,
-      darkMode: false,
-      eraserMode: 'erase', // 'erase' or 'delete'
-      lastReleasedElementIndex: -1, // Track last clicked element in delete mode
-
-      // Collaboration data
-      userId: websocketService.getUserId(),
-      username: 'User ' + Math.floor(Math.random() * 1000),
-      activeUsers: [],
-      cursors: [],
-
-      // Smoothing 
-      smoothingFactor: 0.2, // Adjust for smoother drawing (0-1)
-      pointsBuffer: [],
-
-      // Image support
-      isUploadingImage: false,
-      pendingImageData: null,
-
-      // For throttled functions
-      sendCursorPositionFn: null
-    }
-  },
-  mounted() {
-    this.initCanvas();
-    window.addEventListener('paste', this.handlePaste);
-    this.initClipboardHandler();
-    this.setupWebsocket();
-    window.addEventListener('resize', this.handleResize);
-    window.addEventListener('keydown', this.handleKeyDown);
-    this.handleResize();
-
-    // Obserwuj zmiany na body.classList dla darkMode
-    this.darkModeObserver = new MutationObserver((mutations) => {
-      mutations.forEach((mutation) => {
-        if (mutation.attributeName === 'class') {
-          const newDarkMode = document.body.classList.contains('dark-mode');
-          if (this.darkMode !== newDarkMode) {
-            this.darkMode = newDarkMode;
-            this.redrawCanvas();
-          }
-        }
-      });
-    });
-    
-    this.darkModeObserver.observe(document.body, { attributes: true });
-
-    // Initialize history with empty state
-    this.history.push([]);
-    this.historyIndex = 0;
-  },
-  beforeUnmount() {
-    window.removeEventListener('resize', this.handleResize);
-    window.removeEventListener('keydown', this.handleKeyDown);
-    window.removeEventListener('paste', this.handlePaste);
-    this.disconnectWebsocket();
-    
-    // Odłączamy observer
-    if (this.darkModeObserver) {
-      this.darkModeObserver.disconnect();
-    }
-  },
-  methods: {
-    initCanvas() {
-      const canvas = this.$refs.canvas;
-      this.context = canvas.getContext('2d');
-      this.context.lineCap = 'round';
-      this.context.lineJoin = 'round';
-      this.context.strokeStyle = this.currentColor;
-      this.context.lineWidth = this.currentLineWidth;
-
-      // Pobieramy aktualny motyw z rodzica
-      this.darkMode = document.body.classList.contains('dark-mode');
-
-      // Initial draw
-      this.redrawCanvas();
-
-      // Set cursor
-      this.updateCursor();
-
-      // Focus clipboard input for paste handling
-      this.$nextTick(() => {
-        if (this.$refs.clipboardInput) {
-          this.$refs.clipboardInput.focus();
-        }
-      });
+    ydoc: { // Yjs document instance
+      type: Object, // Y.Doc is an object
+      required: true
     },
-
-    initClipboardHandler() {
-      document.addEventListener('click', () => {
-        if (this.$refs.clipboardInput) {
-          this.$refs.clipboardInput.focus();
-        }
-      });
+    awareness: { // Yjs awareness instance
+      type: Object, // Awareness is an object
+      required: true
     },
-
-    setupWebsocket() {
-      if (!this.roomId) return;
-
-      // Connect to the room
-      websocketService.connect(this.roomId, this.username);
-
-      // Set up event handlers
-      websocketService.onConnect(() => {
-        this.showStatus('Connected to collaborative session');
-      });
-
-      websocketService.onMessage('user_joined', user => {
-        this.activeUsers.push(user);
-        this.showStatus(`${user.username} joined the whiteboard`);
-      });
-
-      websocketService.onMessage('user_left', user => {
-        this.activeUsers = this.activeUsers.filter(u => u.userId !== user.userId);
-        this.cursors = this.cursors.filter(c => c.userId !== user.userId);
-        this.showStatus(`${user.username} left the whiteboard`);
-      });
-
-      websocketService.onMessage('init_whiteboard', data => {
-        // Only load if we don't have elements yet
-        if (this.elements.length === 0 && data.elements && data.elements.length > 0) {
-          this.elements = data.elements;
-          this.redrawCanvas();
-          this.pushToHistory();
-        }
-
-        if (data.users) {
-          this.activeUsers = data.users;
-        }
-      });
-
-      websocketService.onMessage('whiteboard_action', payload => {
-        this.handleRemoteAction(payload);
-      });
-
-      websocketService.onMessage('cursor_position', cursor => {
-        // Update or add cursor position
-        const existingIndex = this.cursors.findIndex(c => c.userId === cursor.userId);
-
-        if (existingIndex !== -1) {
-          this.cursors[existingIndex] = cursor;
-        } else {
-          this.cursors.push(cursor);
-        }
-      });
-
-      // Set up throttled cursor position sender
-      this.sendCursorPositionFn = throttle((x, y) => {
-        if (websocketService.isConnected()) {
-          websocketService.sendCursorPosition(x, y);
-        }
-      }, 50);
+    debugMode: {
+      type: Boolean,
+      default: false
     },
+    // Removed roomId, username, userId - handled by parent/awareness
+  },
+  emits: ['state-updated'], // Keep for now if needed by parent for autosave/export trigger
 
-    disconnectWebsocket() {
-      websocketService.disconnect();
-    },
+  setup(props, { emit }) {
+    const canvas = ref(null);
+    const context = ref(null);
+    const canvasWidth = ref(1200);
+    const canvasHeight = ref(800);
+    const isDrawing = ref(false);
+    const currentTool = ref('pen');
+    const currentColor = ref('#000000');
+    const currentLineWidth = ref(2);
+    const zoomLevel = ref(1);
+    const panOffset = ref({ x: 0, y: 0 });
+    const isPanning = ref(false);
+    const lastPanPoint = ref(null);
+    const statusMessage = ref('');
+    const statusTimeout = ref(null);
+    const darkMode = ref(false);
+    const eraserMode = ref('erase');
+    const lastReleasedElementIndex = ref(-1); // Keep for delete mode highlight? Needs Yjs adaptation.
+    const currentElementPreview = ref(null); // For drawing preview
+    const pointsBuffer = ref([]); // For smoothing preview
+    const smoothingFactor = ref(0.2);
+    const notifications = ref([]);
+    const notificationId = ref(0);
+    const clipboardInput = ref(null); // Ref for clipboard input
 
-    handleRemoteAction(payload) {
-      const { action, data } = payload;
+    // --- Yjs specific state ---
+    const yElements = computed(() => props.ydoc?.getArray('elements')); // Get the shared array
 
-      switch (action) {
-        case 'add':
-          this.elements.push(data);
-          break;
+    // --- Local component state ---
+    const localAwarenessState = ref({}); // Store local awareness info
 
-        case 'update':
-          const updateIndex = this.elements.findIndex(el => el.id === data.id);
-          if (updateIndex !== -1) {
-            this.elements[updateIndex] = data;
-          }
-          break;
+    // --- Methods ---
 
-        case 'delete':
-          this.elements = this.elements.filter(el => el.id !== data.id);
-          break;
+    const redrawCanvas = () => {
+      if (!context.value || !yElements.value) return;
 
-        case 'clear':
-          this.elements = [];
-          break;
+      const ctx = context.value;
+      ctx.clearRect(0, 0, canvasWidth.value, canvasHeight.value);
+      drawGrid(ctx, zoomLevel.value, panOffset.value, canvasWidth.value, canvasHeight.value, darkMode.value);
+
+      ctx.save();
+      ctx.setTransform(
+        zoomLevel.value, 0,
+        0, zoomLevel.value,
+        panOffset.value.x, panOffset.value.y
+      );
+
+      // Draw elements from Yjs array
+      yElements.value.forEach((elementMap, index) => {
+        // Convert Y.Map to plain JS object for drawing function
+        const element = elementMap.toJSON();
+        // TODO: Adapt highlighting logic if needed for delete mode
+        const isHighlighted = false; // index === lastReleasedElementIndex.value;
+        drawElement(ctx, element, isHighlighted, smoothingFactor.value);
+      });
+
+      // Draw the preview of the element currently being drawn
+      if (isDrawing.value && currentElementPreview.value) {
+        drawElement(ctx, currentElementPreview.value, false, smoothingFactor.value);
       }
 
-      // Redraw and update history
-      this.redrawCanvas();
-      this.pushToHistory();
-    },
+      ctx.restore();
 
-    handleResize() {
-      const container = this.$el.parentElement;
+      // Emit state update if needed (e.g., for autosave trigger)
+      // emit('state-updated', {}); // Pass relevant info if needed
+    };
+
+    // Debounced redraw for performance during rapid updates
+    const debouncedRedraw = debounce(redrawCanvas, 16); // ~60fps
+
+    const handleYjsUpdate = (event) => {
+      // Check if the update affects 'elements' array or specific elements within it
+      // This check might be complex depending on the granularity needed.
+      // For simplicity, redraw on any doc update for now.
+      console.log(`Yjs update detected. yElements length: ${yElements.value?.length || 0}. Redrawing.`);
+      debouncedRedraw();
+
+      // Trigger state update for parent if needed
+      emit('state-updated', {});
+    };
+
+    const initCanvas = () => {
+      if (!canvas.value) return;
+      context.value = canvas.value.getContext('2d');
+      context.value.lineCap = 'round';
+      context.value.lineJoin = 'round';
+      context.value.strokeStyle = currentColor.value;
+      context.value.lineWidth = currentLineWidth.value;
+      darkMode.value = document.body.classList.contains('dark-mode');
+      redrawCanvas();
+      updateCursor();
+      nextTick(() => {
+        if (clipboardInput.value) clipboardInput.value.focus();
+      });
+    };
+
+    const initClipboardHandler = () => {
+      document.addEventListener('click', () => {
+        if (clipboardInput.value) clipboardInput.value.focus();
+      });
+    };
+
+    const handleResize = () => {
+      const container = canvas.value?.parentElement;
       if (container) {
-        // Set canvas to fill available space completely
-        this.canvasWidth = container.offsetWidth;
-        this.canvasHeight = container.offsetHeight;
-
-        // Ensure canvas element size matches these dimensions
-        const canvas = this.$refs.canvas;
-        canvas.width = this.canvasWidth;
-        canvas.height = this.canvasHeight;
-
-        // Redraw everything
-        this.$nextTick(() => {
-          this.redrawCanvas();
+        canvasWidth.value = container.clientWidth;
+        canvasHeight.value = container.clientHeight;
+        nextTick(() => { // Ensure DOM updates before redraw
+           if (canvas.value) {
+             canvas.value.width = canvasWidth.value;
+             canvas.value.height = canvasHeight.value;
+           }
+           redrawCanvas();
         });
       }
-    },
+    };
 
-    handleMouseDown(event) {
-      // Check for middle mouse button or Alt + left click (pan)
-      if (event.button === 1 || (event.button === 0 && event.altKey)) {
-        this.isPanning = true;
-        this.lastPanPoint = { x: event.offsetX, y: event.offsetY };
-        event.preventDefault();
-        return;
+    const handleDarkModeChange = () => {
+       const newDarkMode = document.body.classList.contains('dark-mode');
+       if (darkMode.value !== newDarkMode) {
+         darkMode.value = newDarkMode;
+         redrawCanvas();
+       }
+    };
+
+    const darkModeObserver = new MutationObserver(handleDarkModeChange);
+
+    onMounted(() => {
+      initCanvas();
+      initClipboardHandler();
+      window.addEventListener('resize', handleResize);
+      window.addEventListener('keydown', handleKeyDown);
+      window.addEventListener('paste', handlePaste); // Keep global paste listener
+      darkModeObserver.observe(document.body, { attributes: true });
+      handleResize(); // Initial size calculation
+
+      // --- Yjs Setup ---
+      if (props.ydoc) {
+        // Observe the shared array for changes
+        yElements.value?.observeDeep(handleYjsUpdate);
+        // Initial draw based on Yjs state
+        redrawCanvas();
+      } else {
+        console.error("WhiteboardCanvas: ydoc prop is missing!");
       }
 
-      // Regular drawing
-      if (event.button === 0) {
-        this.startDrawing(event);
+      if (props.awareness) {
+        // Update local awareness state (e.g., cursor position)
+        // y-websocket provider handles sending local state automatically
+        // We just need to set it when it changes (e.g., in handleMouseMove)
+      } else {
+        console.error("WhiteboardCanvas: awareness prop is missing!");
       }
-    },
+    });
 
-    handleMouseMove(event) {
-      // Send cursor position to other users
-      if (this.sendCursorPositionFn) {
-        this.sendCursorPositionFn(event.offsetX, event.offsetY);
-      }
+    onBeforeUnmount(() => {
+      window.removeEventListener('resize', handleResize);
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('paste', handlePaste);
+      darkModeObserver.disconnect();
 
-      // Handle panning
-      if (this.isPanning && this.lastPanPoint) {
-        const deltaX = event.offsetX - this.lastPanPoint.x;
-        const deltaY = event.offsetY - this.lastPanPoint.y;
+      // --- Yjs Cleanup ---
+      yElements.value?.unobserveDeep(handleYjsUpdate);
+      // Awareness listeners are managed by the parent (App.vue) via destroyYjs
+    });
 
-        this.panOffset.x += deltaX;
-        this.panOffset.y += deltaY;
+    // --- Input Handlers ---
 
-        this.lastPanPoint = { x: event.offsetX, y: event.offsetY };
-        this.redrawCanvas();
-        return;
-      }
-
-      // Regular drawing
-      if (this.isDrawing) {
-        this.draw(event);
-      } else if (this.currentTool === 'eraser' && this.eraserMode === 'delete') {
-        // Check for element under cursor in delete mode
-        this.checkElementUnderCursor(event);
-      }
-    },
-
-    handleMouseUp(event) {
-      if (this.isPanning) {
-        this.isPanning = false;
-        this.lastPanPoint = null;
-        return;
-      }
-
-      if (this.isDrawing) {
-        this.stopDrawing();
-      } else if (this.currentTool === 'eraser' && this.eraserMode === 'delete' && this.lastReleasedElementIndex !== -1) {
-        // Delete element in delete mode
-        this.deleteElementAtIndex(this.lastReleasedElementIndex);
-        this.lastReleasedElementIndex = -1;
-      }
-    },
-
-    handleMouseLeave(event) {
-      this.isPanning = false;
-      this.lastPanPoint = null;
-
-      if (this.isDrawing) {
-        this.stopDrawing();
-      }
-
-      // Reset highlighted element
-      this.lastReleasedElementIndex = -1;
-      this.redrawCanvas();
-    },
-
-    handleZoom(event) {
-      event.preventDefault();
-
-      const delta = event.deltaY < 0 ? 1.1 : 0.9;
-      const mouseX = event.offsetX;
-      const mouseY = event.offsetY;
-
-      // Calculate new zoom level
-      const newZoom = Math.max(0.1, Math.min(5, this.zoomLevel * delta));
-
-      // Calculate new pan offset to zoom centered on mouse position
-      const zoomRatio = newZoom / this.zoomLevel;
-      this.panOffset.x = mouseX - (mouseX - this.panOffset.x) * zoomRatio;
-      this.panOffset.y = mouseY - (mouseY - this.panOffset.y) * zoomRatio;
-
-      this.zoomLevel = newZoom;
-      this.redrawCanvas();
-    },
-
-    handleKeyDown(event) {
-      // Skip if user is typing in an input field
-      if (event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA') {
-        return;
-      }
-
-      // Handle keyboard shortcuts
-      switch (event.key.toLowerCase()) {
-        case 'p':
-          this.setTool('pen');
-          break;
-        case 'h':
-          this.setTool('highlighter');
-          break;
-        case 'e':
-          this.setTool('eraser');
-          break;
-        case 'l':
-          this.setTool('line');
-          break;
-        case 'r':
-          this.setTool('rectangle');
-          break;
-        case 'c':
-          this.setTool('circle');
-          break;
-        case 't':
-          this.setTool('text');
-          break;
-        case 'i':
-          // Upload image
-          if (this.$parent && this.$parent.$refs.imageInput) {
-            this.$parent.$refs.imageInput.click();
-          }
-          break;
-        case 'z':
-          // Undo: Ctrl+Z
-          if (event.ctrlKey && !event.shiftKey) {
-            event.preventDefault();
-            this.undo();
-          }
-          // Redo: Ctrl+Shift+Z
-          else if (event.ctrlKey && event.shiftKey) {
-            event.preventDefault();
-            this.redo();
-          }
-          break;
-        case 'y':
-          // Redo: Ctrl+Y
-          if (event.ctrlKey) {
-            event.preventDefault();
-            this.redo();
-          }
-          break;
-        case 'delete':
-          // Delete: when element is selected
-          if (this.lastReleasedElementIndex !== -1) {
-            this.deleteElementAtIndex(this.lastReleasedElementIndex);
-            this.lastReleasedElementIndex = -1;
-          }
-          break;
-      }
-    },
-
-    handlePaste(event) {
-      event.preventDefault();
-
-      const items = (event.clipboardData || window.clipboardData).items;
-
-      if (!items) return;
-
-      // Look for an image in the clipboard
-      for (let i = 0; i < items.length; i++) {
-        if (items[i].type.indexOf('image') !== -1) {
-          const blob = items[i].getAsFile();
-          const reader = new FileReader();
-
-          reader.onload = (e) => {
-            this.addImageFromDataUrl(e.target.result);
-          };
-
-          reader.readAsDataURL(blob);
-          return;
-        }
-      }
-
-      // If no image, try to get text
-      const text = (event.clipboardData || window.clipboardData).getData('text');
-
-      if (text) {
-        // Add text element at center of viewport
-        const centerX = (this.canvasWidth / 2 - this.panOffset.x) / this.zoomLevel;
-        const centerY = (this.canvasHeight / 2 - this.panOffset.y) / this.zoomLevel;
-
-        this.addTextElement({ x: centerX, y: centerY }, text);
-      }
-    },
-
-    getCoordinates(event) {
+    const getCoordinates = (event) => {
+      if (!canvas.value) return { offsetX: 0, offsetY: 0 };
+      const rect = canvas.value.getBoundingClientRect();
       if (event.touches && event.touches[0]) {
-        const rect = this.$refs.canvas.getBoundingClientRect();
         return {
           offsetX: event.touches[0].clientX - rect.left,
           offsetY: event.touches[0].clientY - rect.top
         };
-      } else {
-        return {
-          offsetX: event.offsetX,
-          offsetY: event.offsetY
-        };
       }
-    },
-
-    transformCoordinates(x, y) {
-      // Convert screen coordinates to canvas coordinates accounting for zoom and pan
       return {
-        x: (x - this.panOffset.x) / this.zoomLevel,
-        y: (y - this.panOffset.y) / this.zoomLevel
+        offsetX: event.clientX - rect.left, // Use clientX/Y for consistency
+        offsetY: event.clientY - rect.top
       };
-    },
+    };
 
-    startDrawing(event) {
-      if (event.button !== 0) return;
+    const transformCoordinates = (x, y) => {
+      return {
+        x: (x - panOffset.value.x) / zoomLevel.value,
+        y: (y - panOffset.value.y) / zoomLevel.value
+      };
+    };
 
-      this.isDrawing = true;
-      const coords = this.getCoordinates(event);
-      const transformedCoords = this.transformCoordinates(coords.offsetX, coords.offsetY);
+    const updateLocalAwarenessCursor = throttle((coords) => {
+        if (props.awareness) {
+            props.awareness.setLocalStateField('cursor', {
+                x: coords.x,
+                y: coords.y,
+            });
+        }
+    }, 50); // Throttle cursor updates
 
-      // Reset points buffer for smoothing
-      this.pointsBuffer = [];
+    const handleMouseMove = (e) => {
+      const coords = getCoordinates(e);
+      const transformedCoords = transformCoordinates(coords.offsetX, coords.offsetY);
 
-      // Create a new element based on the selected tool
-      this.currentElement = createNewElement(
-        this.currentTool, 
-        transformedCoords, 
-        this.currentColor, 
-        this.currentLineWidth
+      // Update local awareness state (cursor position)
+      updateLocalAwarenessCursor(transformedCoords);
+
+      if (isPanning.value && lastPanPoint.value) {
+        const currentPanPoint = transformCoordinates(coords.offsetX, coords.offsetY);
+        panOffset.value.x += coords.offsetX - lastPanPoint.value.screenX;
+        panOffset.value.y += coords.offsetY - lastPanPoint.value.screenY;
+        lastPanPoint.value = { ...currentPanPoint, screenX: coords.offsetX, screenY: coords.offsetY };
+        redrawCanvas();
+        return;
+      }
+
+      if (isDrawing.value) {
+        draw(transformedCoords);
+      }
+      // TODO: Adapt highlight logic for delete mode if kept
+    };
+
+    const handleMouseDown = (event) => {
+      if (event.button === 1 || (event.button === 0 && event.altKey)) { // Middle or Alt+Left
+        isPanning.value = true;
+        const coords = getCoordinates(event);
+        lastPanPoint.value = { ...transformCoordinates(coords.offsetX, coords.offsetY), screenX: coords.offsetX, screenY: coords.offsetY };
+        event.preventDefault();
+        return;
+      }
+      if (event.button === 0) { // Left click
+        startDrawing(event);
+      }
+    };
+
+    const handleMouseUp = (event) => {
+      if (isPanning.value) {
+        isPanning.value = false;
+        lastPanPoint.value = null;
+        return;
+      }
+      if (isDrawing.value) {
+        finishDrawing();
+      }
+      // TODO: Adapt delete logic if kept
+    };
+
+    const handleMouseLeave = (event) => {
+      if (isPanning.value) {
+        isPanning.value = false;
+        lastPanPoint.value = null;
+      }
+      if (isDrawing.value) {
+        finishDrawing(); // Finish drawing if mouse leaves canvas
+      }
+      // Clear local awareness cursor when mouse leaves
+       if (props.awareness) {
+           props.awareness.setLocalStateField('cursor', null);
+       }
+    };
+
+     // --- Touch Handlers ---
+    const handleTouchStart = (event) => {
+        if (event.touches.length === 1) {
+            // Prevent default scroll/zoom behavior
+            event.preventDefault();
+            startDrawing(event.touches[0]);
+        }
+        // Handle panning with two fingers? (More complex)
+    };
+
+    const handleTouchMove = (event) => {
+        if (event.touches.length === 1) {
+            // Prevent default scroll/zoom behavior
+            event.preventDefault();
+            const coords = getCoordinates(event);
+            const transformedCoords = transformCoordinates(coords.offsetX, coords.offsetY);
+            updateLocalAwarenessCursor(transformedCoords); // Update cursor for touch
+
+            if (isDrawing.value) {
+                draw(transformedCoords);
+            }
+        }
+    };
+
+    const handleTouchEnd = (event) => {
+        // Prevent default behaviors
+        event.preventDefault();
+        if (isDrawing.value) {
+            finishDrawing();
+        }
+         // Clear local awareness cursor on touch end
+        if (props.awareness) {
+            props.awareness.setLocalStateField('cursor', null);
+        }
+    };
+
+
+    // --- Drawing Logic (Yjs Integration) ---
+
+    const startDrawing = (event) => {
+      if (!props.ydoc) return;
+      isDrawing.value = true;
+      const coords = getCoordinates(event);
+      const transformedCoords = transformCoordinates(coords.offsetX, coords.offsetY);
+      pointsBuffer.value = []; // Reset points buffer
+
+      // Create a preview element locally, don't add to Yjs yet
+      currentElementPreview.value = createNewElement(
+        currentTool.value,
+        transformedCoords,
+        currentColor.value,
+        currentLineWidth.value
       );
+      currentElementPreview.value.id = `temp_${props.awareness.clientID}_${Date.now()}`; // Temporary ID
 
-      // Handle special tools
-      if (this.currentTool === 'text') {
+      // Special handling for text tool
+      if (currentTool.value === 'text') {
         const text = prompt('Enter text:', '');
         if (text) {
-          const textElement = createTextElement(
-            transformedCoords, 
-            text, 
-            this.currentColor, 
-            this.currentLineWidth * 10
+          const textElementData = createTextElement(
+            transformedCoords,
+            text,
+            currentColor.value,
+            currentLineWidth.value * 10 // Example size calculation
           );
-          this.elements.push(textElement);
-          this.pushToHistory();
-          this.sendElementToCollaborators('add', textElement);
+          // Add directly to Yjs within a transaction
+          props.ydoc.transact(() => {
+            yElements.value.push([new Y.Map(Object.entries(textElementData))]);
+          });
         }
-        this.isDrawing = false;
-      } else if (this.currentTool === 'image') {
-        this.isUploadingImage = true;
-        if (this.$parent && this.$parent.$refs.imageInput) {
-          this.$parent.$refs.imageInput.click();
-        }
-        this.isDrawing = false;
+        isDrawing.value = false; // Text is added immediately
+        currentElementPreview.value = null;
       }
-    },
+    };
 
-    draw(event) {
-      if (!this.isDrawing || !this.currentElement) return;
+    const draw = (coords) => {
+      if (!isDrawing.value || !currentElementPreview.value) return;
 
-      const { offsetX, offsetY } = this.getCoordinates(event);
-      const transformedCoords = this.transformCoordinates(offsetX, offsetY);
-
-      switch (this.currentTool) {
+      switch (currentTool.value) {
         case 'pen':
-        case 'eraser':
-          // Add point to current element
-          this.currentElement.points.push(transformedCoords);
-
-          // Add to points buffer for smoothing
-          this.pointsBuffer.push(transformedCoords);
-
-          // Only keep the last 3 points for real-time smoothing
-          if (this.pointsBuffer.length > 3) {
-            this.pointsBuffer.shift();
-          }
-
-          // Redraw canvas to show the preview
-          this.redrawCanvas();
+        case 'eraser': // Eraser might need different logic (modifying existing elements or using blend modes)
+          currentElementPreview.value.points.push(coords);
+          pointsBuffer.value.push(coords);
+          if (pointsBuffer.value.length > 3) pointsBuffer.value.shift();
+          redrawCanvas(); // Redraw for preview
           break;
-
         case 'line':
         case 'rectangle':
         case 'circle':
-          // Update end point for shape
-          this.currentElement.end = transformedCoords;
-
-          // Redraw canvas to show the shape preview
-          this.redrawCanvas();
+          currentElementPreview.value.end = coords;
+          redrawCanvas(); // Redraw for preview
           break;
       }
-    },
+    };
 
-    stopDrawing() {
-      if (!this.isDrawing) return;
+    const finishDrawing = () => {
+      if (!isDrawing.value || !currentElementPreview.value || !props.ydoc) return;
+      isDrawing.value = false;
 
-      this.isDrawing = false;
+      let elementToAdd = null;
+      const preview = currentElementPreview.value;
 
-      // Add the element to our elements array if valid
-      if (this.currentElement) {
-        let shouldAdd = false;
-
-        switch (this.currentElement.type) {
-          case 'pen':
-          case 'eraser':
-            shouldAdd = this.currentElement.points && this.currentElement.points.length > 1;
-            break;
-
-          case 'line':
-          case 'rectangle':
-          case 'circle':
-            shouldAdd = this.currentElement.start.x !== this.currentElement.end.x || 
-                       this.currentElement.start.y !== this.currentElement.end.y;
-            break;
-        }
-
-        if (shouldAdd) {
-          this.elements.push(this.currentElement);
-          this.sendElementToCollaborators('add', this.currentElement);
-          this.pushToHistory();
-        }
-      }
-
-      this.currentElement = null;
-      this.pointsBuffer = [];
-      this.redrawCanvas();
-    },
-
-    sendElementToCollaborators(action, element) {
-      if (websocketService.isConnected()) {
-        websocketService.sendWhiteboardAction(action, element);
-      }
-    },
-
-    checkElementUnderCursor(event) {
-      const { offsetX, offsetY } = this.getCoordinates(event);
-      const transformedCoords = this.transformCoordinates(offsetX, offsetY);
-
-      // Check which element is under the cursor
-      let foundElementIndex = -1;
-
-      // Check from the end to find the topmost element
-      for (let i = this.elements.length - 1; i >= 0; i--) {
-        if (isPointInElement(transformedCoords, this.elements[i])) {
-          foundElementIndex = i;
+      // Finalize element data and check if it's valid to add
+      switch (preview.type) {
+        case 'pen':
+        case 'eraser':
+          if (preview.points && preview.points.length > 1) {
+            elementToAdd = { ...preview };
+          }
           break;
+        case 'line':
+        case 'rectangle':
+        case 'circle':
+          if (preview.start.x !== preview.end.x || preview.start.y !== preview.end.y) {
+             elementToAdd = { ...preview };
+          }
+          break;
+      }
+
+      // Add the finalized element to Yjs within a transaction
+      if (elementToAdd) {
+         // Assign a permanent ID (optional, Yjs handles object identity)
+         // elementToAdd.id = `elem_${props.awareness.clientID}_${Date.now()}`;
+         // Assign a permanent ID (optional, Yjs handles object identity)
+         // elementToAdd.id = `elem_${props.awareness.clientID}_${Date.now()}`;
+         delete elementToAdd.id; // Remove temporary ID
+         console.log('Adding element to Yjs:', JSON.stringify(elementToAdd)); // Log element being added
+
+         props.ydoc.transact(() => {
+           yElements.value.push([new Y.Map(Object.entries(elementToAdd))]);
+         });
+      }
+
+      currentElementPreview.value = null;
+      pointsBuffer.value = [];
+      redrawCanvas(); // Redraw final state
+    };
+
+    // --- Tool and Style Setters ---
+    const setTool = (tool) => { currentTool.value = tool; updateCursor(); };
+    const setColor = (color) => { currentColor.value = color; updateCursor(); };
+    const setLineWidth = (width) => { currentLineWidth.value = Number(width) || 2; updateCursor(); };
+    const setEraserMode = (mode) => { eraserMode.value = mode; updateCursor(); };
+
+    const updateCursor = () => {
+      if (canvas.value) {
+        canvas.value.style.cursor = getCursorStyle(currentTool.value, currentColor.value, eraserMode.value);
+      }
+    };
+
+    // --- Zoom/Pan ---
+    const handleZoom = (event) => {
+      event.preventDefault();
+      if (!canvas.value) return;
+      const rect = canvas.value.getBoundingClientRect();
+      const mouseX = event.clientX - rect.left;
+      const mouseY = event.clientY - rect.top;
+      const delta = event.deltaY < 0 ? 1.1 : 0.9;
+      const newZoom = Math.max(0.1, Math.min(5, zoomLevel.value * delta));
+      const zoomRatio = newZoom / zoomLevel.value;
+
+      panOffset.value.x = mouseX - (mouseX - panOffset.value.x) * zoomRatio;
+      panOffset.value.y = mouseY - (mouseY - panOffset.value.y) * zoomRatio;
+      zoomLevel.value = newZoom;
+      redrawCanvas();
+      showStatus(`Zoom: ${Math.round(zoomLevel.value * 100)}%`);
+    };
+    const zoomIn = () => {
+        const prevZoom = zoomLevel.value;
+        zoomLevel.value = Math.min(5, zoomLevel.value * 1.2);
+        const centerX = canvasWidth.value / 2;
+        const centerY = canvasHeight.value / 2;
+        const zoomRatio = zoomLevel.value / prevZoom;
+        panOffset.value.x = centerX - (centerX - panOffset.value.x) * zoomRatio;
+        panOffset.value.y = centerY - (centerY - panOffset.value.y) * zoomRatio;
+        redrawCanvas();
+        // showStatus(`Zoom: ${Math.round(zoomLevel.value * 100)}%`); // Reduce status spam
+    };
+    const zoomOut = () => {
+        const prevZoom = zoomLevel.value;
+        zoomLevel.value = Math.max(0.1, zoomLevel.value / 1.2);
+        const centerX = canvasWidth.value / 2;
+        const centerY = canvasHeight.value / 2;
+        const zoomRatio = zoomLevel.value / prevZoom;
+        panOffset.value.x = centerX - (centerX - panOffset.value.x) * zoomRatio;
+        panOffset.value.y = centerY - (centerY - panOffset.value.y) * zoomRatio;
+        redrawCanvas();
+        // showStatus(`Zoom: ${Math.round(zoomLevel.value * 100)}%`); // Reduce status spam
+    };
+    const resetZoom = () => {
+        zoomLevel.value = 1;
+        panOffset.value = { x: 0, y: 0 };
+        redrawCanvas();
+        // showStatus('View reset'); // Reduce status spam
+    };
+
+    // --- Other Actions ---
+    const handleKeyDown = (event) => {
+      if (event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA') return;
+      // Basic tool shortcuts (adapt as needed)
+      if (!event.ctrlKey && !event.metaKey && !event.altKey) {
+        switch (event.key.toLowerCase()) {
+          case 'p': setTool('pen'); break;
+          case 'e': setTool('eraser'); break;
+          case 'l': setTool('line'); break;
+          // Add other tool shortcuts
         }
       }
+      // Undo/Redo shortcuts are typically handled by UndoManager listener in Toolbar/App
+    };
 
-      // If an element is found, highlight it
-      if (foundElementIndex !== this.lastReleasedElementIndex) {
-        this.lastReleasedElementIndex = foundElementIndex;
-        this.redrawCanvas(); // Redraw to show highlight
-      }
-    },
+    const handlePaste = (event) => {
+       event.preventDefault();
+       const items = (event.clipboardData || window.clipboardData).items;
+       if (!items || !props.ydoc) return;
 
-    deleteElementAtIndex(index) {
-      if (index >= 0 && index < this.elements.length) {
-        const elementToDelete = this.elements[index];
+       for (let i = 0; i < items.length; i++) {
+         if (items[i].type.indexOf('image') !== -1) {
+           const blob = items[i].getAsFile();
+           const reader = new FileReader();
+           reader.onload = (e) => addImageFromDataUrl(e.target.result); // Add image via Yjs
+           reader.readAsDataURL(blob);
+           return; // Handle first image found
+         }
+       }
 
-        // Remove element
-        this.elements.splice(index, 1);
-        this.pushToHistory();
-        this.redrawCanvas();
+       const text = (event.clipboardData || window.clipboardData).getData('text');
+       if (text) {
+         const centerX = (canvasWidth.value / 2 - panOffset.value.x) / zoomLevel.value;
+         const centerY = (canvasHeight.value / 2 - panOffset.value.y) / zoomLevel.value;
+         addTextElement({ x: centerX, y: centerY }, text); // Add text via Yjs
+       }
+    };
 
-        // Notify collaborators
-        if (websocketService.isConnected() && elementToDelete) {
-          websocketService.sendWhiteboardAction('delete', { id: elementToDelete.id });
-        }
+    const addImageFromDataUrl = (dataUrl) => {
+        if (!props.ydoc) return;
+        const centerX = (canvasWidth.value / 2 - panOffset.value.x) / zoomLevel.value;
+        const centerY = (canvasHeight.value / 2 - panOffset.value.y) / zoomLevel.value;
+        createImageElement(dataUrl, centerX, centerY).then(imageData => {
+            props.ydoc.transact(() => {
+                yElements.value.push([new Y.Map(Object.entries(imageData))]);
+            });
+        });
+    };
 
-        this.showStatus('Element deleted');
-      }
-    },
-
-    redrawCanvas() {
-      if (!this.context) return;
-
-      // Clear and draw grid
-      this.context.clearRect(0, 0, this.canvasWidth, this.canvasHeight);
-      drawGrid(this.context, this.zoomLevel, this.panOffset, this.canvasWidth, this.canvasHeight, this.darkMode);
-
-      // Save the context state
-      this.context.save();
-
-      // Apply zoom and pan transformations for elements
-      this.context.setTransform(
-        this.zoomLevel, 0, 
-        0, this.zoomLevel, 
-        this.panOffset.x, this.panOffset.y
-      );
-
-      // Draw all elements
-      this.elements.forEach((element, index) => {
-        const isHighlighted = index === this.lastReleasedElementIndex;
-        drawElement(this.context, element, isHighlighted, this.smoothingFactor);
-      });
-
-      // If we're currently drawing, also draw the current element
-      if (this.isDrawing && this.currentElement) {
-        drawElement(this.context, this.currentElement, false, this.smoothingFactor);
-      }
-
-      // Restore context
-      this.context.restore();
-
-      // Emit updated state
-      this.$emit('state-updated', this.getSerializableState());
-    },
-
-    pushToHistory() {
-      // Remove forward history if we've gone back and made a new action
-      if (this.historyIndex < this.history.length - 1) {
-        this.history = this.history.slice(0, this.historyIndex + 1);
-      }
-
-      // Push a deep copy of the current elements to history
-      this.history.push(JSON.parse(JSON.stringify(this.elements)));
-      this.historyIndex = this.history.length - 1;
-
-      // Emit the updated state for parent components
-      this.$emit('state-updated', this.getSerializableState());
-    },
-
-    undo() {
-      if (this.historyIndex > 0) {
-        this.historyIndex--;
-        this.elements = JSON.parse(JSON.stringify(this.history[this.historyIndex]));
-        this.redrawCanvas();
-        this.$emit('state-updated', this.getSerializableState());
-      }
-    },
-
-    redo() {
-      if (this.historyIndex < this.history.length - 1) {
-        this.historyIndex++;
-        this.elements = JSON.parse(JSON.stringify(this.history[this.historyIndex]));
-        this.redrawCanvas();
-        this.$emit('state-updated', this.getSerializableState());
-      }
-    },
-
-    zoomIn() {
-      const prevZoom = this.zoomLevel;
-      this.zoomLevel = Math.min(5, this.zoomLevel * 1.2);
-
-      // Adjust pan to keep center point
-      const centerX = this.canvasWidth / 2;
-      const centerY = this.canvasHeight / 2;
-      const zoomRatio = this.zoomLevel / prevZoom;
-      this.panOffset.x = centerX - (centerX - this.panOffset.x) * zoomRatio;
-      this.panOffset.y = centerY - (centerY - this.panOffset.y) * zoomRatio;
-
-      this.redrawCanvas();
-      this.showStatus(`Zoom: ${Math.round(this.zoomLevel * 100)}%`);
-    },
-
-    zoomOut() {
-      const prevZoom = this.zoomLevel;
-      this.zoomLevel = Math.max(0.1, this.zoomLevel / 1.2);
-
-      // Adjust pan to keep center point
-      const centerX = this.canvasWidth / 2;
-      const centerY = this.canvasHeight / 2;
-      const zoomRatio = this.zoomLevel / prevZoom;
-      this.panOffset.x = centerX - (centerX - this.panOffset.x) * zoomRatio;
-      this.panOffset.y = centerY - (centerY - this.panOffset.y) * zoomRatio;
-
-      this.redrawCanvas();
-      this.showStatus(`Zoom: ${Math.round(this.zoomLevel * 100)}%`);
-    },
-
-    resetZoom() {
-      this.zoomLevel = 1;
-      this.panOffset = { x: 0, y: 0 };
-      this.redrawCanvas();
-      this.showStatus('View reset');
-    },
-
-    showStatus(message, duration = 2000) {
-      this.statusMessage = message;
-
-      if (this.statusTimeout) {
-        clearTimeout(this.statusTimeout);
-      }
-
-      this.statusTimeout = setTimeout(() => {
-        this.statusMessage = '';
-      }, duration);
-    },
-
-    setTool(tool) {
-      this.currentTool = tool;
-      console.log('Narzędzie ustawione na:', tool);
-      this.updateCursor();
-    },
-
-    setColor(color) {
-      this.currentColor = color;
-      console.log('Kolor ustawiony na:', color);
-      this.context.strokeStyle = color;
-      this.context.fillStyle = color;
-      this.updateCursor();
-    },
-
-    setLineWidth(width) {
-      const numWidth = Number(width);
-      if (!isNaN(numWidth)) {
-        this.currentLineWidth = numWidth;
-        console.log('Grubość linii ustawiona na:', numWidth);
-        this.context.lineWidth = numWidth;
-        this.updateCursor();
-      } else {
-        console.error('Nieprawidłowa wartość grubości linii:', width);
-      }
-    },
-
-    setEraserMode(mode) {
-      this.eraserMode = mode;
-      this.showStatus(`Eraser mode: ${mode === 'erase' ? 'Erase' : 'Delete'}`);
-      this.updateCursor();
-    },
-
-    updateCursor() {
-      if (this.$refs.canvas) {
-        const cursorStyle = getCursorStyle(
-          this.currentTool, 
-          this.currentColor, 
-          this.eraserMode
+     const addTextElement = (position, text) => {
+        if (!props.ydoc || !text) return;
+        const textElementData = createTextElement(
+            position,
+            text,
+            currentColor.value,
+            currentLineWidth.value * 10 // Example size
         );
-        console.log('Aktualizacja kursora:', cursorStyle);
-        this.$refs.canvas.style.cursor = cursorStyle;
-      }
-    },
+        props.ydoc.transact(() => {
+            yElements.value.push([new Y.Map(Object.entries(textElementData))]);
+        });
+    };
 
-    clearCanvas() {
-      if (confirm('Are you sure you want to clear the canvas? All content will be lost.')) {
-        this.elements = [];
-        this.pushToHistory();
 
-        // Notify collaborators
-        if (websocketService.isConnected()) {
-          websocketService.sendWhiteboardAction('clear', {});
+    // --- Status & Notifications ---
+    const showStatus = (message, duration = 2000) => {
+      statusMessage.value = message;
+      if (statusTimeout.value) clearTimeout(statusTimeout.value);
+      statusTimeout.value = setTimeout(() => { statusMessage.value = ''; }, duration);
+    };
+
+    const showToast = (message, type = 'default', duration = 3000) => {
+      const id = ++notificationId.value;
+      notifications.value.push({ id, message, type });
+      setTimeout(() => {
+        notifications.value = notifications.value.filter(n => n.id !== id);
+      }, duration);
+    };
+
+    // --- Public methods exposed via ref ---
+    // (These might be called by parent or Toolbar)
+    const clearCanvas = () => { // Called by App.vue via ref
+        if (props.ydoc && confirm('Are you sure you want to clear the canvas?')) {
+            props.ydoc.transact(() => {
+                while (yElements.value.length > 0) {
+                    yElements.value.delete(0);
+                }
+            });
+            showStatus('Canvas cleared');
         }
+    };
+    const undo = () => { /* Handled by UndoManager */ };
+    const redo = () => { /* Handled by UndoManager */ };
+    const getSerializableState = () => { /* Needs Yjs adaptation if still needed */ return {}; };
+    const loadState = (state) => { /* Needs Yjs adaptation */ return false; };
+    const exportAsText = () => { /* Needs Yjs adaptation */ return ''; };
+    const importFromText = (text) => { /* Needs Yjs adaptation */ return false; };
+    const toggleDebug = (enabled) => { /* Keep if needed */ };
+    const getViewportCenter = () => ({
+        x: (canvasWidth.value / 2 - panOffset.value.x) / zoomLevel.value,
+        y: (canvasHeight.value / 2 - panOffset.value.y) / zoomLevel.value,
+    });
 
-        this.redrawCanvas();
-      }
-    },
 
-    // Methods for images
-    addImageFromDataUrl(dataUrl) {
-      const centerX = (this.canvasWidth / 2 - this.panOffset.x) / this.zoomLevel;
-      const centerY = (this.canvasHeight / 2 - this.panOffset.y) / this.zoomLevel;
-
-      createImageElement(dataUrl, centerX, centerY).then(imageElement => {
-        this.elements.push(imageElement);
-        this.pushToHistory();
-        this.redrawCanvas();
-
-        // Send to collaborators
-        this.sendElementToCollaborators('add', imageElement);
-      });
-    },
-
-    // Methods for text
-    addTextElement(position, text) {
-      const textElement = createTextElement(
-        position, 
-        text, 
-        this.currentColor, 
-        this.currentLineWidth * 10
-      );
-
-      this.elements.push(textElement);
-      this.pushToHistory();
-      this.redrawCanvas();
-
-      // Send to collaborators
-      this.sendElementToCollaborators('add', textElement);
-    },
-
-    // Methods for state serialization
-    getSerializableState() {
-      return {
-        elements: this.elements,
-        canvasWidth: this.canvasWidth,
-        canvasHeight: this.canvasHeight,
-        zoomLevel: this.zoomLevel,
-        panOffset: this.panOffset,
-        darkMode: this.darkMode
-      };
-    },
-
-    loadState(state) {
-      if (!state || !state.elements) return false;
-
-      this.elements = state.elements;
-
-      // Optional: adjust canvas size if it's in the state
-      if (state.canvasWidth) this.canvasWidth = state.canvasWidth;
-      if (state.canvasHeight) this.canvasHeight = state.canvasHeight;
-      if (state.zoomLevel) this.zoomLevel = state.zoomLevel;
-      if (state.panOffset) this.panOffset = state.panOffset;
-      if (state.darkMode !== undefined) this.darkMode = state.darkMode;
-
-      this.redrawCanvas();
-      this.pushToHistory();
-      return true;
-    },
-
-    exportAsText() {
-      return JSON.stringify(this.getSerializableState());
-    },
-
-    importFromText(text) {
-      try {
-        const state = JSON.parse(text);
-        const result = this.loadState(state);
-
-        // Broadcast imported state to collaborators
-        if (result && websocketService.isConnected()) {
-          state.elements.forEach(element => {
-            websocketService.sendWhiteboardAction('add', element);
-          });
+    // --- Watchers ---
+    watch(() => props.ydoc, (newYDoc, oldYDoc) => {
+        if (oldYDoc) yElements.value?.unobserveDeep(handleYjsUpdate);
+        if (newYDoc) {
+            yElements.value?.observeDeep(handleYjsUpdate);
+            redrawCanvas(); // Redraw with new doc state
         }
+    });
+     watch(() => props.awareness, (newAwareness, oldAwareness) => {
+        // Awareness listeners are handled in parent (App.vue)
+        // But redraw might be needed if cursor rendering depends on it directly
+        redrawCanvas();
+    });
 
-        return result;
-      } catch (e) {
-        console.error('Failed to import state:', e);
-        return false;
-      }
-    }
+
+    return {
+      canvas,
+      canvasWidth,
+      canvasHeight,
+      isDrawing,
+      currentTool,
+      currentColor,
+      currentLineWidth,
+      zoomLevel,
+      panOffset,
+      isPanning,
+      lastPanPoint,
+      statusMessage,
+      darkMode,
+      eraserMode,
+      notifications,
+      clipboardInput,
+      // Methods
+      handleMouseDown,
+      handleMouseMove,
+      handleMouseUp,
+      handleMouseLeave,
+      handleZoom,
+      handleKeyDown,
+      handlePaste,
+      handleResize,
+      handleTouchStart,
+      handleTouchMove,
+      handleTouchEnd,
+      zoomIn,
+      zoomOut,
+      resetZoom,
+      setTool,
+      setColor,
+      setLineWidth,
+      setEraserMode,
+      showToast, // Expose for parent
+      clearCanvas, // Expose for parent
+      undo, // Expose for parent (delegates to UndoManager)
+      redo, // Expose for parent (delegates to UndoManager)
+      getSerializableState, // Expose if needed
+      loadState, // Expose if needed
+      exportAsText, // Expose if needed
+      importFromText, // Expose if needed
+      toggleDebug, // Expose for parent
+      addImageFromDataUrl, // Expose if needed by parent/toolbar
+      getViewportCenter, // Expose for image placement etc.
+      redrawCanvas // Expose for parent (e.g., after theme change)
+    };
   }
 }
 </script>
@@ -937,17 +754,19 @@ export default {
   overflow: hidden;
   background-color: white;
   position: relative;
-  flex: 1;
+  flex: 1; /* Ensure it fills space if in flex container */
+  cursor: crosshair; /* Default cursor */
 }
 
 .whiteboard-container.dark-mode {
-  background-color: #121212;
+  background-color: #1e1e1e; /* Darker background for dark mode */
 }
 
 .whiteboard-canvas {
+  display: block; /* Remove extra space below canvas */
   width: 100%;
   height: 100%;
-  /* Cursor set dynamically in updateCursor() */
+  /* Cursor is set dynamically via JS */
 }
 
 .clipboard-input {
@@ -955,5 +774,76 @@ export default {
   opacity: 0;
   pointer-events: none;
   top: -100px;
+  left: -100px; /* Position off-screen */
 }
+
+/* Styles for notifications container */
+.notifications {
+  position: fixed;
+  bottom: 20px;
+  left: 20px;
+  z-index: 1050; /* Ensure notifications are above other elements */
+  display: flex;
+  flex-direction: column;
+  gap: 10px; /* Space between notifications */
+}
+
+/* Individual notification style */
+.notification {
+  padding: 10px 15px;
+  border-radius: 4px;
+  color: #fff;
+  font-size: 14px;
+  box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+  transition: all 0.3s ease-in-out;
+  opacity: 0.9;
+}
+
+.notification.default { background-color: #555; }
+.notification.info { background-color: #2196F3; }
+.notification.success { background-color: #4CAF50; }
+.notification.warning { background-color: #FF9800; }
+.notification.error { background-color: #F44336; }
+
+/* Fade animation for notifications */
+.fade-enter-active, .fade-leave-active {
+  transition: opacity 0.5s, transform 0.5s;
+}
+.fade-enter-from, .fade-leave-to {
+  opacity: 0;
+  transform: translateY(10px);
+}
+
+</style>
+
+<style>
+/* Global toast styles (if not defined elsewhere) */
+.toast {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  padding: 12px 20px;
+  border-radius: 6px;
+  background-color: #333;
+  color: white;
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+  z-index: 9999;
+  font-size: 14px;
+  opacity: 0;
+  transform: translateY(-20px);
+  transition: all 0.3s ease;
+  max-width: 300px;
+  text-align: center;
+}
+
+.toast.show {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.toast-default { background-color: #333; }
+.toast-info { background-color: #2196F3; }
+.toast-success { background-color: #4CAF50; }
+.toast-warning { background-color: #FF9800; }
+.toast-error { background-color: #F44336; }
 </style>

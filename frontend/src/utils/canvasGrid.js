@@ -1,124 +1,136 @@
 /**
  * Canvas Grid Module
- * Provides functionality for drawing the grid
+ * Provides functionality for drawing the grid aligned to world coordinates.
  */
 
-/**
- * Update grid size settings based on zoom level
- * @param {number} zoomLevel - Current zoom level
- * @returns {object} - Grid size settings
- */
-export const getGridSettings = (zoomLevel) => {
-  // Adjust grid size based on zoom level for better visibility
-  if (zoomLevel <= 0.5) {
-    return {
-      gridSize: 40,
-      majorGridSize: 200
-    };
-  } else if (zoomLevel <= 1) {
-    return {
-      gridSize: 20,
-      majorGridSize: 100
-    };
-  } else if (zoomLevel <= 2) {
-    return {
-      gridSize: 10,
-      majorGridSize: 50
-    };
-  } else {
-    return {
-      gridSize: 5,
-      majorGridSize: 25
-    };
-  }
-};
+const MINOR_GRID_WORLD_SIZE = 20; // Base size of a small grid cell in world units
+const MAJOR_GRID_FACTOR = 5; // Draw a major line every 5 minor lines
 
 /**
- * Draw grid on canvas
- * @param {object} ctx - Canvas 2D context
+ * Draw grid on canvas, aligned to world coordinates.
+ * @param {CanvasRenderingContext2D} ctx - Canvas 2D context
  * @param {number} zoomLevel - Current zoom level
- * @param {object} panOffset - Pan offset {x, y}
- * @param {number} canvasWidth - Canvas width
- * @param {number} canvasHeight - Canvas height
+ * @param {object} panOffset - Pan offset {x, y} in screen coordinates
+ * @param {number} canvasWidth - Canvas width in screen coordinates
+ * @param {number} canvasHeight - Canvas height in screen coordinates
  * @param {boolean} darkMode - Dark mode enabled
  */
 export const drawGrid = (ctx, zoomLevel, panOffset, canvasWidth, canvasHeight, darkMode) => {
-  console.log('Rysowanie siatki:', { zoomLevel, darkMode });
-  
-  // Czyszczenie canvas z poprzednim tłem
+  if (!ctx) return;
+
   ctx.save();
-  
-  // Ustawienie tła canvasu
-  ctx.fillStyle = darkMode ? '#1e1e1e' : '#ffffff';
+
+  // Clear canvas and set background
+  ctx.fillStyle = darkMode ? '#1e1e1e' : '#ffffff'; // Use slightly darker dark mode bg
   ctx.fillRect(0, 0, canvasWidth, canvasHeight);
-  
-  // Dostosowanie rozmiaru siatki do zoomu
-  // Przy wysokim zoomie siatka byłaby za gęsta, więc dostosowujemy
-  let baseGridSize = 20;
-  if (zoomLevel > 3) {
-    baseGridSize = 40;
-  } else if (zoomLevel > 1.5) {
-    baseGridSize = 30;
-  } else if (zoomLevel < 0.5) {
-    baseGridSize = 10;
+
+  // --- Calculate grid properties based on zoom ---
+  const baseWorldGridSize = MINOR_GRID_WORLD_SIZE;
+  let screenGridSize = baseWorldGridSize * zoomLevel;
+  let worldGridStep = baseWorldGridSize;
+
+  // Adjust grid density based on visual size on screen
+  // Aim for visible grid lines roughly between 10px and 40px apart
+  while (screenGridSize < 10 && worldGridStep < baseWorldGridSize * 100) {
+    worldGridStep *= 2; // Double the world size step
+    screenGridSize = worldGridStep * zoomLevel;
   }
-  
-  // Obliczamy widoczny rozmiar siatki w zależności od zoomu
-  const gridSize = baseGridSize * zoomLevel;
-  
-  // Obliczenie wartości przesunięcia siatki względem panOffset
-  const offsetX = (panOffset.x % gridSize + gridSize) % gridSize;
-  const offsetY = (panOffset.y % gridSize + gridSize) % gridSize;
-  
-  // Wybór koloru siatki w zależności od motywu
-  const gridColor = darkMode ? 'rgba(255, 255, 255, 0.1)' : 'rgba(100, 100, 100, 0.2)';
-  
-  ctx.strokeStyle = gridColor;
-  ctx.lineWidth = 0.5;
-  
-  // Rysowanie linii pionowych
-  for (let x = offsetX; x < canvasWidth; x += gridSize) {
-    ctx.beginPath();
-    ctx.moveTo(x, 0);
-    ctx.lineTo(x, canvasHeight);
-    ctx.stroke();
+  while (screenGridSize > 40 && worldGridStep > baseWorldGridSize / 4) {
+     worldGridStep /= 2; // Halve the world size step
+     screenGridSize = worldGridStep * zoomLevel;
   }
-  
-  // Rysowanie linii poziomych
-  for (let y = offsetY; y < canvasHeight; y += gridSize) {
-    ctx.beginPath();
-    ctx.moveTo(0, y);
-    ctx.lineTo(canvasWidth, y);
-    ctx.stroke();
+
+  // Don't draw if lines are too dense or too sparse
+  if (screenGridSize < 5 || screenGridSize > canvasWidth * 2) {
+     ctx.restore();
+     return;
   }
-  
-  // Dla większego skalowania, możemy dodać drugą siatkę (główną)
-  if (zoomLevel > 0.5) {
-    const majorGridSize = baseGridSize * 5 * zoomLevel;
-    const majorOffsetX = (panOffset.x % majorGridSize + majorGridSize) % majorGridSize;
-    const majorOffsetY = (panOffset.y % majorGridSize + majorGridSize) % majorGridSize;
-    
-    const majorGridColor = darkMode ? 'rgba(255, 255, 255, 0.2)' : 'rgba(100, 100, 100, 0.4)';
-    
-    ctx.strokeStyle = majorGridColor;
-    ctx.lineWidth = 1;
-    
-    // Rysowanie głównych linii pionowych
-    for (let x = majorOffsetX; x < canvasWidth; x += majorGridSize) {
-      ctx.beginPath();
-      ctx.moveTo(x, 0);
-      ctx.lineTo(x, canvasHeight);
-      ctx.stroke();
+
+  const majorWorldGridSize = worldGridStep * MAJOR_GRID_FACTOR;
+  const majorScreenGridSize = majorWorldGridSize * zoomLevel;
+
+  // --- Calculate visible world bounds ---
+  const worldXMin = -panOffset.x / zoomLevel;
+  const worldXMax = (canvasWidth - panOffset.x) / zoomLevel;
+  const worldYMin = -panOffset.y / zoomLevel;
+  const worldYMax = (canvasHeight - panOffset.y) / zoomLevel;
+
+  // --- Calculate starting grid lines in world coordinates ---
+  const startWorldX = Math.floor(worldXMin / worldGridStep) * worldGridStep;
+  const startWorldY = Math.floor(worldYMin / worldGridStep) * worldGridStep;
+  const startMajorWorldX = Math.floor(worldXMin / majorWorldGridSize) * majorWorldGridSize;
+  const startMajorWorldY = Math.floor(worldYMin / majorWorldGridSize) * majorWorldGridSize;
+
+  // --- Set line styles ---
+  const minorColor = darkMode ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.08)';
+  const majorColor = darkMode ? 'rgba(255, 255, 255, 0.15)' : 'rgba(0, 0, 0, 0.15)';
+  const pixelRatio = window.devicePixelRatio || 1;
+  const minorLineWidth = 1 / pixelRatio; // Aim for 1 physical pixel
+  const majorLineWidth = 1.5 / pixelRatio; // Slightly thicker major lines
+
+  // Helper function to convert world coord to screen coord
+  const worldToScreenX = (worldX) => worldX * zoomLevel + panOffset.x;
+  const worldToScreenY = (worldY) => worldY * zoomLevel + panOffset.y;
+
+  // --- Draw Minor Grid Lines ---
+  ctx.beginPath();
+  ctx.strokeStyle = minorColor;
+  ctx.lineWidth = minorLineWidth;
+
+  // Vertical lines
+  let currentWorldX = startWorldX;
+  while (currentWorldX < worldXMax) {
+    // Avoid drawing lines exactly on major grid lines if major grid is drawn
+    if (majorScreenGridSize < 5 || Math.abs(currentWorldX % majorWorldGridSize) > 0.001) {
+        const screenX = Math.round(worldToScreenX(currentWorldX)) + (minorLineWidth / 2); // Align to pixel grid
+        ctx.moveTo(screenX, 0);
+        ctx.lineTo(screenX, canvasHeight);
     }
-    
-    // Rysowanie głównych linii poziomych
-    for (let y = majorOffsetY; y < canvasHeight; y += majorGridSize) {
-      ctx.beginPath();
-      ctx.moveTo(0, y);
-      ctx.lineTo(canvasWidth, y);
-      ctx.stroke();
-    }
+    currentWorldX += worldGridStep;
   }
-  
+
+  // Horizontal lines
+  let currentWorldY = startWorldY;
+  while (currentWorldY < worldYMax) {
+     if (majorScreenGridSize < 5 || Math.abs(currentWorldY % majorWorldGridSize) > 0.001) {
+        const screenY = Math.round(worldToScreenY(currentWorldY)) + (minorLineWidth / 2); // Align to pixel grid
+        ctx.moveTo(0, screenY);
+        ctx.lineTo(canvasWidth, screenY);
+     }
+    currentWorldY += worldGridStep;
+  }
+  ctx.stroke();
+
+
+  // --- Draw Major Grid Lines (if they are visually distinct enough) ---
+  if (majorScreenGridSize >= 5) {
+      ctx.beginPath();
+      ctx.strokeStyle = majorColor;
+      ctx.lineWidth = majorLineWidth;
+
+      // Vertical major lines
+      let currentMajorWorldX = startMajorWorldX;
+      while (currentMajorWorldX < worldXMax) {
+          const screenX = Math.round(worldToScreenX(currentMajorWorldX)) + (majorLineWidth / 2); // Align to pixel grid
+          ctx.moveTo(screenX, 0);
+          ctx.lineTo(screenX, canvasHeight);
+          currentMajorWorldX += majorWorldGridSize;
+      }
+
+      // Horizontal major lines
+      let currentMajorWorldY = startMajorWorldY;
+      while (currentMajorWorldY < worldYMax) {
+          const screenY = Math.round(worldToScreenY(currentMajorWorldY)) + (majorLineWidth / 2); // Align to pixel grid
+          ctx.moveTo(0, screenY);
+          ctx.lineTo(canvasWidth, screenY);
+          currentMajorWorldY += majorWorldGridSize;
+      }
+      ctx.stroke();
+  }
+
   ctx.restore();
 };
+
+// Keep the old getGridSettings function if it's used elsewhere,
+// otherwise it can be removed as drawGrid now calculates density dynamically.
+// export const getGridSettings = (zoomLevel) => { ... };

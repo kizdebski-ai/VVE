@@ -1,48 +1,53 @@
+<!-- In App.vue, update the template structure -->
 <template>
   <div id="app" :class="{ 'dark-mode': darkMode }">
-    <div class="app-header">
-      <div class="logo">
-        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
-        </svg>
-        <h1>Interactive Whiteboard</h1>
-      </div>
-      <div class="username-container">
-        <input 
-          type="text" 
-          v-model="username" 
-          placeholder="Your Name"
-          class="username-input"
-          @blur="updateUsername"
-        >
-      </div>
-      <div class="user-count">
-        <span class="user-count-badge">{{ activeUsers.length + 1 }}</span>
-        <span class="user-count-label">Online</span>
-      </div>
-      <div class="actions">
-        <button class="import-export-btn" @click="handleExportRequest" title="Export Whiteboard">
-          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-            <polyline points="7 10 12 15 17 10"></polyline>
-            <line x1="12" y1="15" x2="12" y2="3"></line>
-          </svg>
-          Export
-        </button>
-        <button class="import-export-btn" @click="showImportDialog = true" title="Import Whiteboard">
-          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-            <polyline points="17 8 12 3 7 8"></polyline>
-            <line x1="12" y1="3" x2="12" y2="15"></line>
-          </svg>
-          Import
-        </button>
-      </div>
-    </div>
-
+    <!-- Canvas container takes full screen -->
     <div class="whiteboard-container">
-      <!-- Pasek narzędzi zawsze widoczny z boku płótna -->
-      <div class="toolbar-container">
+      <WhiteboardCanvas
+        ref="whiteboard"
+        :ydoc="yjsInstances?.ydoc"
+        :awareness="yjsInstances?.awareness"
+        :debug-mode="debugMode"
+        :room-id="roomId"
+        :username="username"
+        @state-updated="handleStateUpdate"
+      ></WhiteboardCanvas> <!-- Explicit closing tag -->
+
+      <!-- User info in top-right corner -->
+      <div class="floating-user-info">
+        <div class="username-container">
+          <input
+            type="text"
+            v-model="username"
+            placeholder="Your Name"
+            class="username-input"
+            @blur="updateUsername"
+          /> <!-- Input remains self-closing -->
+        </div>
+
+        <div class="user-count">
+          <!-- Display count from Yjs awareness -->
+          <span class="user-count-badge">{{ activeUsersCount }}</span>
+          <span class="user-count-label">Online</span>
+        </div>
+
+        <button class="share-btn" @click="shareRoom">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"></path>
+            <polyline points="16 6 12 2 8 6"></polyline>
+            <line x1="12" y1="2" x2="12" y2="15"></line>
+          </svg>
+          Share Room
+        </button>
+
+        <!-- Debug button -->
+        <button class="debug-btn" @click="toggleDebugMode">
+          Debug {{ debugMode ? 'ON' : 'OFF' }}
+        </button>
+      </div>
+
+      <!-- Floating toolbar -->
+      <div class="floating-toolbar">
         <ToolBar
           ref="toolbar"
           @tool-changed="handleToolChange"
@@ -54,73 +59,33 @@
           @export-whiteboard="handleExportRequest"
           @import-whiteboard="showImportDialog = true"
           @image-selected="handleImageSelected"
-        />
+          :ydoc="yjsInstances?.ydoc"
+        ></ToolBar> <!-- Explicit closing tag -->
       </div>
-      
-      <!-- Canvas znajduje się obok paska narzędzi -->
-      <WhiteboardCanvas
-        ref="whiteboard"
-        @state-updated="handleStateUpdate"
-      />
 
-      <!-- Connection status component -->
-      <ConnectionStatus 
-        :active-users-count="activeUsers.length"
-        @click="showConnectionDetails = !showConnectionDetails"
-      />
-      
-      <!-- Theme Toggle -->
-      <div class="theme-toggle-container">
-        <ThemeToggle 
-          :dark-mode="darkMode" 
-          @toggle="toggleDarkMode" 
-        />
+      <!-- Room info display -->
+      <div class="room-info">
+        <span>Room: {{ roomId }}</span>
+        <!-- Removed Reconnect button as y-websocket handles it -->
       </div>
     </div>
 
-    <div class="app-footer">
-      <div class="status-info">
-        <span v-if="statusMessage" class="status-message">{{ statusMessage }}</span>
-        <span v-else-if="lastSaved">Last saved: {{ formattedLastSaved }}</span>
-        <span v-else>Collaborative whiteboard - Changes saved automatically</span>
-      </div>
-      <div class="version-info">
-        <span>v1.0.0</span>
-      </div>
-    </div>
-
-    <!-- Dialogs -->
-    <ImportDialog 
-      :show="showImportDialog" 
+    <!-- Keep dialogs as they are, but import/export needs Yjs adaptation -->
+    <!-- Import Dialog -->
+    <ImportDialog
+      :show="showImportDialog"
       @close="showImportDialog = false"
       @import="handleImportState"
-    />
+    ></ImportDialog> <!-- Explicit closing tag -->
 
-    <ExportDialog 
-      :show="showExportDialog" 
+    <!-- Export Dialog -->
+    <ExportDialog
+      :show="showExportDialog"
       :export-text="exportedState"
       @close="showExportDialog = false"
       @copy="copyToClipboard"
       @download="downloadAsFile"
-    />
-
-    <!-- Hidden file input for image uploads -->
-    <input 
-      type="file" 
-      ref="imageInput" 
-      style="display: none" 
-      accept="image/*" 
-      @change="handleImageSelected"
-    />
-
-    <!-- Hidden file input for JSON import -->
-    <input
-      type="file"
-      ref="jsonImportInput"
-      style="display: none"
-      accept=".json"
-      @change="handleJsonFileImport"
-    />
+    ></ExportDialog> <!-- Explicit closing tag -->
   </div>
 </template>
 
@@ -129,10 +94,12 @@ import WhiteboardCanvas from './components/WhiteboardCanvas.vue';
 import ToolBar from './components/ToolBar.vue';
 import ImportDialog from './components/ImportDialog.vue';
 import ExportDialog from './components/ExportDialog.vue';
-import ConnectionStatus from './components/ConnectionStatus.vue';
-import ThemeToggle from './components/ThemeToggle.vue';
-import websocketService from './services/websocket.js';
+// import ConnectionStatus from './components/ConnectionStatus.vue'; // Not used currently
+import ThemeToggle from './components/ThemeToggle.vue'; // Keep if used
+import { initYjs, destroyYjs, getYjsInstances } from './services/websocket.js'; // Import Yjs service
 import { copyToClipboard } from './utils/fileUtils.js';
+import * as Y from 'yjs'; // Import Yjs for encoding/decoding state
+import { Buffer } from 'buffer'; // Needed for base64 encoding/decoding
 
 export default {
   name: 'App',
@@ -141,187 +108,137 @@ export default {
     ToolBar,
     ImportDialog,
     ExportDialog,
-    ConnectionStatus,
+    // ConnectionStatus,
     ThemeToggle
   },
   data() {
     return {
-      currentState: null,
-      serializedState: '',
       lastSaved: null,
       showExportDialog: false,
       showImportDialog: false,
-      exportedState: '',
-      username: 'User ' + Math.floor(Math.random() * 1000),
-      activeUsers: [],
+      exportedState: '', // Will hold Yjs encoded state (base64)
+      username: localStorage.getItem('whiteboard_username') || 'User ' + Math.floor(Math.random() * 1000),
+      yjsInstances: null, // To hold { ydoc, provider, awareness }
+      awarenessStates: new Map(), // To hold awareness states Map<clientID, state>
       statusMessage: '',
       statusTimeout: null,
-      showConnectionDetails: false,
-      darkMode: localStorage.getItem('darkMode') === 'true'
+      darkMode: localStorage.getItem('darkMode') === 'true',
+      debugMode: false,
+      roomId: 'default_room',
     }
   },
   computed: {
+    // Compute active users count from awareness states
+    activeUsersCount() {
+      if (!this.yjsInstances?.awareness) return 0;
+      return this.yjsInstances.awareness.getStates().size; // Count all connected clients including self
+    },
+    localClientId() {
+      return this.yjsInstances?.awareness?.clientID;
+    },
     formattedLastSaved() {
+      // (Keep existing computed property if needed)
       if (!this.lastSaved) return '';
-
       const now = new Date();
       const saved = new Date(this.lastSaved);
       const diffMs = now - saved;
       const diffMins = Math.floor(diffMs / 60000);
-
-      if (diffMins < 1) {
-        return 'Just now';
-      } else if (diffMins < 60) {
-        return `${diffMins} minute${diffMins > 1 ? 's' : ''} ago`;
-      } else if (diffMins < 1440) {
-        const hours = Math.floor(diffMins / 60);
-        return `${hours} hour${hours > 1 ? 's' : ''} ago`;
-      } else {
-        return saved.toLocaleString();
-      }
+      if (diffMins < 1) return 'Just now';
+      if (diffMins < 60) return `${diffMins} minute${diffMins > 1 ? 's' : ''} ago`;
+      const hours = Math.floor(diffMins / 60);
+      if (hours < 24) return `${hours} hour${hours > 1 ? 's' : ''} ago`;
+      return saved.toLocaleString();
     }
   },
   mounted() {
-    // Check for autosaved state
-    this.loadAutosavedState();
-
-    // Get username from localStorage if available
-    const savedUsername = localStorage.getItem('whiteboard_username');
-    if (savedUsername) {
-      this.username = savedUsername;
+    // Extract room ID from URL query parameter or generate/load last used
+    const urlParams = new URLSearchParams(window.location.search);
+    let roomId = urlParams.get('room');
+    if (!roomId) {
+      roomId = localStorage.getItem('last_room_id') || `board_${Math.random().toString(36).substr(2, 9)}`;
+      const newUrl = new URL(window.location);
+      newUrl.searchParams.set('room', roomId);
+      window.history.replaceState({}, '', newUrl);
+    } else {
+      localStorage.setItem('last_room_id', roomId);
     }
-    
-    // Inicjalizacja motywu z localStorage
+    this.roomId = roomId;
+
+    console.log(`Initializing Yjs for room: ${this.roomId} with username: ${this.username}`);
+
+    // Initialize Yjs
+    this.yjsInstances = initYjs(this.roomId, { username: this.username });
+
+    if (this.yjsInstances) {
+      // Listen to awareness changes to update UI
+      this.yjsInstances.awareness.on('change', this.handleAwarenessChange);
+      this.handleAwarenessChange(); // Initial update
+
+      // Load autosaved state for Yjs
+      this.loadAutosavedStateYjs();
+
+      // Optional: Listen to ydoc updates for autosave
+      this.yjsInstances.ydoc.on('update', this.handleYDocUpdate);
+
+      this.showNotification(`Connected to room: ${this.roomId}`, 'success');
+
+    } else {
+      this.showStatus("Failed to initialize collaboration service.", 5000);
+      this.showNotification("Error initializing collaboration.", 'error');
+    }
+
+    // Initialize theme
     const savedDarkMode = localStorage.getItem('darkMode') === 'true';
     this.darkMode = savedDarkMode;
-    
-    // Dodaj klasę dark-mode do body jeśli potrzeba
     if (this.darkMode) {
       document.body.classList.add('dark-mode');
     } else {
       document.body.classList.remove('dark-mode');
     }
 
-    // Setup WebSocket connection
-    this.setupWebSocket();
-
     // Add handlers for window/tab closing to autosave
     window.addEventListener('beforeunload', this.handleBeforeUnload);
   },
-  beforeDestroy() {
-    // Clean up WebSocket handlers
-    websocketService.offMessage('user_joined', this.handleUserJoined);
-    websocketService.offMessage('user_left', this.handleUserLeft);
-    websocketService.offMessage('init_whiteboard', this.handleInitWhiteboard);
-
-    // Clean up other handlers
+  beforeUnmount() { // Use beforeUnmount in Vue 3
+    // Clean up handlers
     window.removeEventListener('beforeunload', this.handleBeforeUnload);
 
-    // Disconnect WebSocket
-    websocketService.disconnect();
+    // Remove Yjs listeners
+    if (this.yjsInstances?.awareness) {
+        this.yjsInstances.awareness.off('change', this.handleAwarenessChange);
+    }
+    if (this.yjsInstances?.ydoc) {
+        this.yjsInstances.ydoc.off('update', this.handleYDocUpdate);
+    }
+
+    // Disconnect Yjs
+    destroyYjs();
   },
   methods: {
-    setupWebSocket() {
-      console.log('Setting up WebSocket');
-
-      // Clear previous user list
-      this.activeUsers = [];
-
-      // Set up WebSocket status handlers
-      websocketService.onConnect(() => {
-        console.log("✅ Connected to WebSocket server");
-        this.showStatus("Connected to collaborative session");
-
-        // After successful connection, request the full state
-        setTimeout(() => {
-          websocketService.requestFullState();
-        }, 500);
-      });
-
-      websocketService.onDisconnect(() => {
-        console.log("❌ Disconnected from WebSocket server");
-        this.showStatus("Lost connection to server", 5000);
-      });
-
-      websocketService.onError((error) => {
-        console.error("WebSocket error:", error);
-        this.showStatus("Connection error. Collaboration disabled.", 5000);
-      });
-
-      // Set up handlers for user join/leave events
-      websocketService.onMessage('user_joined', this.handleUserJoined);
-      websocketService.onMessage('user_left', this.handleUserLeft);
-      websocketService.onMessage('init_whiteboard', this.handleInitWhiteboard);
-
-      // Initialize WebSocket connection with username
-      setTimeout(() => {
-        websocketService.connect(this.username);
-      }, 500); // Small delay for stability
-    },
-
-    handleInitWhiteboard(payload) {
-      console.log("Received initial whiteboard state:", 
-                 payload.users?.length + " users", 
-                 payload.elements?.length + " elements");
-
-      // Update active users
-      if (payload.users && Array.isArray(payload.users)) {
-        this.activeUsers = payload.users.filter(user => 
-          user.userId !== websocketService.getUserId()
-        );
+    handleAwarenessChange() {
+      if (this.yjsInstances?.awareness) {
+        this.awarenessStates = new Map(this.yjsInstances.awareness.getStates());
+        // Force Vue reactivity update if needed
+        this.$forceUpdate();
+        // console.log('Awareness updated:', this.awarenessStates);
       }
-
-      // Load elements if they exist, whiteboard is ready, and we don't have elements
-      if (payload.elements && Array.isArray(payload.elements) && 
-          this.$refs.whiteboard && this.$refs.whiteboard.elements.length === 0) {
-        this.$refs.whiteboard.elements = payload.elements;
-        this.$refs.whiteboard.redrawCanvas();
-        this.$refs.whiteboard.pushToHistory();
-      }
-    },
-
-    handleUserJoined(user) {
-      console.log("User joined:", user.username, user.userId);
-
-      // Don't add ourselves to the active users list
-      if (user.userId === websocketService.getUserId()) {
-        return;
-      }
-
-      // Check if user already exists
-      const existingUserIndex = this.activeUsers.findIndex(u => u.userId === user.userId);
-      if (existingUserIndex === -1) {
-        this.activeUsers.push(user);
-      } else {
-        // Update existing user
-        this.activeUsers.splice(existingUserIndex, 1, user);
-      }
-
-      this.showStatus(`${user.username} joined the whiteboard`);
     },
 
     handleBeforeUnload() {
-      // Autosave the current state
-      this.saveCurrentState();
-      
-      // Try to disconnect before page closes
-      websocketService.disconnect();
-    },
-
-    handleUserLeft(user) {
-      console.log("User left:", user.username, user.userId);
-      this.activeUsers = this.activeUsers.filter(u => u.userId !== user.userId);
-      this.showStatus(`${user.username} left the whiteboard`);
+      // Autosave the current state using Yjs
+      this.saveCurrentStateYjs();
+      // destroyYjs will be called in beforeUnmount
     },
 
     updateUsername() {
-      // Save to localStorage
       localStorage.setItem('whiteboard_username', this.username);
-
-      // Update in WebSocket service
-      if (websocketService.isConnected()) {
-        websocketService.disconnect();
-        websocketService.connect(this.username);
+      if (this.yjsInstances?.awareness) {
+        this.yjsInstances.awareness.setLocalStateField('user', {
+          name: this.username
+          // Keep other fields like color if they exist
+          // ...this.yjsInstances.awareness.getLocalState()?.user
+        });
+        console.log(`Updated awareness username to: ${this.username}`);
       }
     },
 
@@ -344,96 +261,119 @@ export default {
     },
 
     handleClearCanvas() {
-      if (this.$refs.whiteboard) {
-        this.$refs.whiteboard.clearCanvas();
+      // Needs adaptation for Yjs - clear the shared array/map
+      if (this.yjsInstances?.ydoc) {
+        const yElements = this.yjsInstances.ydoc.getArray('elements'); // Assuming 'elements' is the shared type
+        this.yjsInstances.ydoc.transact(() => {
+          // Delete elements one by one to ensure proper sync
+          while (yElements.length > 0) {
+            yElements.delete(0);
+          }
+        });
+        this.showStatus('Canvas cleared');
       }
+      // if (this.$refs.whiteboard) {
+      //   this.$refs.whiteboard.clearCanvas(); // Keep local clear if needed, but Yjs sync is primary
+      // }
     },
 
     handleUndo() {
-      if (this.$refs.whiteboard) {
-        this.$refs.whiteboard.undo();
-      }
+      // Yjs Undo Manager integration needed in ToolBar or here
+       if (this.$refs.toolbar) {
+         this.$refs.toolbar.undo(); // Delegate to toolbar which should use UndoManager
+       }
+      // if (this.$refs.whiteboard) {
+      //   this.$refs.whiteboard.undo(); // Old history
+      // }
     },
 
     handleRedo() {
-      if (this.$refs.whiteboard) {
-        this.$refs.whiteboard.redo();
-      }
+      // Yjs Undo Manager integration needed in ToolBar or here
+       if (this.$refs.toolbar) {
+         this.$refs.toolbar.redo(); // Delegate to toolbar which should use UndoManager
+       }
+      // if (this.$refs.whiteboard) {
+      //   this.$refs.whiteboard.redo(); // Old history
+      // }
     },
 
     showStatus(message, duration = 3000) {
       this.statusMessage = message;
-
-      if (this.statusTimeout) {
-        clearTimeout(this.statusTimeout);
-      }
-
-      this.statusTimeout = setTimeout(() => {
-        this.statusMessage = '';
-      }, duration);
+      if (this.statusTimeout) clearTimeout(this.statusTimeout);
+      this.statusTimeout = setTimeout(() => { this.statusMessage = ''; }, duration);
     },
 
-    handleStateUpdate(state) {
-      this.currentState = state;
-      this.serializedState = JSON.stringify(state);
+    // --- Yjs State Handling ---
 
-      // Update toolbar undo/redo state
-      if (this.$refs.whiteboard && this.$refs.toolbar) {
-        const canUndo = this.$refs.whiteboard.historyIndex > 0;
-        const canRedo = this.$refs.whiteboard.historyIndex < this.$refs.whiteboard.history.length - 1;
-        this.$refs.toolbar.setUndoRedoState(canUndo, canRedo);
-      }
-
-      // Autosave the current state
-      this.saveCurrentState();
-
-      // Update last saved timestamp
+    handleYDocUpdate() {
+      // Triggered whenever the Yjs document changes locally or remotely
+      // Use this for autosaving
+      this.saveCurrentStateYjs();
       this.lastSaved = new Date().toISOString();
+
+      // Update toolbar undo/redo state if UndoManager is managed here or in Toolbar
+      // Example:
+      // if (this.$refs.toolbar && this.$refs.toolbar.undoManager) {
+      //   const canUndo = this.$refs.toolbar.undoManager.undoStack.length > 0;
+      //   const canRedo = this.$refs.toolbar.undoManager.redoStack.length > 0;
+      //   this.$refs.toolbar.setUndoRedoState(canUndo, canRedo);
+      // }
     },
 
-    saveCurrentState() {
-      // Only save if we have elements to save
-      if (this.currentState && this.currentState.elements && 
-          this.currentState.elements.length > 0) {
-        localStorage.setItem('whiteboard_autosave', this.serializedState);
+    saveCurrentStateYjs() {
+      if (this.yjsInstances?.ydoc) {
+        try {
+          // Encode the entire document state as an update message
+          const stateUpdate = Y.encodeStateAsUpdate(this.yjsInstances.ydoc);
+          // Convert Uint8Array to base64 string for localStorage
+          const base64State = Buffer.from(stateUpdate).toString('base64');
+          localStorage.setItem(`whiteboard_autosave_${this.roomId}`, base64State);
+          // console.log('Autosaved Yjs state (base64)');
+        } catch (e) {
+          console.error('Error autosaving Yjs state:', e);
+        }
       }
     },
 
-    loadAutosavedState() {
-      try {
-        const autosaved = localStorage.getItem('whiteboard_autosave');
-        if (autosaved && this.$refs.whiteboard) {
-          const success = this.$refs.whiteboard.importFromText(autosaved);
-          if (success) {
+    loadAutosavedStateYjs() {
+      if (this.yjsInstances?.ydoc) {
+        try {
+          const base64State = localStorage.getItem(`whiteboard_autosave_${this.roomId}`);
+          if (base64State) {
+            // Convert base64 string back to Uint8Array
+            const stateUpdate = Buffer.from(base64State, 'base64');
+            // Apply the saved state to the current document
+            Y.applyUpdate(this.yjsInstances.ydoc, stateUpdate);
             this.showStatus('Previous whiteboard state loaded');
+            console.log('Loaded autosaved Yjs state.');
           }
+        } catch (e) {
+          console.error('Error loading autosaved Yjs state:', e);
+          // Clear potentially corrupted save data
+          localStorage.removeItem(`whiteboard_autosave_${this.roomId}`);
         }
-      } catch (e) {
-        console.error('Error loading autosaved state:', e);
       }
     },
 
     handleExportRequest() {
-      // Get the current state as text
-      if (this.$refs.whiteboard) {
-        const stateText = this.$refs.whiteboard.exportAsText();
-
-        // Set it in the export state
-        this.exportedState = stateText;
-
-        // Show the export dialog
-        this.showExportDialog = true;
-
-        // Update last saved timestamp
-        this.lastSaved = new Date().toISOString();
+      // Export the Yjs document state
+      if (this.yjsInstances?.ydoc) {
+        try {
+          const stateUpdate = Y.encodeStateAsUpdate(this.yjsInstances.ydoc);
+          const base64State = Buffer.from(stateUpdate).toString('base64');
+          this.exportedState = base64State; // Store base64 for dialog
+          this.showExportDialog = true;
+          this.lastSaved = new Date().toISOString();
+        } catch (e) {
+          console.error('Error exporting Yjs state:', e);
+          this.showStatus('Failed to export whiteboard state.', 3000);
+        }
       }
     },
 
     copyToClipboard() {
-      copyToClipboard(this.exportedState)
-        .then(() => {
-          this.showStatus('Copied to clipboard!');
-        })
+      copyToClipboard(this.exportedState) // Copy base64 state
+        .then(() => this.showStatus('Copied to clipboard!'))
         .catch(err => {
           console.error('Failed to copy to clipboard: ', err);
           this.showStatus('Failed to copy to clipboard', 3000);
@@ -441,11 +381,13 @@ export default {
     },
 
     downloadAsFile() {
-      const blob = new Blob([this.exportedState], { type: 'application/json' });
+      // Download the base64 encoded state as a text/plain file (or .yjs if preferred)
+      const blob = new Blob([this.exportedState], { type: 'text/plain' }); // Use text/plain for base64
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `whiteboard_${new Date().toISOString().replace(/:/g, '-')}.json`;
+      // Use .txt extension for base64, or .yjsbin/.json if encoding differently
+      a.download = `whiteboard_${this.roomId}_${new Date().toISOString().replace(/:/g, '-')}.txt`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -453,36 +395,33 @@ export default {
       this.showStatus('File downloaded!');
     },
 
-    handleImportState(text) {
-      if (!text.trim()) {
-        this.showStatus('Please paste a valid whiteboard state.', 3000);
+    handleImportState(base64State) {
+      // Import Yjs state from base64 string
+      if (!base64State.trim()) {
+        this.showStatus('Please paste a valid whiteboard state (base64).', 3000);
         return;
       }
-
-      try {
-        // Try to parse the JSON to validate it
-        JSON.parse(text);
-
-        // Handle the import in the whiteboard component
-        if (this.$refs.whiteboard) {
-          const success = this.$refs.whiteboard.importFromText(text);
-          if (success) {
-            this.showStatus('Whiteboard state loaded successfully!');
-            this.lastSaved = new Date().toISOString();
-            this.showImportDialog = false;
-            
-            // Save this as the autosave state
-            localStorage.setItem('whiteboard_autosave', text);
-          } else {
-            this.showStatus('Failed to load whiteboard state.', 3000);
-          }
+      if (this.yjsInstances?.ydoc) {
+        try {
+          // Decode base64 and apply update
+          const stateUpdate = Buffer.from(base64State, 'base64');
+          // It's crucial to apply the update within a transaction
+          this.yjsInstances.ydoc.transact(() => {
+            Y.applyUpdate(this.yjsInstances.ydoc, stateUpdate);
+          });
+          this.showStatus('Whiteboard state loaded successfully!');
+          this.lastSaved = new Date().toISOString();
+          this.showImportDialog = false;
+          // Save this imported state as the new autosave state
+          this.saveCurrentStateYjs();
+        } catch (e) {
+          console.error('Error importing Yjs state:', e);
+          this.showStatus('Invalid whiteboard state format (base64).', 3000);
         }
-      } catch (e) {
-        this.showStatus('Invalid whiteboard state format.', 3000);
       }
     },
 
-    handleJsonFileImport(event) {
+    handleJsonFileImport(event) { // Renamed to handleTextFileImport
       const file = event.target.files[0];
       if (!file) return;
 
@@ -490,71 +429,119 @@ export default {
       reader.onload = (e) => {
         try {
           const text = e.target.result;
-          this.handleImportState(text);
+          this.handleImportState(text); // Import the base64 text
         } catch (err) {
-          console.error('Error reading JSON file:', err);
-          this.showStatus('Error reading file. Is it a valid JSON?', 3000);
+          console.error('Error reading state file:', err);
+          this.showStatus('Error reading file.', 3000);
         }
       };
-      reader.readAsText(file);
-      
-      // Reset the file input
-      event.target.value = '';
+      reader.readAsText(file); // Read as text (base64)
+      event.target.value = ''; // Reset input
     },
+    // --- End Yjs State Handling ---
 
     handleImageSelected(event) {
+      // This needs Yjs integration - store image data (e.g., base64) in Yjs doc
       const file = event.target?.files?.[0] || event;
       if (!file) return;
 
       if (file instanceof File) {
         const reader = new FileReader();
         reader.onload = (e) => {
-          if (this.$refs.whiteboard) {
-            this.$refs.whiteboard.addImageFromDataUrl(e.target.result);
+          const dataUrl = e.target.result;
+          // TODO: Add image data to Yjs document (e.g., in the 'elements' array)
+          // Example structure: { type: 'image', id: Y.generateUniqueID(), x: ..., y: ..., dataUrl: ... }
+          if (this.yjsInstances?.ydoc) {
+             const yElements = this.yjsInstances.ydoc.getArray('elements');
+             // Get current viewport center or default position
+             const pos = this.$refs.whiteboard?.getViewportCenter() || { x: 100, y: 100 };
+             yElements.push([{
+               type: 'image',
+               id: `img_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`, // Simple unique ID
+               x: pos.x,
+               y: pos.y,
+               dataUrl: dataUrl,
+               width: 200, // Default width, allow resizing later
+               height: null // Calculate based on aspect ratio later
+             }]);
+             console.log('Added image placeholder to Yjs doc');
           }
+          // if (this.$refs.whiteboard) {
+          //   this.$refs.whiteboard.addImageFromDataUrl(e.target.result); // Old direct add
+          // }
         };
         reader.readAsDataURL(file);
 
-        // Reset file input to allow selecting the same file again
-        if (this.$refs.imageInput) {
-          this.$refs.imageInput.value = '';
-        }
-      } else if (typeof file === 'string') {
-        // Direct data URL
-        if (this.$refs.whiteboard) {
-          this.$refs.whiteboard.addImageFromDataUrl(file);
-        }
+        // Reset file input
+        // if (this.$refs.imageInput) { this.$refs.imageInput.value = ''; } // Ref might not exist
       }
+      // else if (typeof file === 'string') { ... } // Handle direct data URL if needed
     },
 
     toggleDarkMode() {
       this.darkMode = !this.darkMode;
       localStorage.setItem('darkMode', this.darkMode);
-      
-      // Upewnij się, że klasa dark-mode jest dodawana również do elementu body
       if (this.darkMode) {
         document.body.classList.add('dark-mode');
       } else {
         document.body.classList.remove('dark-mode');
       }
-      
-      // Wymuś odświeżenie canvas do rysowania
+      // Force redraw if necessary
       if (this.$refs.whiteboard) {
-        console.log('Wymuszenie odświeżenia tablicy po zmianie motywu');
-        // Spowoduje to ponowne narysowanie siatki i elementów z właściwymi kolorami
-        this.$nextTick(() => {
-          this.$refs.whiteboard.redrawCanvas();
-        });
+        this.$nextTick(() => { this.$refs.whiteboard.redrawCanvas(); });
       }
-      
-      this.showStatus(this.darkMode ? 'Włączono ciemny motyw' : 'Włączono jasny motyw');
+      this.showStatus(this.darkMode ? 'Dark mode enabled' : 'Light mode enabled');
+    },
+
+    showNotification(message, type = 'info') {
+      console.log(`[Notification] ${type}: ${message}`);
+      // Use existing toast/notification mechanism if available
+      if (this.$refs.whiteboard?.showToast) {
+        this.$refs.whiteboard.showToast(message, type);
+      } else {
+        // Fallback notification
+        const notification = document.createElement('div');
+        notification.className = `notification notification-${type}`;
+        notification.textContent = message;
+        document.body.appendChild(notification);
+        setTimeout(() => { notification.classList.add('show'); }, 10);
+        setTimeout(() => {
+          notification.classList.remove('show');
+          setTimeout(() => { document.body.removeChild(notification); }, 300);
+        }, 3000);
+      }
+    },
+
+    // Removed reconnectWebSocket
+
+    toggleDebugMode() {
+      this.debugMode = !this.debugMode;
+      // Pass debug state to canvas if needed
+      if (this.$refs.whiteboard) {
+        this.$refs.whiteboard.toggleDebug(this.debugMode);
+      }
+      // Yjs provider logging is usually controlled via environment variables or provider options
+      this.showNotification(`Debug mode: ${this.debugMode ? 'ENABLED' : 'DISABLED'}`, 'info');
+    },
+
+    shareRoom() {
+      const shareableUrl = `${window.location.origin}${window.location.pathname}?room=${this.roomId}`;
+      navigator.clipboard.writeText(shareableUrl)
+        .then(() => {
+          this.showStatus('Room link copied! Share to collaborate.');
+          this.showNotification('Room link copied', 'success');
+        })
+        .catch(err => {
+          console.error('Failed to copy:', err);
+          this.showStatus('Failed to copy room link.', 3000);
+        });
     }
   }
 }
 </script>
 
 <style>
-/* Dodajemy klasę dla theme toggle */
+/* Styles remain largely the same, but adjust user count display if needed */
 .theme-toggle-container {
   position: absolute;
   bottom: 20px;
@@ -610,8 +597,9 @@ export default {
   background-color: #4285f4;
   color: white;
   border-radius: 50%;
-  width: 24px;
+  min-width: 24px; /* Use min-width */
   height: 24px;
+  padding: 0 6px; /* Add padding for multi-digit numbers */
   font-size: 12px;
   font-weight: bold;
 }
@@ -656,5 +644,143 @@ export default {
 
 .status-message {
   color: #4285f4;
+}
+
+/* Make canvas container full screen */
+.whiteboard-container {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* Floating toolbar */
+.floating-toolbar {
+position: absolute !important;
+  left: 15px; /* Changed from right to left */
+  top: 50%;
+  transform: translateY(-50%);
+  width: auto !important;
+  background-color: rgba(40, 40, 40, 0.8);
+  border-radius: 10px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  z-index: 1000;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* User info */
+.floating-user-info {
+  position: absolute;
+  top: 15px;
+  right: 15px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background-color: rgba(40, 40, 40, 0.7);
+  border-radius: 8px;
+  padding: 8px 12px;
+  z-index: 1000;
+}
+
+/* The same styles for light mode */
+:not(.dark-mode) .floating-toolbar {
+  background-color: rgba(240, 240, 240, 0.8);
+}
+
+:not(.dark-mode) .floating-user-info {
+  background-color: rgba(240, 240, 240, 0.8);
+}
+
+/* Add room sharing functionality */
+.share-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 10px;
+  background-color: #4285f4;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.share-btn:hover {
+  background-color: #3367d6;
+}
+
+/* Debug button style */
+.debug-btn {
+  padding: 6px 10px;
+  background-color: #ff9800;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.debug-btn:hover {
+  background-color: #f57c00;
+}
+
+/* Room info style */
+.room-info {
+  position: absolute;
+  bottom: 15px;
+  right: 15px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background-color: rgba(40, 40, 40, 0.7);
+  border-radius: 8px;
+  padding: 8px 12px;
+  color: white;
+  font-size: 14px;
+  z-index: 1000;
+}
+
+/* Removed reconnect-btn styles */
+
+:not(.dark-mode) .room-info {
+  background-color: rgba(240, 240, 240, 0.8);
+  color: #333;
+}
+
+/* Notification styling */
+.notification {
+  position: fixed;
+  bottom: 20px;
+  left: 20px;
+  padding: 12px 16px;
+  background-color: #333;
+  color: white;
+  border-radius: 6px;
+  box-shadow: 0 3px 10px rgba(0,0,0,0.3);
+  z-index: 9999;
+  transition: all 0.3s ease;
+  transform: translateY(100px);
+  opacity: 0;
+}
+
+.notification.show {
+  transform: translateY(0);
+  opacity: 1;
+}
+
+.notification-info {
+  background-color: #2196F3;
+}
+
+.notification-success {
+  background-color: #4CAF50;
+}
+
+.notification-warning {
+  background-color: #FF9800;
+}
+
+.notification-error {
+  background-color: #F44336;
 }
 </style>

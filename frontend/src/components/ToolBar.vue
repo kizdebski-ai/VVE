@@ -1,16 +1,16 @@
 <template>
   <div class="toolbar">
     <div class="tool-group drawing-tools">
-      <button 
-        :class="['tool-btn', { active: currentTool === 'pen' }]" 
+      <button
+        :class="['tool-btn', { active: currentTool === 'pen' }]"
         @click="selectTool('pen')"
         title="Pen (P)">
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/>
         </svg>
       </button>
-      <button 
-        :class="['tool-btn', { active: currentTool === 'highlighter' }]" 
+      <button
+        :class="['tool-btn', { active: currentTool === 'highlighter' }]"
         @click="selectTool('highlighter')"
         title="Highlighter (H)">
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -19,8 +19,8 @@
           <path d="M18 2l-9 9 3 3 9-9-3-3z"/>
         </svg>
       </button>
-      <button 
-        :class="['tool-btn', { active: currentTool === 'eraser' }]" 
+      <button
+        :class="['tool-btn', { active: currentTool === 'eraser' }]"
         @click="selectTool('eraser')"
         title="Eraser (E)">
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -28,40 +28,40 @@
           <path d="M14 7l3 3"/>
         </svg>
       </button>
-      <button 
-        :class="['tool-btn', { active: currentTool === 'line' }]" 
+      <button
+        :class="['tool-btn', { active: currentTool === 'line' }]"
         @click="selectTool('line')"
         title="Line (L)">
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <line x1="5" y1="19" x2="19" y2="5"></line>
         </svg>
       </button>
-      <button 
-        :class="['tool-btn', { active: currentTool === 'rectangle' }]" 
+      <button
+        :class="['tool-btn', { active: currentTool === 'rectangle' }]"
         @click="selectTool('rectangle')"
         title="Rectangle (R)">
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
         </svg>
       </button>
-      <button 
-        :class="['tool-btn', { active: currentTool === 'circle' }]" 
+      <button
+        :class="['tool-btn', { active: currentTool === 'circle' }]"
         @click="selectTool('circle')"
         title="Circle (C)">
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <circle cx="12" cy="12" r="10"></circle>
         </svg>
       </button>
-      <button 
-        :class="['tool-btn', { active: currentTool === 'text' }]" 
+      <button
+        :class="['tool-btn', { active: currentTool === 'text' }]"
         @click="selectTool('text')"
         title="Text (T)">
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M17 8h2a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2h-2v4l-4-4H9a2 2 0 0 1-2-2v-6a2 2 0 0 1 2-2h2V4l4 4z"></path>
         </svg>
       </button>
-      <button 
-        :class="['tool-btn', { active: currentTool === 'image' }]" 
+      <button
+        :class="['tool-btn', { active: currentTool === 'image' }]"
         @click="uploadImage"
         title="Image (I)">
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -73,20 +73,20 @@
     </div>
 
     <!-- Color Picker -->
-    <ColorPicker 
+    <ColorPicker
       v-model="currentColor"
       @change="setColor"
     />
 
     <div class="line-width-selector">
       <div class="line-width-preview">
-        <div 
-          class="line-preview" 
+        <div
+          class="line-preview"
           :style="{ height: currentLineWidth + 'px', backgroundColor: currentColor }"
         ></div>
       </div>
-      <select 
-        v-model="currentLineWidth" 
+      <select
+        v-model="currentLineWidth"
         @change="updateLineWidth"
         class="line-width-select">
         <option value="1">Thin</option>
@@ -97,8 +97,8 @@
     </div>
 
     <div class="tool-group action-tools">
-      <button 
-        class="tool-btn" 
+      <button
+        class="tool-btn"
         @click="undo"
         title="Undo (Ctrl+Z)"
         :disabled="!canUndo">
@@ -107,8 +107,8 @@
           <path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"></path>
         </svg>
       </button>
-      <button 
-        class="tool-btn" 
+      <button
+        class="tool-btn"
         @click="redo"
         title="Redo (Ctrl+Y)"
         :disabled="!canRedo">
@@ -117,8 +117,8 @@
           <path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3L21 13"></path>
         </svg>
       </button>
-      <button 
-        class="tool-btn danger" 
+      <button
+        class="tool-btn danger"
         @click="clearCanvas"
         title="Clear All">
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -131,8 +131,8 @@
     </div>
 
     <div class="export-import-group">
-      <button 
-        class="export-btn" 
+      <button
+        class="export-btn"
         @click="exportWhiteboard"
         title="Export Whiteboard">
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -141,8 +141,8 @@
           <line x1="12" y1="15" x2="12" y2="3"></line>
         </svg>
       </button>
-      <button 
-        class="import-btn" 
+      <button
+        class="import-btn"
         @click="importWhiteboard"
         title="Import Whiteboard">
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -151,8 +151,8 @@
           <line x1="12" y1="3" x2="12" y2="15"></line>
         </svg>
       </button>
-      <button 
-        class="share-btn" 
+      <button
+        class="share-btn"
         @click="shareWhiteboard"
         title="Share Whiteboard">
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -166,11 +166,11 @@
     </div>
 
     <!-- Hidden file input for image upload -->
-    <input 
-      type="file" 
-      ref="imageInput" 
-      style="display: none" 
-      accept="image/*" 
+    <input
+      type="file"
+      ref="imageInput"
+      style="display: none"
+      accept="image/*"
       @change="onImageSelected">
 
     <!-- Keyboard shortcuts info -->
@@ -253,6 +253,8 @@
 </template>
 
 <script>
+import { ref, onMounted, onBeforeUnmount, watch, nextTick, computed } from 'vue'; // Added computed
+import * as Y from 'yjs';
 import ColorPicker from './ColorPicker.vue';
 
 export default {
@@ -260,160 +262,264 @@ export default {
   components: {
     ColorPicker
   },
-  data() {
-    return {
-      currentTool: 'pen',
-      currentColor: '#000000',
-      currentLineWidth: 2,
-      canUndo: false,
-      canRedo: false,
-      showShortcutsInfo: false
+  props: {
+    ydoc: { // Add ydoc prop
+      type: Object, // Y.Doc
+      required: true
     }
   },
-  mounted() {
-    // Set up keyboard shortcuts
-    window.addEventListener('keydown', this.handleKeyDown);
-    
-    // Upewnij się, że początkowe wartości są emitowane do komponentu nadrzędnego
-    this.$nextTick(() => {
-      this.$emit('tool-changed', this.currentTool);
-      this.$emit('color-changed', this.currentColor);
-      this.$emit('line-width-changed', parseInt(this.currentLineWidth));
+  emits: [
+    'tool-changed',
+    'color-changed',
+    'line-width-changed',
+    'clear-canvas',
+    'export-whiteboard',
+    'import-whiteboard',
+    'image-selected',
+    'share-room' // Added share-room emit
+    // Removed 'undo', 'redo' as they are handled internally now
+    // Removed 'update-cursor' as it's likely handled by WhiteboardCanvas
+  ],
+  setup(props, { emit }) {
+    const currentTool = ref('pen');
+    const currentColor = ref('#000000');
+    const currentLineWidth = ref(2);
+    const canUndo = ref(false);
+    const canRedo = ref(false);
+    const showShortcutsInfo = ref(false);
+    const imageInput = ref(null); // Ref for the hidden image input
+
+    // --- Yjs Undo Manager ---
+    let undoManager = null;
+    // Use computed property to reactively get yElements
+    const yElements = computed(() => {
+        try {
+            // Attempt to get the array, return null if ydoc is not ready or doesn't have it
+            return props.ydoc?.getArray('elements');
+        } catch (e) {
+            console.error("Error getting ydoc.getArray('elements'):", e);
+            return null; // Return null on error
+        }
     });
-  },
-  beforeDestroy() {
-    window.removeEventListener('keydown', this.handleKeyDown);
-  },
-  methods: {
-    handleKeyDown(event) {
-      // Skip if user is typing in an input field
-      if (event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA') {
+
+
+    const updateUndoRedoState = () => {
+      if (undoManager) {
+        canUndo.value = undoManager.canUndo();
+        canRedo.value = undoManager.canRedo();
+        // console.log(`UndoManager state: canUndo=${canUndo.value}, canRedo=${canRedo.value}`);
+      } else {
+        canUndo.value = false;
+        canRedo.value = false;
+      }
+    };
+
+    const initializeUndoManager = () => {
+       // Ensure ydoc and the specific YArray exist before initializing
+      if (props.ydoc && yElements.value instanceof Y.Array) {
+        if (undoManager) {
+          // Clean up previous instance if ydoc or yElements changes significantly
+          undoManager.off('stack-item-added', updateUndoRedoState);
+          undoManager.off('stack-item-popped', updateUndoRedoState);
+          undoManager.destroy();
+          undoManager = null;
+           console.log('Previous UndoManager destroyed');
+        }
+        // Initialize with the reactive computed property's value
+        undoManager = new Y.UndoManager(yElements.value);
+        undoManager.on('stack-item-added', updateUndoRedoState);
+        undoManager.on('stack-item-popped', updateUndoRedoState);
+        updateUndoRedoState(); // Set initial state
+        console.log('UndoManager initialized successfully');
+      } else {
+         // Log error or warning if initialization prerequisites are not met
+         console.warn('Cannot initialize UndoManager: ydoc or yElements (Y.Array) not available or not ready.', {ydoc: props.ydoc, yElements: yElements.value});
+         // Ensure buttons are disabled if manager fails to init
+         canUndo.value = false;
+         canRedo.value = false;
+      }
+    };
+
+
+    // Watch ydoc prop for changes (e.g., if parent re-initializes)
+    // Use nextTick to ensure ydoc is fully available after potential parent updates
+    watch(() => props.ydoc, (newYDoc) => {
+        console.log('ydoc prop changed in Toolbar, attempting to re-initialize UndoManager...');
+        nextTick(() => {
+             initializeUndoManager();
+        });
+    }, { immediate: false }); // Don't run immediately, wait for mount
+
+    // Watch the computed yElements as well, in case the array itself is replaced (less common)
+     watch(yElements, (newYElements) => {
+         if (newYElements instanceof Y.Array) {
+            console.log('yElements (Y.Array) became available, attempting to initialize UndoManager...');
+            initializeUndoManager();
+         }
+     }, { immediate: false });
+
+
+    onMounted(() => {
+      // Keyboard shortcuts listener
+      window.addEventListener('keydown', handleKeyDown);
+
+      // Emit initial values
+      nextTick(() => {
+        emit('tool-changed', currentTool.value);
+        emit('color-changed', currentColor.value);
+        emit('line-width-changed', parseInt(currentLineWidth.value));
+      });
+
+      // Attempt initial UndoManager setup
+      // It might depend on ydoc being fully ready from the parent
+      nextTick(() => {
+          initializeUndoManager();
+      });
+    });
+
+    onBeforeUnmount(() => {
+      window.removeEventListener('keydown', handleKeyDown);
+      // Destroy UndoManager
+      if (undoManager) {
+        undoManager.off('stack-item-added', updateUndoRedoState);
+        undoManager.off('stack-item-popped', updateUndoRedoState);
+        undoManager.destroy();
+        undoManager = null;
+        console.log('UndoManager destroyed');
+      }
+    });
+
+    // --- Methods ---
+    const handleKeyDown = (event) => {
+      // Skip if typing in input/textarea or if a dialog is likely open
+      if (event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA' || showShortcutsInfo.value) {
         return;
       }
 
-      // Handle keyboard shortcuts
-      switch (event.key.toLowerCase()) {
-        case 'p':
-          this.selectTool('pen');
-          break;
-        case 'h':
-          this.selectTool('highlighter');
-          break;
-        case 'e':
-          this.selectTool('eraser');
-          break;
-        case 'l':
-          this.selectTool('line');
-          break;
-        case 'r':
-          this.selectTool('rectangle');
-          break;
-        case 'c':
-          this.selectTool('circle');
-          break;
-        case 't':
-          this.selectTool('text');
-          break;
-        case 'i':
-          this.uploadImage();
-          break;
+       // Handle tool shortcuts (only if no modifier keys are pressed)
+       if (!event.ctrlKey && !event.metaKey && !event.altKey) {
+            switch (event.key.toLowerCase()) {
+                case 'p': selectTool('pen'); break;
+                case 'h': selectTool('highlighter'); break;
+                case 'e': selectTool('eraser'); break;
+                case 'l': selectTool('line'); break;
+                case 'r': selectTool('rectangle'); break;
+                case 'c': selectTool('circle'); break;
+                case 't': selectTool('text'); break;
+                case 'i': uploadImage(); break;
+            }
+       }
+
+       // Handle Undo/Redo shortcuts
+       if ((event.ctrlKey || event.metaKey) && !event.shiftKey && event.key.toLowerCase() === 'z') {
+           event.preventDefault();
+           undo();
+       }
+       if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 'z') {
+           event.preventDefault();
+           redo();
+       }
+       // Ctrl+Y for Redo (common on Windows)
+       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'y') {
+           event.preventDefault();
+           redo();
+       }
+    };
+
+    const selectTool = (tool) => {
+      currentTool.value = tool;
+      emit('tool-changed', tool);
+      console.log('Tool changed to:', tool);
+    };
+
+    const setColor = (color) => {
+      currentColor.value = color;
+      emit('color-changed', color);
+      console.log('Color changed to:', color);
+    };
+
+    const updateLineWidth = () => {
+      const width = parseInt(currentLineWidth.value);
+      emit('line-width-changed', width);
+      console.log('Line width changed to:', width);
+    };
+
+    const clearCanvas = () => {
+      // Confirmation is handled in App.vue now, just emit the event
+      emit('clear-canvas');
+    };
+
+    const undo = () => {
+      if (undoManager && undoManager.canUndo()) { // Check capability before calling
+        undoManager.undo();
+        console.log('Undo triggered');
+      } else {
+         console.log('Cannot undo');
       }
-    },
+    };
 
-    selectTool(tool) {
-      this.currentTool = tool;
-      this.$emit('tool-changed', tool);
-
-      // If eraser is selected, highlight the button
-      if (tool === 'eraser') {
-        this.updateCursor();
+    const redo = () => {
+      if (undoManager && undoManager.canRedo()) { // Check capability before calling
+        undoManager.redo();
+        console.log('Redo triggered');
+      } else {
+         console.log('Cannot redo');
       }
-      
-      console.log('Narzędzie zmienione na:', tool);
-    },
+    };
 
-    setColor(color) {
-      this.currentColor = color;
-      this.$emit('color-changed', color);
-      console.log('Kolor zmieniony na:', color);
-    },
+    const exportWhiteboard = () => {
+      emit('export-whiteboard');
+    };
 
-    updateLineWidth() {
-      const width = parseInt(this.currentLineWidth);
-      this.$emit('line-width-changed', width);
-      console.log('Grubość linii zmieniona na:', width);
-    },
+    const importWhiteboard = () => {
+      emit('import-whiteboard');
+    };
 
-    updateCursor() {
-      // Update cursor based on current tool
-      this.$emit('update-cursor');
-    },
+    const shareWhiteboard = () => {
+      // Share logic is likely better placed in App.vue which knows the roomId
+      // Emit an event or call a method on the parent if needed
+       emit('share-room'); // Assuming App.vue handles sharing
+    };
 
-    clearCanvas() {
-      // Confirm before clearing
-      if (confirm('Are you sure you want to clear the canvas? This action cannot be undone once confirmed.')) {
-        this.$emit('clear-canvas');
-      }
-    },
+    const toggleShortcutsInfo = () => {
+      showShortcutsInfo.value = !showShortcutsInfo.value;
+    };
 
-    undo() {
-      this.$emit('undo');
-    },
+    const uploadImage = () => {
+      imageInput.value?.click(); // Use ref to trigger click
+    };
 
-    redo() {
-      this.$emit('redo');
-    },
-
-    setUndoRedoState(canUndo, canRedo) {
-      this.canUndo = canUndo;
-      this.canRedo = canRedo;
-    },
-
-    exportWhiteboard() {
-      this.$emit('export-whiteboard');
-    },
-
-    importWhiteboard() {
-      this.$emit('import-whiteboard');
-    },
-
-    shareWhiteboard() {
-      // Copy current URL to clipboard
-      const url = window.location.href;
-      navigator.clipboard.writeText(url)
-        .then(() => {
-          alert('Board link copied to clipboard! Share it with others to collaborate in real-time.');
-        })
-        .catch(err => {
-          console.error('Failed to copy URL: ', err);
-          // Fallback
-          const textArea = document.createElement('textarea');
-          textArea.value = url;
-          document.body.appendChild(textArea);
-          textArea.select();
-          document.execCommand('copy');
-          document.body.removeChild(textArea);
-          alert('Board link copied to clipboard! Share it with others to collaborate in real-time.');
-        });
-    },
-
-    toggleShortcutsInfo() {
-      this.showShortcutsInfo = !this.showShortcutsInfo;
-    },
-
-    uploadImage() {
-      // Trigger file input click
-      this.$refs.imageInput.click();
-    },
-
-    onImageSelected(event) {
+    const onImageSelected = (event) => {
       const file = event.target.files[0];
       if (file) {
-        this.$emit('image-selected', file);
-        // Reset file input to allow selecting the same file again
-        event.target.value = '';
+        emit('image-selected', file);
+        event.target.value = ''; // Reset file input
       }
-    }
+    };
+
+    // Expose necessary refs and methods to the template
+    return {
+      currentTool,
+      currentColor,
+      currentLineWidth,
+      canUndo,
+      canRedo,
+      showShortcutsInfo,
+      imageInput,
+      // Methods
+      selectTool,
+      setColor,
+      updateLineWidth,
+      clearCanvas,
+      undo,
+      redo,
+      exportWhiteboard,
+      importWhiteboard,
+      shareWhiteboard,
+      toggleShortcutsInfo,
+      uploadImage,
+      onImageSelected,
+    };
   }
 }
 </script>

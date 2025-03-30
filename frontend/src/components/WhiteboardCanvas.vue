@@ -69,14 +69,14 @@
 </template>
 
 <script>
-import { ref, onMounted, onBeforeUnmount, watch, nextTick, computed } from 'vue';
+import { ref, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'; // Removed computed as yDrawings is now a direct ref
 import * as Y from 'yjs';
 // import { v4 as uuidv4 } from 'uuid'; // Use Yjs mechanisms for IDs if possible
 import Collaborators from './Collaborators.vue';
 import ZoomPanControls from './ZoomPanControls.vue';
 import EraserModeControls from './EraserModeControls.vue';
 import StatusMessage from './StatusMessage.vue';
-// Removed old websocket service import
+import { connectToYjs } from '../services/connectToYjs'; // Import the new provider
 import { drawElement, throttle, isPointInElement, distanceToSegment } from '../utils/canvasDrawing.js';
 import { createNewElement, createTextElement, createImageElement, getCursorStyle } from '../utils/canvasTools.js'; // Adapt these for Yjs maps
 import { drawGrid } from '../utils/canvasGrid.js';
@@ -101,22 +101,14 @@ export default {
     Collaborators,
     ZoomPanControls,
     EraserModeControls,
-    StatusMessage
+    StatusMessage,
   },
   props: {
-    ydoc: { // Yjs document instance
-      type: Object, // Y.Doc is an object
-      required: true
-    },
-    awareness: { // Yjs awareness instance
-      type: Object, // Awareness is an object
-      required: true
-    },
+    // Removed ydoc and awareness props - connection handled internally now
     debugMode: {
       type: Boolean,
-      default: false
+      default: false,
     },
-    // Removed roomId, username, userId - handled by parent/awareness
   },
   emits: ['state-updated'], // Keep for now if needed by parent for autosave/export trigger
 
@@ -145,16 +137,20 @@ export default {
     const notificationId = ref(0);
     const clipboardInput = ref(null); // Ref for clipboard input
 
-    // --- Yjs specific state ---
-    const yElements = computed(() => props.ydoc?.getArray('elements')); // Get the shared array
+    // --- Yjs specific state (managed internally) ---
+    const yjsConnection = ref(null); // Stores the connection object { ydoc, socket, yDrawings, disconnect }
+    const ydoc = ref(null); // Y.Doc instance from the provider
+    const yDrawings = ref(null); // Y.Array for drawings from the provider
+    // Awareness will be handled later via yjsConnection if needed
 
     // --- Local component state ---
-    const localAwarenessState = ref({}); // Store local awareness info
+    // const localAwarenessState = ref({}); // Awareness state is not handled by this provider yet
 
     // --- Methods ---
 
     const redrawCanvas = () => {
-      if (!context.value || !yElements.value) return;
+      // Use the local yDrawings ref
+      if (!context.value || !yDrawings.value) return;
 
       const ctx = context.value;
       ctx.clearRect(0, 0, canvasWidth.value, canvasHeight.value);
@@ -167,8 +163,8 @@ export default {
         panOffset.value.x, panOffset.value.y
       );
 
-      // Draw elements from Yjs array
-      yElements.value.forEach((elementMap, index) => {
+      // Draw elements from Yjs array (now yDrawings)
+      yDrawings.value.forEach((elementMap, index) => {
         // Convert Y.Map to plain JS object for drawing function
         const element = elementMap.toJSON();
         // TODO: Adapt highlighting logic if needed for delete mode
@@ -190,11 +186,12 @@ export default {
     // Debounced redraw for performance during rapid updates
     const debouncedRedraw = debounce(redrawCanvas, 16); // ~60fps
 
-    const handleYjsUpdate = (event) => {
-      // Check if the update affects 'elements' array or specific elements within it
-      // This check might be complex depending on the granularity needed.
-      // For simplicity, redraw on any doc update for now.
-      console.log(`Yjs update detected. yElements length: ${yElements.value?.length || 0}. Redrawing.`);
+    const handleYjsUpdate = (events, transaction) => { // Y.Array observeDeep provides events and transaction
+      // Check if the update originated locally (optional, provider handles echo prevention)
+      // if (transaction.local) return;
+
+      // Redraw whenever the shared array changes
+      console.log(`Yjs update detected for drawings. yDrawings length: ${yDrawings.value?.length || 0}. Redrawing.`);
       debouncedRedraw();
 
       // Trigger state update for parent if needed
@@ -257,21 +254,32 @@ export default {
       handleResize(); // Initial size calculation
 
       // --- Yjs Setup ---
-      if (props.ydoc) {
-        // Observe the shared array for changes
-        yElements.value?.observeDeep(handleYjsUpdate);
-        // Initial draw based on Yjs state
-        redrawCanvas();
-      } else {
-        console.error("WhiteboardCanvas: ydoc prop is missing!");
-      }
+      const urlParams = new URLSearchParams(window.location.search);
+      const roomId = urlParams.get('room');
 
-      if (props.awareness) {
-        // Update local awareness state (e.g., cursor position)
-        // y-websocket provider handles sending local state automatically
-        // We just need to set it when it changes (e.g., in handleMouseMove)
+      if (roomId) {
+        try {
+          const connection = connectToYjs(roomId);
+          yjsConnection.value = connection;
+          ydoc.value = connection.ydoc;
+          yDrawings.value = connection.yDrawings;
+
+          // Observe the shared drawings array for changes
+          yDrawings.value.observeDeep(handleYjsUpdate);
+
+          // Initial draw based on Yjs state
+          redrawCanvas();
+
+          // TODO: Setup awareness handling here when implemented in the provider
+          // Example: setupAwareness(connection.ydoc, connection.socket);
+
+        } catch (error) {
+          console.error("Failed to connect Yjs provider:", error);
+          showToast("Error connecting to collaboration session.", "error");
+        }
       } else {
-        console.error("WhiteboardCanvas: awareness prop is missing!");
+        console.error("WhiteboardCanvas: 'room' parameter missing in URL!");
+        showToast("Room ID missing. Collaboration disabled.", "error");
       }
     });
 
@@ -282,8 +290,11 @@ export default {
       darkModeObserver.disconnect();
 
       // --- Yjs Cleanup ---
-      yElements.value?.unobserveDeep(handleYjsUpdate);
-      // Awareness listeners are managed by the parent (App.vue) via destroyYjs
+      // Unobserve before disconnecting
+      yDrawings.value?.unobserveDeep(handleYjsUpdate);
+      // Disconnect the WebSocket connection
+      yjsConnection.value?.disconnect();
+      // TODO: Cleanup awareness handling here
     });
 
     // --- Input Handlers ---
@@ -310,13 +321,14 @@ export default {
       };
     };
 
+    // TODO: Re-implement awareness updates when provider supports it
     const updateLocalAwarenessCursor = throttle((coords) => {
-        if (props.awareness) {
-            props.awareness.setLocalStateField('cursor', {
-                x: coords.x,
-                y: coords.y,
-            });
-        }
+        // if (yjsConnection.value?.awareness) { // Check if awareness exists
+        //     yjsConnection.value.awareness.setLocalStateField('cursor', {
+        //         x: coords.x,
+        //         y: coords.y,
+        //     });
+        // }
     }, 50); // Throttle cursor updates
 
     const handleMouseMove = (e) => {
@@ -374,10 +386,11 @@ export default {
       if (isDrawing.value) {
         finishDrawing(); // Finish drawing if mouse leaves canvas
       }
-      // Clear local awareness cursor when mouse leaves
-       if (props.awareness) {
-           props.awareness.setLocalStateField('cursor', null);
-       }
+       // Clear local awareness cursor when mouse leaves
+       // TODO: Re-implement awareness updates when provider supports it
+       // if (yjsConnection.value?.awareness) {
+       //     yjsConnection.value.awareness.setLocalStateField('cursor', null);
+       // }
     };
 
      // --- Touch Handlers ---
@@ -411,16 +424,18 @@ export default {
             finishDrawing();
         }
          // Clear local awareness cursor on touch end
-        if (props.awareness) {
-            props.awareness.setLocalStateField('cursor', null);
-        }
+        // TODO: Re-implement awareness updates when provider supports it
+        // if (yjsConnection.value?.awareness) {
+        //     yjsConnection.value.awareness.setLocalStateField('cursor', null);
+        // }
     };
 
 
     // --- Drawing Logic (Yjs Integration) ---
 
     const startDrawing = (event) => {
-      if (!props.ydoc) return;
+      // Use local ydoc ref
+      if (!ydoc.value) return;
       isDrawing.value = true;
       const coords = getCoordinates(event);
       const transformedCoords = transformCoordinates(coords.offsetX, coords.offsetY);
@@ -443,14 +458,14 @@ export default {
             transformedCoords,
             text,
             currentColor.value,
-            currentLineWidth.value * 10 // Example size calculation
-          );
-          // Add directly to Yjs within a transaction
-          props.ydoc.transact(() => {
-            yElements.value.push([new Y.Map(Object.entries(textElementData))]);
-          });
-        }
-        isDrawing.value = false; // Text is added immediately
+        currentLineWidth.value * 10 // Example size calculation
+      );
+      // Add directly to Yjs within a transaction using local ydoc and yDrawings
+      ydoc.value.transact(() => {
+        yDrawings.value.push([new Y.Map(Object.entries(textElementData))]);
+      });
+    }
+    isDrawing.value = false; // Text is added immediately
         currentElementPreview.value = null;
       }
     };
@@ -476,7 +491,8 @@ export default {
     };
 
     const finishDrawing = () => {
-      if (!isDrawing.value || !currentElementPreview.value || !props.ydoc) return;
+      // Use local ydoc and yDrawings refs
+      if (!isDrawing.value || !currentElementPreview.value || !ydoc.value || !yDrawings.value) return;
       isDrawing.value = false;
 
       let elementToAdd = null;
@@ -506,10 +522,11 @@ export default {
          // Assign a permanent ID (optional, Yjs handles object identity)
          // elementToAdd.id = `elem_${props.awareness.clientID}_${Date.now()}`;
          delete elementToAdd.id; // Remove temporary ID
-         console.log('Adding element to Yjs:', JSON.stringify(elementToAdd)); // Log element being added
+         console.log('Adding element to Yjs drawings array:', JSON.stringify(elementToAdd)); // Log element being added
 
-         props.ydoc.transact(() => {
-           yElements.value.push([new Y.Map(Object.entries(elementToAdd))]);
+         // Use local ydoc and yDrawings
+         ydoc.value.transact(() => {
+           yDrawings.value.push([new Y.Map(Object.entries(elementToAdd))]);
          });
       }
 
@@ -594,7 +611,8 @@ export default {
     const handlePaste = (event) => {
        event.preventDefault();
        const items = (event.clipboardData || window.clipboardData).items;
-       if (!items || !props.ydoc) return;
+       // Use local ydoc ref
+       if (!items || !ydoc.value) return;
 
        for (let i = 0; i < items.length; i++) {
          if (items[i].type.indexOf('image') !== -1) {
@@ -615,26 +633,28 @@ export default {
     };
 
     const addImageFromDataUrl = (dataUrl) => {
-        if (!props.ydoc) return;
+        // Use local ydoc and yDrawings refs
+        if (!ydoc.value || !yDrawings.value) return;
         const centerX = (canvasWidth.value / 2 - panOffset.value.x) / zoomLevel.value;
         const centerY = (canvasHeight.value / 2 - panOffset.value.y) / zoomLevel.value;
         createImageElement(dataUrl, centerX, centerY).then(imageData => {
-            props.ydoc.transact(() => {
-                yElements.value.push([new Y.Map(Object.entries(imageData))]);
+            ydoc.value.transact(() => {
+                yDrawings.value.push([new Y.Map(Object.entries(imageData))]);
             });
         });
     };
 
      const addTextElement = (position, text) => {
-        if (!props.ydoc || !text) return;
+        // Use local ydoc and yDrawings refs
+        if (!ydoc.value || !yDrawings.value || !text) return;
         const textElementData = createTextElement(
             position,
             text,
             currentColor.value,
             currentLineWidth.value * 10 // Example size
         );
-        props.ydoc.transact(() => {
-            yElements.value.push([new Y.Map(Object.entries(textElementData))]);
+        ydoc.value.transact(() => {
+            yDrawings.value.push([new Y.Map(Object.entries(textElementData))]);
         });
     };
 
@@ -657,10 +677,12 @@ export default {
     // --- Public methods exposed via ref ---
     // (These might be called by parent or Toolbar)
     const clearCanvas = () => { // Called by App.vue via ref
-        if (props.ydoc && confirm('Are you sure you want to clear the canvas?')) {
-            props.ydoc.transact(() => {
-                while (yElements.value.length > 0) {
-                    yElements.value.delete(0);
+        // Use local ydoc and yDrawings refs
+        if (ydoc.value && yDrawings.value && confirm('Are you sure you want to clear the canvas?')) {
+            ydoc.value.transact(() => {
+                // Clear the drawings array
+                while (yDrawings.value.length > 0) {
+                    yDrawings.value.delete(0);
                 }
             });
             showStatus('Canvas cleared');
@@ -680,18 +702,7 @@ export default {
 
 
     // --- Watchers ---
-    watch(() => props.ydoc, (newYDoc, oldYDoc) => {
-        if (oldYDoc) yElements.value?.unobserveDeep(handleYjsUpdate);
-        if (newYDoc) {
-            yElements.value?.observeDeep(handleYjsUpdate);
-            redrawCanvas(); // Redraw with new doc state
-        }
-    });
-     watch(() => props.awareness, (newAwareness, oldAwareness) => {
-        // Awareness listeners are handled in parent (App.vue)
-        // But redraw might be needed if cursor rendering depends on it directly
-        redrawCanvas();
-    });
+    // Removed watchers for props.ydoc and props.awareness as they are no longer props
 
 
     return {

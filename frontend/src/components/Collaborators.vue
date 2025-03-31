@@ -72,7 +72,7 @@ export default {
   },
   setup(props) {
     const awarenessStates = ref(new Map());
-    const debugMode = ref(false); // Local debug state for this component
+    const debugMode = ref(true); // TEMPORARILY ENABLED FOR DEBUGGING
 
     // --- Computed Properties ---
 

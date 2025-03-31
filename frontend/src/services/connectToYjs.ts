@@ -2,6 +2,11 @@ import * as Y from 'yjs';
 import { Awareness } from 'y-protocols/awareness';
 import { applyAwarenessUpdate, encodeAwarenessUpdate, removeAwarenessStates } from 'y-protocols/awareness';
 
+// Define message types
+const messageSync = 0;
+const messageAwareness = 1;
+// Add other types if needed (e.g., messageAuth = 2)
+
 // Define the structure of the returned object
 interface YjsConnection {
   ydoc: Y.Doc;
@@ -72,14 +77,16 @@ export function connectToYjs(
 
       // --- Send initial states ---
       if (socket?.readyState === WebSocket.OPEN) {
-        // Send Yjs doc state
+        // Send Yjs doc state (prefixed)
         const docState = Y.encodeStateAsUpdate(ydoc);
-        socket.send(docState);
+        const syncMessage = new Uint8Array([messageSync, ...docState]);
+        socket.send(syncMessage);
         console.log('[Yjs Provider] Sent initial document state.');
 
-        // Send awareness state
-        const awarenessState = encodeAwarenessUpdate(awareness, [ydoc.clientID]);
-        socket.send(awarenessState);
+        // Send awareness state (prefixed)
+        const awarenessState = encodeAwarenessUpdate(awareness, [awareness.clientID]); // Use awareness.clientID
+        const awarenessMessage = new Uint8Array([messageAwareness, ...awarenessState]);
+        socket.send(awarenessMessage);
         console.log('[Yjs Provider] Sent initial awareness state.');
 
       } else {
@@ -90,11 +97,22 @@ export function connectToYjs(
     socket.onmessage = (event: MessageEvent) => {
       // console.log('[Yjs Provider] Received message from server.');
       if (event.data instanceof ArrayBuffer) {
-        const update = new Uint8Array(event.data);
-        // Try applying as doc update AND awareness update.
-        // Yjs functions are designed to ignore updates not intended for them.
-        Y.applyUpdate(ydoc, update, 'websocketProvider');
-        applyAwarenessUpdate(awareness, update, 'websocketProvider');
+        const data = new Uint8Array(event.data);
+        const messageType = data[0]; // First byte is the type
+        const update = data.slice(1); // The rest is the payload
+
+        switch (messageType) {
+          case messageSync:
+            // console.log('[Yjs Provider] Applying received document update:', update);
+            Y.applyUpdate(ydoc, update, 'websocketProvider');
+            break;
+          case messageAwareness:
+            // console.log('[Yjs Provider] Applying received awareness update:', update);
+            applyAwarenessUpdate(awareness, update, 'websocketProvider');
+            break;
+          default:
+            console.warn(`[Yjs Provider] Received unknown message type: ${messageType}`);
+        }
       } else {
         console.warn('[Yjs Provider] Received non-binary message:', event.data);
       }
@@ -130,7 +148,8 @@ export function connectToYjs(
     // Only send updates that didn't originate from the WebSocket provider itself
     if (origin !== 'websocketProvider' && socket?.readyState === WebSocket.OPEN) {
       // console.log('[Yjs Provider] Local Yjs update detected, sending to server:', update);
-      socket.send(update); // Send raw update
+      const message = new Uint8Array([messageSync, ...update]); // Prefix with type
+      socket.send(message);
     } else if (origin !== 'websocketProvider') {
       console.warn('[Yjs Provider] WebSocket not open, unable to send document update.');
     }
@@ -143,7 +162,8 @@ export function connectToYjs(
     if (origin !== 'websocketProvider' && socket?.readyState === WebSocket.OPEN) {
       // console.log('[Yjs Provider] Local awareness update detected, sending to server:', changedClients);
       const update = encodeAwarenessUpdate(awareness, changedClients);
-      socket.send(update); // Send raw update
+      const message = new Uint8Array([messageAwareness, ...update]); // Prefix with type
+      socket.send(message);
     } else if (origin !== 'websocketProvider') {
        console.warn('[Yjs Provider] WebSocket not open, unable to send awareness update.');
     }

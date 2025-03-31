@@ -19,11 +19,12 @@
 
     <!-- Cursor overlays for other users -->
     <Collaborators
+      v-if="yjsConnection?.awareness"
       ref="collaborators"
-      :awareness="awareness"
+      :awareness="yjsConnection.awareness"
       :zoom-level="zoomLevel"
       :pan-offset="panOffset"
-      :local-client-id="awareness?.clientID"
+      :local-client-id="yjsConnection.awareness.clientID"
     />
 
     <!-- Zoom and pan controls -->
@@ -321,14 +322,17 @@ export default {
       };
     };
 
-    // TODO: Re-implement awareness updates when provider supports it
     const updateLocalAwarenessCursor = throttle((coords) => {
-        // if (yjsConnection.value?.awareness) { // Check if awareness exists
-        //     yjsConnection.value.awareness.setLocalStateField('cursor', {
-        //         x: coords.x,
-        //         y: coords.y,
-        //     });
-        // }
+        if (yjsConnection.value?.awareness) { // Check if awareness exists
+            // Also send user info if available (example)
+            const userState = yjsConnection.value.awareness.getLocalState()?.user || { name: 'Anonymous', color: '#000000' };
+            yjsConnection.value.awareness.setLocalStateField('cursor', {
+                x: coords.x,
+                y: coords.y,
+            });
+             // Keep user info when updating cursor
+            yjsConnection.value.awareness.setLocalStateField('user', userState);
+        }
     }, 50); // Throttle cursor updates
 
     const handleMouseMove = (e) => {
@@ -387,10 +391,14 @@ export default {
         finishDrawing(); // Finish drawing if mouse leaves canvas
       }
        // Clear local awareness cursor when mouse leaves
-       // TODO: Re-implement awareness updates when provider supports it
-       // if (yjsConnection.value?.awareness) {
-       //     yjsConnection.value.awareness.setLocalStateField('cursor', null);
-       // }
+       if (yjsConnection.value?.awareness) {
+           yjsConnection.value.awareness.setLocalStateField('cursor', null);
+           // Keep user info even when cursor is null
+           const userState = yjsConnection.value.awareness.getLocalState()?.user;
+           if (userState) {
+               yjsConnection.value.awareness.setLocalStateField('user', userState);
+           }
+       }
     };
 
      // --- Touch Handlers ---
@@ -424,10 +432,14 @@ export default {
             finishDrawing();
         }
          // Clear local awareness cursor on touch end
-        // TODO: Re-implement awareness updates when provider supports it
-        // if (yjsConnection.value?.awareness) {
-        //     yjsConnection.value.awareness.setLocalStateField('cursor', null);
-        // }
+        if (yjsConnection.value?.awareness) {
+            yjsConnection.value.awareness.setLocalStateField('cursor', null);
+            // Keep user info even when cursor is null
+            const userState = yjsConnection.value.awareness.getLocalState()?.user;
+            if (userState) {
+                yjsConnection.value.awareness.setLocalStateField('user', userState);
+            }
+        }
     };
 
 
@@ -448,7 +460,9 @@ export default {
         currentColor.value,
         currentLineWidth.value
       );
-      currentElementPreview.value.id = `temp_${props.awareness.clientID}_${Date.now()}`; // Temporary ID
+      // Use the clientID from the connection's awareness object
+      const localClientId = yjsConnection.value?.awareness?.clientID || 'unknown';
+      currentElementPreview.value.id = `temp_${localClientId}_${Date.now()}`; // Temporary ID
 
       // Special handling for text tool
       if (currentTool.value === 'text') {
@@ -722,6 +736,7 @@ export default {
       eraserMode,
       notifications,
       clipboardInput,
+      yjsConnection, // Expose the connection object which contains awareness
       // Methods
       handleMouseDown,
       handleMouseMove,

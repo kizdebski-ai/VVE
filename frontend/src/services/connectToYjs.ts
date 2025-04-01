@@ -89,6 +89,14 @@ export function connectToYjs(
         socket.send(awarenessMessage);
         console.log('[Yjs Provider] Sent initial awareness state.');
 
+        // --- Attach Yjs listeners only AFTER socket is open ---
+        // Note: ydoc.on and awareness.on are typically idempotent, but attaching here ensures
+        // we don't try to send before the socket is ready after initial connect or reconnect.
+        console.log('[Yjs Provider] Attaching ydoc & awareness update listeners.');
+        ydoc.on('update', ydocUpdateHandler);
+        awareness.on('update', awarenessUpdateHandler);
+        // ---
+
       } else {
         console.error('[Yjs Provider] WebSocket not open when trying to send initial states.');
       }
@@ -103,15 +111,15 @@ export function connectToYjs(
 
         switch (messageType) {
           case messageSync:
-            // console.log('[Yjs Provider] Applying received document update:', update);
+            console.log('[Yjs Provider] Attempting to apply sync update (Type 0)');
             Y.applyUpdate(ydoc, update, 'websocketProvider');
             break;
           case messageAwareness:
-            // console.log('[Yjs Provider] Applying received awareness update:', update);
+            console.log('[Yjs Provider] Attempting to apply awareness update (Type 1)');
             applyAwarenessUpdate(awareness, update, 'websocketProvider');
             break;
           default:
-            console.warn(`[Yjs Provider] Received unknown message type: ${messageType}`);
+            console.warn(`[Yjs Provider] Received unknown message type: ${messageType}`, data);
         }
       } else {
         console.warn('[Yjs Provider] Received non-binary message:', event.data);
@@ -140,9 +148,8 @@ export function connectToYjs(
     };
   };
 
-  // --- Yjs Document Event Handler ---
-
   // --- Yjs Document & Awareness Event Handlers ---
+  // Define handlers outside setupWebSocket so they can be referenced in onopen and disconnect
 
   const ydocUpdateHandler = (update: Uint8Array, origin: any) => {
     // Only send updates that didn't originate from the WebSocket provider itself
@@ -151,10 +158,10 @@ export function connectToYjs(
       const message = new Uint8Array([messageSync, ...update]); // Prefix with type
       socket.send(message);
     } else if (origin !== 'websocketProvider') {
+      // This warning might still appear if updates happen during reconnection attempts
       console.warn('[Yjs Provider] WebSocket not open, unable to send document update.');
     }
   };
-  ydoc.on('update', ydocUpdateHandler); // Listen for document updates
 
   const awarenessUpdateHandler = ({ added, updated, removed }: { added: number[], updated: number[], removed: number[] }, origin: any) => {
     // Only send updates that didn't originate from the WebSocket provider itself
@@ -165,10 +172,10 @@ export function connectToYjs(
       const message = new Uint8Array([messageAwareness, ...update]); // Prefix with type
       socket.send(message);
     } else if (origin !== 'websocketProvider') {
+       // This warning might still appear if updates happen during reconnection attempts
        console.warn('[Yjs Provider] WebSocket not open, unable to send awareness update.');
     }
   };
-  awareness.on('update', awarenessUpdateHandler); // Listen for awareness updates
 
   // --- Disconnect Function ---
   const disconnect = () => {

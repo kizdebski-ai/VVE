@@ -5,13 +5,12 @@
     <div class="whiteboard-container">
       <WhiteboardCanvas
         ref="whiteboard"
-        :ydoc="yjsInstances?.ydoc"
-        :awareness="yjsInstances?.awareness"
-        :debug-mode="debugMode"
-        :room-id="roomId"
-        :username="username"
-        @state-updated="handleStateUpdate"
-      ></WhiteboardCanvas> <!-- Explicit closing tag -->
+        :ydoc="yjsConnection?.ydoc"
+        :awareness="yjsConnection?.awareness"
+         :debug-mode="debugMode"
+         :room-id="roomId"
+         :username="username"
+       ></WhiteboardCanvas> <!-- Explicit closing tag -->
 
       <!-- User info in top-right corner -->
       <div class="floating-user-info">
@@ -59,7 +58,7 @@
           @export-whiteboard="handleExportRequest"
           @import-whiteboard="showImportDialog = true"
           @image-selected="handleImageSelected"
-          :ydoc="yjsInstances?.ydoc"
+          :ydoc="yjsConnection?.ydoc"
         ></ToolBar> <!-- Explicit closing tag -->
       </div>
 
@@ -96,7 +95,8 @@ import ImportDialog from './components/ImportDialog.vue';
 import ExportDialog from './components/ExportDialog.vue';
 // import ConnectionStatus from './components/ConnectionStatus.vue'; // Not used currently
 import ThemeToggle from './components/ThemeToggle.vue'; // Keep if used
-import { initYjs, destroyYjs, getYjsInstances } from './services/websocket.js'; // Import Yjs service
+// Import our custom provider
+import { connectToYjs } from './services/connectToYjs.ts';
 import { copyToClipboard } from './utils/fileUtils.js';
 import * as Y from 'yjs'; // Import Yjs for encoding/decoding state
 import { Buffer } from 'buffer'; // Needed for base64 encoding/decoding
@@ -118,7 +118,7 @@ export default {
       showImportDialog: false,
       exportedState: '', // Will hold Yjs encoded state (base64)
       username: localStorage.getItem('whiteboard_username') || 'User ' + Math.floor(Math.random() * 1000),
-      yjsInstances: null, // To hold { ydoc, provider, awareness }
+      yjsConnection: null, // Renamed to hold { ydoc, awareness, socket, disconnect }
       awarenessStates: new Map(), // To hold awareness states Map<clientID, state>
       statusMessage: '',
       statusTimeout: null,
@@ -130,11 +130,13 @@ export default {
   computed: {
     // Compute active users count from awareness states
     activeUsersCount() {
-      if (!this.yjsInstances?.awareness) return 0;
-      return this.yjsInstances.awareness.getStates().size; // Count all connected clients including self
+      // Access awareness via yjsConnection
+      if (!this.yjsConnection?.awareness) return 0;
+      return this.yjsConnection.awareness.getStates().size; // Count all connected clients including self
     },
     localClientId() {
-      return this.yjsInstances?.awareness?.clientID;
+      // Access awareness via yjsConnection
+      return this.yjsConnection?.awareness?.clientID;
     },
     formattedLastSaved() {
       // (Keep existing computed property if needed)
@@ -164,25 +166,27 @@ export default {
     }
     this.roomId = roomId;
 
-    console.log(`Initializing Yjs for room: ${this.roomId} with username: ${this.username}`);
+    console.log(`Initializing custom Yjs connection for room: ${this.roomId} with username: ${this.username}`);
 
-    // Initialize Yjs
-    this.yjsInstances = initYjs(this.roomId, { username: this.username });
+    // Initialize Yjs using our custom connectToYjs
+    try {
+      // Pass username to connectToYjs if needed, although it sets a default currently
+      this.yjsConnection = connectToYjs(this.roomId);
 
-    if (this.yjsInstances) {
       // Listen to awareness changes to update UI
-      this.yjsInstances.awareness.on('change', this.handleAwarenessChange);
+      this.yjsConnection.awareness.on('change', this.handleAwarenessChange);
       this.handleAwarenessChange(); // Initial update
 
       // Load autosaved state for Yjs
-      this.loadAutosavedStateYjs();
+      this.loadAutosavedStateYjs(); // Pass ydoc
 
       // Optional: Listen to ydoc updates for autosave
-      this.yjsInstances.ydoc.on('update', this.handleYDocUpdate);
+      this.yjsConnection.ydoc.on('update', this.handleYDocUpdate);
 
       this.showNotification(`Connected to room: ${this.roomId}`, 'success');
 
-    } else {
+    } catch (error) {
+      console.error("Failed to initialize custom Yjs connection:", error);
       this.showStatus("Failed to initialize collaboration service.", 5000);
       this.showNotification("Error initializing collaboration.", 'error');
     }
@@ -203,23 +207,27 @@ export default {
     // Clean up handlers
     window.removeEventListener('beforeunload', this.handleBeforeUnload);
 
-    // Remove Yjs listeners
-    if (this.yjsInstances?.awareness) {
-        this.yjsInstances.awareness.off('change', this.handleAwarenessChange);
+    // Remove Yjs listeners (access via yjsConnection)
+    if (this.yjsConnection?.awareness) {
+        this.yjsConnection.awareness.off('change', this.handleAwarenessChange);
     }
-    if (this.yjsInstances?.ydoc) {
-        this.yjsInstances.ydoc.off('update', this.handleYDocUpdate);
+    if (this.yjsConnection?.ydoc) {
+        this.yjsConnection.ydoc.off('update', this.handleYDocUpdate);
     }
 
-    // Disconnect Yjs
-    destroyYjs();
+    // Disconnect using the function returned by connectToYjs
+    if (this.yjsConnection?.disconnect) {
+      this.yjsConnection.disconnect();
+    }
+    this.yjsConnection = null;
   },
   methods: {
     handleAwarenessChange() {
-      if (this.yjsInstances?.awareness) {
-        this.awarenessStates = new Map(this.yjsInstances.awareness.getStates());
+      // Access awareness via yjsConnection
+      if (this.yjsConnection?.awareness) {
+        this.awarenessStates = new Map(this.yjsConnection.awareness.getStates());
         // Force Vue reactivity update if needed
-        this.$forceUpdate();
+        // this.$forceUpdate(); // Usually not needed with refs/computed
         // console.log('Awareness updated:', this.awarenessStates);
       }
     },
@@ -227,16 +235,18 @@ export default {
     handleBeforeUnload() {
       // Autosave the current state using Yjs
       this.saveCurrentStateYjs();
-      // destroyYjs will be called in beforeUnmount
+      // disconnect will be called in beforeUnmount
     },
 
     updateUsername() {
       localStorage.setItem('whiteboard_username', this.username);
-      if (this.yjsInstances?.awareness) {
-        this.yjsInstances.awareness.setLocalStateField('user', {
+      // Access awareness via yjsConnection
+      if (this.yjsConnection?.awareness) {
+        // Get existing user state to preserve color etc.
+        const currentUserState = this.yjsConnection.awareness.getLocalState()?.user || {};
+        this.yjsConnection.awareness.setLocalStateField('user', {
+          ...currentUserState, // Preserve existing fields like color
           name: this.username
-          // Keep other fields like color if they exist
-          // ...this.yjsInstances.awareness.getLocalState()?.user
         });
         console.log(`Updated awareness username to: ${this.username}`);
       }
@@ -261,20 +271,18 @@ export default {
     },
 
     handleClearCanvas() {
-      // Needs adaptation for Yjs - clear the shared array/map
-      if (this.yjsInstances?.ydoc) {
-        const yElements = this.yjsInstances.ydoc.getArray('elements'); // Assuming 'elements' is the shared type
-        this.yjsInstances.ydoc.transact(() => {
+      // Access ydoc via yjsConnection
+      if (this.yjsConnection?.ydoc) {
+        // Use the correct shared type name ('drawings')
+        const yDrawings = this.yjsConnection.ydoc.getArray('drawings');
+        this.yjsConnection.ydoc.transact(() => {
           // Delete elements one by one to ensure proper sync
-          while (yElements.length > 0) {
-            yElements.delete(0);
+          while (yDrawings.length > 0) {
+            yDrawings.delete(0); // Corrected: delete from yDrawings
           }
         });
         this.showStatus('Canvas cleared');
       }
-      // if (this.$refs.whiteboard) {
-      //   this.$refs.whiteboard.clearCanvas(); // Keep local clear if needed, but Yjs sync is primary
-      // }
     },
 
     handleUndo() {
@@ -282,9 +290,6 @@ export default {
        if (this.$refs.toolbar) {
          this.$refs.toolbar.undo(); // Delegate to toolbar which should use UndoManager
        }
-      // if (this.$refs.whiteboard) {
-      //   this.$refs.whiteboard.undo(); // Old history
-      // }
     },
 
     handleRedo() {
@@ -292,9 +297,6 @@ export default {
        if (this.$refs.toolbar) {
          this.$refs.toolbar.redo(); // Delegate to toolbar which should use UndoManager
        }
-      // if (this.$refs.whiteboard) {
-      //   this.$refs.whiteboard.redo(); // Old history
-      // }
     },
 
     showStatus(message, duration = 3000) {
@@ -321,10 +323,11 @@ export default {
     },
 
     saveCurrentStateYjs() {
-      if (this.yjsInstances?.ydoc) {
+      // Access ydoc via yjsConnection
+      if (this.yjsConnection?.ydoc) {
         try {
           // Encode the entire document state as an update message
-          const stateUpdate = Y.encodeStateAsUpdate(this.yjsInstances.ydoc);
+          const stateUpdate = Y.encodeStateAsUpdate(this.yjsConnection.ydoc);
           // Convert Uint8Array to base64 string for localStorage
           const base64State = Buffer.from(stateUpdate).toString('base64');
           localStorage.setItem(`whiteboard_autosave_${this.roomId}`, base64State);
@@ -336,14 +339,15 @@ export default {
     },
 
     loadAutosavedStateYjs() {
-      if (this.yjsInstances?.ydoc) {
+      // Access ydoc via yjsConnection
+      if (this.yjsConnection?.ydoc) {
         try {
           const base64State = localStorage.getItem(`whiteboard_autosave_${this.roomId}`);
           if (base64State) {
             // Convert base64 string back to Uint8Array
             const stateUpdate = Buffer.from(base64State, 'base64');
             // Apply the saved state to the current document
-            Y.applyUpdate(this.yjsInstances.ydoc, stateUpdate);
+            Y.applyUpdate(this.yjsConnection.ydoc, stateUpdate);
             this.showStatus('Previous whiteboard state loaded');
             console.log('Loaded autosaved Yjs state.');
           }
@@ -356,10 +360,10 @@ export default {
     },
 
     handleExportRequest() {
-      // Export the Yjs document state
-      if (this.yjsInstances?.ydoc) {
+      // Export the Yjs document state (access ydoc via yjsConnection)
+      if (this.yjsConnection?.ydoc) {
         try {
-          const stateUpdate = Y.encodeStateAsUpdate(this.yjsInstances.ydoc);
+          const stateUpdate = Y.encodeStateAsUpdate(this.yjsConnection.ydoc);
           const base64State = Buffer.from(stateUpdate).toString('base64');
           this.exportedState = base64State; // Store base64 for dialog
           this.showExportDialog = true;
@@ -401,13 +405,14 @@ export default {
         this.showStatus('Please paste a valid whiteboard state (base64).', 3000);
         return;
       }
-      if (this.yjsInstances?.ydoc) {
+      // Access ydoc via yjsConnection
+      if (this.yjsConnection?.ydoc) {
         try {
           // Decode base64 and apply update
           const stateUpdate = Buffer.from(base64State, 'base64');
           // It's crucial to apply the update within a transaction
-          this.yjsInstances.ydoc.transact(() => {
-            Y.applyUpdate(this.yjsInstances.ydoc, stateUpdate);
+          this.yjsConnection.ydoc.transact(() => {
+            Y.applyUpdate(this.yjsConnection.ydoc, stateUpdate);
           });
           this.showStatus('Whiteboard state loaded successfully!');
           this.lastSaved = new Date().toISOString();
@@ -449,33 +454,32 @@ export default {
         const reader = new FileReader();
         reader.onload = (e) => {
           const dataUrl = e.target.result;
-          // TODO: Add image data to Yjs document (e.g., in the 'elements' array)
-          // Example structure: { type: 'image', id: Y.generateUniqueID(), x: ..., y: ..., dataUrl: ... }
-          if (this.yjsInstances?.ydoc) {
-             const yElements = this.yjsInstances.ydoc.getArray('elements');
+          // TODO: Add image data to Yjs document (e.g., in the 'drawings' array)
+          // Example structure: { type: 'image', id: ..., x: ..., y: ..., dataUrl: ... }
+          // Access ydoc via yjsConnection
+          if (this.yjsConnection?.ydoc) {
+             const yDrawings = this.yjsConnection.ydoc.getArray('drawings'); // Use 'drawings'
              // Get current viewport center or default position
              const pos = this.$refs.whiteboard?.getViewportCenter() || { x: 100, y: 100 };
-             yElements.push([{
-               type: 'image',
-               id: `img_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`, // Simple unique ID
-               x: pos.x,
-               y: pos.y,
-               dataUrl: dataUrl,
-               width: 200, // Default width, allow resizing later
-               height: null // Calculate based on aspect ratio later
-             }]);
+             // Create a Y.Map for the image data
+             const imageMap = new Y.Map();
+             imageMap.set('type', 'image');
+             imageMap.set('id', `img_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`);
+             imageMap.set('x', pos.x);
+             imageMap.set('y', pos.y);
+             imageMap.set('dataUrl', dataUrl);
+             imageMap.set('width', 200);
+             imageMap.set('height', null);
+             // Push the Y.Map into the Y.Array
+             yDrawings.push([imageMap]);
              console.log('Added image placeholder to Yjs doc');
           }
-          // if (this.$refs.whiteboard) {
-          //   this.$refs.whiteboard.addImageFromDataUrl(e.target.result); // Old direct add
-          // }
         };
         reader.readAsDataURL(file);
 
         // Reset file input
         // if (this.$refs.imageInput) { this.$refs.imageInput.value = ''; } // Ref might not exist
       }
-      // else if (typeof file === 'string') { ... } // Handle direct data URL if needed
     },
 
     toggleDarkMode() {

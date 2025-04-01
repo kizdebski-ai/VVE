@@ -1,8 +1,21 @@
 <template>
-  <div class="top-menu-container" @mouseenter="showMenu = true" @mouseleave="hideMenu">
-    <div class="hover-area"></div>
+  <div class="top-menu-container" @mouseenter="handleMouseEnter" @mouseleave="handleMouseLeave">
+    <!-- Explicit Hover Area -->
+    <div class="hover-trigger-area"></div>
+
+    <!-- Gear Icon Trigger (Visible on hover container) -->
+    <transition name="fade">
+      <button v-if="showGear" class="gear-btn" @click="toggleMenu" @mouseenter="cancelHide" @mouseleave="handleMouseLeave" title="Settings">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="3"></circle>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V15a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+        </svg>
+      </button>
+    </transition>
+
+    <!-- Actual Menu (Visible on gear click) -->
     <transition name="slide-fade">
-      <div v-if="showMenu" class="top-menu">
+      <div v-if="showMenu" class="top-menu" @mouseenter="cancelHide" @mouseleave="handleMouseLeave">
         <button class="menu-btn" @click="emitClear" title="Clear Board">
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <polyline points="3 6 5 6 21 6"></polyline>
@@ -26,7 +39,7 @@
       </div>
     </transition>
 
-     <!-- Keyboard shortcuts info dialog (Logic to be added in Step 7) -->
+     <!-- Keyboard shortcuts info dialog -->
     <div v-if="showShortcutsInfo" class="shortcuts-dialog">
        <div class="shortcuts-dialog-header">
         <h3>Keyboard Shortcuts</h3>
@@ -46,16 +59,8 @@
             <div class="shortcut-desc">Eraser Tool</div>
           </div>
           <div class="shortcut-item">
-            <div class="shortcut-key">L</div>
-            <div class="shortcut-desc">Line Tool</div>
-          </div>
-          <div class="shortcut-item">
-            <div class="shortcut-key">R</div>
-            <div class="shortcut-desc">Rectangle Tool</div>
-          </div>
-          <div class="shortcut-item">
-            <div class="shortcut-key">C</div>
-            <div class="shortcut-desc">Circle Tool</div>
+            <div class="shortcut-key">S</div> <!-- Updated shortcut key -->
+            <div class="shortcut-desc">Shapes Tool</div>
           </div>
           <div class="shortcut-item">
             <div class="shortcut-key">T</div>
@@ -99,66 +104,138 @@ import { ref } from 'vue';
 
 const emit = defineEmits(['clear-canvas']);
 
-const showMenu = ref(false);
-const showShortcutsInfo = ref(false); // Will be populated later
-let hideTimeout = null;
+const showGear = ref(false); // Controls gear visibility
+const showMenu = ref(false); // Controls menu visibility
+const showShortcutsInfo = ref(false);
+let hideTimeout = null; // Timeout for hiding gear/menu
 
-const hideMenu = () => {
-  // Delay hiding to allow moving cursor to the menu
+// Show gear on hover, clear any pending hide actions
+const handleMouseEnter = () => {
+  console.log('[TopMenu] Mouse Enter Container/Trigger Area'); // Debug log
   if (hideTimeout) clearTimeout(hideTimeout);
-  hideTimeout = setTimeout(() => {
-    showMenu.value = false;
-  }, 300); // Adjust delay as needed
+  showGear.value = true;
+};
+
+// Hide gear and menu after a delay if mouse leaves container
+const handleMouseLeave = () => {
+  console.log('[TopMenu] Mouse Leave Container/Menu'); // Debug log
+  if (hideTimeout) clearTimeout(hideTimeout);
+  // Only hide if shortcuts dialog is not open
+  if (!showShortcutsInfo.value) {
+      hideTimeout = setTimeout(() => {
+        console.log('[TopMenu] Hiding gear and menu after delay'); // Debug log
+        showGear.value = false;
+        showMenu.value = false; // Also hide menu when leaving container
+      }, 500); // Adjust delay as needed
+  }
+};
+
+// Keep gear/menu visible if mouse moves onto them
+const cancelHide = () => {
+  console.log('[TopMenu] Cancel Hide'); // Debug log
+  if (hideTimeout) clearTimeout(hideTimeout);
+};
+
+// Toggle menu visibility on gear click
+const toggleMenu = () => {
+  showMenu.value = !showMenu.value;
+  console.log(`[TopMenu DEBUG] Toggled Menu visibility to: ${showMenu.value}`);
+  if (showMenu.value) {
+      cancelHide(); // Prevent hiding if menu is opened
+  }
 };
 
 const emitClear = () => {
   emit('clear-canvas');
   showMenu.value = false; // Hide menu after action
+  showGear.value = false; // Hide gear as well
 };
 
 const toggleShortcuts = () => {
   showShortcutsInfo.value = !showShortcutsInfo.value;
-  // Keep menu open if shortcuts are shown? Or close it? For now, let's keep it simple.
-  // showMenu.value = false; // Optional: Hide main menu when dialog opens
+  console.log(`[TopMenu DEBUG] Toggled Shortcuts visibility to: ${showShortcutsInfo.value}`);
+  // Keep menu/gear visible when shortcuts dialog is open
+  if (showShortcutsInfo.value) {
+      cancelHide();
+      showMenu.value = true; // Ensure menu stays open
+      showGear.value = true; // Ensure gear stays visible
+  } else {
+      // If closing shortcuts, allow normal hide behavior
+      handleMouseLeave();
+  }
 };
-
-// Placeholder for shortcut list content (will be moved from ToolBar.vue)
 
 </script>
 
 <style scoped>
 .top-menu-container {
-  position: fixed; /* Or absolute relative to a container */
+  position: fixed;
   top: 0;
   left: 0;
   width: 100%;
-  z-index: 1001; /* Above toolbar/canvas */
+  z-index: 1001;
   display: flex;
-  justify-content: center;
+  flex-direction: column; /* Stack trigger area, gear, menu */
+  align-items: center;
+  /* Removed pointer-events: none */
 }
 
-.hover-area {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 15px; /* Adjust hover sensitivity area */
-  /* background-color: rgba(255, 0, 0, 0.1); */ /* For debugging */
-  z-index: 1; 
+/* Explicit hover area */
+.hover-trigger-area {
+    width: 100%;
+    height: 25px; /* Height of the hover trigger zone */
+    /* background-color: rgba(0, 0, 255, 0.1); */ /* DEBUG */
+    position: absolute; /* Position it at the very top */
+    top: 0;
+    left: 0;
+    z-index: 1; /* Below gear/menu */
+    pointer-events: auto; /* Capture mouse events */
+}
+
+
+.gear-btn {
+  background-color: var(--btn-bg, #f8f9fa);
+  border: 1px solid var(--border-color, #dee2e6);
+  border-radius: 50%;
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+  color: var(--btn-color, #495057);
+  padding: 6px; /* Adjust padding for icon size */
+  box-sizing: border-box;
+  position: relative; /* Keep relative for stacking */
+  z-index: 3; /* Above hover area and menu */
+  pointer-events: auto; /* Gear button is clickable */
+  margin-top: 5px; /* Add small margin from top */
+}
+.gear-btn svg {
+    width: 100%;
+    height: 100%;
+}
+
+.gear-btn:hover {
+  background-color: var(--btn-hover-bg, #dee2e6);
+  box-shadow: 0 4px 8px rgba(0,0,0,0.15);
 }
 
 .top-menu {
-  margin-top: 5px; /* Small gap from the top */
+  margin-top: 8px; /* Space below gear */
   background-color: var(--toolbar-bg, #f8f9fa);
-  border-radius: 0 0 12px 12px; /* Rounded bottom corners */
+  border-radius: 8px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
   padding: 8px 15px;
   display: flex;
   gap: 10px;
   align-items: center;
-  z-index: 2; /* Above hover area */
   border: 1px solid var(--border-color, #e0e0e0);
-  border-top: none; /* No top border */
+  position: relative; /* Relative to the container */
+  z-index: 2; /* Below gear */
+  pointer-events: auto; /* Menu is interactive */
 }
 
 .menu-btn {
@@ -180,36 +257,43 @@ const toggleShortcuts = () => {
 }
 
 .menu-btn svg {
-  width: 18px; /* Slightly smaller icons */
+  width: 18px;
   height: 18px;
 }
 
-/* Transition for slide-down effect */
-.slide-fade-enter-active {
-  transition: all 0.3s ease-out;
+/* Transitions */
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.2s ease;
 }
-
-.slide-fade-leave-active {
-  transition: all 0.3s cubic-bezier(1, 0.5, 0.8, 1);
-}
-
-.slide-fade-enter-from,
-.slide-fade-leave-to {
-  transform: translateY(-20px);
+.fade-enter-from,
+.fade-leave-to {
   opacity: 0;
 }
 
-/* Styles for shortcuts dialog (copied roughly from ToolBar.vue, adjust as needed) */
+.slide-fade-enter-active {
+  transition: all 0.2s ease-out;
+}
+.slide-fade-leave-active {
+  transition: all 0.2s cubic-bezier(1, 0.5, 0.8, 1);
+}
+.slide-fade-enter-from,
+.slide-fade-leave-to {
+  transform: translateY(-10px);
+  opacity: 0;
+}
+
+/* Styles for shortcuts dialog */
 .shortcuts-dialog {
-  position: fixed; /* Fixed position relative to viewport */
+  position: fixed;
   top: 50%;
   left: 50%;
-  transform: translate(-50%, -50%); /* Center the dialog */
+  transform: translate(-50%, -50%);
   background-color: var(--dialog-bg, #ffffff);
   border-radius: 8px;
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.2);
-  z-index: 1050; /* Ensure it's above everything */
-  max-width: 400px; /* Adjust width */
+  z-index: 1050;
+  max-width: 400px;
   width: 90%;
   max-height: 85vh;
   overflow-y: auto;
@@ -249,20 +333,19 @@ const toggleShortcuts = () => {
   padding: 15px 20px;
 }
 
-/* Styles for shortcut items (copied from ToolBar.vue) */
 .shortcut-item {
   display: flex;
-  margin-bottom: 10px; /* Increased spacing slightly */
-  font-size: 14px; /* Slightly larger font */
+  margin-bottom: 10px;
+  font-size: 14px;
   align-items: center;
 }
 
 .shortcut-key {
-  background-color: var(--key-bg, rgba(0, 0, 0, 0.08)); /* Use CSS var or fallback */
-  padding: 3px 8px; /* Adjusted padding */
+  background-color: var(--key-bg, rgba(0, 0, 0, 0.08));
+  padding: 3px 8px;
   border-radius: 4px;
   margin-right: 12px;
-  min-width: 90px; /* Adjusted width */
+  min-width: 90px;
   text-align: center;
   font-weight: 500;
   color: var(--key-color, #333);
@@ -270,6 +353,6 @@ const toggleShortcuts = () => {
 }
 
 .shortcut-desc {
-  color: var(--text-color-secondary, #555); /* Use CSS var or fallback */
+  color: var(--text-color-secondary, #555);
 }
 </style>

@@ -11,14 +11,16 @@ import { v4 as uuidv4 } from 'uuid';
  * @param {object} coords - Transformed coordinates {x, y}
  * @param {string} color - Current color
  * @param {number} lineWidth - Current line width
+ * @param {object} [extraData={}] - Optional additional data (e.g., lineStyle)
  * @returns {object|null} - New element or null if not applicable
  */
-export const createNewElement = (tool, coords, color, lineWidth) => {
+export const createNewElement = (tool, coords, color, lineWidth, extraData = {}) => {
   const elementId = uuidv4();
 
   switch (tool) {
     case 'pen':
-      return {
+      // Pen doesn't use start/end or lineStyle
+      const penElement = {
         id: elementId,
         type: tool,
         points: [coords],
@@ -27,6 +29,9 @@ export const createNewElement = (tool, coords, color, lineWidth) => {
         lineWidth: lineWidth,
         timestamp: Date.now()
       };
+      // Remove potential lineStyle from extraData if passed incorrectly
+      delete penElement.lineStyle;
+      return penElement;
 
     case 'eraser':
       // Eraser preview might still be needed, but it won't be added to Yjs
@@ -44,6 +49,19 @@ export const createNewElement = (tool, coords, color, lineWidth) => {
     case 'line':
     case 'rectangle':
     case 'circle':
+    // Add new shape types here as well
+    case 'square':
+    case 'triangle':
+    case 'trapezoid':
+    case 'parallelogram':
+    case 'deltoid':
+    case 'cube':
+    case 'cuboid':
+    case 'sphere':
+    case 'cylinder':
+    case 'cone':
+    case 'pyramid':
+    case 'tetrahedron':
       return {
         id: elementId,
         type: tool,
@@ -51,7 +69,8 @@ export const createNewElement = (tool, coords, color, lineWidth) => {
         end: coords,
         color: color,
         lineWidth: lineWidth,
-        timestamp: Date.now()
+        timestamp: Date.now(),
+        ...extraData // Spread additional data like lineStyle
       };
 
     case 'text':

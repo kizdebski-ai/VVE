@@ -21,7 +21,7 @@ export const createNewElement = (tool, coords, color, lineWidth, extraData = {})
     case 'pen':
       // Pen doesn't use start/end or lineStyle
       const penElement = {
-        id: elementId,
+        id: elementId, // Keep ID for preview consistency if needed
         type: tool,
         points: [coords],
         smoothedPoints: [],

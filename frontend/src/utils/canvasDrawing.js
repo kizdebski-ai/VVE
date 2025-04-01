@@ -117,6 +117,9 @@ export const drawElement = (context, element, isHighlighted = false, smoothingFa
   context.globalCompositeOperation = 'source-over';
   context.shadowColor = 'transparent';
   context.shadowBlur = 0;
+  // DEBUG: Log the element being drawn
+  // console.log('[drawElement] Drawing:', JSON.stringify(element));
+
   context.restore();
 };
 
@@ -206,56 +209,80 @@ const drawPath = (context, element, smoothingFactor) => {
  * Draw a line with different styles (solid, dotted, dashed, vector, dotted_vector)
  */
 const drawLine = (context, element) => {
+  // DEBUG: Log line element details
+  console.log(`[drawLine] Element received: type=${element.type}, style=${element.lineStyle}, start=(${element.start?.x},${element.start?.y}), end=(${element.end?.x},${element.end?.y})`);
+
+  context.save(); // Save context state before potentially changing dash/fill
   context.beginPath();
   context.moveTo(element.start.x, element.start.y);
 
   // Handle line styles
   const lineStyle = element.lineStyle || 'solid'; // Default to solid
+  const lw = Math.max(1, element.lineWidth || 1); // Ensure positive line width for dash calculation
   let dashPattern = [];
-  if (lineStyle === 'dotted') {
-    dashPattern = [context.lineWidth, context.lineWidth * 2]; // Small dash, larger gap
+  console.log(`[drawLine] Processing style: ${lineStyle}, lineWidth: ${lw}`); // DEBUG
+
+  if (lineStyle === 'dotted' || lineStyle === 'dotted_vector') {
+    // Use fixed small values for dotted lines, scaled slightly by line width
+    dashPattern = [lw * 0.5, lw * 1.5];
   } else if (lineStyle === 'dashed') {
-    dashPattern = [context.lineWidth * 3, context.lineWidth * 2]; // Longer dash, gap
-  } else if (lineStyle === 'dotted_vector') {
-    dashPattern = [context.lineWidth, context.lineWidth * 2];
+    // Use larger dash and gap, scaled by line width
+    dashPattern = [lw * 3, lw * 2];
   }
 
   if (dashPattern.length > 0) {
+    // Ensure dash pattern values are not zero
+    dashPattern = dashPattern.map(val => Math.max(0.1, val));
+    console.log(`[drawLine] Applying dash pattern: [${dashPattern.join(', ')}]`); // DEBUG
     context.setLineDash(dashPattern);
+  } else {
+    console.log(`[drawLine] No dash pattern applied (solid line).`); // DEBUG
   }
 
   context.lineTo(element.end.x, element.end.y);
-  context.stroke();
+  context.strokeStyle = element.color; // Ensure strokeStyle is set
+  context.lineWidth = lw; // Ensure lineWidth is set
+  context.stroke(); // Stroke the line path
 
-  // Reset line dash
+  // Reset line dash *before* drawing arrowhead if needed
   if (dashPattern.length > 0) {
     context.setLineDash([]);
   }
 
   // Draw arrowhead for vector types
   if (lineStyle === 'vector' || lineStyle === 'dotted_vector') {
-    drawArrowhead(context, element.start, element.end, element.lineWidth);
+    // Arrowhead should use the element's color
+    context.fillStyle = element.color;
+    drawArrowhead(context, element.start, element.end, lw);
   }
+
+  context.restore(); // Restore original context state (including dash setting)
 };
 
 /**
  * Helper function to draw an arrowhead
  */
 const drawArrowhead = (context, from, to, lineWidth) => {
-    const headLength = Math.max(10, lineWidth * 4); // Arrowhead size based on line width
+    // Prevent drawing arrowhead if start and end points are the same
+    if (from.x === to.x && from.y === to.y) return;
+
+    const headLength = Math.max(8, lineWidth * 3.5); // Adjusted size calculation
     const angle = Math.atan2(to.y - from.y, to.x - from.x);
 
+    // Save context state specifically for arrowhead drawing
     context.save();
-    context.beginPath();
+    // fillStyle should be set before calling this function
+    context.beginPath(); // Start a new path for the arrowhead
     context.translate(to.x, to.y);
     context.rotate(angle);
+    // Draw the arrowhead shape relative to the translated/rotated origin (the endpoint)
     context.moveTo(0, 0);
-    context.lineTo(-headLength, -headLength / 2);
-    context.lineTo(-headLength * 0.8, 0); // Make it slightly concave
-    context.lineTo(-headLength, headLength / 2);
+    context.lineTo(-headLength, -headLength / 2.5); // Adjusted shape
+    // context.lineTo(-headLength * 0.9, 0); // Removed concave point for simpler arrow
+    context.lineTo(-headLength, headLength / 2.5); // Adjusted shape
     context.closePath();
-    context.fill(); // Use fill for arrowhead
-    context.restore();
+    context.fill(); // Fill the arrowhead path
+    context.restore(); // Restore context state
 };
 
 
@@ -411,32 +438,41 @@ const drawCuboid = (context, element) => {
 
 
 /**
- * Draw a sphere (circle with shading)
+ * Draw a sphere (circle with equator and meridian lines)
  */
 const drawSphere = (context, element) => {
-  // Essentially draw a circle, maybe add a subtle gradient/highlight later if needed
-  drawCircle(context, element);
-  // Optional: Add a simple highlight
   const centerX = (element.start.x + element.end.x) / 2;
   const centerY = (element.start.y + element.end.y) / 2;
   const radiusX = Math.abs(element.end.x - element.start.x) / 2;
   const radiusY = Math.abs(element.end.y - element.start.y) / 2;
-  const radius = Math.min(radiusX, radiusY);
+  const ellipseHeightRatio = 0.3; // How tall the equator ellipse is relative to radiusY
 
-  if (radius > 5) {
-    context.save();
-    const gradient = context.createRadialGradient(
-      centerX - radius * 0.3, centerY - radius * 0.3, radius * 0.1,
-      centerX, centerY, radius
-    );
-    gradient.addColorStop(0, 'rgba(255,255,255,0.3)');
-    gradient.addColorStop(1, 'rgba(255,255,255,0)');
-    context.fillStyle = gradient;
-    context.beginPath();
-    context.ellipse(centerX, centerY, radiusX, radiusY, 0, 0, Math.PI * 2);
-    context.fill();
-    context.restore();
-  }
+  context.save();
+  context.lineWidth = element.lineWidth;
+  context.strokeStyle = element.color;
+
+  // Draw outer circle
+  context.beginPath();
+  context.ellipse(centerX, centerY, radiusX, radiusY, 0, 0, Math.PI * 2);
+  context.stroke();
+
+  // Draw equator (dashed back, solid front)
+  context.beginPath();
+  context.ellipse(centerX, centerY, radiusX, radiusY * ellipseHeightRatio, 0, 0, Math.PI); // Front half (solid)
+  context.stroke();
+
+  context.beginPath();
+  context.setLineDash([element.lineWidth * 2, element.lineWidth * 2]); // Dashed line
+  context.ellipse(centerX, centerY, radiusX, radiusY * ellipseHeightRatio, 0, Math.PI, Math.PI * 2); // Back half (dashed)
+  context.stroke();
+  context.setLineDash([]); // Reset dash
+
+  // Draw a vertical meridian arc
+  context.beginPath();
+  context.ellipse(centerX, centerY, radiusX * ellipseHeightRatio * 0.8, radiusY, 0, Math.PI * 0.5, Math.PI * 1.5); // Vertical ellipse (arc)
+  context.stroke();
+
+  context.restore();
 };
 
 /**
@@ -520,7 +556,7 @@ const drawPyramid = (context, element) => {
   context.moveTo(baseX1, baseY1);
   context.lineTo(x, baseY2);
   context.lineTo(x + width, baseY2);
-  context.lineTo(baseX2, baseY1);
+  context.lineTo(baseX2, baseY1); // Connect base corners
   // Edges to tip
   context.moveTo(tipX, tipY);
   context.lineTo(baseX1, baseY1);
@@ -530,9 +566,9 @@ const drawPyramid = (context, element) => {
   context.lineTo(x + width, baseY2);
   context.moveTo(tipX, tipY);
   context.lineTo(baseX2, baseY1);
-  // Hidden base line (optional, could be dashed)
-  // context.moveTo(baseX1, baseY1);
-  // context.lineTo(baseX2, baseY1);
+  // Draw the final base line (previously missing)
+  context.moveTo(baseX1, baseY1);
+  context.lineTo(baseX2, baseY1);
   context.stroke();
 };
 
@@ -559,7 +595,7 @@ const drawTetrahedron = (context, element) => {
   // Base triangle (visible lines)
   context.moveTo(baseLeftX, baseY);
   context.lineTo(baseRightX, baseY);
-  context.lineTo(baseMidX, baseMidY);
+  context.lineTo(baseMidX, baseMidY); // Connect base corners
   // Edges to tip
   context.moveTo(tipX, tipY);
   context.lineTo(baseLeftX, baseY);
@@ -567,9 +603,9 @@ const drawTetrahedron = (context, element) => {
   context.lineTo(baseRightX, baseY);
   context.moveTo(tipX, tipY);
   context.lineTo(baseMidX, baseMidY);
-  // Hidden base line (optional)
-  // context.moveTo(baseLeftX, baseY);
-  // context.lineTo(baseMidX, baseMidY);
+  // Draw the final base line (previously missing)
+  context.moveTo(baseLeftX, baseY);
+  context.lineTo(baseMidX, baseMidY);
   context.stroke();
 };
 

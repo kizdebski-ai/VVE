@@ -96,31 +96,33 @@ const selectShape = (shape) => {
 <style scoped>
 .shape-selector {
   display: flex;
-  flex-direction: column; /* Stack groups vertically */
-  gap: 15px; /* Space between groups */
-  padding-bottom: 10px;
-  margin-bottom: 10px;
-  border-bottom: 1px solid var(--border-color-light, #eee);
+  flex-direction: column;
+  gap: 10px; /* Reduced gap between groups */
   width: 100%;
+  /* Removed bottom border/margin, handled by group */
 }
 
 .shape-group {
   display: flex;
-  flex-wrap: wrap; /* Allow buttons to wrap */
+  flex-wrap: wrap;
   gap: 8px;
-  justify-content: center; /* Center buttons within the group */
-  position: relative; /* For title positioning */
-  padding-top: 15px; /* Space for the title */
+  justify-content: flex-start; /* Align buttons to the start */
+  position: relative;
+  padding: 15px 5px 5px 5px; /* Adjust padding for title */
+  border: 1px solid var(--border-color-light, #eee); /* Add border around group */
+  border-radius: 4px;
+  margin-bottom: 5px; /* Space below group */
 }
 
 .group-title {
   position: absolute;
-  top: -5px; /* Position above the buttons */
-  left: 50%;
-  transform: translateX(-50%);
+  top: -8px; /* Position slightly overlapping the border */
+  left: 10px; /* Position near the start */
+  /* transform: translateX(-50%); REMOVED */
   font-size: 10px;
+  font-weight: bold;
   color: var(--text-color-secondary, #666);
-  background-color: var(--toolbar-bg, #ffffff); /* Match background */
+  background-color: var(--toolbar-bg, #ffffff);
   padding: 0 5px;
   white-space: nowrap;
 }

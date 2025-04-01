@@ -70,17 +70,16 @@
 </template>
 
 <script>
-import { ref, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'; // Removed computed as yDrawings is now a direct ref
+import { ref, onMounted, onBeforeUnmount, watch, nextTick } from 'vue';
 import * as Y from 'yjs';
-import { UndoManager } from 'yjs'; // Import UndoManager
-// import { v4 as uuidv4 } from 'uuid'; // Use Yjs mechanisms for IDs if possible
+import { UndoManager } from 'yjs';
 import Collaborators from './Collaborators.vue';
 import ZoomPanControls from './ZoomPanControls.vue';
 import EraserModeControls from './EraserModeControls.vue';
 import StatusMessage from './StatusMessage.vue';
-import { connectToYjs } from '../services/connectToYjs'; // Import the new provider
+import { connectToYjs } from '../services/connectToYjs';
 import { drawElement, throttle, isPointInElement, distanceToSegment } from '../utils/canvasDrawing.js';
-import { createNewElement, createTextElement, createImageElement, getCursorStyle } from '../utils/canvasTools.js'; // Adapt these for Yjs maps
+import { createNewElement, createTextElement, createImageElement, getCursorStyle } from '../utils/canvasTools.js';
 import { drawGrid } from '../utils/canvasGrid.js';
 
 // Debounce function
@@ -106,13 +105,10 @@ export default {
     StatusMessage,
   },
   props: {
-    // Removed ydoc and awareness props - connection handled internally now
-    debugMode: {
-      type: Boolean,
-      default: false,
-    },
+    debugMode: { type: Boolean, default: false },
+    currentShape: { type: String, default: 'rectangle' } // Add currentShape prop
   },
-  emits: ['state-updated'], // Keep for now if needed by parent for autosave/export trigger
+  emits: ['state-updated'],
 
   setup(props, { emit }) {
     const canvas = ref(null);
@@ -131,32 +127,28 @@ export default {
     const statusTimeout = ref(null);
     const darkMode = ref(false);
     const eraserMode = ref('erase');
-    const lastReleasedElementIndex = ref(-1); // Keep for delete mode highlight? Needs Yjs adaptation.
-    const currentElementPreview = ref(null); // For drawing preview
-    const pointsBuffer = ref([]); // For smoothing preview
+    const lastReleasedElementIndex = ref(-1);
+    const currentElementPreview = ref(null);
+    const pointsBuffer = ref([]);
     const smoothingFactor = ref(0.2);
     const notifications = ref([]);
     const notificationId = ref(0);
-    const clipboardInput = ref(null); // Ref for clipboard input
-    const imageCache = ref(new Map()); // Cache for loaded image objects
-    const hoveredElementIndex = ref(-1); // Index of element hovered by eraser
+    const clipboardInput = ref(null);
+    const imageCache = ref(new Map());
+    const hoveredElementIndex = ref(-1);
 
     // --- Yjs specific state (managed internally) ---
-    const yjsConnection = ref(null); // Stores the connection object { ydoc, socket, yDrawings, disconnect }
-    const ydoc = ref(null); // Y.Doc instance from the provider
-    const yDrawings = ref(null); // Y.Array for drawings from the provider
-    const undoManager = ref(null); // Y.UndoManager instance
+    const yjsConnection = ref(null);
+    const ydoc = ref(null);
+    const yDrawings = ref(null);
+    const undoManager = ref(null);
     const canUndo = ref(false);
     const canRedo = ref(false);
-    // Awareness will be handled later via yjsConnection if needed
 
-    // --- Local component state ---
-    // const localAwarenessState = ref({}); // Awareness state is not handled by this provider yet
 
     // --- Methods ---
 
     const redrawCanvas = () => {
-      // Use the local yDrawings ref
       if (!context.value || !yDrawings.value) return;
 
       const ctx = context.value;
@@ -170,88 +162,69 @@ export default {
         panOffset.value.x, panOffset.value.y
       );
 
-      // Draw elements from Yjs array (now yDrawings)
       yDrawings.value.forEach((elementMap, index) => {
         let element;
-        const type = elementMap.get('type'); // Get type first
+        const type = elementMap.get('type');
 
         if (type === 'image') {
-            // For images, get all properties directly using .get()
             const rawPosition = elementMap.get('position');
-            let finalPosition = { x: 0, y: 0 }; // Default position
+            let finalPosition = { x: 0, y: 0 };
 
-            // Check if rawPosition is an object and try to get x, y
-            if (rawPosition && typeof rawPosition === 'object') {
-                if (typeof rawPosition.x === 'number' && typeof rawPosition.y === 'number') {
-                    // Looks like a plain object already
-                    finalPosition = { x: rawPosition.x, y: rawPosition.y };
-                } else if (typeof rawPosition.toJSON === 'function') {
-                    // Maybe it's a Y.Map or similar, try toJSON()
-                    const posJSON = rawPosition.toJSON();
-                    if (typeof posJSON.x === 'number' && typeof posJSON.y === 'number') {
-                        finalPosition = { x: posJSON.x, y: posJSON.y };
-                    } else {
-                         console.error("[redrawCanvas] Image position object after toJSON() is invalid:", posJSON);
-                    }
-                } else {
-                     console.error("[redrawCanvas] Image position object is not a plain object or Y.Map:", rawPosition);
-                }
+            if (rawPosition instanceof Y.Map) {
+                finalPosition = rawPosition.toJSON();
+            } else if (rawPosition && typeof rawPosition === 'object' && typeof rawPosition.x === 'number' && typeof rawPosition.y === 'number') {
+                finalPosition = rawPosition;
             } else {
-                console.error("[redrawCanvas] Image position data is missing or not an object:", rawPosition);
+                console.error("[redrawCanvas] Image position data is invalid:", rawPosition);
+                return;
             }
 
             element = {
               type: type,
-              position: finalPosition, // Use the validated/converted position
+              position: finalPosition,
               dataUrl: elementMap.get('dataUrl'),
               width: elementMap.get('width'),
               height: elementMap.get('height')
             };
-            console.log(`[redrawCanvas] Image Element ${index} data (final pos):`, JSON.stringify(element));
 
         } else {
-            // For other types, toJSON() should be fine
-            element = elementMap.toJSON();
+            try {
+                element = elementMap.toJSON ? elementMap.toJSON() : elementMap;
+            } catch (e) {
+                console.error("Error converting elementMap to JSON:", elementMap, e);
+                return;
+            }
         }
 
-        // Highlight element if hovered by eraser
+        if (!element || typeof element !== 'object') {
+            console.error("Invalid element data after conversion:", element);
+            return;
+        }
+
+
         const isHighlighted = index === hoveredElementIndex.value && currentTool.value === 'eraser';
-        // Pass image cache and redraw function to drawElement
         drawElement(ctx, element, isHighlighted, smoothingFactor.value, imageCache.value, redrawCanvas);
       });
 
-      // Draw the preview of the element currently being drawn (don't use cache for preview)
       if (isDrawing.value && currentElementPreview.value) {
         drawElement(ctx, currentElementPreview.value, false, smoothingFactor.value);
       }
 
       ctx.restore();
-
-      // Emit state update if needed (e.g., for autosave trigger)
-      // emit('state-updated', {}); // Pass relevant info if needed
     };
 
-    // Debounced redraw for performance during rapid updates
-    const debouncedRedraw = debounce(redrawCanvas, 16); // ~60fps
+    const debouncedRedraw = debounce(redrawCanvas, 16);
 
-    const handleYjsUpdate = (events, transaction) => { // Y.Array observeDeep provides events and transaction
-      // Check if the update originated locally (optional, provider handles echo prevention)
-      // if (transaction.local) return;
-
-      // Redraw whenever the shared array changes
-      console.log(`Yjs update detected for drawings. yDrawings length: ${yDrawings.value?.length || 0}. Redrawing.`);
+    const handleYjsUpdate = (events, transaction) => {
+      // console.log(`Yjs update detected for drawings. yDrawings length: ${yDrawings.value?.length || 0}. Redrawing.`);
       debouncedRedraw();
-
-      // Trigger state update for parent if needed
       emit('state-updated', {});
     };
 
-    // --- Undo/Redo Manager Setup ---
     const updateUndoRedoState = () => {
       if (undoManager.value) {
         canUndo.value = undoManager.value.canUndo();
         canRedo.value = undoManager.value.canRedo();
-        // console.log(`[Canvas] UndoManager state: canUndo=${canUndo.value}, canRedo=${canRedo.value}`);
       } else {
         canUndo.value = false;
         canRedo.value = false;
@@ -261,7 +234,6 @@ export default {
     const initializeUndoManager = () => {
       if (ydoc.value && yDrawings.value instanceof Y.Array) {
         if (undoManager.value) {
-          // Clean up previous instance if needed (less likely here than in Toolbar)
           undoManager.value.off('stack-item-added', updateUndoRedoState);
           undoManager.value.off('stack-item-popped', updateUndoRedoState);
           undoManager.value.destroy();
@@ -270,7 +242,7 @@ export default {
         undoManager.value = new UndoManager(yDrawings.value);
         undoManager.value.on('stack-item-added', updateUndoRedoState);
         undoManager.value.on('stack-item-popped', updateUndoRedoState);
-        updateUndoRedoState(); // Set initial state
+        updateUndoRedoState();
         console.log('[Canvas] UndoManager initialized successfully for yDrawings.');
       } else {
         console.warn('[Canvas] Cannot initialize UndoManager: ydoc or yDrawings (Y.Array) not available or not ready.', { ydoc: ydoc.value, yDrawings: yDrawings.value });
@@ -305,7 +277,7 @@ export default {
       if (container) {
         canvasWidth.value = container.clientWidth;
         canvasHeight.value = container.clientHeight;
-        nextTick(() => { // Ensure DOM updates before redraw
+        nextTick(() => {
            if (canvas.value) {
              canvas.value.width = canvasWidth.value;
              canvas.value.height = canvasHeight.value;
@@ -325,16 +297,32 @@ export default {
 
     const darkModeObserver = new MutationObserver(handleDarkModeChange);
 
+    const handleKeyDown = (event) => {
+      if (event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA') return;
+
+      if ((event.ctrlKey || event.metaKey) && !event.shiftKey && event.key.toLowerCase() === 'z') {
+          event.preventDefault();
+          undo();
+      }
+      if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 'z') {
+          event.preventDefault();
+          redo();
+      }
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'y') {
+          event.preventDefault();
+          redo();
+      }
+    };
+
     onMounted(() => {
       initCanvas();
       initClipboardHandler();
       window.addEventListener('resize', handleResize);
       window.addEventListener('keydown', handleKeyDown);
-      window.addEventListener('paste', handlePaste); // Keep global paste listener
+      window.addEventListener('paste', handlePaste);
       darkModeObserver.observe(document.body, { attributes: true });
-      handleResize(); // Initial size calculation
+      handleResize();
 
-      // --- Yjs Setup ---
       const urlParams = new URLSearchParams(window.location.search);
       const roomId = urlParams.get('room');
 
@@ -344,19 +332,9 @@ export default {
           yjsConnection.value = connection;
           ydoc.value = connection.ydoc;
           yDrawings.value = connection.yDrawings;
-
-          // Observe the shared drawings array for changes
           yDrawings.value.observeDeep(handleYjsUpdate);
-
-          // Initialize UndoManager AFTER yDrawings is confirmed to be a Y.Array
           initializeUndoManager();
-
-          // Initial draw based on Yjs state
           redrawCanvas();
-
-          // TODO: Setup awareness handling here when implemented in the provider
-          // Example: setupAwareness(connection.ydoc, connection.socket);
-
         } catch (error) {
           console.error("Failed to connect Yjs provider:", error);
           showToast("Error connecting to collaboration session.", "error");
@@ -372,12 +350,7 @@ export default {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('paste', handlePaste);
       darkModeObserver.disconnect();
-
-      // --- Yjs Cleanup ---
-      // Unobserve before disconnecting
       yDrawings.value?.unobserveDeep(handleYjsUpdate);
-
-      // Destroy UndoManager
       if (undoManager.value) {
         undoManager.value.off('stack-item-added', updateUndoRedoState);
         undoManager.value.off('stack-item-popped', updateUndoRedoState);
@@ -385,10 +358,7 @@ export default {
         undoManager.value = null;
         console.log('[Canvas] UndoManager destroyed');
       }
-
-      // Disconnect the WebSocket connection
       yjsConnection.value?.disconnect();
-      // TODO: Cleanup awareness handling here
     });
 
     // --- Input Handlers ---
@@ -403,7 +373,7 @@ export default {
         };
       }
       return {
-        offsetX: event.clientX - rect.left, // Use clientX/Y for consistency
+        offsetX: event.clientX - rect.left,
         offsetY: event.clientY - rect.top
       };
     };
@@ -416,23 +386,19 @@ export default {
     };
 
     const updateLocalAwarenessCursor = throttle((coords) => {
-        if (yjsConnection.value?.awareness) { // Check if awareness exists
-            // Also send user info if available (example)
+        if (yjsConnection.value?.awareness) {
             const userState = yjsConnection.value.awareness.getLocalState()?.user || { name: 'Anonymous', color: '#000000' };
             yjsConnection.value.awareness.setLocalStateField('cursor', {
                 x: coords.x,
                 y: coords.y,
             });
-             // Keep user info when updating cursor
             yjsConnection.value.awareness.setLocalStateField('user', userState);
         }
-    }, 50); // Throttle cursor updates
+    }, 50);
 
     const handleMouseMove = (e) => {
       const coords = getCoordinates(e);
       const transformedCoords = transformCoordinates(coords.offsetX, coords.offsetY);
-
-      // Update local awareness state (cursor position)
       updateLocalAwarenessCursor(transformedCoords);
 
       if (isPanning.value && lastPanPoint.value) {
@@ -444,33 +410,32 @@ export default {
         return;
       }
 
-      if (isDrawing.value && currentTool.value !== 'eraser') { // Don't draw path for eraser
+      if (isDrawing.value && currentTool.value !== 'eraser') {
         draw(transformedCoords);
       } else if (currentTool.value === 'eraser') {
-        // Eraser Hover Logic
         let foundIndex = -1;
-        // Iterate backwards to find the topmost element
-        for (let i = yDrawings.value.length - 1; i >= 0; i--) {
-            const elementMap = yDrawings.value.get(i);
-            const element = elementMap.toJSON(); // Convert Y.Map to plain object for hit testing
-             // Use a slightly larger hit distance for easier erasing
-            if (isPointInElement(transformedCoords, element, (element.lineWidth || 2) / 2 + 5)) {
-                foundIndex = i;
-                break; // Stop after finding the first (topmost) element
+        if (yDrawings.value) {
+            for (let i = yDrawings.value.length - 1; i >= 0; i--) {
+                const elementMap = yDrawings.value.get(i);
+                try {
+                    const element = elementMap.toJSON ? elementMap.toJSON() : elementMap;
+                    if (isPointInElement(transformedCoords, element, (element.lineWidth || 2) / 2 + 5)) {
+                        foundIndex = i;
+                        break;
+                    }
+                } catch (error) {
+                    console.error("Error processing element for eraser hover:", elementMap, error);
+                }
             }
         }
-
         if (hoveredElementIndex.value !== foundIndex) {
             hoveredElementIndex.value = foundIndex;
-            redrawCanvas(); // Redraw needed to show/hide highlight
+            redrawCanvas();
         }
-
-        // Continuous Erasing while mouse button is down
         if (isDrawing.value && foundIndex !== -1) {
            eraseElement(foundIndex);
         }
       } else {
-         // Clear hover effect if not using eraser
          if (hoveredElementIndex.value !== -1) {
              hoveredElementIndex.value = -1;
              redrawCanvas();
@@ -479,21 +444,19 @@ export default {
     };
 
     const handleMouseDown = (event) => {
-      if (event.button === 1 || (event.button === 0 && event.altKey)) { // Middle or Alt+Left
+      if (event.button === 1 || (event.button === 0 && event.altKey)) {
         isPanning.value = true;
         const coords = getCoordinates(event);
         lastPanPoint.value = { ...transformCoordinates(coords.offsetX, coords.offsetY), screenX: coords.offsetX, screenY: coords.offsetY };
         event.preventDefault();
         return;
       }
-      if (event.button === 0) { // Left click
+      if (event.button === 0) {
         if (currentTool.value === 'eraser') {
-            // Handle single click erase
             if (hoveredElementIndex.value !== -1) {
                 eraseElement(hoveredElementIndex.value);
-                hoveredElementIndex.value = -1; // Reset hover after erase
+                hoveredElementIndex.value = -1;
             }
-            // Start "drawing" state for continuous erase on drag
             isDrawing.value = true;
         } else {
             startDrawing(event);
@@ -509,14 +472,11 @@ export default {
       }
       if (isDrawing.value) {
          if (currentTool.value === 'eraser') {
-             isDrawing.value = false; // Stop continuous erase state
-             // Optional: Reset hover index if needed, though mouseMove should handle it
-             // hoveredElementIndex.value = -1;
+             isDrawing.value = false;
          } else {
              finishDrawing();
          }
       }
-      // TODO: Adapt delete logic if kept
     };
 
     const handleMouseLeave = (event) => {
@@ -525,12 +485,10 @@ export default {
         lastPanPoint.value = null;
       }
       if (isDrawing.value) {
-        finishDrawing(); // Finish drawing if mouse leaves canvas
+        finishDrawing();
       }
-       // Clear local awareness cursor when mouse leaves
        if (yjsConnection.value?.awareness) {
            yjsConnection.value.awareness.setLocalStateField('cursor', null);
-           // Keep user info even when cursor is null
            const userState = yjsConnection.value.awareness.getLocalState()?.user;
            if (userState) {
                yjsConnection.value.awareness.setLocalStateField('user', userState);
@@ -538,23 +496,19 @@ export default {
        }
     };
 
-     // --- Touch Handlers ---
     const handleTouchStart = (event) => {
         if (event.touches.length === 1) {
-            // Prevent default scroll/zoom behavior
             event.preventDefault();
             startDrawing(event.touches[0]);
         }
-        // Handle panning with two fingers? (More complex)
     };
 
     const handleTouchMove = (event) => {
         if (event.touches.length === 1) {
-            // Prevent default scroll/zoom behavior
             event.preventDefault();
             const coords = getCoordinates(event);
             const transformedCoords = transformCoordinates(coords.offsetX, coords.offsetY);
-            updateLocalAwarenessCursor(transformedCoords); // Update cursor for touch
+            updateLocalAwarenessCursor(transformedCoords);
 
             if (isDrawing.value) {
                 draw(transformedCoords);
@@ -563,15 +517,12 @@ export default {
     };
 
     const handleTouchEnd = (event) => {
-        // Prevent default behaviors
         event.preventDefault();
         if (isDrawing.value) {
             finishDrawing();
         }
-         // Clear local awareness cursor on touch end
         if (yjsConnection.value?.awareness) {
             yjsConnection.value.awareness.setLocalStateField('cursor', null);
-            // Keep user info even when cursor is null
             const userState = yjsConnection.value.awareness.getLocalState()?.user;
             if (userState) {
                 yjsConnection.value.awareness.setLocalStateField('user', userState);
@@ -583,25 +534,38 @@ export default {
     // --- Drawing Logic (Yjs Integration) ---
 
     const startDrawing = (event) => {
-      // Use local ydoc ref
       if (!ydoc.value) return;
       isDrawing.value = true;
       const coords = getCoordinates(event);
       const transformedCoords = transformCoordinates(coords.offsetX, coords.offsetY);
-      pointsBuffer.value = []; // Reset points buffer
+      pointsBuffer.value = [];
 
-      // Create a preview element locally, don't add to Yjs yet
+      // FIX: Determine the actual tool type using props.currentShape if tool is 'shapes'
+      let toolType = currentTool.value;
+      if (toolType === 'shapes') {
+          toolType = props.currentShape; // Use the specific shape from prop
+          console.log(`[Canvas] Starting shape drawing with type: ${toolType}`);
+      }
+
+      // Create preview element based on the determined toolType
       currentElementPreview.value = createNewElement(
-        currentTool.value,
+        toolType, // Use the actual shape or tool
         transformedCoords,
         currentColor.value,
         currentLineWidth.value
       );
-      // Use the clientID from the connection's awareness object
-      const localClientId = yjsConnection.value?.awareness?.clientID || 'unknown';
-      currentElementPreview.value.id = `temp_${localClientId}_${Date.now()}`; // Temporary ID
 
-      // Special handling for text tool
+      // FIX: Check if preview element was created before setting ID
+      if (currentElementPreview.value) {
+          const localClientId = yjsConnection.value?.awareness?.clientID || 'unknown';
+          currentElementPreview.value.id = `temp_${localClientId}_${Date.now()}`;
+      } else {
+          console.error(`[Canvas] Failed to create preview element for tool type: ${toolType}`);
+          isDrawing.value = false; // Stop drawing if preview failed
+          return;
+      }
+
+
       if (currentTool.value === 'text') {
         const text = prompt('Enter text:', '');
         if (text) {
@@ -609,14 +573,13 @@ export default {
             transformedCoords,
             text,
             currentColor.value,
-        currentLineWidth.value * 10 // Example size calculation
-      );
-      // Add directly to Yjs within a transaction using local ydoc and yDrawings
-      ydoc.value.transact(() => {
-        yDrawings.value.push([new Y.Map(Object.entries(textElementData))]);
-      });
-    }
-    isDrawing.value = false; // Text is added immediately
+            currentLineWidth.value * 10
+          );
+          ydoc.value.transact(() => {
+            yDrawings.value.push([new Y.Map(Object.entries(textElementData))]);
+          });
+        }
+        isDrawing.value = false;
         currentElementPreview.value = null;
       }
     };
@@ -625,47 +588,42 @@ export default {
         if (ydoc.value && yDrawings.value && index >= 0 && index < yDrawings.value.length) {
             ydoc.value.transact(() => {
                 console.log(`Erasing element at index: ${index}`);
-                yDrawings.value.delete(index, 1); // Delete 1 element at the specified index
+                yDrawings.value.delete(index, 1);
             });
-            // No need to redraw here, Yjs update handler will trigger it
-            // redrawCanvas();
         }
     };
 
     const draw = (coords) => {
       if (!isDrawing.value || !currentElementPreview.value) return;
-
-      // Eraser no longer draws a path, handled separately
       if (currentTool.value === 'eraser') return;
 
-      switch (currentTool.value) {
+      let previewType = currentElementPreview.value.type;
+
+      switch (previewType) {
         case 'pen':
           currentElementPreview.value.points.push(coords);
           pointsBuffer.value.push(coords);
           if (pointsBuffer.value.length > 3) pointsBuffer.value.shift();
-          redrawCanvas(); // Redraw for preview
+          redrawCanvas();
           break;
         case 'line':
         case 'rectangle':
         case 'circle':
           currentElementPreview.value.end = coords;
-          redrawCanvas(); // Redraw for preview
+          redrawCanvas();
           break;
       }
     };
 
     const finishDrawing = () => {
-      // Use local ydoc and yDrawings refs
       if (!isDrawing.value || !currentElementPreview.value || !ydoc.value || !yDrawings.value) return;
       isDrawing.value = false;
 
       let elementToAdd = null;
       const preview = currentElementPreview.value;
 
-      // Finalize element data and check if it's valid to add
       switch (preview.type) {
         case 'pen':
-        case 'eraser':
           if (preview.points && preview.points.length > 1) {
             elementToAdd = { ...preview };
           }
@@ -673,19 +631,16 @@ export default {
         case 'line':
         case 'rectangle':
         case 'circle':
-          if (preview.start.x !== preview.end.x || preview.start.y !== preview.end.y) {
+          if (preview.start && preview.end && (preview.start.x !== preview.end.x || preview.start.y !== preview.end.y)) {
              elementToAdd = { ...preview };
           }
           break;
       }
 
-      // Add the finalized element to Yjs within a transaction
-      // Ensure eraser doesn't add its temporary path
-      if (elementToAdd && elementToAdd.type !== 'eraser') {
-         delete elementToAdd.id; // Remove temporary ID
-         console.log('Adding element to Yjs drawings array:', JSON.stringify(elementToAdd)); // Log element being added
+      if (elementToAdd) {
+         delete elementToAdd.id;
+         console.log('Adding element to Yjs drawings array:', JSON.stringify(elementToAdd));
 
-         // Use local ydoc and yDrawings
          ydoc.value.transact(() => {
            yDrawings.value.push([new Y.Map(Object.entries(elementToAdd))]);
          });
@@ -693,7 +648,7 @@ export default {
 
       currentElementPreview.value = null;
       pointsBuffer.value = [];
-      redrawCanvas(); // Redraw final state
+      redrawCanvas();
     };
 
     // --- Tool and Style Setters ---
@@ -704,7 +659,8 @@ export default {
 
     const updateCursor = () => {
       if (canvas.value) {
-        canvas.value.style.cursor = getCursorStyle(currentTool.value, currentColor.value, eraserMode.value);
+        const toolForCursor = currentTool.value === 'shapes' ? props.currentShape : currentTool.value;
+        canvas.value.style.cursor = getCursorStyle(toolForCursor, currentColor.value, eraserMode.value);
       }
     };
 
@@ -734,7 +690,6 @@ export default {
         panOffset.value.x = centerX - (centerX - panOffset.value.x) * zoomRatio;
         panOffset.value.y = centerY - (centerY - panOffset.value.y) * zoomRatio;
         redrawCanvas();
-        // showStatus(`Zoom: ${Math.round(zoomLevel.value * 100)}%`); // Reduce status spam
     };
     const zoomOut = () => {
         const prevZoom = zoomLevel.value;
@@ -745,56 +700,26 @@ export default {
         panOffset.value.x = centerX - (centerX - panOffset.value.x) * zoomRatio;
         panOffset.value.y = centerY - (centerY - panOffset.value.y) * zoomRatio;
         redrawCanvas();
-        // showStatus(`Zoom: ${Math.round(zoomLevel.value * 100)}%`); // Reduce status spam
     };
     const resetZoom = () => {
         zoomLevel.value = 1;
         panOffset.value = { x: 0, y: 0 };
         redrawCanvas();
-        // showStatus('View reset'); // Reduce status spam
     };
 
     // --- Other Actions ---
-    const handleKeyDown = (event) => {
-      if (event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA') return;
-      // Basic tool shortcuts (adapt as needed)
-      if (!event.ctrlKey && !event.metaKey && !event.altKey) {
-        switch (event.key.toLowerCase()) {
-          case 'p': setTool('pen'); break;
-          case 'e': setTool('eraser'); break;
-          case 'l': setTool('line'); break;
-          // Add other tool shortcuts
-        }
-      }
-      // Handle Undo/Redo shortcuts
-      if ((event.ctrlKey || event.metaKey) && !event.shiftKey && event.key.toLowerCase() === 'z') {
-          event.preventDefault();
-          undo();
-      }
-      if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 'z') {
-          event.preventDefault();
-          redo();
-      }
-      // Ctrl+Y for Redo (common on Windows)
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'y') {
-          event.preventDefault();
-          redo();
-      }
-    };
-
     const handlePaste = (event) => {
        event.preventDefault();
        const items = (event.clipboardData || window.clipboardData).items;
-       // Use local ydoc ref
        if (!items || !ydoc.value) return;
 
        for (let i = 0; i < items.length; i++) {
          if (items[i].type.indexOf('image') !== -1) {
            const blob = items[i].getAsFile();
            const reader = new FileReader();
-           reader.onload = (e) => addImageFromDataUrl(e.target.result); // Add image via Yjs
+           reader.onload = (e) => addImageFromDataUrl(e.target.result);
            reader.readAsDataURL(blob);
-           return; // Handle first image found
+           return;
          }
        }
 
@@ -802,29 +727,27 @@ export default {
        if (text) {
          const centerX = (canvasWidth.value / 2 - panOffset.value.x) / zoomLevel.value;
          const centerY = (canvasHeight.value / 2 - panOffset.value.y) / zoomLevel.value;
-         addTextElement({ x: centerX, y: centerY }, text); // Add text via Yjs
+         addTextElement({ x: centerX, y: centerY }, text);
        }
     };
 
     const addImageFromDataUrl = (dataUrl) => {
-        // Use local ydoc and yDrawings refs
         if (!ydoc.value || !yDrawings.value) return;
         const centerX = (canvasWidth.value / 2 - panOffset.value.x) / zoomLevel.value;
         const centerY = (canvasHeight.value / 2 - panOffset.value.y) / zoomLevel.value;
-        // Ensure createImageElement resolves with necessary properties (position, width, height, dataUrl)
         createImageElement(dataUrl, centerX, centerY).then(imageData => {
-             // Create a Y.Map for the image data
              const imageMap = new Y.Map();
              imageMap.set('type', 'image');
-             // Generate a unique ID if needed, though Yjs handles identity
-             // imageMap.set('id', `img_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`);
-             imageMap.set('position', { x: imageData.x, y: imageData.y }); // Store position object
+             // FIX: Store position as a nested Y.Map for consistency
+             const positionMap = new Y.Map();
+             positionMap.set('x', imageData.x);
+             positionMap.set('y', imageData.y);
+             imageMap.set('position', positionMap);
              imageMap.set('dataUrl', imageData.dataUrl);
              imageMap.set('width', imageData.width);
              imageMap.set('height', imageData.height);
-
              ydoc.value.transact(() => {
-                 yDrawings.value.push([imageMap]); // Push the Y.Map
+                 yDrawings.value.push([imageMap]);
              });
              console.log('Added image Y.Map to yDrawings');
         }).catch(err => {
@@ -834,13 +757,12 @@ export default {
     };
 
      const addTextElement = (position, text) => {
-        // Use local ydoc and yDrawings refs
         if (!ydoc.value || !yDrawings.value || !text) return;
         const textElementData = createTextElement(
             position,
             text,
             currentColor.value,
-            currentLineWidth.value * 10 // Example size
+            currentLineWidth.value * 10
         );
         ydoc.value.transact(() => {
             yDrawings.value.push([new Y.Map(Object.entries(textElementData))]);
@@ -864,12 +786,9 @@ export default {
     };
 
     // --- Public methods exposed via ref ---
-    // (These might be called by parent or Toolbar)
-    const clearCanvas = () => { // Called by App.vue via ref
-        // Use local ydoc and yDrawings refs
+    const clearCanvas = () => {
         if (ydoc.value && yDrawings.value && confirm('Are you sure you want to clear the canvas?')) {
             ydoc.value.transact(() => {
-                // Clear the drawings array
                 while (yDrawings.value.length > 0) {
                     yDrawings.value.delete(0);
                 }
@@ -893,11 +812,11 @@ export default {
         console.log('[Canvas] Cannot redo');
       }
     };
-    const getSerializableState = () => { /* Needs Yjs adaptation if still needed */ return {}; };
-    const loadState = (state) => { /* Needs Yjs adaptation */ return false; };
-    const exportAsText = () => { /* Needs Yjs adaptation */ return ''; };
-    const importFromText = (text) => { /* Needs Yjs adaptation */ return false; };
-    const toggleDebug = (enabled) => { /* Keep if needed */ };
+    const getSerializableState = () => { return {}; };
+    const loadState = (state) => { return false; };
+    const exportAsText = () => { return ''; };
+    const importFromText = (text) => { return false; };
+    const toggleDebug = (enabled) => { };
     const getViewportCenter = () => ({
         x: (canvasWidth.value / 2 - panOffset.value.x) / zoomLevel.value,
         y: (canvasHeight.value / 2 - panOffset.value.y) / zoomLevel.value,
@@ -905,7 +824,11 @@ export default {
 
 
     // --- Watchers ---
-    // Removed watchers for props.ydoc and props.awareness as they are no longer props
+    watch(() => props.currentShape, (newShape) => {
+        if (currentTool.value === 'shapes') {
+            updateCursor();
+        }
+    });
 
 
     return {
@@ -925,16 +848,15 @@ export default {
       eraserMode,
       notifications,
       clipboardInput,
-      yjsConnection, // Expose the connection object which contains awareness
-      canUndo, // Expose undo/redo state
-      canRedo, // Expose undo/redo state
-      // Methods
+      yjsConnection,
+      canUndo,
+      canRedo,
       handleMouseDown,
       handleMouseMove,
       handleMouseUp,
       handleMouseLeave,
       handleZoom,
-      handleKeyDown,
+      // handleKeyDown, // Keep internal, not needed by parent
       handlePaste,
       handleResize,
       handleTouchStart,
@@ -947,18 +869,18 @@ export default {
       setColor,
       setLineWidth,
       setEraserMode,
-      showToast, // Expose for parent
-      clearCanvas, // Expose for parent
-      undo, // Expose for parent (delegates to UndoManager)
-      redo, // Expose for parent (delegates to UndoManager)
-      getSerializableState, // Expose if needed
-      loadState, // Expose if needed
-      exportAsText, // Expose if needed
-      importFromText, // Expose if needed
-      toggleDebug, // Expose for parent
-      addImageFromDataUrl, // Expose if needed by parent/toolbar
-      getViewportCenter, // Expose for image placement etc.
-      redrawCanvas // Expose for parent (e.g., after theme change)
+      showToast,
+      clearCanvas,
+      undo,
+      redo,
+      getSerializableState,
+      loadState,
+      exportAsText,
+      importFromText,
+      toggleDebug,
+      addImageFromDataUrl,
+      getViewportCenter,
+      redrawCanvas
     };
   }
 }

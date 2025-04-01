@@ -1,5 +1,5 @@
 <template>
-  <div class="toolbar">
+  <div class="toolbar" ref="toolbarRef">
     <!-- Drawing Tools Category -->
     <div class="tool-category">
       <button :class="['tool-btn', { active: currentTool === 'pen' }]" @click="selectTool('pen', $event)" title="Pen (P)">
@@ -24,21 +24,11 @@
 
     <!-- Shapes Category -->
     <div class="tool-category">
-      <button :class="['tool-btn', { active: currentTool === 'line' }]" @click="selectTool('line', $event)" title="Line (L)">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <line x1="5" y1="19" x2="19" y2="5"></line>
-        </svg>
-      </button>
-      <button :class="['tool-btn', { active: currentTool === 'rectangle' }]" @click="selectTool('rectangle', $event)" title="Rectangle (R)">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
-        </svg>
-      </button>
-      <button :class="['tool-btn', { active: currentTool === 'circle' }]" @click="selectTool('circle', $event)" title="Circle (C)">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <circle cx="12" cy="12" r="10"></circle>
-        </svg>
-      </button>
+       <button :class="['tool-btn', { active: currentTool === 'shapes' }]" @click="selectTool('shapes', $event)" title="Shapes (S)">
+         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"></path>
+         </svg>
+       </button>
     </div>
 
     <!-- Other Tools Category -->
@@ -59,13 +49,22 @@
 
     <!-- Floating Options Panel -->
     <FloatingOptions
-      v-if="floatingOptionsPosition.visible"
+      ref="floatingOptionsRef"
+      v-show="floatingOptionsPosition.visible" 
+      :style="{ /* Temporary fixed position for debugging */
+        position: 'fixed',
+        top: '150px',
+        left: '100px',
+        border: '2px solid blue', /* Changed border color for visibility */
+        zIndex: 1100
+      }"
       :initialColor="currentColor"
       :initialWidth="currentLineWidth"
-      :top="floatingOptionsPosition.top"
-      :left="floatingOptionsPosition.left"
+      :show-shape-selector="currentTool === 'shapes'"
+      :current-shape="currentShape"
       @color-changed="setColor"
       @line-width-changed="updateLineWidth"
+      @shape-changed="handleShapeChange"
     />
 
     <!-- Action Tools Category -->
@@ -82,7 +81,6 @@
           <path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3L21 13"></path>
         </svg>
       </button>
-      <!-- REMOVED Clear Canvas Button -->
     </div>
 
     <!-- Export/Import/Share Category -->
@@ -119,25 +117,19 @@
       style="display: none"
       accept="image/*"
       @change="onImageSelected">
-
-    <!-- REMOVED Keyboard shortcuts button category -->
-    <!-- REMOVED Keyboard shortcuts info dialog -->
   </div>
 </template>
 
 <script>
 import { ref, onMounted, onBeforeUnmount, watch, nextTick, reactive } from 'vue';
-import ColorPicker from './ColorPicker.vue';
 import FloatingOptions from './FloatingOptions.vue';
 
 export default {
   name: 'ToolBar',
   components: {
-    ColorPicker, // Keep ColorPicker if it's used elsewhere, or remove if only used inline before
-    FloatingOptions // Register the new component
+    FloatingOptions
   },
   props: {
-    // Add props for undo/redo state and actions
     canUndo: { type: Boolean, default: false },
     canRedo: { type: Boolean, default: false },
     undo: { type: Function, required: true },
@@ -147,107 +139,122 @@ export default {
     'tool-changed',
     'color-changed',
     'line-width-changed',
-    'clear-canvas', // Keep emit even if button is removed, parent might still need it
+    'shape-changed',
+    'clear-canvas',
     'export-whiteboard',
     'import-whiteboard',
     'image-selected',
-    'share-room' // Added share-room emit
+    'share-room'
   ],
   setup(props, { emit }) {
     const currentTool = ref('pen');
     const currentColor = ref('#000000');
     const currentLineWidth = ref(2);
-    const imageInput = ref(null); // Ref for the hidden image input
-    const floatingOptionsPosition = reactive({ top: 0, left: 0, visible: false }); // State for panel position & visibility
+    const currentShape = ref('rectangle');
+    const imageInput = ref(null);
+    const floatingOptionsPosition = reactive({ top: 150, left: 100, visible: false }); // Keep state, use v-show
+    const toolbarRef = ref(null);
+    const floatingOptionsRef = ref(null);
+
+    const handleClickOutside = (event) => {
+      if (!floatingOptionsPosition.visible) return;
+      const toolbarEl = toolbarRef.value;
+      const optionsEl = floatingOptionsRef.value?.$el;
+      if (event.target && optionsEl && !optionsEl.contains(event.target) && toolbarEl && !toolbarEl.contains(event.target)) {
+         console.log('[Toolbar] Click outside detected, hiding options.');
+         floatingOptionsPosition.visible = false;
+      }
+    };
 
     onMounted(() => {
-      // Keyboard shortcuts listener (keep for tool shortcuts)
       window.addEventListener('keydown', handleKeyDown);
-
-      // Emit initial values
+      document.addEventListener('click', handleClickOutside, true);
       nextTick(() => {
         emit('tool-changed', currentTool.value);
         emit('color-changed', currentColor.value);
         emit('line-width-changed', parseInt(currentLineWidth.value));
+        emit('shape-changed', currentShape.value);
       });
     });
 
     onBeforeUnmount(() => {
       window.removeEventListener('keydown', handleKeyDown);
+      document.removeEventListener('click', handleClickOutside, true);
     });
 
-    // --- Methods ---
     const handleKeyDown = (event) => {
-      // Skip if typing in input/textarea
-      if (event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA') {
-        return;
+      if (event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA') return;
+      if (!event.ctrlKey && !event.metaKey && !event.altKey) {
+        const keyToolMap = {
+          'p': 'pen', 'h': 'highlighter', 'e': 'eraser',
+          's': 'shapes', 't': 'text', 'i': 'image'
+        };
+        const toolForKey = keyToolMap[event.key.toLowerCase()];
+        if (toolForKey) {
+          selectTool(toolForKey, null);
+        }
       }
-       // Handle tool shortcuts (only if no modifier keys are pressed)
-       if (!event.ctrlKey && !event.metaKey && !event.altKey) {
-            // Find the button element corresponding to the key to calculate position later if needed
-            const keyToolMap = {
-                'p': 'pen', 'h': 'highlighter', 'e': 'eraser', 'l': 'line',
-                'r': 'rectangle', 'c': 'circle', 't': 'text', 'i': 'image'
-            };
-            const toolForKey = keyToolMap[event.key.toLowerCase()];
-
-            if (toolForKey) {
-                 // For now, we'll just select the tool, positioning won't work via shortcut yet.
-                 selectTool(toolForKey, null); // Pass null for event initially
-            }
-       }
     };
 
-    const toolsWithOptions = ['pen', 'highlighter', 'line', 'rectangle', 'circle'];
+    const toolsWithOptions = ['pen', 'highlighter', 'shapes'];
 
-    const selectTool = (tool, event = null) => { // event can be null if called from shortcut
+    const selectTool = (tool, event = null) => {
+      console.log(`[Toolbar DEBUG] selectTool called with tool: ${tool}, event: ${event ? 'present' : 'null'}`);
+      const isOptionTool = toolsWithOptions.includes(tool);
+      const isSameOptionTool = tool === currentTool.value && isOptionTool;
+
       currentTool.value = tool;
       emit('tool-changed', tool);
-      console.log('Tool changed to:', tool);
+      console.log('[Toolbar DEBUG] Tool changed to:', tool);
 
-      // Special case for image tool - trigger upload immediately
       if (tool === 'image') {
         uploadImage();
-        floatingOptionsPosition.visible = false; // Hide options panel if it was open
-        return; // Don't proceed with positioning logic for image tool
+        floatingOptionsPosition.visible = false;
+        console.log('[Toolbar DEBUG] Image tool selected, hiding options.');
+        return;
       }
 
-      // Show/Position options panel for relevant tools if triggered by a click event
-      if (toolsWithOptions.includes(tool) && event?.currentTarget) {
-        const buttonRect = event.currentTarget.getBoundingClientRect();
-        const toolbarRect = event.currentTarget.closest('.toolbar')?.getBoundingClientRect(); // Get toolbar bounds for relative positioning
-
-        if (toolbarRect) {
-            floatingOptionsPosition.top = buttonRect.top - toolbarRect.top; // Position relative to toolbar top
-            floatingOptionsPosition.left = buttonRect.right + 10; // Position to the right of the button + offset
-            floatingOptionsPosition.visible = true;
+      if (isOptionTool) {
+        if (isSameOptionTool) {
+          floatingOptionsPosition.visible = !floatingOptionsPosition.visible; // Toggle if same tool
+          console.log(`[Toolbar DEBUG] Toggling options visibility to: ${floatingOptionsPosition.visible}`);
         } else {
-             // Fallback if toolbar rect not found (shouldn't happen ideally)
-            floatingOptionsPosition.top = buttonRect.top;
-            floatingOptionsPosition.left = buttonRect.right + 10;
-            floatingOptionsPosition.visible = true;
+          floatingOptionsPosition.visible = true; // Always show if switching to a new option tool
+          console.log('[Toolbar DEBUG] Switching to new option tool, showing options.');
         }
-
+        // Keep position calculation logic, but it won't apply with fixed style
+        if (floatingOptionsPosition.visible && event?.currentTarget) {
+          const buttonElement = event.currentTarget;
+          // floatingOptionsPosition.top = buttonElement.offsetTop; // Keep calculation logic commented out for now
+          // floatingOptionsPosition.left = buttonElement.offsetLeft + buttonElement.offsetWidth + 10;
+          console.log(`[Toolbar DEBUG] (Position calculation skipped due to fixed style)`);
+        }
       } else {
         floatingOptionsPosition.visible = false;
+        console.log('[Toolbar DEBUG] Tool without options selected, hiding options.');
+      }
+
+      if (tool === 'shapes' && isOptionTool && !isSameOptionTool) {
+        emit('shape-changed', currentShape.value);
       }
     };
+
 
     const setColor = (color) => {
       currentColor.value = color;
       emit('color-changed', color);
-      console.log('Color changed to:', color);
     };
 
-    // Combined handler for line width changes from FloatingOptions
     const updateLineWidth = (width) => {
-        currentLineWidth.value = width; // Update local state
-        emit('line-width-changed', width);
-        console.log('Line width changed to:', width);
+      currentLineWidth.value = width;
+      emit('line-width-changed', width);
     };
 
-    // REMOVED clearCanvas method (only emit remains)
-    // REMOVED toggleShortcutsInfo method
+     const handleShapeChange = (shape) => {
+       currentShape.value = shape;
+       emit('shape-changed', shape);
+       console.log('Shape changed to:', shape);
+     };
 
     const exportWhiteboard = () => { emit('export-whiteboard'); };
     const importWhiteboard = () => { emit('import-whiteboard'); };
@@ -258,27 +265,28 @@ export default {
       const file = event.target.files[0];
       if (file) {
         emit('image-selected', file);
-        event.target.value = ''; // Reset file input
+        event.target.value = '';
       }
     };
 
-    // Expose necessary refs and methods to the template
     return {
+      toolbarRef,
+      floatingOptionsRef,
       currentTool,
       currentColor,
       currentLineWidth,
+      currentShape,
       imageInput,
-      floatingOptionsPosition, // Expose position state
-      // Methods
+      floatingOptionsPosition,
       selectTool,
       setColor,
-      updateLineWidth, // Use the single handler
+      updateLineWidth,
+      handleShapeChange,
       exportWhiteboard,
       importWhiteboard,
       shareWhiteboard,
       uploadImage,
       onImageSelected,
-      // Expose props.undo/redo directly if needed in template (they are used via @click="undo/redo")
       undo: props.undo,
       redo: props.redo,
       canUndo: props.canUndo,
@@ -297,8 +305,8 @@ export default {
   padding: 5px 0;
   width: 100%;
   height: 100%;
-  overflow-y: auto;
-  overflow-x: hidden;
+  overflow-y: auto; /* Allows scrolling within the toolbar */
+  /* overflow-x: hidden; REMOVED this line */
   scrollbar-width: none; /* Firefox */
 }
 
@@ -366,7 +374,7 @@ export default {
   transform: none;
 }
 
-/* Keep styles for FloatingOptions internal elements if needed, or remove if self-contained */
+/* Styles for elements previously in ToolBar but now potentially in FloatingOptions */
 .line-width-selector {
   display: flex;
   flex-direction: column;
@@ -408,8 +416,6 @@ export default {
 .tool-btn.danger:hover {
   background-color: rgba(255, 77, 79, 0.1);
 }
-
-/* REMOVED .shortcuts-dialog styles */
 
 @media (max-width: 600px) {
   .toolbar {

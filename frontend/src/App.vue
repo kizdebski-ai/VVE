@@ -9,7 +9,8 @@
         :debug-mode="debugMode"
         :room-id="roomId"
         :username="username"
-       /> <!-- Self-closing tag -->
+        :current-shape="currentShape"
+       />
 
       <!-- User info in top-right corner -->
       <div class="floating-user-info">
@@ -20,7 +21,7 @@
             placeholder="Your Name"
             class="username-input"
             @blur="updateUsername"
-          /> <!-- Input remains self-closing -->
+          />
         </div>
 
         <div class="user-count">
@@ -45,13 +46,13 @@
       </div>
 
       <!-- Floating toolbar -->
-      <div class="floating-toolbar">
+      <div class="floating-toolbar"> <!-- Check styles for this container -->
         <ToolBar
           ref="toolbar"
           @tool-changed="handleToolChange"
           @color-changed="handleColorChange"
           @line-width-changed="handleLineWidthChange"
-          
+          @shape-changed="handleShapeChange"
           @export-whiteboard="handleExportRequest"
           @import-whiteboard="showImportDialog = true"
           @image-selected="handleImageSelected"
@@ -59,7 +60,7 @@
           :can-redo="whiteboard?.canRedo"
           :undo="callWhiteboardUndo"
           :redo="callWhiteboardRedo"
-         /> <!-- Self-closing tag -->
+         />
       </div>
 
       <!-- Room info display -->
@@ -73,15 +74,14 @@
       :show="showImportDialog"
       @close="showImportDialog = false"
       @import="handleImportState"
-    /> <!-- Self-closing tag -->
-
+    />
     <ExportDialog
       :show="showExportDialog"
       :export-text="exportedState"
       @close="showExportDialog = false"
       @copy="copyToClipboard"
       @download="downloadAsFile"
-    /> <!-- Self-closing tag -->
+    />
   </div>
 </template>
 
@@ -124,6 +124,7 @@ export default {
     const darkMode = ref(localStorage.getItem('darkMode') === 'true');
     const debugMode = ref(false);
     const roomId = ref('default_room');
+    const currentShape = ref('rectangle'); // Add state for current shape
 
     // --- Computed Properties ---
     const activeUsersCount = computed(() => {
@@ -217,6 +218,13 @@ export default {
 
     const handleLineWidthChange = (width) => {
       if (whiteboard.value) whiteboard.value.setLineWidth(width);
+    };
+
+    // New handler for shape changes
+    const handleShapeChange = (shape) => {
+      currentShape.value = shape;
+      // No need to call whiteboard.setShape directly if WhiteboardCanvas watches the prop
+      console.log('App.vue: Shape changed to', shape);
     };
 
     const handleClearCanvas = () => {
@@ -413,12 +421,14 @@ export default {
       darkMode,
       debugMode,
       roomId,
+      currentShape, // Return current shape
       activeUsersCount,
       localClientId,
       formattedLastSaved,
       handleToolChange,
       handleColorChange,
       handleLineWidthChange,
+      handleShapeChange, // Return shape handler
       handleClearCanvas,
       handleExportRequest,
       handleImportState,
@@ -487,6 +497,7 @@ export default {
   background-color: rgba(40, 40, 40, 0.8); border-radius: 10px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3); z-index: 1000;
   border: 1px solid rgba(255, 255, 255, 0.1);
+  /* overflow: visible !important; */ /* Ensure overflow is not hidden */
 }
 .floating-user-info {
   position: absolute; top: 15px; right: 15px; display: flex;

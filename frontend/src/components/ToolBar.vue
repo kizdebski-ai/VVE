@@ -50,12 +50,11 @@
     <!-- Floating Options Panel -->
     <FloatingOptions
       ref="floatingOptionsRef"
-      v-show="floatingOptionsPosition.visible" 
-      :style="{ /* Temporary fixed position for debugging */
+      v-if="floatingOptionsPosition.visible"
+      :style="{ /* Use fixed positioning */
         position: 'fixed',
-        top: '150px',
-        left: '100px',
-        border: '2px solid blue', /* Changed border color for visibility */
+        top: `${floatingOptionsPosition.top}px`,
+        left: `${floatingOptionsPosition.left}px`,
         zIndex: 1100
       }"
       :initialColor="currentColor"
@@ -152,19 +151,31 @@ export default {
     const currentLineWidth = ref(2);
     const currentShape = ref('rectangle');
     const imageInput = ref(null);
-    const floatingOptionsPosition = reactive({ top: 150, left: 100, visible: false }); // Keep state, use v-show
+    const floatingOptionsPosition = reactive({ top: 0, left: 0, visible: false });
     const toolbarRef = ref(null);
     const floatingOptionsRef = ref(null);
+    const lastOpenedByButton = ref(null); // Track which button opened the panel
 
+    // --- Click Outside Handler (Refined) ---
     const handleClickOutside = (event) => {
       if (!floatingOptionsPosition.visible) return;
-      const toolbarEl = toolbarRef.value;
+
       const optionsEl = floatingOptionsRef.value?.$el;
-      if (event.target && optionsEl && !optionsEl.contains(event.target) && toolbarEl && !toolbarEl.contains(event.target)) {
-         console.log('[Toolbar] Click outside detected, hiding options.');
-         floatingOptionsPosition.visible = false;
+
+      // Check if the click target exists and is NOT inside the options panel
+      if (event.target && optionsEl && !optionsEl.contains(event.target)) {
+        // Check if the click target is the button that *just* opened the panel
+        if (lastOpenedByButton.value && lastOpenedByButton.value.contains(event.target)) {
+          // console.log('[Toolbar] Clicked the opener button again, allowing toggle.');
+          // The selectTool function will handle the toggle
+        } else {
+          console.log('[Toolbar] Click outside detected, hiding options.');
+          floatingOptionsPosition.visible = false;
+          lastOpenedByButton.value = null; // Reset tracker
+        }
       }
     };
+
 
     onMounted(() => {
       window.addEventListener('keydown', handleKeyDown);
@@ -202,38 +213,53 @@ export default {
       console.log(`[Toolbar DEBUG] selectTool called with tool: ${tool}, event: ${event ? 'present' : 'null'}`);
       const isOptionTool = toolsWithOptions.includes(tool);
       const isSameOptionTool = tool === currentTool.value && isOptionTool;
+      const clickedButtonElement = event?.currentTarget || null;
 
+      // Set the new tool
       currentTool.value = tool;
       emit('tool-changed', tool);
       console.log('[Toolbar DEBUG] Tool changed to:', tool);
 
+      // Special case for image tool
       if (tool === 'image') {
         uploadImage();
         floatingOptionsPosition.visible = false;
+        lastOpenedByButton.value = null;
         console.log('[Toolbar DEBUG] Image tool selected, hiding options.');
         return;
       }
 
+      // Handle visibility and positioning for tools with options
       if (isOptionTool) {
         if (isSameOptionTool) {
-          floatingOptionsPosition.visible = !floatingOptionsPosition.visible; // Toggle if same tool
+          // Toggle visibility if clicking the same tool again
+          floatingOptionsPosition.visible = !floatingOptionsPosition.visible;
+          lastOpenedByButton.value = floatingOptionsPosition.visible ? clickedButtonElement : null; // Track if opened
           console.log(`[Toolbar DEBUG] Toggling options visibility to: ${floatingOptionsPosition.visible}`);
         } else {
-          floatingOptionsPosition.visible = true; // Always show if switching to a new option tool
+          // Switching to a new tool with options, always show
+          floatingOptionsPosition.visible = true;
+          lastOpenedByButton.value = clickedButtonElement; // Track which button opened it
           console.log('[Toolbar DEBUG] Switching to new option tool, showing options.');
         }
-        // Keep position calculation logic, but it won't apply with fixed style
-        if (floatingOptionsPosition.visible && event?.currentTarget) {
-          const buttonElement = event.currentTarget;
-          // floatingOptionsPosition.top = buttonElement.offsetTop; // Keep calculation logic commented out for now
-          // floatingOptionsPosition.left = buttonElement.offsetLeft + buttonElement.offsetWidth + 10;
-          console.log(`[Toolbar DEBUG] (Position calculation skipped due to fixed style)`);
+
+        // Update position using getBoundingClientRect relative to viewport if showing
+        if (floatingOptionsPosition.visible && clickedButtonElement) {
+          const buttonRect = clickedButtonElement.getBoundingClientRect();
+          floatingOptionsPosition.top = buttonRect.top; // Use viewport top
+          floatingOptionsPosition.left = buttonRect.right + 10; // Position right of button
+          console.log(`[Toolbar DEBUG] Positioning options for ${tool} at top: ${floatingOptionsPosition.top}, left: ${floatingOptionsPosition.left}. Visible: ${floatingOptionsPosition.visible}`);
+        } else if (floatingOptionsPosition.visible) {
+           console.log('[Toolbar DEBUG] Options visible but no event target for positioning (likely shortcut). Keeping position.');
         }
       } else {
+        // Hide options if selecting a tool without options
         floatingOptionsPosition.visible = false;
+        lastOpenedByButton.value = null;
         console.log('[Toolbar DEBUG] Tool without options selected, hiding options.');
       }
 
+      // Emit default shape only when switching TO shapes tool
       if (tool === 'shapes' && isOptionTool && !isSameOptionTool) {
         emit('shape-changed', currentShape.value);
       }

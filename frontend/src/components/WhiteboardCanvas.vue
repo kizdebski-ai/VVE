@@ -138,6 +138,8 @@ export default {
     const notifications = ref([]);
     const notificationId = ref(0);
     const clipboardInput = ref(null); // Ref for clipboard input
+    const imageCache = ref(new Map()); // Cache for loaded image objects
+    const hoveredElementIndex = ref(-1); // Index of element hovered by eraser
 
     // --- Yjs specific state (managed internally) ---
     const yjsConnection = ref(null); // Stores the connection object { ydoc, socket, yDrawings, disconnect }
@@ -170,14 +172,55 @@ export default {
 
       // Draw elements from Yjs array (now yDrawings)
       yDrawings.value.forEach((elementMap, index) => {
-        // Convert Y.Map to plain JS object for drawing function
-        const element = elementMap.toJSON();
-        // TODO: Adapt highlighting logic if needed for delete mode
-        const isHighlighted = false; // index === lastReleasedElementIndex.value;
-        drawElement(ctx, element, isHighlighted, smoothingFactor.value);
+        let element;
+        const type = elementMap.get('type'); // Get type first
+
+        if (type === 'image') {
+            // For images, get all properties directly using .get()
+            const rawPosition = elementMap.get('position');
+            let finalPosition = { x: 0, y: 0 }; // Default position
+
+            // Check if rawPosition is an object and try to get x, y
+            if (rawPosition && typeof rawPosition === 'object') {
+                if (typeof rawPosition.x === 'number' && typeof rawPosition.y === 'number') {
+                    // Looks like a plain object already
+                    finalPosition = { x: rawPosition.x, y: rawPosition.y };
+                } else if (typeof rawPosition.toJSON === 'function') {
+                    // Maybe it's a Y.Map or similar, try toJSON()
+                    const posJSON = rawPosition.toJSON();
+                    if (typeof posJSON.x === 'number' && typeof posJSON.y === 'number') {
+                        finalPosition = { x: posJSON.x, y: posJSON.y };
+                    } else {
+                         console.error("[redrawCanvas] Image position object after toJSON() is invalid:", posJSON);
+                    }
+                } else {
+                     console.error("[redrawCanvas] Image position object is not a plain object or Y.Map:", rawPosition);
+                }
+            } else {
+                console.error("[redrawCanvas] Image position data is missing or not an object:", rawPosition);
+            }
+
+            element = {
+              type: type,
+              position: finalPosition, // Use the validated/converted position
+              dataUrl: elementMap.get('dataUrl'),
+              width: elementMap.get('width'),
+              height: elementMap.get('height')
+            };
+            console.log(`[redrawCanvas] Image Element ${index} data (final pos):`, JSON.stringify(element));
+
+        } else {
+            // For other types, toJSON() should be fine
+            element = elementMap.toJSON();
+        }
+
+        // Highlight element if hovered by eraser
+        const isHighlighted = index === hoveredElementIndex.value && currentTool.value === 'eraser';
+        // Pass image cache and redraw function to drawElement
+        drawElement(ctx, element, isHighlighted, smoothingFactor.value, imageCache.value, redrawCanvas);
       });
 
-      // Draw the preview of the element currently being drawn
+      // Draw the preview of the element currently being drawn (don't use cache for preview)
       if (isDrawing.value && currentElementPreview.value) {
         drawElement(ctx, currentElementPreview.value, false, smoothingFactor.value);
       }
@@ -401,10 +444,38 @@ export default {
         return;
       }
 
-      if (isDrawing.value) {
+      if (isDrawing.value && currentTool.value !== 'eraser') { // Don't draw path for eraser
         draw(transformedCoords);
+      } else if (currentTool.value === 'eraser') {
+        // Eraser Hover Logic
+        let foundIndex = -1;
+        // Iterate backwards to find the topmost element
+        for (let i = yDrawings.value.length - 1; i >= 0; i--) {
+            const elementMap = yDrawings.value.get(i);
+            const element = elementMap.toJSON(); // Convert Y.Map to plain object for hit testing
+             // Use a slightly larger hit distance for easier erasing
+            if (isPointInElement(transformedCoords, element, (element.lineWidth || 2) / 2 + 5)) {
+                foundIndex = i;
+                break; // Stop after finding the first (topmost) element
+            }
+        }
+
+        if (hoveredElementIndex.value !== foundIndex) {
+            hoveredElementIndex.value = foundIndex;
+            redrawCanvas(); // Redraw needed to show/hide highlight
+        }
+
+        // Continuous Erasing while mouse button is down
+        if (isDrawing.value && foundIndex !== -1) {
+           eraseElement(foundIndex);
+        }
+      } else {
+         // Clear hover effect if not using eraser
+         if (hoveredElementIndex.value !== -1) {
+             hoveredElementIndex.value = -1;
+             redrawCanvas();
+         }
       }
-      // TODO: Adapt highlight logic for delete mode if kept
     };
 
     const handleMouseDown = (event) => {
@@ -416,7 +487,17 @@ export default {
         return;
       }
       if (event.button === 0) { // Left click
-        startDrawing(event);
+        if (currentTool.value === 'eraser') {
+            // Handle single click erase
+            if (hoveredElementIndex.value !== -1) {
+                eraseElement(hoveredElementIndex.value);
+                hoveredElementIndex.value = -1; // Reset hover after erase
+            }
+            // Start "drawing" state for continuous erase on drag
+            isDrawing.value = true;
+        } else {
+            startDrawing(event);
+        }
       }
     };
 
@@ -427,7 +508,13 @@ export default {
         return;
       }
       if (isDrawing.value) {
-        finishDrawing();
+         if (currentTool.value === 'eraser') {
+             isDrawing.value = false; // Stop continuous erase state
+             // Optional: Reset hover index if needed, though mouseMove should handle it
+             // hoveredElementIndex.value = -1;
+         } else {
+             finishDrawing();
+         }
       }
       // TODO: Adapt delete logic if kept
     };
@@ -534,12 +621,25 @@ export default {
       }
     };
 
+    const eraseElement = (index) => {
+        if (ydoc.value && yDrawings.value && index >= 0 && index < yDrawings.value.length) {
+            ydoc.value.transact(() => {
+                console.log(`Erasing element at index: ${index}`);
+                yDrawings.value.delete(index, 1); // Delete 1 element at the specified index
+            });
+            // No need to redraw here, Yjs update handler will trigger it
+            // redrawCanvas();
+        }
+    };
+
     const draw = (coords) => {
       if (!isDrawing.value || !currentElementPreview.value) return;
 
+      // Eraser no longer draws a path, handled separately
+      if (currentTool.value === 'eraser') return;
+
       switch (currentTool.value) {
         case 'pen':
-        case 'eraser': // Eraser might need different logic (modifying existing elements or using blend modes)
           currentElementPreview.value.points.push(coords);
           pointsBuffer.value.push(coords);
           if (pointsBuffer.value.length > 3) pointsBuffer.value.shift();
@@ -580,11 +680,8 @@ export default {
       }
 
       // Add the finalized element to Yjs within a transaction
-      if (elementToAdd) {
-         // Assign a permanent ID (optional, Yjs handles object identity)
-         // elementToAdd.id = `elem_${props.awareness.clientID}_${Date.now()}`;
-         // Assign a permanent ID (optional, Yjs handles object identity)
-         // elementToAdd.id = `elem_${props.awareness.clientID}_${Date.now()}`;
+      // Ensure eraser doesn't add its temporary path
+      if (elementToAdd && elementToAdd.type !== 'eraser') {
          delete elementToAdd.id; // Remove temporary ID
          console.log('Adding element to Yjs drawings array:', JSON.stringify(elementToAdd)); // Log element being added
 
@@ -714,10 +811,25 @@ export default {
         if (!ydoc.value || !yDrawings.value) return;
         const centerX = (canvasWidth.value / 2 - panOffset.value.x) / zoomLevel.value;
         const centerY = (canvasHeight.value / 2 - panOffset.value.y) / zoomLevel.value;
+        // Ensure createImageElement resolves with necessary properties (position, width, height, dataUrl)
         createImageElement(dataUrl, centerX, centerY).then(imageData => {
-            ydoc.value.transact(() => {
-                yDrawings.value.push([new Y.Map(Object.entries(imageData))]);
-            });
+             // Create a Y.Map for the image data
+             const imageMap = new Y.Map();
+             imageMap.set('type', 'image');
+             // Generate a unique ID if needed, though Yjs handles identity
+             // imageMap.set('id', `img_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`);
+             imageMap.set('position', { x: imageData.x, y: imageData.y }); // Store position object
+             imageMap.set('dataUrl', imageData.dataUrl);
+             imageMap.set('width', imageData.width);
+             imageMap.set('height', imageData.height);
+
+             ydoc.value.transact(() => {
+                 yDrawings.value.push([imageMap]); // Push the Y.Map
+             });
+             console.log('Added image Y.Map to yDrawings');
+        }).catch(err => {
+            console.error("Error creating image element:", err);
+            showToast("Failed to process image.", "error");
         });
     };
 

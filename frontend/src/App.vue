@@ -294,19 +294,55 @@ export default {
     };
 
     const handleImageSelected = (file) => {
-      if (!file || !whiteboard.value) return;
+      console.log("App.vue: handleImageSelected called with:", file); // Log entry
+      if (!file) {
+          console.warn("handleImageSelected: No file received.");
+          return;
+      }
+      if (!whiteboard.value) {
+          console.warn("handleImageSelected: Whiteboard ref not available yet.");
+          // Maybe queue the file or show an error?
+          showNotification("Whiteboard not ready, please try again.", "warning");
+          return;
+      }
+
       if (file instanceof File) {
+        console.log(`handleImageSelected: Processing File object: ${file.name}, type: ${file.type}`);
         const reader = new FileReader();
+
         reader.onload = (e) => {
+          console.log("FileReader onload triggered."); // Log onload
+          const dataUrl = e.target.result;
           if (whiteboard.value?.addImageFromDataUrl) {
-            whiteboard.value.addImageFromDataUrl(e.target.result);
+            console.log("Calling whiteboard.addImageFromDataUrl with dataUrl (first 50 chars):", dataUrl.substring(0, 50)); // Log before call
+            whiteboard.value.addImageFromDataUrl(dataUrl);
+            console.log("Called whiteboard.addImageFromDataUrl."); // Log after call
+          } else {
+            console.error("Whiteboard ref or addImageFromDataUrl method not available when FileReader loaded.");
+            showNotification("Error processing image (internal).", "error");
           }
         };
+
+        reader.onerror = (err) => { // Add FileReader error handling
+            console.error("FileReader error:", err);
+            showNotification("Error reading selected file.", "error"); // Use showNotification
+        };
+
         reader.readAsDataURL(file);
-      } else if (whiteboard.value?.addImageFromDataUrl) {
-        whiteboard.value.addImageFromDataUrl(file);
+        console.log("FileReader readAsDataURL called."); // Log read call
+
+      } else {
+         console.warn("handleImageSelected received non-File object:", file);
+         // Attempt to call addImageFromDataUrl anyway if it's possibly a data URL
+         if (whiteboard.value?.addImageFromDataUrl && typeof file === 'string') {
+             console.log("Calling whiteboard.addImageFromDataUrl with non-File object (string)...");
+             whiteboard.value.addImageFromDataUrl(file);
+         } else {
+             showNotification("Invalid image data received.", "error");
+         }
       }
     };
+
 
     const toggleDarkMode = () => {
       darkMode.value = !darkMode.value;
@@ -383,7 +419,7 @@ export default {
       handleClearCanvas,
       handleExportRequest,
       handleImportState,
-      handleImageSelected,
+      handleImageSelected, // Make sure this is returned
       copyToClipboard: copyToClipboardLocal, // Use renamed method
       downloadAsFile,
       handleJsonFileImport,

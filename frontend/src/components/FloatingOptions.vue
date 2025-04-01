@@ -102,14 +102,16 @@ const positionStyle = computed(() => ({
 <style scoped>
 .floating-options {
   position: absolute;
-  z-index: 1001; /* Increased z-index */
+  z-index: 1001;
   background-color: var(--toolbar-bg, #ffffff);
   border: 1px solid var(--border-color, #e0e0e0);
   border-radius: 8px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-  padding: 10px;
+  padding: 15px; /* Increased padding */
   display: flex;
   flex-direction: column;
+  min-width: 150px; /* Ensure a minimum width */
+  max-width: 300px; /* Allow it to grow but not excessively */
   gap: 10px;
 }
 

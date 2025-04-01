@@ -132,6 +132,8 @@ export default {
     const currentElementPreview = ref(null);
     const pointsBuffer = ref([]);
     const smoothingFactor = ref(0.2);
+    const shiftPressedAtStart = ref(false); // Track shift key state at mousedown
+    const startCoordsForShiftLine = ref(null); // Store start coords specifically for Shift+Pen
     const notifications = ref([]);
     const notificationId = ref(0);
     const clipboardInput = ref(null);
@@ -190,7 +192,17 @@ export default {
 
         } else {
             try {
-                element = elementMap.toJSON ? elementMap.toJSON() : elementMap;
+                // Ensure all properties are extracted, especially lineStyle
+                element = {};
+                for (const [key, value] of elementMap.entries()) {
+                    if (value instanceof Y.Array || value instanceof Y.Map) {
+                        element[key] = value.toJSON();
+                    } else {
+                        element[key] = value;
+                    }
+                }
+                 // DEBUG: Log the element data being passed to drawElement
+                 // console.log(`[redrawCanvas] Drawing element ${index}:`, JSON.stringify(element));
             } catch (e) {
                 console.error("Error converting elementMap to JSON:", elementMap, e);
                 return;
@@ -412,7 +424,7 @@ export default {
       }
 
       if (isDrawing.value && currentTool.value !== 'eraser') {
-        draw(transformedCoords);
+        draw(transformedCoords, e.shiftKey); // Pass shift key state
       } else if (currentTool.value === 'eraser') {
         let foundIndex = -1;
         if (yDrawings.value) {
@@ -442,9 +454,13 @@ export default {
              redrawCanvas();
          }
       }
-    };
+      };
 
     const handleMouseDown = (event) => {
+      shiftPressedAtStart.value = event.shiftKey; // Record shift state on mousedown
+      startCoordsForShiftLine.value = null; // Reset shift line start point
+      // console.log(`[handleMouseDown] Shift pressed at start: ${shiftPressedAtStart.value}`); // DEBUG - Keep less verbose
+
       if (event.button === 1 || (event.button === 0 && event.altKey)) {
         isPanning.value = true;
         const coords = getCoordinates(event);
@@ -512,7 +528,8 @@ export default {
             updateLocalAwarenessCursor(transformedCoords);
 
             if (isDrawing.value) {
-                draw(transformedCoords);
+                // Touch events don't have shiftKey, so pass false
+                draw(transformedCoords, false);
             }
         }
     };
@@ -544,13 +561,18 @@ export default {
       let toolType = currentTool.value;
       let elementData = {}; // Object to hold extra data like lineStyle
 
-      if (toolType === 'shapes') {
+      // Handle Shift+Pen combination: Keep type 'pen' for now, store start point
+      if (toolType === 'pen' && shiftPressedAtStart.value) {
+          console.log("[startDrawing] Shift+Pen detected, storing start point.");
+          startCoordsForShiftLine.value = transformedCoords; // Store the starting point
+          // Preview element remains 'pen' type initially for simplicity
+      } else if (toolType === 'shapes') {
           toolType = props.currentShape; // Use the specific shape from prop
-          console.log(`[Canvas] Starting shape drawing with type: ${toolType}`);
+          console.log(`[startDrawing] Starting shape drawing with type: ${toolType}`);
       } else if (toolType === 'lines') {
           toolType = 'line'; // Base type is 'line'
           elementData.lineStyle = props.currentLineStyle; // Add lineStyle
-          console.log(`[Canvas] Starting line drawing with style: ${props.currentLineStyle}`);
+          console.log(`[startDrawing] Starting line drawing with style: ${props.currentLineStyle}`);
       }
 
       // Create preview element based on the determined toolType
@@ -565,8 +587,9 @@ export default {
       if (currentElementPreview.value) {
           const localClientId = yjsConnection.value?.awareness?.clientID || 'unknown';
           currentElementPreview.value.id = `temp_${localClientId}_${Date.now()}`;
+          console.log("[startDrawing] Preview element created:", JSON.stringify(currentElementPreview.value)); // DEBUG
       } else {
-          console.error(`[Canvas] Failed to create preview element for tool type: ${toolType} with data:`, elementData);
+          console.error(`[startDrawing] Failed to create preview element for tool type: ${toolType} with data:`, elementData);
           isDrawing.value = false; // Stop drawing if preview failed
           return;
       }
@@ -599,24 +622,37 @@ export default {
         }
     };
 
-    const draw = (coords) => {
+    const draw = (coords, isShiftPressed) => { // Accept shift key state
       if (!isDrawing.value || !currentElementPreview.value) return;
       if (currentTool.value === 'eraser') return;
 
       const preview = currentElementPreview.value;
 
-      // Update logic based on the actual tool, not just preview type initially
+      // Update logic based on the actual tool and shift state
       if (currentTool.value === 'pen') {
-          preview.points.push(coords);
-          pointsBuffer.value.push(coords);
-          if (pointsBuffer.value.length > 3) pointsBuffer.value.shift();
+          if (shiftPressedAtStart.value && startCoordsForShiftLine.value) {
+              // Update preview for Shift+Pen: Draw straight line from stored start to current coords
+              // Modify the preview element directly to represent a line for drawing purposes
+              preview.type = 'line'; // Temporarily change type for drawElement
+              preview.start = startCoordsForShiftLine.value;
+              preview.end = coords;
+              delete preview.points; // Remove points array for line preview
+              // console.log(`[draw] Shift+Pen preview update (as line): [${startCoordsForShiftLine.value.x}, ${startCoordsForShiftLine.value.y}] -> [${coords.x}, ${coords.y}]`); // DEBUG
+          } else if (!shiftPressedAtStart.value) {
+              // Normal pen drawing - ensure preview type is 'pen'
+              preview.type = 'pen';
+              if (!preview.points) preview.points = []; // Initialize if needed
+              preview.points.push(coords);
+              pointsBuffer.value.push(coords);
+              if (pointsBuffer.value.length > 3) pointsBuffer.value.shift();
+          }
       } else if (currentTool.value === 'shapes' || currentTool.value === 'lines') {
-          // Update end coordinates for all shape/line types during drag
+          // Update end coordinates for shapes and regular lines
           preview.end = coords;
 
-          // Special handling for square to maintain aspect ratio during preview
+          // Special handling for square aspect ratio during preview
           if (preview.type === 'square') {
-              const dx = Math.abs(coords.x - preview.start.x);
+              const dx = Math.abs(coords.x - preview.start.x); // Use coords directly here
               const dy = Math.abs(coords.y - preview.start.y);
               const size = Math.max(dx, dy);
               preview.end = {
@@ -630,6 +666,12 @@ export default {
     };
 
     const finishDrawing = () => {
+      const wasShiftPressed = shiftPressedAtStart.value; // Capture state before resetting
+      const shiftStartPoint = startCoordsForShiftLine.value; // Capture start point
+      const originalTool = currentTool.value; // Capture the tool selected in the toolbar
+      shiftPressedAtStart.value = false; // Reset shift state
+      startCoordsForShiftLine.value = null; // Reset start point
+
       if (!isDrawing.value || !currentElementPreview.value || !ydoc.value || !yDrawings.value) {
           isDrawing.value = false; // Ensure drawing state is reset
           currentElementPreview.value = null;
@@ -642,21 +684,68 @@ export default {
 
       // Check if the element is valid (e.g., has size)
       const isValidElement = preview.start && preview.end && (preview.start.x !== preview.end.x || preview.start.y !== preview.end.y);
-      const isValidPen = preview.type === 'pen' && preview.points && preview.points.length > 1;
+      // Pen needs at least two distinct points unless it was a Shift+Pen action
+      const isValidPen = preview.type === 'pen' && preview.points && preview.points.length >= 2 && !wasShiftPressed;
+      // Shift+Pen is valid if we have the start point and the preview end point
+      const isValidShiftPen = originalTool === 'pen' && wasShiftPressed && shiftStartPoint && preview.end && (shiftStartPoint.x !== preview.end.x || shiftStartPoint.y !== preview.end.y);
 
-      if (isValidPen || (preview.type !== 'pen' && isValidElement)) {
-          elementToAdd = { ...preview };
-          delete elementToAdd.id; // Remove temporary ID
 
-          // Ensure lineStyle is included if it's a line element
-          if (elementToAdd.type === 'line' && !elementToAdd.lineStyle) {
-              elementToAdd.lineStyle = props.currentLineStyle || 'solid';
+      if (isValidPen || (preview.type !== 'pen' && isValidElement) || isValidShiftPen) {
+
+          // If Shift was held with the pen tool, create a 'line' element
+          if (wasShiftPressed && originalTool === 'pen' && isValidShiftPen) {
+              console.log("[finishDrawing] Shift held with Pen, creating Line element."); // DEBUG
+              elementToAdd = {
+                  type: 'line',
+                  start: shiftStartPoint, // Use the stored start point
+                  end: preview.end, // Use the final end point from the preview
+                  color: preview.color,
+                  lineWidth: preview.lineWidth,
+                  timestamp: Date.now(), // Use current timestamp
+                  lineStyle: 'solid' // Force solid line style for Shift+Pen
+              };
+          } else {
+              // Otherwise, use the preview element as is
+              elementToAdd = { ...preview };
+              delete elementToAdd.id; // Remove temporary ID
+
+              // Ensure lineStyle is included if the original tool was 'lines'
+              if (originalTool === 'lines' && elementToAdd.type === 'line') {
+                 // lineStyle should have been added in startDrawing, double-check
+                 if (!elementToAdd.lineStyle) {
+                     elementToAdd.lineStyle = props.currentLineStyle || 'solid';
+                 }
+                 console.log(`[finishDrawing] Adding Line element with style: ${elementToAdd.lineStyle}`); // DEBUG
+              }
           }
 
-          console.log('Adding element to Yjs drawings array:', JSON.stringify(elementToAdd));
-          ydoc.value.transact(() => {
-              yDrawings.value.push([new Y.Map(Object.entries(elementToAdd))]);
-          });
+          console.log('[finishDrawing] Element to add:', JSON.stringify(elementToAdd)); // DEBUG log before saving
+          // Add only if elementToAdd is not null (it shouldn't be null here based on checks)
+          if (elementToAdd) {
+              ydoc.value.transact(() => {
+                  // Convert element object to Y.Map before pushing
+                  const yElementMap = new Y.Map();
+                  for (const [key, value] of Object.entries(elementToAdd)) {
+                      // Handle nested objects like start/end points if necessary
+                      if (key === 'start' || key === 'end' || key === 'position') {
+                         if (typeof value === 'object' && value !== null) {
+                             yElementMap.set(key, new Y.Map(Object.entries(value)));
+                         } else {
+                             // Fallback or error handling if structure is unexpected
+                             console.warn(`Unexpected structure for ${key}:`, value);
+                             yElementMap.set(key, value); // Store as is, might cause issues later
+                         }
+                      } else if (key === 'points' && Array.isArray(value)) {
+                          // Store points as a plain array in Yjs Map for simplicity
+                          // For full collaborative editing of points, Y.Array would be needed
+                          yElementMap.set(key, value);
+                      } else {
+                          yElementMap.set(key, value);
+                      }
+                  }
+                  yDrawings.value.push([yElementMap]);
+              });
+          }
       } else {
           console.log('Drawing finished but element was too small or invalid, not adding.');
       }
@@ -955,9 +1044,9 @@ export default {
       // initCanvas, initClipboardHandler, handleYjsUpdate, redrawCanvas etc.
 
       // Expose redrawCanvas if external trigger is needed
-      redrawCanvas, // Added comma
+      redrawCanvas,
     };
-  }, // Added comma
+  },
 };
 </script>
 
@@ -1027,7 +1116,6 @@ export default {
   opacity: 0;
   transform: translateY(10px);
 }
-
 </style>
 
 <style>
@@ -1061,3 +1149,5 @@ export default {
 .toast-warning { background-color: #FF9800; }
 .toast-error { background-color: #F44336; }
 </style>
+
+

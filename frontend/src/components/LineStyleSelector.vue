@@ -50,12 +50,13 @@ const selectLineStyle = (style) => {
 <style scoped>
 .line-style-selector {
   display: flex;
+  flex-wrap: wrap; /* Allow wrapping */
   gap: 8px;
-  padding-bottom: 10px;
-  margin-bottom: 10px;
-  border-bottom: 1px solid var(--border-color-light, #eee);
+  padding: 5px; /* Add some padding */
+  margin-bottom: 10px; /* Space below */
+  /* border-bottom: 1px solid var(--border-color-light, #eee); REMOVED border */
   width: 100%;
-  justify-content: center;
+  justify-content: flex-start; /* Align to start */
 }
 
 .style-btn {

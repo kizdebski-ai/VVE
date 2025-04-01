@@ -253,8 +253,7 @@
 </template>
 
 <script>
-import { ref, onMounted, onBeforeUnmount, watch, nextTick, computed } from 'vue'; // Added computed
-import * as Y from 'yjs';
+import { ref, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'; // Removed computed and Yjs import
 import ColorPicker from './ColorPicker.vue';
 
 export default {
@@ -263,8 +262,22 @@ export default {
     ColorPicker
   },
   props: {
-    ydoc: { // Add ydoc prop
-      type: Object, // Y.Doc
+    // Remove ydoc prop
+    // Add props for undo/redo state and actions
+    canUndo: {
+      type: Boolean,
+      default: false
+    },
+    canRedo: {
+      type: Boolean,
+      default: false
+    },
+    undo: {
+      type: Function,
+      required: true
+    },
+    redo: {
+      type: Function,
       required: true
     }
   },
@@ -284,83 +297,14 @@ export default {
     const currentTool = ref('pen');
     const currentColor = ref('#000000');
     const currentLineWidth = ref(2);
-    const canUndo = ref(false);
-    const canRedo = ref(false);
+    // Removed canUndo, canRedo refs - use props instead
     const showShortcutsInfo = ref(false);
     const imageInput = ref(null); // Ref for the hidden image input
 
-    // --- Yjs Undo Manager ---
-    let undoManager = null;
-    // Use computed property to reactively get yElements
-    const yElements = computed(() => {
-        try {
-            // Attempt to get the array, return null if ydoc is not ready or doesn't have it
-            return props.ydoc?.getArray('elements');
-        } catch (e) {
-            console.error("Error getting ydoc.getArray('elements'):", e);
-            return null; // Return null on error
-        }
-    });
-
-
-    const updateUndoRedoState = () => {
-      if (undoManager) {
-        canUndo.value = undoManager.canUndo();
-        canRedo.value = undoManager.canRedo();
-        // console.log(`UndoManager state: canUndo=${canUndo.value}, canRedo=${canRedo.value}`);
-      } else {
-        canUndo.value = false;
-        canRedo.value = false;
-      }
-    };
-
-    const initializeUndoManager = () => {
-       // Ensure ydoc and the specific YArray exist before initializing
-      if (props.ydoc && yElements.value instanceof Y.Array) {
-        if (undoManager) {
-          // Clean up previous instance if ydoc or yElements changes significantly
-          undoManager.off('stack-item-added', updateUndoRedoState);
-          undoManager.off('stack-item-popped', updateUndoRedoState);
-          undoManager.destroy();
-          undoManager = null;
-           console.log('Previous UndoManager destroyed');
-        }
-        // Initialize with the reactive computed property's value
-        undoManager = new Y.UndoManager(yElements.value);
-        undoManager.on('stack-item-added', updateUndoRedoState);
-        undoManager.on('stack-item-popped', updateUndoRedoState);
-        updateUndoRedoState(); // Set initial state
-        console.log('UndoManager initialized successfully');
-      } else {
-         // Log error or warning if initialization prerequisites are not met
-         console.warn('Cannot initialize UndoManager: ydoc or yElements (Y.Array) not available or not ready.', {ydoc: props.ydoc, yElements: yElements.value});
-         // Ensure buttons are disabled if manager fails to init
-         canUndo.value = false;
-         canRedo.value = false;
-      }
-    };
-
-
-    // Watch ydoc prop for changes (e.g., if parent re-initializes)
-    // Use nextTick to ensure ydoc is fully available after potential parent updates
-    watch(() => props.ydoc, (newYDoc) => {
-        console.log('ydoc prop changed in Toolbar, attempting to re-initialize UndoManager...');
-        nextTick(() => {
-             initializeUndoManager();
-        });
-    }, { immediate: false }); // Don't run immediately, wait for mount
-
-    // Watch the computed yElements as well, in case the array itself is replaced (less common)
-     watch(yElements, (newYElements) => {
-         if (newYElements instanceof Y.Array) {
-            console.log('yElements (Y.Array) became available, attempting to initialize UndoManager...');
-            initializeUndoManager();
-         }
-     }, { immediate: false });
-
+    // --- Removed Yjs Undo Manager logic ---
 
     onMounted(() => {
-      // Keyboard shortcuts listener
+      // Keyboard shortcuts listener (keep for tool shortcuts)
       window.addEventListener('keydown', handleKeyDown);
 
       // Emit initial values
@@ -370,23 +314,12 @@ export default {
         emit('line-width-changed', parseInt(currentLineWidth.value));
       });
 
-      // Attempt initial UndoManager setup
-      // It might depend on ydoc being fully ready from the parent
-      nextTick(() => {
-          initializeUndoManager();
-      });
+      // Removed UndoManager setup
     });
 
     onBeforeUnmount(() => {
       window.removeEventListener('keydown', handleKeyDown);
-      // Destroy UndoManager
-      if (undoManager) {
-        undoManager.off('stack-item-added', updateUndoRedoState);
-        undoManager.off('stack-item-popped', updateUndoRedoState);
-        undoManager.destroy();
-        undoManager = null;
-        console.log('UndoManager destroyed');
-      }
+      // Removed UndoManager cleanup
     });
 
     // --- Methods ---
@@ -410,20 +343,7 @@ export default {
             }
        }
 
-       // Handle Undo/Redo shortcuts
-       if ((event.ctrlKey || event.metaKey) && !event.shiftKey && event.key.toLowerCase() === 'z') {
-           event.preventDefault();
-           undo();
-       }
-       if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 'z') {
-           event.preventDefault();
-           redo();
-       }
-       // Ctrl+Y for Redo (common on Windows)
-       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'y') {
-           event.preventDefault();
-           redo();
-       }
+       // Removed Undo/Redo shortcut handling (now in WhiteboardCanvas)
     };
 
     const selectTool = (tool) => {
@@ -449,23 +369,7 @@ export default {
       emit('clear-canvas');
     };
 
-    const undo = () => {
-      if (undoManager && undoManager.canUndo()) { // Check capability before calling
-        undoManager.undo();
-        console.log('Undo triggered');
-      } else {
-         console.log('Cannot undo');
-      }
-    };
-
-    const redo = () => {
-      if (undoManager && undoManager.canRedo()) { // Check capability before calling
-        undoManager.redo();
-        console.log('Redo triggered');
-      } else {
-         console.log('Cannot redo');
-      }
-    };
+    // Removed internal undo/redo methods - use props.undo() and props.redo() directly in template
 
     const exportWhiteboard = () => {
       emit('export-whiteboard');
@@ -502,8 +406,7 @@ export default {
       currentTool,
       currentColor,
       currentLineWidth,
-      canUndo,
-      canRedo,
+      // Removed canUndo, canRedo refs
       showShortcutsInfo,
       imageInput,
       // Methods
@@ -511,8 +414,7 @@ export default {
       setColor,
       updateLineWidth,
       clearCanvas,
-      undo,
-      redo,
+      // Removed undo, redo methods from return
       exportWhiteboard,
       importWhiteboard,
       shareWhiteboard,

@@ -72,6 +72,7 @@
 <script>
 import { ref, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'; // Removed computed as yDrawings is now a direct ref
 import * as Y from 'yjs';
+import { UndoManager } from 'yjs'; // Import UndoManager
 // import { v4 as uuidv4 } from 'uuid'; // Use Yjs mechanisms for IDs if possible
 import Collaborators from './Collaborators.vue';
 import ZoomPanControls from './ZoomPanControls.vue';
@@ -142,6 +143,9 @@ export default {
     const yjsConnection = ref(null); // Stores the connection object { ydoc, socket, yDrawings, disconnect }
     const ydoc = ref(null); // Y.Doc instance from the provider
     const yDrawings = ref(null); // Y.Array for drawings from the provider
+    const undoManager = ref(null); // Y.UndoManager instance
+    const canUndo = ref(false);
+    const canRedo = ref(false);
     // Awareness will be handled later via yjsConnection if needed
 
     // --- Local component state ---
@@ -197,6 +201,39 @@ export default {
 
       // Trigger state update for parent if needed
       emit('state-updated', {});
+    };
+
+    // --- Undo/Redo Manager Setup ---
+    const updateUndoRedoState = () => {
+      if (undoManager.value) {
+        canUndo.value = undoManager.value.canUndo();
+        canRedo.value = undoManager.value.canRedo();
+        // console.log(`[Canvas] UndoManager state: canUndo=${canUndo.value}, canRedo=${canRedo.value}`);
+      } else {
+        canUndo.value = false;
+        canRedo.value = false;
+      }
+    };
+
+    const initializeUndoManager = () => {
+      if (ydoc.value && yDrawings.value instanceof Y.Array) {
+        if (undoManager.value) {
+          // Clean up previous instance if needed (less likely here than in Toolbar)
+          undoManager.value.off('stack-item-added', updateUndoRedoState);
+          undoManager.value.off('stack-item-popped', updateUndoRedoState);
+          undoManager.value.destroy();
+          undoManager.value = null;
+        }
+        undoManager.value = new UndoManager(yDrawings.value);
+        undoManager.value.on('stack-item-added', updateUndoRedoState);
+        undoManager.value.on('stack-item-popped', updateUndoRedoState);
+        updateUndoRedoState(); // Set initial state
+        console.log('[Canvas] UndoManager initialized successfully for yDrawings.');
+      } else {
+        console.warn('[Canvas] Cannot initialize UndoManager: ydoc or yDrawings (Y.Array) not available or not ready.', { ydoc: ydoc.value, yDrawings: yDrawings.value });
+        canUndo.value = false;
+        canRedo.value = false;
+      }
     };
 
     const initCanvas = () => {
@@ -268,6 +305,9 @@ export default {
           // Observe the shared drawings array for changes
           yDrawings.value.observeDeep(handleYjsUpdate);
 
+          // Initialize UndoManager AFTER yDrawings is confirmed to be a Y.Array
+          initializeUndoManager();
+
           // Initial draw based on Yjs state
           redrawCanvas();
 
@@ -293,6 +333,16 @@ export default {
       // --- Yjs Cleanup ---
       // Unobserve before disconnecting
       yDrawings.value?.unobserveDeep(handleYjsUpdate);
+
+      // Destroy UndoManager
+      if (undoManager.value) {
+        undoManager.value.off('stack-item-added', updateUndoRedoState);
+        undoManager.value.off('stack-item-popped', updateUndoRedoState);
+        undoManager.value.destroy();
+        undoManager.value = null;
+        console.log('[Canvas] UndoManager destroyed');
+      }
+
       // Disconnect the WebSocket connection
       yjsConnection.value?.disconnect();
       // TODO: Cleanup awareness handling here
@@ -619,7 +669,20 @@ export default {
           // Add other tool shortcuts
         }
       }
-      // Undo/Redo shortcuts are typically handled by UndoManager listener in Toolbar/App
+      // Handle Undo/Redo shortcuts
+      if ((event.ctrlKey || event.metaKey) && !event.shiftKey && event.key.toLowerCase() === 'z') {
+          event.preventDefault();
+          undo();
+      }
+      if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 'z') {
+          event.preventDefault();
+          redo();
+      }
+      // Ctrl+Y for Redo (common on Windows)
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'y') {
+          event.preventDefault();
+          redo();
+      }
     };
 
     const handlePaste = (event) => {
@@ -700,10 +763,24 @@ export default {
                 }
             });
             showStatus('Canvas cleared');
-        }
+      }
     };
-    const undo = () => { /* Handled by UndoManager */ };
-    const redo = () => { /* Handled by UndoManager */ };
+    const undo = () => {
+      if (undoManager.value && undoManager.value.canUndo()) {
+        undoManager.value.undo();
+        console.log('[Canvas] Undo triggered');
+      } else {
+        console.log('[Canvas] Cannot undo');
+      }
+    };
+    const redo = () => {
+      if (undoManager.value && undoManager.value.canRedo()) {
+        undoManager.value.redo();
+        console.log('[Canvas] Redo triggered');
+      } else {
+        console.log('[Canvas] Cannot redo');
+      }
+    };
     const getSerializableState = () => { /* Needs Yjs adaptation if still needed */ return {}; };
     const loadState = (state) => { /* Needs Yjs adaptation */ return false; };
     const exportAsText = () => { /* Needs Yjs adaptation */ return ''; };
@@ -737,6 +814,8 @@ export default {
       notifications,
       clipboardInput,
       yjsConnection, // Expose the connection object which contains awareness
+      canUndo, // Expose undo/redo state
+      canRedo, // Expose undo/redo state
       // Methods
       handleMouseDown,
       handleMouseMove,

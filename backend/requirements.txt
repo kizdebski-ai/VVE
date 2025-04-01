@@ -1,0 +1,8 @@
+# Django and Channels
+django
+channels
+daphne
+
+# Yjs backend
+y-py
+anyio

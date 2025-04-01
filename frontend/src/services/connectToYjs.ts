@@ -75,13 +75,14 @@ export function connectToYjs(
         reconnectTimer = null;
       }
 
-      // --- Send initial states ---
+      // --- Send initial awareness state ---
+      // The backend now sends the initial document state upon connection.
       if (socket?.readyState === WebSocket.OPEN) {
-        // Send Yjs doc state (prefixed)
-        const docState = Y.encodeStateAsUpdate(ydoc);
-        const syncMessage = new Uint8Array([messageSync, ...docState]);
-        socket.send(syncMessage);
-        console.log('[Yjs Provider] Sent initial document state.');
+        // REMOVED: Sending initial document state (backend handles this)
+        // const docState = Y.encodeStateAsUpdate(ydoc);
+        // const syncMessage = new Uint8Array([messageSync, ...docState]);
+        // socket.send(syncMessage);
+        // console.log('[Yjs Provider] Sent initial document state.');
 
         // Send awareness state (prefixed)
         const awarenessState = encodeAwarenessUpdate(awareness, [awareness.clientID]); // Use awareness.clientID

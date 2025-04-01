@@ -1,19 +1,27 @@
 # consumers.py
 import json
 from channels.generic.websocket import AsyncWebsocketConsumer
+# from channels.db import database_sync_to_async # Moved import lower
 import anyio # Use anyio for async locks compatible with asyncio/trio
 import y_py as Y # Import y-py
+# from .models import WhiteboardRoom # Import moved lower
 
 # Define message types (must match frontend)
 MESSAGE_SYNC = 0
 MESSAGE_AWARENESS = 1
 
 # In-memory storage for YDoc instances per room
-# NOTE: This state is lost when the Django server restarts.
-# For production, use a persistent store (DB, Redis with y-redis).
+# In-memory storage for YDoc instances per room.
+# Docs are now loaded from DB on first access and saved back on updates.
 room_docs: dict[str, Y.YDoc] = {}
 room_locks: dict[str, anyio.Lock] = {}
 
+# Database helper functions moved to db_utils.py
+
+# Import database_sync_to_async once for use below
+from channels.db import database_sync_to_async
+
+# --- Consumer ---
 
 class WhiteboardConsumer(AsyncWebsocketConsumer):
     """
@@ -33,34 +41,83 @@ class WhiteboardConsumer(AsyncWebsocketConsumer):
 
         # Join room group
         await self.channel_layer.group_add(
-            self.room_group_name,
-            self.room_group_name,
-            self.channel_name
+            self.room_group_name, # Group name
+            self.channel_name     # Channel name to add
         )
 
         # Get or create the YDoc and lock for this room
-        if self.room_group_name not in room_docs:
-            self.doc = Y.YDoc()
+        if self.room_group_name not in room_locks: # Use lock presence to check initialization
             self.lock = anyio.Lock()
-            room_docs[self.room_group_name] = self.doc
             room_locks[self.room_group_name] = self.lock
-            print(f"Created new YDoc for room {self.room_id}")
-        else:
-            self.doc = room_docs[self.room_group_name]
+            print(f"Created new lock for room {self.room_id}")
+
+            # Lock before accessing/creating the shared doc
+            async with self.lock:
+                # Double-check if another connection initialized the doc while waiting for the lock
+                if self.room_group_name not in room_docs:
+                    self.doc = Y.YDoc()
+                    # --- Load initial state from DB ---
+                    print(f"Attempting to load state for room {self.room_id} from DB...")
+                    # Import utils and call function inline
+                    try:
+                        from . import db_utils # Import utils here
+                        initial_state = await database_sync_to_async(db_utils.get_room_state_sync)(self.room_id)
+                        if initial_state:
+                            Y.apply_update(self.doc, initial_state)
+                            print(f"Successfully loaded state for room {self.room_id} from DB (size: {len(initial_state)} bytes)")
+                        else:
+                             print(f"No existing state found for room {self.room_id}. Starting fresh.")
+                    except Exception as e: # Catch potential import or db errors during load
+                        print(f"Error loading initial state for room {self.room_id}: {e}. Starting fresh.")
+                        initial_state = None # Ensure it's None if loading failed
+
+                    # --- End Load initial state ---
+                    room_docs[self.room_group_name] = self.doc
+                    print(f"Initialized YDoc for room {self.room_id}")
+                else:
+                    # Doc was initialized by another connection while we waited
+                    self.doc = room_docs[self.room_group_name]
+                    print(f"Reusing YDoc initialized by another connection for room {self.room_id}")
+
+        else: # Lock already exists, implies doc might exist too (or is being initialized)
             self.lock = room_locks[self.room_group_name]
-            print(f"Reusing existing YDoc for room {self.room_id}")
+            # Correct indentation for this block
+            async with self.lock: # Ensure doc is available before proceeding
+                 if self.room_group_name in room_docs:
+                     self.doc = room_docs[self.room_group_name]
+                     print(f"Reusing existing YDoc and lock for room {self.room_id}")
+                 else:
+                     # This case should ideally not happen if lock creation and doc creation are atomic
+                     # but as a fallback, initialize it here.
+                     print(f"Warning: Lock existed but doc didn't for room {self.room_id}. Initializing doc.")
+                     self.doc = Y.YDoc()
+                     # Attempt load again just in case
+                     try:
+                         from . import db_utils # Import utils here
+                         initial_state = await database_sync_to_async(db_utils.get_room_state_sync)(self.room_id)
+                         if initial_state:
+                             Y.apply_update(self.doc, initial_state)
+                     except Exception as e:
+                         print(f"Error applying initial state (fallback): {e}")
+                     room_docs[self.room_group_name] = self.doc
+
 
         # Accept the WebSocket connection
         await self.accept()
         print(f"WebSocket connected: {self.channel_name} to room {self.room_id}")
 
-        # Send the current document state to the new client
+        # Send the current document state (potentially loaded from DB) to the new client
         async with self.lock:
-            state_update = Y.encode_state_as_update(self.doc)
+            # Use encode_state_as_update to send the whole doc state
+            state_vector = Y.encode_state_vector(self.doc) # Get state vector for diff update later if needed
+            full_state_update = Y.encode_state_as_update(self.doc)
+
         # Prefix the state update with the sync message type
-        message = bytes([MESSAGE_SYNC]) + state_update
+        message = bytes([MESSAGE_SYNC]) + full_state_update
         print(f"Sending initial state to {self.channel_name} for room {self.room_id} (size: {len(message)} bytes)")
         await self.send(bytes_data=message)
+
+        # Note: Client still needs to send its initial awareness state
 
         # Note: Client still needs to send its initial awareness state
 
@@ -95,13 +152,19 @@ class WhiteboardConsumer(AsyncWebsocketConsumer):
             if message_type == MESSAGE_SYNC:
                 # Apply the update to the backend YDoc
                 try:
-                    update = Y.read_update(payload)
+                    # Apply the update within the lock
                     async with self.lock:
-                        self.doc.apply_update(update)
-                    # print(f"Applied sync update from {self.channel_name} to backend doc for room {self.room_id}")
+                        Y.apply_update(self.doc, payload) # Apply raw payload directly
+                        # --- Save state after applying update ---
+                        current_state = Y.encode_state_as_update(self.doc)
+                        # Import utils and call function inline
+                        from . import db_utils # Import utils here
+                        await database_sync_to_async(db_utils.save_room_state_sync)(self.room_id, current_state)
+                        # --- End Save state ---
+                    # print(f"Applied sync update from {self.channel_name} to backend doc for room {self.room_id} and saved state.")
                 except Exception as e:
-                    print(f"Error applying sync update in room {self.room_id}: {e}")
-                    # Don't broadcast potentially corrupted update? Or maybe still broadcast?
+                    print(f"Error applying sync update or saving state in room {self.room_id}: {e}")
+                    # Decide on error handling: broadcast original message anyway?
                     # For now, we'll still broadcast the original message.
 
             elif message_type == MESSAGE_AWARENESS:

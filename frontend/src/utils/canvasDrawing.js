@@ -66,6 +66,44 @@ export const drawElement = (context, element, isHighlighted = false, smoothingFa
     case 'circle':
       drawCircle(context, element);
       break;
+    // Add cases for new 2D shapes
+    case 'square':
+      drawSquare(context, element);
+      break;
+    case 'triangle':
+      drawTriangle(context, element);
+      break;
+    case 'trapezoid':
+      drawTrapezoid(context, element);
+      break;
+    case 'parallelogram':
+      drawParallelogram(context, element);
+      break;
+    case 'deltoid':
+      drawDeltoid(context, element);
+      break;
+    // Add cases for new 3D shapes (2D representations)
+    case 'cube':
+      drawCube(context, element);
+      break;
+    case 'cuboid':
+      drawCuboid(context, element);
+      break;
+    case 'sphere':
+      drawSphere(context, element);
+      break;
+    case 'cylinder':
+      drawCylinder(context, element);
+      break;
+    case 'cone':
+      drawCone(context, element);
+      break;
+    case 'pyramid':
+      drawPyramid(context, element);
+      break;
+    case 'tetrahedron':
+      drawTetrahedron(context, element);
+      break;
     case 'text':
       drawText(context, element);
       break;
@@ -165,14 +203,61 @@ const drawPath = (context, element, smoothingFactor) => {
 };
 
 /**
- * Draw a line
+ * Draw a line with different styles (solid, dotted, dashed, vector, dotted_vector)
  */
 const drawLine = (context, element) => {
   context.beginPath();
   context.moveTo(element.start.x, element.start.y);
+
+  // Handle line styles
+  const lineStyle = element.lineStyle || 'solid'; // Default to solid
+  let dashPattern = [];
+  if (lineStyle === 'dotted') {
+    dashPattern = [context.lineWidth, context.lineWidth * 2]; // Small dash, larger gap
+  } else if (lineStyle === 'dashed') {
+    dashPattern = [context.lineWidth * 3, context.lineWidth * 2]; // Longer dash, gap
+  } else if (lineStyle === 'dotted_vector') {
+    dashPattern = [context.lineWidth, context.lineWidth * 2];
+  }
+
+  if (dashPattern.length > 0) {
+    context.setLineDash(dashPattern);
+  }
+
   context.lineTo(element.end.x, element.end.y);
   context.stroke();
+
+  // Reset line dash
+  if (dashPattern.length > 0) {
+    context.setLineDash([]);
+  }
+
+  // Draw arrowhead for vector types
+  if (lineStyle === 'vector' || lineStyle === 'dotted_vector') {
+    drawArrowhead(context, element.start, element.end, element.lineWidth);
+  }
 };
+
+/**
+ * Helper function to draw an arrowhead
+ */
+const drawArrowhead = (context, from, to, lineWidth) => {
+    const headLength = Math.max(10, lineWidth * 4); // Arrowhead size based on line width
+    const angle = Math.atan2(to.y - from.y, to.x - from.x);
+
+    context.save();
+    context.beginPath();
+    context.translate(to.x, to.y);
+    context.rotate(angle);
+    context.moveTo(0, 0);
+    context.lineTo(-headLength, -headLength / 2);
+    context.lineTo(-headLength * 0.8, 0); // Make it slightly concave
+    context.lineTo(-headLength, headLength / 2);
+    context.closePath();
+    context.fill(); // Use fill for arrowhead
+    context.restore();
+};
+
 
 /**
  * Draw a rectangle
@@ -189,6 +274,305 @@ const drawRectangle = (context, element) => {
   );
   context.stroke();
 };
+
+/**
+ * Draw a square (uses rectangle logic but ensures equal sides during creation)
+ */
+const drawSquare = (context, element) => {
+  // Drawing is the same as rectangle, aspect ratio is enforced during creation/update
+  drawRectangle(context, element);
+};
+
+/**
+ * Draw a triangle
+ */
+const drawTriangle = (context, element) => {
+  context.beginPath();
+  // Simple isosceles triangle based on bounding box
+  const midX = element.start.x + (element.end.x - element.start.x) / 2;
+  context.moveTo(midX, element.start.y); // Top point
+  context.lineTo(element.end.x, element.end.y); // Bottom right
+  context.lineTo(element.start.x, element.end.y); // Bottom left
+  context.closePath();
+  context.stroke();
+};
+
+/**
+ * Draw a trapezoid
+ */
+const drawTrapezoid = (context, element) => {
+  context.beginPath();
+  const width = element.end.x - element.start.x;
+  const inset = width * 0.2; // Adjust for slant
+  context.moveTo(element.start.x + inset, element.start.y); // Top left
+  context.lineTo(element.end.x - inset, element.start.y); // Top right
+  context.lineTo(element.end.x, element.end.y); // Bottom right
+  context.lineTo(element.start.x, element.end.y); // Bottom left
+  context.closePath();
+  context.stroke();
+};
+
+/**
+ * Draw a parallelogram
+ */
+const drawParallelogram = (context, element) => {
+  context.beginPath();
+  const width = element.end.x - element.start.x;
+  const slant = width * 0.2; // Adjust for slant
+  context.moveTo(element.start.x + slant, element.start.y); // Top left
+  context.lineTo(element.end.x + slant, element.start.y); // Top right
+  context.lineTo(element.end.x - slant, element.end.y); // Bottom right
+  context.lineTo(element.start.x - slant, element.end.y); // Bottom left
+  context.closePath();
+  context.stroke();
+};
+
+/**
+ * Draw a deltoid (kite)
+ */
+const drawDeltoid = (context, element) => {
+  context.beginPath();
+  const midX = element.start.x + (element.end.x - element.start.x) / 2;
+  const midY = element.start.y + (element.end.y - element.start.y) / 2;
+  context.moveTo(midX, element.start.y); // Top point
+  context.lineTo(element.end.x, midY); // Middle right
+  context.lineTo(midX, element.end.y); // Bottom point
+  context.lineTo(element.start.x, midY); // Middle left
+  context.closePath();
+  context.stroke();
+};
+
+// --- 3D Shape Drawing Functions (2D Representations) ---
+
+/**
+ * Draw a cube (isometric view)
+ */
+const drawCube = (context, element) => {
+  const { x: x1, y: y1 } = element.start;
+  const { x: x2, y: y2 } = element.end;
+  const width = Math.abs(x2 - x1);
+  const height = Math.abs(y2 - y1);
+  const size = Math.min(width, height); // Base size on smaller dimension
+  const x = Math.min(x1, x2);
+  const y = Math.min(y1, y2);
+
+  const offsetRatio = 0.4; // How much the back faces are offset
+  const offsetX = size * offsetRatio;
+  const offsetY = size * offsetRatio * 0.5; // Simulate perspective
+
+  context.beginPath();
+  // Front face
+  context.rect(x, y, size, size);
+  // Back face
+  context.rect(x + offsetX, y - offsetY, size, size);
+  // Connecting lines
+  context.moveTo(x, y);
+  context.lineTo(x + offsetX, y - offsetY);
+  context.moveTo(x + size, y);
+  context.lineTo(x + size + offsetX, y - offsetY);
+  context.moveTo(x, y + size);
+  context.lineTo(x + offsetX, y + size - offsetY);
+  context.moveTo(x + size, y + size);
+  context.lineTo(x + size + offsetX, y + size - offsetY);
+  context.stroke();
+};
+
+/**
+ * Draw a cuboid (isometric view)
+ */
+const drawCuboid = (context, element) => {
+  const { x: x1, y: y1 } = element.start;
+  const { x: x2, y: y2 } = element.end;
+  const width = Math.abs(x2 - x1);
+  const height = Math.abs(y2 - y1);
+  const x = Math.min(x1, x2);
+  const y = Math.min(y1, y2);
+
+  const depthRatio = 0.4; // How much the back faces are offset
+  const depthX = width * depthRatio;
+  const depthY = height * depthRatio * 0.5; // Simulate perspective
+
+  context.beginPath();
+  // Front face
+  context.rect(x, y, width, height);
+  // Back face
+  context.rect(x + depthX, y - depthY, width, height);
+  // Connecting lines
+  context.moveTo(x, y);
+  context.lineTo(x + depthX, y - depthY);
+  context.moveTo(x + width, y);
+  context.lineTo(x + width + depthX, y - depthY);
+  context.moveTo(x, y + height);
+  context.lineTo(x + depthX, y + height - depthY);
+  context.moveTo(x + width, y + height);
+  context.lineTo(x + width + depthX, y + height - depthY);
+  context.stroke();
+};
+
+
+/**
+ * Draw a sphere (circle with shading)
+ */
+const drawSphere = (context, element) => {
+  // Essentially draw a circle, maybe add a subtle gradient/highlight later if needed
+  drawCircle(context, element);
+  // Optional: Add a simple highlight
+  const centerX = (element.start.x + element.end.x) / 2;
+  const centerY = (element.start.y + element.end.y) / 2;
+  const radiusX = Math.abs(element.end.x - element.start.x) / 2;
+  const radiusY = Math.abs(element.end.y - element.start.y) / 2;
+  const radius = Math.min(radiusX, radiusY);
+
+  if (radius > 5) {
+    context.save();
+    const gradient = context.createRadialGradient(
+      centerX - radius * 0.3, centerY - radius * 0.3, radius * 0.1,
+      centerX, centerY, radius
+    );
+    gradient.addColorStop(0, 'rgba(255,255,255,0.3)');
+    gradient.addColorStop(1, 'rgba(255,255,255,0)');
+    context.fillStyle = gradient;
+    context.beginPath();
+    context.ellipse(centerX, centerY, radiusX, radiusY, 0, 0, Math.PI * 2);
+    context.fill();
+    context.restore();
+  }
+};
+
+/**
+ * Draw a cylinder
+ */
+const drawCylinder = (context, element) => {
+  const { x: x1, y: y1 } = element.start;
+  const { x: x2, y: y2 } = element.end;
+  const width = Math.abs(x2 - x1);
+  const height = Math.abs(y2 - y1);
+  const x = Math.min(x1, x2);
+  const y = Math.min(y1, y2);
+
+  const ellipseHeight = Math.min(height * 0.2, width * 0.3); // Height of the top/bottom ellipses
+  const radiusX = width / 2;
+
+  context.beginPath();
+  // Top ellipse
+  context.ellipse(x + radiusX, y + ellipseHeight / 2, radiusX, ellipseHeight / 2, 0, 0, Math.PI * 2);
+  // Bottom ellipse (only draw front part)
+  context.ellipse(x + radiusX, y + height - ellipseHeight / 2, radiusX, ellipseHeight / 2, 0, 0, Math.PI);
+  // Sides
+  context.moveTo(x, y + ellipseHeight / 2);
+  context.lineTo(x, y + height - ellipseHeight / 2);
+  context.moveTo(x + width, y + ellipseHeight / 2);
+  context.lineTo(x + width, y + height - ellipseHeight / 2);
+  // Draw back part of bottom ellipse
+  context.ellipse(x + radiusX, y + height - ellipseHeight / 2, radiusX, ellipseHeight / 2, 0, Math.PI, Math.PI * 2);
+  context.stroke();
+};
+
+/**
+ * Draw a cone
+ */
+const drawCone = (context, element) => {
+  const { x: x1, y: y1 } = element.start;
+  const { x: x2, y: y2 } = element.end;
+  const width = Math.abs(x2 - x1);
+  const height = Math.abs(y2 - y1);
+  const x = Math.min(x1, x2);
+  const y = Math.min(y1, y2);
+
+  const ellipseHeight = Math.min(height * 0.2, width * 0.3);
+  const radiusX = width / 2;
+  const tipY = y; // Tip at the top
+  const baseY = y + height - ellipseHeight / 2;
+
+  context.beginPath();
+  // Bottom ellipse (draw only front part initially)
+  context.ellipse(x + radiusX, baseY, radiusX, ellipseHeight / 2, 0, 0, Math.PI);
+  // Sides
+  context.moveTo(x, baseY);
+  context.lineTo(x + radiusX, tipY);
+  context.lineTo(x + width, baseY);
+  // Draw back part of bottom ellipse
+  context.ellipse(x + radiusX, baseY, radiusX, ellipseHeight / 2, 0, Math.PI, Math.PI * 2);
+  context.stroke();
+};
+
+/**
+ * Draw a pyramid (square base)
+ */
+const drawPyramid = (context, element) => {
+  const { x: x1, y: y1 } = element.start;
+  const { x: x2, y: y2 } = element.end;
+  const width = Math.abs(x2 - x1);
+  const height = Math.abs(y2 - y1);
+  const x = Math.min(x1, x2);
+  const y = Math.min(y1, y2);
+
+  const baseInsetRatio = 0.2; // Perspective for base
+  const tipX = x + width / 2;
+  const tipY = y;
+  const baseX1 = x + width * baseInsetRatio;
+  const baseX2 = x + width * (1 - baseInsetRatio);
+  const baseY1 = y + height * (1 - baseInsetRatio * 0.5);
+  const baseY2 = y + height;
+
+  context.beginPath();
+  // Base lines (visible)
+  context.moveTo(baseX1, baseY1);
+  context.lineTo(x, baseY2);
+  context.lineTo(x + width, baseY2);
+  context.lineTo(baseX2, baseY1);
+  // Edges to tip
+  context.moveTo(tipX, tipY);
+  context.lineTo(baseX1, baseY1);
+  context.moveTo(tipX, tipY);
+  context.lineTo(x, baseY2);
+  context.moveTo(tipX, tipY);
+  context.lineTo(x + width, baseY2);
+  context.moveTo(tipX, tipY);
+  context.lineTo(baseX2, baseY1);
+  // Hidden base line (optional, could be dashed)
+  // context.moveTo(baseX1, baseY1);
+  // context.lineTo(baseX2, baseY1);
+  context.stroke();
+};
+
+/**
+ * Draw a tetrahedron (triangular pyramid)
+ */
+const drawTetrahedron = (context, element) => {
+  const { x: x1, y: y1 } = element.start;
+  const { x: x2, y: y2 } = element.end;
+  const width = Math.abs(x2 - x1);
+  const height = Math.abs(y2 - y1);
+  const x = Math.min(x1, x2);
+  const y = Math.min(y1, y2);
+
+  const tipX = x + width / 2;
+  const tipY = y;
+  const baseLeftX = x;
+  const baseRightX = x + width;
+  const baseMidX = x + width * 0.7; // Back corner x
+  const baseY = y + height;
+  const baseMidY = y + height * 0.8; // Back corner y
+
+  context.beginPath();
+  // Base triangle (visible lines)
+  context.moveTo(baseLeftX, baseY);
+  context.lineTo(baseRightX, baseY);
+  context.lineTo(baseMidX, baseMidY);
+  // Edges to tip
+  context.moveTo(tipX, tipY);
+  context.lineTo(baseLeftX, baseY);
+  context.moveTo(tipX, tipY);
+  context.lineTo(baseRightX, baseY);
+  context.moveTo(tipX, tipY);
+  context.lineTo(baseMidX, baseMidY);
+  // Hidden base line (optional)
+  // context.moveTo(baseLeftX, baseY);
+  // context.lineTo(baseMidX, baseMidY);
+  context.stroke();
+};
+
 
 /**
  * Draw a circle
@@ -336,9 +720,11 @@ export const isPointInElement = (point, element, hitDistance = 10) => {
 
     case 'line':
       // Consider line width for hit detection
+      // Also check if lineStyle includes 'vector' to potentially increase hit area near arrowhead? (For simplicity, keep it the same for now)
       return distanceToSegment(point, element.start, element.end) < (element.lineWidth / 2 + hitDistance);
 
     case 'rectangle':
+    case 'square': // Same hit detection as rectangle
       // Check if point is close to any edge of the rectangle
       const width = element.end.x - element.start.x;
       const height = element.end.y - element.start.y;
@@ -371,6 +757,72 @@ export const isPointInElement = (point, element, hitDistance = 10) => {
 
       // Check if point is close to the circle edge, considering line width
       return Math.abs(distanceFromCenter - radius) < (element.lineWidth / 2 + hitDistance);
+
+    // --- Hit detection for new shapes ---
+    // These are simplified bounding box checks or distance to edges.
+    // More accurate point-in-polygon tests could be implemented if needed.
+
+    case 'triangle': {
+      const midX = element.start.x + (element.end.x - element.start.x) / 2;
+      const p1 = { x: midX, y: element.start.y };
+      const p2 = { x: element.end.x, y: element.end.y };
+      const p3 = { x: element.start.x, y: element.end.y };
+      return distanceToSegment(point, p1, p2) < hitDistance ||
+             distanceToSegment(point, p2, p3) < hitDistance ||
+             distanceToSegment(point, p3, p1) < hitDistance;
+    }
+    case 'trapezoid': {
+      const width = element.end.x - element.start.x;
+      const inset = width * 0.2;
+      const p1 = { x: element.start.x + inset, y: element.start.y };
+      const p2 = { x: element.end.x - inset, y: element.start.y };
+      const p3 = { x: element.end.x, y: element.end.y };
+      const p4 = { x: element.start.x, y: element.end.y };
+      return distanceToSegment(point, p1, p2) < hitDistance ||
+             distanceToSegment(point, p2, p3) < hitDistance ||
+             distanceToSegment(point, p3, p4) < hitDistance ||
+             distanceToSegment(point, p4, p1) < hitDistance;
+    }
+    case 'parallelogram': {
+       const width = element.end.x - element.start.x;
+       const slant = width * 0.2;
+       const p1 = { x: element.start.x + slant, y: element.start.y };
+       const p2 = { x: element.end.x + slant, y: element.start.y };
+       const p3 = { x: element.end.x - slant, y: element.end.y };
+       const p4 = { x: element.start.x - slant, y: element.end.y };
+       return distanceToSegment(point, p1, p2) < hitDistance ||
+              distanceToSegment(point, p2, p3) < hitDistance ||
+              distanceToSegment(point, p3, p4) < hitDistance ||
+              distanceToSegment(point, p4, p1) < hitDistance;
+    }
+    case 'deltoid': {
+      const midX = element.start.x + (element.end.x - element.start.x) / 2;
+      const midY = element.start.y + (element.end.y - element.start.y) / 2;
+      const p1 = { x: midX, y: element.start.y };
+      const p2 = { x: element.end.x, y: midY };
+      const p3 = { x: midX, y: element.end.y };
+      const p4 = { x: element.start.x, y: midY };
+      return distanceToSegment(point, p1, p2) < hitDistance ||
+             distanceToSegment(point, p2, p3) < hitDistance ||
+             distanceToSegment(point, p3, p4) < hitDistance ||
+             distanceToSegment(point, p4, p1) < hitDistance;
+    }
+    // 3D shapes - use simple bounding box check for now
+    case 'cube':
+    case 'cuboid':
+    case 'sphere': // Treat as circle for hit detection
+    case 'cylinder':
+    case 'cone':
+    case 'pyramid':
+    case 'tetrahedron': {
+      // Simple bounding box check for all 3D representations
+      const minX = Math.min(element.start.x, element.end.x) - hitDistance;
+      const maxX = Math.max(element.start.x, element.end.x) + hitDistance;
+      const minY = Math.min(element.start.y, element.end.y) - hitDistance;
+      const maxY = Math.max(element.start.y, element.end.y) + hitDistance;
+      // Adjust for isometric offsets if needed, but simple box is often sufficient
+      return point.x >= minX && point.x <= maxX && point.y >= minY && point.y <= maxY;
+    }
 
     case 'text':
       // Use a rectangular area around text

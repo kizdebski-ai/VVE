@@ -1,24 +1,19 @@
 <template>
-  <div class="floating-options" :style="positionStyle" @click.stop> <!-- Added @click.stop -->
+  <div class="floating-options" :style="positionStyle" @click.stop>
     <div class="options-content">
       <!-- Shape Selector (Conditional) -->
-      <div v-if="showShapeSelector" class="shape-selector">
-        <button :class="['shape-btn', { active: internalShape === 'line' }]" @click="updateShape('line')" title="Line">
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <line x1="5" y1="19" x2="19" y2="5"></line>
-          </svg>
-        </button>
-        <button :class="['shape-btn', { active: internalShape === 'rectangle' }]" @click="updateShape('rectangle')" title="Rectangle">
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
-          </svg>
-        </button>
-        <button :class="['shape-btn', { active: internalShape === 'circle' }]" @click="updateShape('circle')" title="Circle">
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="12" cy="12" r="10"></circle>
-          </svg>
-        </button>
-      </div>
+      <ShapeSelector
+        v-if="showShapeSelector"
+        :current-shape="internalShape"
+        @shape-changed="updateShape"
+      />
+
+      <!-- Line Style Selector (Conditional) -->
+      <LineStyleSelector
+        v-if="showLineStyleSelector"
+        :current-line-style="internalLineStyle"
+        @line-style-changed="updateLineStyle"
+      />
 
       <ColorPicker
         :modelValue="internalColor"
@@ -47,27 +42,33 @@
 
 <script setup>
 import { ref, watch, computed } from 'vue';
-import ColorPicker from './ColorPicker.vue'; // Assuming ColorPicker is in the same directory
+import ColorPicker from './ColorPicker.vue';
+import ShapeSelector from './ShapeSelector.vue'; // Import ShapeSelector
+import LineStyleSelector from './LineStyleSelector.vue'; // Import LineStyleSelector
 
 const props = defineProps({
   initialColor: { type: String, default: '#000000' },
   initialWidth: { type: Number, default: 2 },
   top: { type: Number, default: 0 },
   left: { type: Number, default: 0 },
-  showShapeSelector: { type: Boolean, default: false }, // New prop
-  currentShape: { type: String, default: 'rectangle' } // New prop
+  showShapeSelector: { type: Boolean, default: false },
+  currentShape: { type: String, default: 'rectangle' },
+  showLineStyleSelector: { type: Boolean, default: false }, // New prop for line style
+  currentLineStyle: { type: String, default: 'solid' } // New prop for line style
 });
 
-const emit = defineEmits(['color-changed', 'line-width-changed', 'shape-changed']); // Added shape-changed emit
+const emit = defineEmits(['color-changed', 'line-width-changed', 'shape-changed', 'line-style-changed']); // Added line-style-changed emit
 
 const internalColor = ref(props.initialColor);
 const internalWidth = ref(props.initialWidth);
-const internalShape = ref(props.currentShape); // New internal state for shape
+const internalShape = ref(props.currentShape);
+const internalLineStyle = ref(props.currentLineStyle); // New internal state for line style
 
 // Watch for prop changes to update internal state
 watch(() => props.initialColor, (newVal) => { internalColor.value = newVal; });
 watch(() => props.initialWidth, (newVal) => { internalWidth.value = newVal; });
-watch(() => props.currentShape, (newVal) => { internalShape.value = newVal; }); // Watch currentShape prop
+watch(() => props.currentShape, (newVal) => { internalShape.value = newVal; });
+watch(() => props.currentLineStyle, (newVal) => { internalLineStyle.value = newVal; }); // Watch currentLineStyle prop
 
 const updateColor = (color) => {
   internalColor.value = color;
@@ -79,10 +80,16 @@ const updateWidth = () => {
   emit('line-width-changed', width);
 };
 
-// New method to update shape
+// Method to update shape (now receives from ShapeSelector)
 const updateShape = (shape) => {
   internalShape.value = shape;
   emit('shape-changed', shape);
+};
+
+// New method to update line style
+const updateLineStyle = (style) => {
+  internalLineStyle.value = style;
+  emit('line-style-changed', style);
 };
 
 const positionStyle = computed(() => ({
@@ -113,44 +120,9 @@ const positionStyle = computed(() => ({
   gap: 10px;
 }
 
-/* Styles for Shape Selector */
-.shape-selector {
-  display: flex;
-  gap: 8px;
-  padding-bottom: 10px;
-  margin-bottom: 10px;
-  border-bottom: 1px solid var(--border-color-light, #eee);
-  width: 100%;
-  justify-content: center;
-}
+/* Styles for Shape Selector and Line Style Selector are now in their respective components */
+/* Keep common styles for ColorPicker and LineWidthSelector */
 
-.shape-btn {
-  width: 32px; /* Smaller buttons for shapes */
-  height: 32px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 6px;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  background-color: var(--btn-bg, #f0f0f0);
-  color: var(--btn-color, #333);
-  border: 1px solid transparent; /* Add border for active state */
-  padding: 0;
-}
-
-.shape-btn:hover {
-  background-color: var(--btn-hover-bg, #e0e0e0);
-}
-
-.shape-btn.active {
-  background-color: var(--btn-active-bg, #cce5ff);
-  color: var(--btn-active-color, #004085);
-  border-color: var(--btn-active-border-color, #b8daff);
-}
-
-
-/* Reuse styles from ToolBar.vue for consistency */
 .line-width-selector {
   display: flex;
   flex-direction: column;

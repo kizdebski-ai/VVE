@@ -19,16 +19,26 @@
           <path d="M18 13l-6 6-8-8 6-6 8 8z"/>
           <path d="M14 7l3 3"/>
         </svg>
-      </button>
+     </button>
     </div>
 
     <!-- Shapes Category -->
     <div class="tool-category">
-       <button :class="['tool-btn', { active: currentTool === 'shapes' }]" @click="selectTool('shapes', $event)" title="Shapes (S)">
-         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"></path>
-         </svg>
-       </button>
+      <button :class="['tool-btn', { active: currentTool === 'shapes' }]" @click="selectTool('shapes', $event)" title="Shapes (S)">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"></path>
+        </svg>
+      </button>
+    </div>
+
+    <!-- Lines Category -->
+    <div class="tool-category">
+      <button :class="['tool-btn', { active: currentTool === 'lines' }]" @click="selectTool('lines', $event)" title="Lines (L)">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="5" y1="12" x2="19" y2="12"></line>
+          <polyline points="12 5 19 12 12 19"></polyline>
+        </svg>
+      </button>
     </div>
 
     <!-- Other Tools Category -->
@@ -61,9 +71,12 @@
       :initialWidth="currentLineWidth"
       :show-shape-selector="currentTool === 'shapes'"
       :current-shape="currentShape"
+      :show-line-style-selector="currentTool === 'lines'"
+      :current-line-style="currentLineStyle"
       @color-changed="setColor"
       @line-width-changed="updateLineWidth"
       @shape-changed="handleShapeChange"
+      @line-style-changed="handleLineStyleChange"
     />
 
     <!-- Action Tools Category -->
@@ -139,6 +152,7 @@ export default {
     'color-changed',
     'line-width-changed',
     'shape-changed',
+    'line-style-changed', // Added emit
     'clear-canvas',
     'export-whiteboard',
     'import-whiteboard',
@@ -150,6 +164,7 @@ export default {
     const currentColor = ref('#000000');
     const currentLineWidth = ref(2);
     const currentShape = ref('rectangle');
+    const currentLineStyle = ref('solid'); // Added line style state
     const imageInput = ref(null);
     const floatingOptionsPosition = reactive({ top: 0, left: 0, visible: false });
     const toolbarRef = ref(null);
@@ -198,7 +213,7 @@ export default {
       if (!event.ctrlKey && !event.metaKey && !event.altKey) {
         const keyToolMap = {
           'p': 'pen', 'h': 'highlighter', 'e': 'eraser',
-          's': 'shapes', 't': 'text', 'i': 'image'
+          's': 'shapes', 'l': 'lines', 't': 'text', 'i': 'image' // Added 'l' for lines
         };
         const toolForKey = keyToolMap[event.key.toLowerCase()];
         if (toolForKey) {
@@ -207,7 +222,7 @@ export default {
       }
     };
 
-    const toolsWithOptions = ['pen', 'highlighter', 'shapes'];
+    const toolsWithOptions = ['pen', 'highlighter', 'shapes', 'lines']; // Added 'lines'
 
     const selectTool = (tool, event = null) => {
       console.log(`[Toolbar DEBUG] selectTool called with tool: ${tool}, event: ${event ? 'present' : 'null'}`);
@@ -259,9 +274,11 @@ export default {
         console.log('[Toolbar DEBUG] Tool without options selected, hiding options.');
       }
 
-      // Emit default shape only when switching TO shapes tool
+      // Emit default shape/style only when switching TO the respective tool
       if (tool === 'shapes' && isOptionTool && !isSameOptionTool) {
         emit('shape-changed', currentShape.value);
+      } else if (tool === 'lines' && isOptionTool && !isSameOptionTool) {
+        emit('line-style-changed', currentLineStyle.value);
       }
     };
 
@@ -280,6 +297,13 @@ export default {
        currentShape.value = shape;
        emit('shape-changed', shape);
        console.log('Shape changed to:', shape);
+     };
+
+     // New handler for line style changes
+     const handleLineStyleChange = (style) => {
+       currentLineStyle.value = style;
+       emit('line-style-changed', style);
+       console.log('Line style changed to:', style);
      };
 
     const exportWhiteboard = () => { emit('export-whiteboard'); };
@@ -302,12 +326,14 @@ export default {
       currentColor,
       currentLineWidth,
       currentShape,
+      currentLineStyle, // Added
       imageInput,
       floatingOptionsPosition,
       selectTool,
       setColor,
       updateLineWidth,
       handleShapeChange,
+      handleLineStyleChange, // Added
       exportWhiteboard,
       importWhiteboard,
       shareWhiteboard,

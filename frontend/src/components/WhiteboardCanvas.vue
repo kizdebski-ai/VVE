@@ -106,7 +106,8 @@ export default {
   },
   props: {
     debugMode: { type: Boolean, default: false },
-    currentShape: { type: String, default: 'rectangle' } // Add currentShape prop
+    currentShape: { type: String, default: 'rectangle' }, // Already exists
+    currentLineStyle: { type: String, default: 'solid' } // Add currentLineStyle prop
   },
   emits: ['state-updated'],
 
@@ -540,27 +541,32 @@ export default {
       const transformedCoords = transformCoordinates(coords.offsetX, coords.offsetY);
       pointsBuffer.value = [];
 
-      // FIX: Determine the actual tool type using props.currentShape if tool is 'shapes'
       let toolType = currentTool.value;
+      let elementData = {}; // Object to hold extra data like lineStyle
+
       if (toolType === 'shapes') {
           toolType = props.currentShape; // Use the specific shape from prop
           console.log(`[Canvas] Starting shape drawing with type: ${toolType}`);
+      } else if (toolType === 'lines') {
+          toolType = 'line'; // Base type is 'line'
+          elementData.lineStyle = props.currentLineStyle; // Add lineStyle
+          console.log(`[Canvas] Starting line drawing with style: ${props.currentLineStyle}`);
       }
 
       // Create preview element based on the determined toolType
       currentElementPreview.value = createNewElement(
-        toolType, // Use the actual shape or tool
+        toolType,
         transformedCoords,
         currentColor.value,
-        currentLineWidth.value
+        currentLineWidth.value,
+        elementData // Pass extra data
       );
 
-      // FIX: Check if preview element was created before setting ID
       if (currentElementPreview.value) {
           const localClientId = yjsConnection.value?.awareness?.clientID || 'unknown';
           currentElementPreview.value.id = `temp_${localClientId}_${Date.now()}`;
       } else {
-          console.error(`[Canvas] Failed to create preview element for tool type: ${toolType}`);
+          console.error(`[Canvas] Failed to create preview element for tool type: ${toolType} with data:`, elementData);
           isDrawing.value = false; // Stop drawing if preview failed
           return;
       }
@@ -597,58 +603,67 @@ export default {
       if (!isDrawing.value || !currentElementPreview.value) return;
       if (currentTool.value === 'eraser') return;
 
-      let previewType = currentElementPreview.value.type;
+      const preview = currentElementPreview.value;
 
-      switch (previewType) {
-        case 'pen':
-          currentElementPreview.value.points.push(coords);
+      // Update logic based on the actual tool, not just preview type initially
+      if (currentTool.value === 'pen') {
+          preview.points.push(coords);
           pointsBuffer.value.push(coords);
           if (pointsBuffer.value.length > 3) pointsBuffer.value.shift();
-          redrawCanvas();
-          break;
-        case 'line':
-        case 'rectangle':
-        case 'circle':
-          currentElementPreview.value.end = coords;
-          redrawCanvas();
-          break;
+      } else if (currentTool.value === 'shapes' || currentTool.value === 'lines') {
+          // Update end coordinates for all shape/line types during drag
+          preview.end = coords;
+
+          // Special handling for square to maintain aspect ratio during preview
+          if (preview.type === 'square') {
+              const dx = Math.abs(coords.x - preview.start.x);
+              const dy = Math.abs(coords.y - preview.start.y);
+              const size = Math.max(dx, dy);
+              preview.end = {
+                  x: preview.start.x + size * Math.sign(coords.x - preview.start.x),
+                  y: preview.start.y + size * Math.sign(coords.y - preview.start.y)
+              };
+          }
       }
+      // Redraw after updating preview element
+      redrawCanvas();
     };
 
     const finishDrawing = () => {
-      if (!isDrawing.value || !currentElementPreview.value || !ydoc.value || !yDrawings.value) return;
+      if (!isDrawing.value || !currentElementPreview.value || !ydoc.value || !yDrawings.value) {
+          isDrawing.value = false; // Ensure drawing state is reset
+          currentElementPreview.value = null;
+          return;
+      }
       isDrawing.value = false;
 
       let elementToAdd = null;
       const preview = currentElementPreview.value;
 
-      switch (preview.type) {
-        case 'pen':
-          if (preview.points && preview.points.length > 1) {
-            elementToAdd = { ...preview };
-          }
-          break;
-        case 'line':
-        case 'rectangle':
-        case 'circle':
-          if (preview.start && preview.end && (preview.start.x !== preview.end.x || preview.start.y !== preview.end.y)) {
-             elementToAdd = { ...preview };
-          }
-          break;
-      }
+      // Check if the element is valid (e.g., has size)
+      const isValidElement = preview.start && preview.end && (preview.start.x !== preview.end.x || preview.start.y !== preview.end.y);
+      const isValidPen = preview.type === 'pen' && preview.points && preview.points.length > 1;
 
-      if (elementToAdd) {
-         delete elementToAdd.id;
-         console.log('Adding element to Yjs drawings array:', JSON.stringify(elementToAdd));
+      if (isValidPen || (preview.type !== 'pen' && isValidElement)) {
+          elementToAdd = { ...preview };
+          delete elementToAdd.id; // Remove temporary ID
 
-         ydoc.value.transact(() => {
-           yDrawings.value.push([new Y.Map(Object.entries(elementToAdd))]);
-         });
+          // Ensure lineStyle is included if it's a line element
+          if (elementToAdd.type === 'line' && !elementToAdd.lineStyle) {
+              elementToAdd.lineStyle = props.currentLineStyle || 'solid';
+          }
+
+          console.log('Adding element to Yjs drawings array:', JSON.stringify(elementToAdd));
+          ydoc.value.transact(() => {
+              yDrawings.value.push([new Y.Map(Object.entries(elementToAdd))]);
+          });
+      } else {
+          console.log('Drawing finished but element was too small or invalid, not adding.');
       }
 
       currentElementPreview.value = null;
       pointsBuffer.value = [];
-      redrawCanvas();
+      redrawCanvas(); // Redraw to remove the preview
     };
 
     // --- Tool and Style Setters ---
@@ -656,10 +671,17 @@ export default {
     const setColor = (color) => { currentColor.value = color; updateCursor(); };
     const setLineWidth = (width) => { currentLineWidth.value = Number(width) || 2; updateCursor(); };
     const setEraserMode = (mode) => { eraserMode.value = mode; updateCursor(); };
+    // Note: setShape and setLineStyle are handled by props now
 
     const updateCursor = () => {
       if (canvas.value) {
-        const toolForCursor = currentTool.value === 'shapes' ? props.currentShape : currentTool.value;
+        let toolForCursor = currentTool.value;
+        if (toolForCursor === 'shapes') {
+            toolForCursor = props.currentShape;
+        } else if (toolForCursor === 'lines') {
+            // Maybe use a specific cursor for lines/vectors? For now, use default crosshair.
+            toolForCursor = 'line'; // Or keep 'lines' if getCursorStyle handles it
+        }
         canvas.value.style.cursor = getCursorStyle(toolForCursor, currentColor.value, eraserMode.value);
       }
     };
@@ -830,60 +852,113 @@ export default {
         }
     });
 
+    // Watch line style changes to update cursor if 'lines' tool is active
+    watch(() => props.currentLineStyle, (newLineStyle) => {
+        if (currentTool.value === 'lines') {
+            updateCursor();
+        }
+    });
 
     return {
+      // Canvas & Context
       canvas,
+      context, // Expose context if needed externally, otherwise keep internal
+
+      // Dimensions
       canvasWidth,
       canvasHeight,
+
+      // Drawing State
       isDrawing,
-      currentTool,
-      currentColor,
-      currentLineWidth,
+      currentTool, // Keep internal? Or controlled by parent? Assuming internal for now.
+      currentColor, // Keep internal?
+      currentLineWidth, // Keep internal?
+      currentElementPreview, // Internal preview state
+      pointsBuffer, // Internal buffer
+
+      // View State
       zoomLevel,
       panOffset,
       isPanning,
-      lastPanPoint,
-      statusMessage,
-      darkMode,
+      lastPanPoint, // Internal panning state
+      darkMode, // Internal dark mode state
+
+      // Tool Specific State
       eraserMode,
-      notifications,
+      hoveredElementIndex, // Internal hover state
+
+      // Yjs & Collaboration
+      yjsConnection, // Expose connection details if needed
+      ydoc, // Expose ydoc if needed
+      yDrawings, // Expose yDrawings if needed
+      undoManager, // Expose undoManager if needed
+      canUndo, // Expose undo state
+      canRedo, // Expose redo state
+      collaborators: ref(null), // Ref for Collaborators component
+
+      // UI Elements Refs
       clipboardInput,
-      yjsConnection,
-      canUndo,
-      canRedo,
+
+      // Notifications & Status
+      notifications,
+      statusMessage,
+
+      // --- Methods ---
+
+      // Input Handlers (Expose if needed, e.g., for testing, otherwise keep internal)
       handleMouseDown,
       handleMouseMove,
       handleMouseUp,
       handleMouseLeave,
       handleZoom,
-      // handleKeyDown, // Keep internal, not needed by parent
       handlePaste,
-      handleResize,
+      handleResize, // Expose if parent needs to trigger resize
       handleTouchStart,
       handleTouchMove,
       handleTouchEnd,
-      zoomIn,
-      zoomOut,
-      resetZoom,
+
+      // Drawing Control (Internal)
+      // startDrawing, draw, finishDrawing - likely internal
+
+      // Tool Setters (Public API for parent component)
       setTool,
       setColor,
       setLineWidth,
-      setEraserMode,
-      showToast,
-      clearCanvas,
+      setEraserMode, // Expose if parent controls eraser mode
+
+      // Zoom/Pan Controls (Public API)
+      zoomIn,
+      zoomOut,
+      resetZoom,
+
+      // Undo/Redo (Public API)
       undo,
       redo,
+
+      // Canvas Actions (Public API)
+      clearCanvas,
+      showToast, // Expose if parent needs to show toasts
+      // showStatus, // Likely internal
+
+      // Data Handling (Public API if needed)
       getSerializableState,
       loadState,
       exportAsText,
       importFromText,
+      addImageFromDataUrl, // Expose if parent triggers image adding
+      getViewportCenter, // Expose if parent needs viewport info
+
+      // Debugging (Public API if needed)
       toggleDebug,
-      addImageFromDataUrl,
-      getViewportCenter,
-      redrawCanvas
+
+      // Lifecycle related (Internal)
+      // initCanvas, initClipboardHandler, handleYjsUpdate, redrawCanvas etc.
+
+      // Expose redrawCanvas if external trigger is needed
+      redrawCanvas, // Added comma
     };
-  }
-}
+  }, // Added comma
+};
 </script>
 
 <style scoped>

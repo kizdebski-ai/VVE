@@ -1,69 +1,54 @@
 <template>
   <div class="toolbar">
-    <div class="tool-group drawing-tools">
-      <button
-        :class="['tool-btn', { active: currentTool === 'pen' }]"
-        @click="selectTool('pen')"
-        title="Pen (P)">
+    <!-- Drawing Tools Category -->
+    <div class="tool-category">
+      <button :class="['tool-btn', { active: currentTool === 'pen' }]" @click="selectTool('pen', $event)" title="Pen (P)">
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/>
         </svg>
       </button>
-      <button
-        :class="['tool-btn', { active: currentTool === 'highlighter' }]"
-        @click="selectTool('highlighter')"
-        title="Highlighter (H)">
+      <button :class="['tool-btn', { active: currentTool === 'highlighter' }]" @click="selectTool('highlighter', $event)" title="Highlighter (H)">
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M9 11l-6 6v3h9l3-3"/>
           <path d="M22 12L9 21"/>
           <path d="M18 2l-9 9 3 3 9-9-3-3z"/>
         </svg>
       </button>
-      <button
-        :class="['tool-btn', { active: currentTool === 'eraser' }]"
-        @click="selectTool('eraser')"
-        title="Eraser (E)">
+      <button :class="['tool-btn', { active: currentTool === 'eraser' }]" @click="selectTool('eraser', $event)" title="Eraser (E)">
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M18 13l-6 6-8-8 6-6 8 8z"/>
           <path d="M14 7l3 3"/>
         </svg>
       </button>
-      <button
-        :class="['tool-btn', { active: currentTool === 'line' }]"
-        @click="selectTool('line')"
-        title="Line (L)">
+    </div>
+
+    <!-- Shapes Category -->
+    <div class="tool-category">
+      <button :class="['tool-btn', { active: currentTool === 'line' }]" @click="selectTool('line', $event)" title="Line (L)">
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <line x1="5" y1="19" x2="19" y2="5"></line>
         </svg>
       </button>
-      <button
-        :class="['tool-btn', { active: currentTool === 'rectangle' }]"
-        @click="selectTool('rectangle')"
-        title="Rectangle (R)">
+      <button :class="['tool-btn', { active: currentTool === 'rectangle' }]" @click="selectTool('rectangle', $event)" title="Rectangle (R)">
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
         </svg>
       </button>
-      <button
-        :class="['tool-btn', { active: currentTool === 'circle' }]"
-        @click="selectTool('circle')"
-        title="Circle (C)">
+      <button :class="['tool-btn', { active: currentTool === 'circle' }]" @click="selectTool('circle', $event)" title="Circle (C)">
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <circle cx="12" cy="12" r="10"></circle>
         </svg>
       </button>
-      <button
-        :class="['tool-btn', { active: currentTool === 'text' }]"
-        @click="selectTool('text')"
-        title="Text (T)">
+    </div>
+
+    <!-- Other Tools Category -->
+    <div class="tool-category">
+       <button :class="['tool-btn', { active: currentTool === 'text' }]" @click="selectTool('text', $event)" title="Text (T)">
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M17 8h2a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2h-2v4l-4-4H9a2 2 0 0 1-2-2v-6a2 2 0 0 1 2-2h2V4l4 4z"></path>
         </svg>
       </button>
-      <button
-        :class="['tool-btn', { active: currentTool === 'image' }]"
-        @click="uploadImage"
-        title="Image (I)">
+      <button :class="['tool-btn', { active: currentTool === 'image' }]" @click="selectTool('image', $event)" title="Image (I)">
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
           <circle cx="8.5" cy="8.5" r="1.5"></circle>
@@ -72,89 +57,51 @@
       </button>
     </div>
 
-    <!-- Color Picker -->
-    <ColorPicker
-      v-model="currentColor"
-      @change="setColor"
+    <!-- Floating Options Panel -->
+    <FloatingOptions
+      v-if="floatingOptionsPosition.visible"
+      :initialColor="currentColor"
+      :initialWidth="currentLineWidth"
+      :top="floatingOptionsPosition.top"
+      :left="floatingOptionsPosition.left"
+      @color-changed="setColor"
+      @line-width-changed="updateLineWidth"
     />
 
-    <div class="line-width-selector">
-      <div class="line-width-preview">
-        <div
-          class="line-preview"
-          :style="{ height: currentLineWidth + 'px', backgroundColor: currentColor }"
-        ></div>
-      </div>
-      <select
-        v-model="currentLineWidth"
-        @change="updateLineWidth"
-        class="line-width-select">
-        <option value="1">Thin</option>
-        <option value="2">Medium</option>
-        <option value="3">Thick</option>
-        <option value="5">Extra Thick</option>
-      </select>
-    </div>
-
-    <div class="tool-group action-tools">
-      <button
-        class="tool-btn"
-        @click="undo"
-        title="Undo (Ctrl+Z)"
-        :disabled="!canUndo">
+    <!-- Action Tools Category -->
+    <div class="tool-category action-tools">
+      <button class="tool-btn" @click="undo" title="Undo (Ctrl+Z)" :disabled="!canUndo">
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M3 7v6h6"></path>
           <path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"></path>
         </svg>
       </button>
-      <button
-        class="tool-btn"
-        @click="redo"
-        title="Redo (Ctrl+Y)"
-        :disabled="!canRedo">
+      <button class="tool-btn" @click="redo" title="Redo (Ctrl+Y)" :disabled="!canRedo">
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M21 7v6h-6"></path>
           <path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3L21 13"></path>
         </svg>
       </button>
-      <button
-        class="tool-btn danger"
-        @click="clearCanvas"
-        title="Clear All">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <polyline points="3 6 5 6 21 6"></polyline>
-          <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-          <line x1="10" y1="11" x2="10" y2="17"></line>
-          <line x1="14" y1="11" x2="14" y2="17"></line>
-        </svg>
-      </button>
+      <!-- REMOVED Clear Canvas Button -->
     </div>
 
-    <div class="export-import-group">
-      <button
-        class="export-btn"
-        @click="exportWhiteboard"
-        title="Export Whiteboard">
+    <!-- Export/Import/Share Category -->
+    <div class="tool-category export-import-group">
+      <button class="export-btn tool-btn" @click="exportWhiteboard" title="Export Whiteboard">
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
           <polyline points="7 10 12 15 17 10"></polyline>
           <line x1="12" y1="15" x2="12" y2="3"></line>
         </svg>
       </button>
-      <button
-        class="import-btn"
-        @click="importWhiteboard"
-        title="Import Whiteboard">
+      <button class="import-btn tool-btn" @click="importWhiteboard" title="Import Whiteboard">
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
           <polyline points="17 8 12 3 7 8"></polyline>
           <line x1="12" y1="3" x2="12" y2="15"></line>
         </svg>
       </button>
-      <button
-        class="share-btn"
-        @click="shareWhiteboard"
-        title="Share Whiteboard">
+      <button class="share-btn tool-btn" @click="shareWhiteboard" title="Share Whiteboard">
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <circle cx="18" cy="5" r="3"></circle>
           <circle cx="6" cy="12" r="3"></circle>
@@ -165,7 +112,7 @@
       </button>
     </div>
 
-    <!-- Hidden file input for image upload -->
+     <!-- Hidden file input for image upload -->
     <input
       type="file"
       ref="imageInput"
@@ -173,135 +120,45 @@
       accept="image/*"
       @change="onImageSelected">
 
-    <!-- Keyboard shortcuts info -->
-    <button class="keyboard-shortcuts-btn" @click="toggleShortcutsInfo" title="Keyboard Shortcuts">
-      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <rect x="2" y="4" width="20" height="16" rx="2" ry="2"></rect>
-        <line x1="6" y1="8" x2="6" y2="16"></line>
-        <line x1="10" y1="8" x2="10" y2="16"></line>
-        <line x1="14" y1="8" x2="14" y2="16"></line>
-        <line x1="18" y1="8" x2="18" y2="16"></line>
-      </svg>
-    </button>
-
-    <!-- Keyboard shortcuts info dialog -->
-    <div v-if="showShortcutsInfo" class="shortcuts-dialog">
-      <div class="shortcuts-dialog-header">
-        <h3>Keyboard Shortcuts</h3>
-        <button class="close-btn" @click="toggleShortcutsInfo">×</button>
-      </div>
-      <div class="shortcuts-list">
-        <div class="shortcut-item">
-          <div class="shortcut-key">P</div>
-          <div class="shortcut-desc">Pen Tool</div>
-        </div>
-        <div class="shortcut-item">
-          <div class="shortcut-key">H</div>
-          <div class="shortcut-desc">Highlighter Tool</div>
-        </div>
-        <div class="shortcut-item">
-          <div class="shortcut-key">E</div>
-          <div class="shortcut-desc">Eraser Tool</div>
-        </div>
-        <div class="shortcut-item">
-          <div class="shortcut-key">L</div>
-          <div class="shortcut-desc">Line Tool</div>
-        </div>
-        <div class="shortcut-item">
-          <div class="shortcut-key">R</div>
-          <div class="shortcut-desc">Rectangle Tool</div>
-        </div>
-        <div class="shortcut-item">
-          <div class="shortcut-key">C</div>
-          <div class="shortcut-desc">Circle Tool</div>
-        </div>
-        <div class="shortcut-item">
-          <div class="shortcut-key">T</div>
-          <div class="shortcut-desc">Text Tool</div>
-        </div>
-        <div class="shortcut-item">
-          <div class="shortcut-key">I</div>
-          <div class="shortcut-desc">Image Tool</div>
-        </div>
-        <div class="shortcut-item">
-          <div class="shortcut-key">Ctrl+Z</div>
-          <div class="shortcut-desc">Undo</div>
-        </div>
-        <div class="shortcut-item">
-          <div class="shortcut-key">Ctrl+Y</div>
-          <div class="shortcut-desc">Redo</div>
-        </div>
-        <div class="shortcut-item">
-          <div class="shortcut-key">Delete</div>
-          <div class="shortcut-desc">Delete Selected Element</div>
-        </div>
-        <div class="shortcut-item">
-          <div class="shortcut-key">Ctrl+V</div>
-          <div class="shortcut-desc">Paste Image from Clipboard</div>
-        </div>
-        <div class="shortcut-item">
-          <div class="shortcut-key">Alt+Click+Drag</div>
-          <div class="shortcut-desc">Pan Canvas</div>
-        </div>
-        <div class="shortcut-item">
-          <div class="shortcut-key">Scroll Wheel</div>
-          <div class="shortcut-desc">Zoom In/Out</div>
-        </div>
-      </div>
-    </div>
+    <!-- REMOVED Keyboard shortcuts button category -->
+    <!-- REMOVED Keyboard shortcuts info dialog -->
   </div>
 </template>
 
 <script>
-import { ref, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'; // Removed computed and Yjs import
+import { ref, onMounted, onBeforeUnmount, watch, nextTick, reactive } from 'vue';
 import ColorPicker from './ColorPicker.vue';
+import FloatingOptions from './FloatingOptions.vue';
 
 export default {
   name: 'ToolBar',
   components: {
-    ColorPicker
+    ColorPicker, // Keep ColorPicker if it's used elsewhere, or remove if only used inline before
+    FloatingOptions // Register the new component
   },
   props: {
-    // Remove ydoc prop
     // Add props for undo/redo state and actions
-    canUndo: {
-      type: Boolean,
-      default: false
-    },
-    canRedo: {
-      type: Boolean,
-      default: false
-    },
-    undo: {
-      type: Function,
-      required: true
-    },
-    redo: {
-      type: Function,
-      required: true
-    }
+    canUndo: { type: Boolean, default: false },
+    canRedo: { type: Boolean, default: false },
+    undo: { type: Function, required: true },
+    redo: { type: Function, required: true }
   },
   emits: [
     'tool-changed',
     'color-changed',
     'line-width-changed',
-    'clear-canvas',
+    'clear-canvas', // Keep emit even if button is removed, parent might still need it
     'export-whiteboard',
     'import-whiteboard',
     'image-selected',
     'share-room' // Added share-room emit
-    // Removed 'undo', 'redo' as they are handled internally now
-    // Removed 'update-cursor' as it's likely handled by WhiteboardCanvas
   ],
   setup(props, { emit }) {
     const currentTool = ref('pen');
     const currentColor = ref('#000000');
     const currentLineWidth = ref(2);
-    // Removed canUndo, canRedo refs - use props instead
-    const showShortcutsInfo = ref(false);
     const imageInput = ref(null); // Ref for the hidden image input
-
-    // --- Removed Yjs Undo Manager logic ---
+    const floatingOptionsPosition = reactive({ top: 0, left: 0, visible: false }); // State for panel position & visibility
 
     onMounted(() => {
       // Keyboard shortcuts listener (keep for tool shortcuts)
@@ -313,43 +170,67 @@ export default {
         emit('color-changed', currentColor.value);
         emit('line-width-changed', parseInt(currentLineWidth.value));
       });
-
-      // Removed UndoManager setup
     });
 
     onBeforeUnmount(() => {
       window.removeEventListener('keydown', handleKeyDown);
-      // Removed UndoManager cleanup
     });
 
     // --- Methods ---
     const handleKeyDown = (event) => {
-      // Skip if typing in input/textarea or if a dialog is likely open
-      if (event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA' || showShortcutsInfo.value) {
+      // Skip if typing in input/textarea
+      if (event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA') {
         return;
       }
-
        // Handle tool shortcuts (only if no modifier keys are pressed)
        if (!event.ctrlKey && !event.metaKey && !event.altKey) {
-            switch (event.key.toLowerCase()) {
-                case 'p': selectTool('pen'); break;
-                case 'h': selectTool('highlighter'); break;
-                case 'e': selectTool('eraser'); break;
-                case 'l': selectTool('line'); break;
-                case 'r': selectTool('rectangle'); break;
-                case 'c': selectTool('circle'); break;
-                case 't': selectTool('text'); break;
-                case 'i': uploadImage(); break;
+            // Find the button element corresponding to the key to calculate position later if needed
+            const keyToolMap = {
+                'p': 'pen', 'h': 'highlighter', 'e': 'eraser', 'l': 'line',
+                'r': 'rectangle', 'c': 'circle', 't': 'text', 'i': 'image'
+            };
+            const toolForKey = keyToolMap[event.key.toLowerCase()];
+
+            if (toolForKey) {
+                 // For now, we'll just select the tool, positioning won't work via shortcut yet.
+                 selectTool(toolForKey, null); // Pass null for event initially
             }
        }
-
-       // Removed Undo/Redo shortcut handling (now in WhiteboardCanvas)
     };
 
-    const selectTool = (tool) => {
+    const toolsWithOptions = ['pen', 'highlighter', 'line', 'rectangle', 'circle'];
+
+    const selectTool = (tool, event = null) => { // event can be null if called from shortcut
       currentTool.value = tool;
       emit('tool-changed', tool);
       console.log('Tool changed to:', tool);
+
+      // Special case for image tool - trigger upload immediately
+      if (tool === 'image') {
+        uploadImage();
+        floatingOptionsPosition.visible = false; // Hide options panel if it was open
+        return; // Don't proceed with positioning logic for image tool
+      }
+
+      // Show/Position options panel for relevant tools if triggered by a click event
+      if (toolsWithOptions.includes(tool) && event?.currentTarget) {
+        const buttonRect = event.currentTarget.getBoundingClientRect();
+        const toolbarRect = event.currentTarget.closest('.toolbar')?.getBoundingClientRect(); // Get toolbar bounds for relative positioning
+
+        if (toolbarRect) {
+            floatingOptionsPosition.top = buttonRect.top - toolbarRect.top; // Position relative to toolbar top
+            floatingOptionsPosition.left = buttonRect.right + 10; // Position to the right of the button + offset
+            floatingOptionsPosition.visible = true;
+        } else {
+             // Fallback if toolbar rect not found (shouldn't happen ideally)
+            floatingOptionsPosition.top = buttonRect.top;
+            floatingOptionsPosition.left = buttonRect.right + 10;
+            floatingOptionsPosition.visible = true;
+        }
+
+      } else {
+        floatingOptionsPosition.visible = false;
+      }
     };
 
     const setColor = (color) => {
@@ -358,40 +239,20 @@ export default {
       console.log('Color changed to:', color);
     };
 
-    const updateLineWidth = () => {
-      const width = parseInt(currentLineWidth.value);
-      emit('line-width-changed', width);
-      console.log('Line width changed to:', width);
+    // Combined handler for line width changes from FloatingOptions
+    const updateLineWidth = (width) => {
+        currentLineWidth.value = width; // Update local state
+        emit('line-width-changed', width);
+        console.log('Line width changed to:', width);
     };
 
-    const clearCanvas = () => {
-      // Confirmation is handled in App.vue now, just emit the event
-      emit('clear-canvas');
-    };
+    // REMOVED clearCanvas method (only emit remains)
+    // REMOVED toggleShortcutsInfo method
 
-    // Removed internal undo/redo methods - use props.undo() and props.redo() directly in template
-
-    const exportWhiteboard = () => {
-      emit('export-whiteboard');
-    };
-
-    const importWhiteboard = () => {
-      emit('import-whiteboard');
-    };
-
-    const shareWhiteboard = () => {
-      // Share logic is likely better placed in App.vue which knows the roomId
-      // Emit an event or call a method on the parent if needed
-       emit('share-room'); // Assuming App.vue handles sharing
-    };
-
-    const toggleShortcutsInfo = () => {
-      showShortcutsInfo.value = !showShortcutsInfo.value;
-    };
-
-    const uploadImage = () => {
-      imageInput.value?.click(); // Use ref to trigger click
-    };
+    const exportWhiteboard = () => { emit('export-whiteboard'); };
+    const importWhiteboard = () => { emit('import-whiteboard'); };
+    const shareWhiteboard = () => { emit('share-room'); };
+    const uploadImage = () => { imageInput.value?.click(); };
 
     const onImageSelected = (event) => {
       const file = event.target.files[0];
@@ -406,21 +267,22 @@ export default {
       currentTool,
       currentColor,
       currentLineWidth,
-      // Removed canUndo, canRedo refs
-      showShortcutsInfo,
       imageInput,
+      floatingOptionsPosition, // Expose position state
       // Methods
       selectTool,
       setColor,
-      updateLineWidth,
-      clearCanvas,
-      // Removed undo, redo methods from return
+      updateLineWidth, // Use the single handler
       exportWhiteboard,
       importWhiteboard,
       shareWhiteboard,
-      toggleShortcutsInfo,
       uploadImage,
       onImageSelected,
+      // Expose props.undo/redo directly if needed in template (they are used via @click="undo/redo")
+      undo: props.undo,
+      redo: props.redo,
+      canUndo: props.canUndo,
+      canRedo: props.canRedo
     };
   }
 }
@@ -430,6 +292,7 @@ export default {
 .toolbar {
   display: flex;
   flex-direction: column;
+  position: relative; /* Needed for absolute positioning of children */
   gap: 15px;
   padding: 5px 0;
   width: 100%;
@@ -445,12 +308,30 @@ export default {
   display: none;
 }
 
-.tool-group {
+.tool-category {
   display: flex;
   flex-direction: column;
   gap: 10px;
   width: 100%;
   align-items: center;
+  padding-bottom: 10px; /* Add some space below each category */
+  margin-bottom: 10px; /* Add some space below each category */
+  border-bottom: 1px solid var(--border-color-light, #eee); /* Separator line */
+}
+
+.tool-category:last-child {
+  border-bottom: none; /* No border for the last category */
+  margin-bottom: 0;
+  padding-bottom: 0;
+}
+
+/* Ensure action/export buttons fill space if needed */
+.action-tools {
+  /* Styles if needed */
+}
+
+.export-import-group {
+  margin-top: auto; /* Pushes this group towards the bottom */
 }
 
 .tool-btn {
@@ -485,12 +366,12 @@ export default {
   transform: none;
 }
 
+/* Keep styles for FloatingOptions internal elements if needed, or remove if self-contained */
 .line-width-selector {
   display: flex;
   flex-direction: column;
   gap: 8px;
   align-items: center;
-  margin: 5px 0;
   width: 100%;
 }
 
@@ -520,35 +401,6 @@ export default {
   font-size: 12px;
 }
 
-.export-import-group {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin-top: auto;
-  width: 100%;
-  align-items: center;
-}
-
-.export-btn, .import-btn, .share-btn, .keyboard-shortcuts-btn {
-  width: 40px;
-  height: 40px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 8px;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  background-color: var(--btn-bg);
-  color: var(--btn-color);
-  border: none;
-  margin: 0 auto;
-}
-
-.export-btn:hover, .import-btn:hover, .share-btn:hover, .keyboard-shortcuts-btn:hover {
-  background-color: var(--btn-hover-bg);
-  transform: translateY(-2px);
-}
-
 .tool-btn.danger {
   color: #ff4d4f;
 }
@@ -557,74 +409,13 @@ export default {
   background-color: rgba(255, 77, 79, 0.1);
 }
 
-.shortcuts-dialog {
-  position: absolute;
-  top: 50%;
-  left: 70px;
-  transform: translateY(-50%);
-  background-color: var(--toolbar-bg);
-  border-radius: 8px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
-  z-index: 1000;
-  max-width: 320px;
-  max-height: 80vh;
-  overflow-y: auto;
-}
-
-.shortcuts-dialog-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 10px 15px;
-  border-bottom: 1px solid var(--border-color);
-}
-
-.shortcuts-dialog-header h3 {
-  margin: 0;
-  font-size: 16px;
-  font-weight: 500;
-}
-
-.close-btn {
-  background: none;
-  border: none;
-  font-size: 20px;
-  cursor: pointer;
-  color: var(--btn-color);
-  padding: 0;
-  line-height: 1;
-}
-
-.shortcuts-list {
-  padding: 10px 15px;
-}
-
-.shortcut-item {
-  display: flex;
-  margin-bottom: 8px;
-  font-size: 13px;
-}
-
-.shortcut-key {
-  background-color: rgba(0, 0, 0, 0.1);
-  padding: 2px 6px;
-  border-radius: 4px;
-  margin-right: 10px;
-  min-width: 80px;
-  text-align: center;
-}
-
-.shortcut-desc {
-  color: var(--text-color);
-  font-size: 14px;
-}
+/* REMOVED .shortcuts-dialog styles */
 
 @media (max-width: 600px) {
   .toolbar {
     padding: 5px;
   }
-  
-  .tool-btn, .export-btn, .import-btn, .share-btn, .keyboard-shortcuts-btn {
+  .tool-btn { /* Apply to all buttons now */
     width: 36px;
     height: 36px;
   }

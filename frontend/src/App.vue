@@ -1,6 +1,7 @@
 <!-- In App.vue, update the template structure -->
 <template>
   <div id="app" :class="{ 'dark-mode': darkMode }">
+    <TopMenu @clear-canvas="handleClearCanvas" /> <!-- Add TopMenu here -->
     <!-- Canvas container takes full screen -->
     <div class="whiteboard-container">
       <WhiteboardCanvas
@@ -50,7 +51,7 @@
           @tool-changed="handleToolChange"
           @color-changed="handleColorChange"
           @line-width-changed="handleLineWidthChange"
-          @clear-canvas="handleClearCanvas"
+          
           @export-whiteboard="handleExportRequest"
           @import-whiteboard="showImportDialog = true"
           @image-selected="handleImageSelected"
@@ -88,6 +89,7 @@
 import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue';
 import WhiteboardCanvas from './components/WhiteboardCanvas.vue';
 import ToolBar from './components/ToolBar.vue';
+import TopMenu from './components/TopMenu.vue'; // Import TopMenu
 import ImportDialog from './components/ImportDialog.vue';
 import ExportDialog from './components/ExportDialog.vue';
 import ThemeToggle from './components/ThemeToggle.vue';
@@ -100,6 +102,7 @@ export default {
   components: {
     WhiteboardCanvas,
     ToolBar,
+    TopMenu, // Register TopMenu
     ImportDialog,
     ExportDialog,
     ThemeToggle

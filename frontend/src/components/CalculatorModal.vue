@@ -87,10 +87,10 @@ onBeforeUnmount(() => {
 .calculator-modal-wrapper {
   position: fixed; /* Use fixed to position relative to viewport */
   z-index: 1100; /* Ensure it's above other elements */
-  background-color: var(--bg-color-secondary, #ffffff); /* Ensure background color with fallback (white) */
-  border: 1px solid var(--border-color, #cccccc); /* Added fallback border */
-  border-radius: 8px;
-  box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
+  background-color: transparent; /* Make wrapper transparent */
+  border: none; /* Remove border */
+  border-radius: 0; /* Remove border-radius if calculator has its own */
+  box-shadow: none; /* Remove shadow if calculator has its own */
   cursor: grab;
   user-select: none; /* Prevent text selection during drag */
   /* Initial position is set by transform */
@@ -107,10 +107,9 @@ onBeforeUnmount(() => {
   justify-content: space-between;
   align-items: center;
   padding: 8px 12px;
-  background-color: var(--bg-color-tertiary);
-  border-bottom: 1px solid var(--border-color-light);
-  border-top-left-radius: 8px;
-  border-top-right-radius: 8px;
+  background-color: transparent; /* Make header transparent */
+  border-bottom: none; /* Remove border */
+  /* Radius will be handled by the calculator component inside */
 }
 
 .modal-title {
@@ -132,6 +131,7 @@ onBeforeUnmount(() => {
 }
 
 .modal-content {
-  padding: 0; /* Calculator has its own padding/structure */
+  padding: 0; /* No padding needed, calculator component handles it */
+  /* The calculator component itself should have the desired border-radius */
 }
 </style>

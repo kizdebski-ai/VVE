@@ -15,27 +15,40 @@
         @line-style-changed="updateLineStyle"
       />
 
-      <ColorPicker
-        :modelValue="internalColor"
-        @update:modelValue="updateColor"
-      />
-      <div class="line-width-selector">
-        <div class="line-width-preview">
-          <div
-            class="line-preview"
-            :style="{ height: internalWidth + 'px', backgroundColor: internalColor }"
-          ></div>
+      <!-- Common Options (Color/Width) - Show unless Advanced is active -->
+      <template v-if="!showAdvancedOptions">
+        <ColorPicker
+          :modelValue="internalColor"
+          @update:modelValue="updateColor"
+        />
+        <div class="line-width-selector">
+          <div class="line-width-preview">
+            <div
+              class="line-preview"
+              :style="{ height: internalWidth + 'px', backgroundColor: internalColor }"
+            ></div>
+          </div>
+          <select
+            v-model="internalWidth"
+            @change="updateWidth"
+            class="line-width-select">
+            <option value="1">Thin</option>
+            <option value="2">Medium</option>
+            <option value="3">Thick</option>
+            <option value="5">Extra Thick</option>
+          </select>
         </div>
-        <select
-          v-model="internalWidth"
-          @change="updateWidth"
-          class="line-width-select">
-          <option value="1">Thin</option>
-          <option value="2">Medium</option>
-          <option value="3">Thick</option>
-          <option value="5">Extra Thick</option>
-        </select>
+      </template>
+
+      <!-- Advanced Options Section (Conditional) -->
+      <div v-if="showAdvancedOptions" class="advanced-options-section">
+        <h4>Advanced Tools</h4>
+        <!-- Add Coordinate System Controls here later -->
+        <!-- Add Physics Graph Controls here later -->
+        <Calculator /> <!-- Add Calculator -->
+        <!-- Add other advanced controls as needed -->
       </div>
+
     </div>
   </div>
 </template>
@@ -43,8 +56,9 @@
 <script setup>
 import { ref, watch, computed } from 'vue';
 import ColorPicker from './ColorPicker.vue';
-import ShapeSelector from './ShapeSelector.vue'; // Import ShapeSelector
-import LineStyleSelector from './LineStyleSelector.vue'; // Import LineStyleSelector
+import ShapeSelector from './ShapeSelector.vue';
+import LineStyleSelector from './LineStyleSelector.vue';
+import Calculator from './Calculator.vue'; // Import Calculator
 
 const props = defineProps({
   initialColor: { type: String, default: '#000000' },
@@ -53,22 +67,23 @@ const props = defineProps({
   left: { type: Number, default: 0 },
   showShapeSelector: { type: Boolean, default: false },
   currentShape: { type: String, default: 'rectangle' },
-  showLineStyleSelector: { type: Boolean, default: false }, // New prop for line style
-  currentLineStyle: { type: String, default: 'solid' } // New prop for line style
+  showLineStyleSelector: { type: Boolean, default: false },
+  currentLineStyle: { type: String, default: 'solid' },
+  showAdvancedOptions: { type: Boolean, default: false } // Prop to show advanced section
 });
 
-const emit = defineEmits(['color-changed', 'line-width-changed', 'shape-changed', 'line-style-changed']); // Added line-style-changed emit
+const emit = defineEmits(['color-changed', 'line-width-changed', 'shape-changed', 'line-style-changed', 'advanced-option-changed']); // Added advanced-option-changed emit
 
 const internalColor = ref(props.initialColor);
 const internalWidth = ref(props.initialWidth);
 const internalShape = ref(props.currentShape);
-const internalLineStyle = ref(props.currentLineStyle); // New internal state for line style
+const internalLineStyle = ref(props.currentLineStyle);
 
 // Watch for prop changes to update internal state
 watch(() => props.initialColor, (newVal) => { internalColor.value = newVal; });
 watch(() => props.initialWidth, (newVal) => { internalWidth.value = newVal; });
 watch(() => props.currentShape, (newVal) => { internalShape.value = newVal; });
-watch(() => props.currentLineStyle, (newVal) => { internalLineStyle.value = newVal; }); // Watch currentLineStyle prop
+watch(() => props.currentLineStyle, (newVal) => { internalLineStyle.value = newVal; });
 
 const updateColor = (color) => {
   internalColor.value = color;
@@ -80,17 +95,20 @@ const updateWidth = () => {
   emit('line-width-changed', width);
 };
 
-// Method to update shape (now receives from ShapeSelector)
 const updateShape = (shape) => {
   internalShape.value = shape;
   emit('shape-changed', shape);
 };
 
-// New method to update line style
 const updateLineStyle = (style) => {
   internalLineStyle.value = style;
   emit('line-style-changed', style);
 };
+
+// Placeholder for handling changes within the advanced section if needed
+// const handleAdvancedChange = (payload) => {
+//   emit('advanced-option-changed', payload);
+// };
 
 const positionStyle = computed(() => ({
   top: `${props.top}px`,
@@ -111,7 +129,7 @@ const positionStyle = computed(() => ({
   display: flex;
   flex-direction: column;
   min-width: 150px; /* Ensure a minimum width */
-  max-width: 300px; /* Allow it to grow but not excessively */
+  /* max-width: 300px; /* Allow it to grow but not excessively - Removed for calculator */
   gap: 10px;
 }
 
@@ -121,6 +139,25 @@ const positionStyle = computed(() => ({
   align-items: center;
   gap: 10px;
 }
+
+.advanced-options-section {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 15px; /* Space between advanced components */
+  border-top: 1px solid var(--border-color-light);
+  padding-top: 10px;
+  margin-top: 5px;
+}
+
+.advanced-options-section h4 {
+  margin: 0 0 5px 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-color-secondary);
+  text-align: center;
+}
+
 
 /* Styles for Shape Selector and Line Style Selector are now in their respective components */
 /* Keep common styles for ColorPicker and LineWidthSelector */

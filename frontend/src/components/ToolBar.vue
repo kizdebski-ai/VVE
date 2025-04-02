@@ -57,6 +57,16 @@
       </button>
     </div>
 
+    <!-- Advanced Tools Category -->
+    <div class="tool-category">
+      <button :class="['tool-btn', { active: currentTool === 'advanced' }]" @click="selectTool('advanced', $event)" title="Advanced (A)">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="3"></circle>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+        </svg>
+      </button>
+    </div>
+
     <!-- Floating Options Panel -->
     <FloatingOptions
       ref="floatingOptionsRef"
@@ -73,11 +83,12 @@
       :current-shape="currentShape"
       :show-line-style-selector="currentTool === 'lines'"
       :current-line-style="currentLineStyle"
+      :show-advanced-options="currentTool === 'advanced'"
       @color-changed="setColor"
       @line-width-changed="updateLineWidth"
       @shape-changed="handleShapeChange"
       @line-style-changed="handleLineStyleChange"
-    />
+    ></FloatingOptions>
 
     <!-- Action Tools Category -->
     <div class="tool-category action-tools">
@@ -152,7 +163,8 @@ export default {
     'color-changed',
     'line-width-changed',
     'shape-changed',
-    'line-style-changed', // Added emit
+    'line-style-changed',
+    'advanced-option-changed', // Add emit for advanced options
     'clear-canvas',
     'export-whiteboard',
     'import-whiteboard',
@@ -210,19 +222,29 @@ export default {
 
     const handleKeyDown = (event) => {
       if (event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA') return;
-      if (!event.ctrlKey && !event.metaKey && !event.altKey) {
+      // Handle Shift+K for Calculator (will be added later)
+      if (event.shiftKey && event.key.toUpperCase() === 'K') {
+        event.preventDefault();
+        console.log("Shift+K pressed - Calculator shortcut (to be implemented)");
+        // selectTool('calculator', null); // Or open calculator modal directly
+        return; // Prevent other key handling
+      }
+
+      if (!event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) { // Ensure Shift isn't pressed for other shortcuts
         const keyToolMap = {
           'p': 'pen', 'h': 'highlighter', 'e': 'eraser',
-          's': 'shapes', 'l': 'lines', 't': 'text', 'i': 'image' // Added 'l' for lines
+          's': 'shapes', 'l': 'lines', 't': 'text', 'i': 'image',
+          'a': 'advanced' // Added 'a' for advanced
         };
         const toolForKey = keyToolMap[event.key.toLowerCase()];
         if (toolForKey) {
+          event.preventDefault(); // Prevent default browser actions like opening find bar with 'a'
           selectTool(toolForKey, null);
         }
       }
     };
 
-    const toolsWithOptions = ['pen', 'highlighter', 'shapes', 'lines']; // Added 'lines'
+    const toolsWithOptions = ['pen', 'highlighter', 'shapes', 'lines', 'advanced']; // Added 'advanced'
 
     const selectTool = (tool, event = null) => {
       console.log(`[Toolbar DEBUG] selectTool called with tool: ${tool}, event: ${event ? 'present' : 'null'}`);
@@ -279,6 +301,9 @@ export default {
         emit('shape-changed', currentShape.value);
       } else if (tool === 'lines' && isOptionTool && !isSameOptionTool) {
         emit('line-style-changed', currentLineStyle.value);
+      } else if (tool === 'advanced' && isOptionTool && !isSameOptionTool) {
+        // Emit something default for advanced if needed, or handle in AdvancedOptions component
+        console.log('[Toolbar] Switched to Advanced tool.');
       }
     };
 
@@ -304,6 +329,13 @@ export default {
        currentLineStyle.value = style;
        emit('line-style-changed', style);
        console.log('Line style changed to:', style);
+     };
+
+     // Placeholder for advanced option changes
+     const handleAdvancedOptionChange = (option) => {
+       // This will be implemented when AdvancedOptions component is built
+       console.log('Advanced option changed:', option);
+       emit('advanced-option-changed', option);
      };
 
     const exportWhiteboard = () => { emit('export-whiteboard'); };
@@ -333,7 +365,8 @@ export default {
       setColor,
       updateLineWidth,
       handleShapeChange,
-      handleLineStyleChange, // Added
+      handleLineStyleChange,
+      handleAdvancedOptionChange, // Added placeholder
       exportWhiteboard,
       importWhiteboard,
       shareWhiteboard,

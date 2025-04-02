@@ -1,7 +1,7 @@
 <!-- In App.vue, update the template structure -->
 <template>
   <div id="app" :class="{ 'dark-mode': darkMode }">
-    <TopMenu @clear-canvas="handleClearCanvas" /> <!-- Add TopMenu here -->
+    <TopMenu @clear-canvas="handleClearCanvas"></TopMenu> <!-- Add TopMenu here -->
     <!-- Canvas container takes full screen -->
     <div class="whiteboard-container">
       <WhiteboardCanvas
@@ -10,7 +10,8 @@
         :room-id="roomId"
         :username="username"
         :current-shape="currentShape"
-       />
+        :current-line-style="currentLineStyle"
+       ></WhiteboardCanvas>
 
       <!-- User info in top-right corner -->
       <div class="floating-user-info">
@@ -53,6 +54,7 @@
           @color-changed="handleColorChange"
           @line-width-changed="handleLineWidthChange"
           @shape-changed="handleShapeChange"
+          @line-style-changed="handleLineStyleChange"
           @export-whiteboard="handleExportRequest"
           @import-whiteboard="showImportDialog = true"
           @image-selected="handleImageSelected"
@@ -60,7 +62,7 @@
           :can-redo="whiteboard?.canRedo"
           :undo="callWhiteboardUndo"
           :redo="callWhiteboardRedo"
-         />
+         ></ToolBar>
       </div>
 
       <!-- Room info display -->
@@ -125,6 +127,7 @@ export default {
     const debugMode = ref(false);
     const roomId = ref('default_room');
     const currentShape = ref('rectangle'); // Add state for current shape
+    const currentLineStyle = ref('solid'); // Add state for current line style
 
     // --- Computed Properties ---
     const activeUsersCount = computed(() => {
@@ -225,6 +228,13 @@ export default {
       currentShape.value = shape;
       // No need to call whiteboard.setShape directly if WhiteboardCanvas watches the prop
       console.log('App.vue: Shape changed to', shape);
+    };
+
+    // New handler for line style changes
+    const handleLineStyleChange = (style) => {
+      currentLineStyle.value = style;
+      console.log('App.vue: Line style changed to', style);
+      // No direct call to whiteboard needed if it watches the prop
     };
 
     const handleClearCanvas = () => {
@@ -422,6 +432,7 @@ export default {
       debugMode,
       roomId,
       currentShape, // Return current shape
+      currentLineStyle, // Return current line style
       activeUsersCount,
       localClientId,
       formattedLastSaved,
@@ -429,6 +440,7 @@ export default {
       handleColorChange,
       handleLineWidthChange,
       handleShapeChange, // Return shape handler
+      handleLineStyleChange, // Return line style handler
       handleClearCanvas,
       handleExportRequest,
       handleImportState,

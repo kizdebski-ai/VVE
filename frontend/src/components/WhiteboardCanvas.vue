@@ -107,7 +107,7 @@ export default {
   props: {
     debugMode: { type: Boolean, default: false },
     currentShape: { type: String, default: 'rectangle' }, // Already exists
-    currentLineStyle: { type: String, default: 'solid' } // Add currentLineStyle prop
+    currentLineStyle: { type: String, default: 'solid' } // Declare currentLineStyle prop
   },
   emits: ['state-updated'],
 
@@ -196,13 +196,20 @@ export default {
                 element = {};
                 for (const [key, value] of elementMap.entries()) {
                     if (value instanceof Y.Array || value instanceof Y.Map) {
-                        element[key] = value.toJSON();
+                         // Check if the value is a Y.Map representing coordinates
+                         if ((key === 'start' || key === 'end' || key === 'position') && value instanceof Y.Map) {
+                             element[key] = value.toJSON();
+                         } else {
+                             // For other Y types (like potentially points array if using Y.Array)
+                             // This might need adjustment if points become collaborative
+                             element[key] = value.toJSON();
+                         }
                     } else {
                         element[key] = value;
                     }
                 }
                  // DEBUG: Log the element data being passed to drawElement
-                 // console.log(`[redrawCanvas] Drawing element ${index}:`, JSON.stringify(element));
+                 console.log(`[redrawCanvas] Element ${index} data from Yjs:`, JSON.stringify(element)); // ADDED LOG
             } catch (e) {
                 console.error("Error converting elementMap to JSON:", elementMap, e);
                 return;
@@ -570,9 +577,13 @@ export default {
           toolType = props.currentShape; // Use the specific shape from prop
           console.log(`[startDrawing] Starting shape drawing with type: ${toolType}`);
       } else if (toolType === 'lines') {
-          toolType = 'line'; // Base type is 'line'
-          elementData.lineStyle = props.currentLineStyle; // Add lineStyle
-          console.log(`[startDrawing] Starting line drawing with style: ${props.currentLineStyle}`);
+          toolType = 'line';
+      }
+
+      // Jeśli to linia — zawsze ustaw lineStyle, nawet jeśli toolType nie był "lines"
+      if (toolType === 'line') {
+          elementData.lineStyle = props.currentLineStyle;
+          console.log(`[startDrawing] Line style set to: ${elementData.lineStyle}`);
       }
 
       // Create preview element based on the determined toolType
@@ -711,39 +722,69 @@ export default {
 
               // Ensure lineStyle is included if the original tool was 'lines'
               if (originalTool === 'lines' && elementToAdd.type === 'line') {
-                 // lineStyle should have been added in startDrawing, double-check
-                 if (!elementToAdd.lineStyle) {
-                     elementToAdd.lineStyle = props.currentLineStyle || 'solid';
-                 }
-                 console.log(`[finishDrawing] Adding Line element with style: ${elementToAdd.lineStyle}`); // DEBUG
+                 // Always assign the style from props when the tool was 'lines'
+                 const styleFromProps = props.currentLineStyle || 'solid';
+                 console.log(`[finishDrawing] lineStyle missing or needs override, setting from prop: ${styleFromProps}`); // DEBUG
+                 elementToAdd.lineStyle = styleFromProps;
+                 // console.log(`[finishDrawing] Adding Line element with style from prop: ${styleFromProps}`); // DEBUG - Redundant with below
               }
           }
 
-          console.log('[finishDrawing] Element to add:', JSON.stringify(elementToAdd)); // DEBUG log before saving
-          // Add only if elementToAdd is not null (it shouldn't be null here based on checks)
+          // DEBUG: Log the final element object before saving
+          console.log('[finishDrawing] Final elementToAdd before Yjs transaction:', JSON.stringify(elementToAdd));
+
+          // Add only if elementToAdd is not null
           if (elementToAdd) {
+             // console.log('[finishDrawing] Attempting to save element:', JSON.stringify(elementToAdd)); // DEBUG - Reduced verbosity
               ydoc.value.transact(() => {
-                  // Convert element object to Y.Map before pushing
                   const yElementMap = new Y.Map();
-                  for (const [key, value] of Object.entries(elementToAdd)) {
-                      // Handle nested objects like start/end points if necessary
-                      if (key === 'start' || key === 'end' || key === 'position') {
-                         if (typeof value === 'object' && value !== null) {
-                             yElementMap.set(key, new Y.Map(Object.entries(value)));
-                         } else {
-                             // Fallback or error handling if structure is unexpected
-                             console.warn(`Unexpected structure for ${key}:`, value);
-                             yElementMap.set(key, value); // Store as is, might cause issues later
-                         }
-                      } else if (key === 'points' && Array.isArray(value)) {
-                          // Store points as a plain array in Yjs Map for simplicity
-                          // For full collaborative editing of points, Y.Array would be needed
-                          yElementMap.set(key, value);
-                      } else {
-                          yElementMap.set(key, value);
+                  // Explicitly set known properties
+                  yElementMap.set('type', elementToAdd.type);
+                  yElementMap.set('color', elementToAdd.color);
+                  yElementMap.set('lineWidth', elementToAdd.lineWidth);
+                  yElementMap.set('timestamp', elementToAdd.timestamp);
+
+                  if (elementToAdd.type === 'pen') {
+                      // Store points as a plain array for simplicity
+                      yElementMap.set('points', elementToAdd.points);
+                      // smoothedPoints might also be needed if calculated
+                      if (elementToAdd.smoothedPoints) {
+                          yElementMap.set('smoothedPoints', elementToAdd.smoothedPoints);
                       }
+                  } else if (elementToAdd.start && elementToAdd.end) {
+                      // Store start/end as nested Y.Maps
+                      const startMap = new Y.Map();
+                      startMap.set('x', elementToAdd.start.x);
+                      startMap.set('y', elementToAdd.start.y);
+                      yElementMap.set('start', startMap);
+
+                      const endMap = new Y.Map();
+                      endMap.set('x', elementToAdd.end.x);
+                      endMap.set('y', elementToAdd.end.y);
+                      yElementMap.set('end', endMap);
+
+                      // Explicitly add lineStyle if the original tool was 'lines'
+                      if (originalTool === 'lines' && elementToAdd.type === 'line') {
+                          const styleToSave = props.currentLineStyle || 'solid'; // Directly use prop value
+                          console.log(`[finishDrawing] Setting lineStyle on Y.Map from prop: ${styleToSave}`); // DEBUG
+                          yElementMap.set('lineStyle', styleToSave);
+                      }
+                      // Handle Shift+Pen case (already has lineStyle: 'solid' set in elementToAdd)
+                      else if (elementToAdd.type === 'line' && elementToAdd.lineStyle) {
+                           yElementMap.set('lineStyle', elementToAdd.lineStyle);
+                      }
+                  } else if (elementToAdd.type === 'text' && elementToAdd.position) {
+                      const positionMap = new Y.Map();
+                      positionMap.set('x', elementToAdd.position.x);
+                      positionMap.set('y', elementToAdd.position.y);
+                      yElementMap.set('position', positionMap);
+                      yElementMap.set('text', elementToAdd.text);
+                      yElementMap.set('fontSize', elementToAdd.fontSize);
                   }
+                  // Add other potential types like 'image' if needed
+
                   yDrawings.value.push([yElementMap]);
+                  console.log('[finishDrawing] Pushed Y.Map to yDrawings.'); // DEBUG
               });
           }
       } else {
@@ -943,6 +984,7 @@ export default {
 
     // Watch line style changes to update cursor if 'lines' tool is active
     watch(() => props.currentLineStyle, (newLineStyle) => {
+        console.log(`[Canvas Watcher] currentLineStyle prop changed to: ${newLineStyle}`); // DEBUG
         if (currentTool.value === 'lines') {
             updateCursor();
         }
@@ -1149,5 +1191,3 @@ export default {
 .toast-warning { background-color: #FF9800; }
 .toast-error { background-color: #F44336; }
 </style>
-
-

@@ -25,14 +25,32 @@ export const throttle = (fn, delay) => {
  * @param {function} requestRedraw - Optional: Redraw function passed to drawImage
  */
 export const drawElement = (context, element, isHighlighted = false, smoothingFactor = 0.2, imageCache = null, requestRedraw = null) => {
-  if (!element) return;
+  if (!element || typeof element !== 'object') {
+      console.error("drawElement received invalid element:", element);
+      return;
+  }
+  // Ensure essential properties exist, especially for lines/shapes
+  if (['line', 'rectangle', 'circle', 'square', 'triangle', 'trapezoid', 'parallelogram', 'deltoid', 'cube', 'cuboid', 'sphere', 'cylinder', 'cone', 'pyramid', 'tetrahedron'].includes(element.type)) {
+      if (!element.start || !element.end) {
+          // Allow text elements which use 'position' instead of 'start'/'end'
+          if (element.type !== 'text' && element.type !== 'image') {
+             console.error(`drawElement received element type ${element.type} without start/end points:`, element);
+             return;
+          }
+      }
+  }
+  if (element.type === 'pen' && (!element.points || element.points.length === 0)) {
+      console.error("drawElement received pen element without points:", element);
+      return;
+  }
+
 
   context.save();
 
   // Set styles
-  context.strokeStyle = element.color;
-  context.fillStyle = element.color;
-  context.lineWidth = element.lineWidth;
+  context.strokeStyle = element.color || '#000000'; // Default color
+  context.fillStyle = element.color || '#000000';
+  context.lineWidth = element.lineWidth || 2; // Default line width
   context.lineCap = 'round';
   context.lineJoin = 'round';
 
@@ -52,10 +70,7 @@ export const drawElement = (context, element, isHighlighted = false, smoothingFa
       drawPath(context, element, smoothingFactor);
       break;
     case 'eraser':
-      // Eraser logic will be changed later to remove elements, not draw
-      // For now, keep the path drawing if needed for preview? Or remove?
-      // Let's comment it out for now, assuming eraser will target elements.
-      // drawPath(context, element, smoothingFactor);
+      // Eraser logic is handled elsewhere (element deletion)
       break;
     case 'line':
       drawLine(context, element);
@@ -111,14 +126,14 @@ export const drawElement = (context, element, isHighlighted = false, smoothingFa
       // Pass cache and redraw request to drawImage
       drawImage(context, element, imageCache, requestRedraw);
       break;
+    default:
+        console.warn(`[drawElement] Unknown element type: ${element.type}`);
   }
 
   // Reset composite operation and shadow
   context.globalCompositeOperation = 'source-over';
   context.shadowColor = 'transparent';
   context.shadowBlur = 0;
-  // DEBUG: Log the element being drawn
-  // console.log('[drawElement] Drawing:', JSON.stringify(element));
 
   context.restore();
 };
@@ -144,62 +159,51 @@ const drawPath = (context, element, smoothingFactor) => {
       context.lineTo(p2.x, p2.y);
       context.stroke();
     } else {
-      // Zaawansowane wygładzanie krzywych z adaptacyjną kontrolą
-
-      // Start from the first point
+      // Advanced curve smoothing with adaptive control (Catmull-Rom to Bezier)
       context.moveTo(element.points[0].x, element.points[0].y);
 
-      // Jeśli element ma już obliczone punkty kontrolne, użyj ich
+      // Use pre-calculated control points if available (e.g., from Yjs)
       if (element.smoothedPoints && element.smoothedPoints.length > 0) {
-        for (let i = 1; i < element.points.length - 1; i++) {
-          if (element.smoothedPoints[i]) {
-            const cp = element.smoothedPoints[i];
-            context.bezierCurveTo(
-              cp.cp1x, cp.cp1y,
-              cp.cp2x, cp.cp2y,
-              element.points[i+1].x, element.points[i+1].y
-            );
-          } else {
-            // Fallback jeśli brak punktów kontrolnych
-            context.lineTo(element.points[i+1].x, element.points[i+1].y);
-          }
+        for (let i = 0; i < element.smoothedPoints.length; i++) {
+           const cp = element.smoothedPoints[i];
+           const p2 = element.points[i + 1]; // Target point for this curve segment
+           if (cp && p2) {
+               context.bezierCurveTo(cp.cp1x, cp.cp1y, cp.cp2x, cp.cp2y, p2.x, p2.y);
+           } else {
+               // Fallback if smoothed points are missing for a segment
+               if (p2) context.lineTo(p2.x, p2.y);
+           }
         }
       } else {
-        // Oblicz krzywe w locie z adaptacyjnym wygładzaniem
-
-        // Użyj wyższej wartości smoothingFactor dla większej płynności
+        // Calculate curves on the fly with adaptive smoothing
         const adaptiveSmoothingFactor = Math.min(0.4, smoothingFactor * 2);
 
-        // Przepuść przez wszystkie punkty z większą precyzją
         for (let i = 0; i < element.points.length - 1; i++) {
-          const p0 = i > 0 ? element.points[i-1] : element.points[i];
+          const p0 = i > 0 ? element.points[i - 1] : element.points[i];
           const p1 = element.points[i];
-          const p2 = element.points[i+1];
-          const p3 = i < element.points.length - 2 ? element.points[i+2] : p2;
+          const p2 = element.points[i + 1];
+          const p3 = i < element.points.length - 2 ? element.points[i + 2] : p2;
 
-          // Usprawniona konwersja Catmull-Rom do krzywej Beziera
+          // Improved Catmull-Rom to Bezier conversion
           const d1 = Math.sqrt(Math.pow(p1.x - p0.x, 2) + Math.pow(p1.y - p0.y, 2));
           const d2 = Math.sqrt(Math.pow(p2.x - p1.x, 2) + Math.pow(p2.y - p1.y, 2));
-          const d3a = Math.sqrt(Math.pow(p3.x - p2.x, 2) + Math.pow(p3.y - p2.y, 2));
+          const d3 = Math.sqrt(Math.pow(p3.x - p2.x, 2) + Math.pow(p3.y - p2.y, 2));
 
-          // Dostosuj współczynnik wygładzania w zależności od odległości punktów
-          const tensionFactor = Math.min(d1, d2, d3a) / Math.max(d1, d2, d3a);
-          const tension = adaptiveSmoothingFactor * (0.5 + tensionFactor / 2);
+          // Adjust tension based on point distances (simplified)
+          const tensionFactor = (d1 + d2 + d3 > 0) ? Math.min(d1, d2, d3) / Math.max(d1, d2, d3) : 0;
+          const tension = adaptiveSmoothingFactor * (0.5 + (isNaN(tensionFactor) ? 0 : tensionFactor) / 2);
 
-          // Punkty kontrolne z adaptacyjną tensją
+
+          // Control points with adaptive tension
           const cp1x = p1.x + (p2.x - p0.x) / 6 * tension;
           const cp1y = p1.y + (p2.y - p0.y) / 6 * tension;
           const cp2x = p2.x - (p3.x - p1.x) / 6 * tension;
           const cp2y = p2.y - (p3.y - p1.y) / 6 * tension;
 
-          // Dodaj krzywą Beziera
-          if (i === 0) {
-            context.lineTo(p1.x, p1.y);
-          }
+          // Add Bezier curve segment
           context.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, p2.x, p2.y);
         }
       }
-
       context.stroke();
     }
   }
@@ -209,8 +213,8 @@ const drawPath = (context, element, smoothingFactor) => {
  * Draw a line with different styles (solid, dotted, dashed, vector, dotted_vector)
  */
 const drawLine = (context, element) => {
-  // DEBUG: Log line element details
-  console.log(`[drawLine] Element received: type=${element.type}, style=${element.lineStyle}, start=(${element.start?.x},${element.start?.y}), end=(${element.end?.x},${element.end?.y})`);
+  // DEBUG: Log line element details more thoroughly
+  console.log(`[drawLine] Element received:`, JSON.stringify(element));
 
   context.save(); // Save context state before potentially changing dash/fill
   context.beginPath();
@@ -236,7 +240,7 @@ const drawLine = (context, element) => {
     console.log(`[drawLine] Applying dash pattern: [${dashPattern.join(', ')}]`); // DEBUG
     context.setLineDash(dashPattern);
   } else {
-    console.log(`[drawLine] No dash pattern applied (solid line).`); // DEBUG
+     console.log(`[drawLine] No dash pattern applied (solid line).`); // DEBUG
   }
 
   context.lineTo(element.end.x, element.end.y);
@@ -264,7 +268,7 @@ const drawLine = (context, element) => {
  */
 const drawArrowhead = (context, from, to, lineWidth) => {
     // Prevent drawing arrowhead if start and end points are the same
-    if (from.x === to.x && from.y === to.y) return;
+    if (!from || !to || (from.x === to.x && from.y === to.y)) return;
 
     const headLength = Math.max(8, lineWidth * 3.5); // Adjusted size calculation
     const angle = Math.atan2(to.y - from.y, to.x - from.x);
@@ -887,3 +891,5 @@ export const isPointInElement = (point, element, hitDistance = 10) => {
       return false;
   }
 };
+
+

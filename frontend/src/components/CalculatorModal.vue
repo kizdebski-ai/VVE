@@ -48,10 +48,11 @@ const closeModal = () => {
 };
 
 const startDrag = (event) => {
-  // Prevent dragging if clicking on a button inside the calculator
+  // Prevent dragging if clicking on any button (calculator's internal close button or operation buttons)
   if (event.target.closest('button')) {
-    return;
+      return;
   }
+  // Allow dragging by clicking anywhere else on the wrapper (which contains the calculator)
   isDragging.value = true;
   dragStartOffset.value = {
     x: event.clientX - position.value.x,
@@ -94,7 +95,7 @@ onBeforeUnmount(() => {
   border: none; /* Remove border */
   border-radius: 0; /* Remove border-radius if calculator has its own */
   box-shadow: none; /* Remove shadow if calculator has its own */
-  cursor: grab;
+  cursor: grab; /* Default cursor indicates draggable */
   user-select: none; /* Prevent text selection during drag */
   /* Initial position is set by transform */
   left: 0;

@@ -70,7 +70,7 @@
     <!-- Floating Options Panel -->
     <FloatingOptions
       ref="floatingOptionsRef"
-      v-if="floatingOptionsPosition.visible"
+      v-show="floatingOptionsPosition.visible" 
       :style="{ /* Use fixed positioning */
         position: 'fixed',
         top: `${floatingOptionsPosition.top}px`,
@@ -88,6 +88,7 @@
       @line-width-changed="updateLineWidth"
       @shape-changed="handleShapeChange"
       @line-style-changed="handleLineStyleChange"
+      @toggle-calculator="handleToggleCalculator"
     ></FloatingOptions>
 
     <!-- Action Tools Category -->
@@ -164,7 +165,8 @@ export default {
     'line-width-changed',
     'shape-changed',
     'line-style-changed',
-    'advanced-option-changed', // Add emit for advanced options
+    'advanced-option-changed',
+    'toggle-calculator', // Ensure emit is declared
     'clear-canvas',
     'export-whiteboard',
     'import-whiteboard',
@@ -222,11 +224,11 @@ export default {
 
     const handleKeyDown = (event) => {
       if (event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA') return;
-      // Handle Shift+K for Calculator (will be added later)
+      // Handle Shift+K for Calculator
       if (event.shiftKey && event.key.toUpperCase() === 'K') {
         event.preventDefault();
-        console.log("Shift+K pressed - Calculator shortcut (to be implemented)");
-        // selectTool('calculator', null); // Or open calculator modal directly
+        console.log("Shift+K pressed - Toggling calculator via Toolbar");
+        emit('toggle-calculator'); // Emit toggle event for Shift+K
         return; // Prevent other key handling
       }
 
@@ -338,6 +340,12 @@ export default {
        emit('advanced-option-changed', option);
      };
 
+     // Method to handle and re-emit the toggle event
+     const handleToggleCalculator = () => {
+       console.log('ToolBar: Received toggle-calculator, re-emitting...');
+       emit('toggle-calculator');
+     };
+
     const exportWhiteboard = () => { emit('export-whiteboard'); };
     const importWhiteboard = () => { emit('import-whiteboard'); };
     const shareWhiteboard = () => { emit('share-room'); };
@@ -366,7 +374,8 @@ export default {
       updateLineWidth,
       handleShapeChange,
       handleLineStyleChange,
-      handleAdvancedOptionChange, // Added placeholder
+      handleAdvancedOptionChange,
+      handleToggleCalculator, // Expose the new method
       exportWhiteboard,
       importWhiteboard,
       shareWhiteboard,

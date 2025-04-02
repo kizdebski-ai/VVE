@@ -43,10 +43,12 @@
       <!-- Advanced Options Section (Conditional) -->
       <div v-if="showAdvancedOptions" class="advanced-options-section">
         <h4>Advanced Tools</h4>
-        <!-- Add Coordinate System Controls here later -->
-        <!-- Add Physics Graph Controls here later -->
-        <Calculator /> <!-- Add Calculator -->
-        <!-- Add other advanced controls as needed -->
+        <button class="adv-option-btn" @click="() => { console.log('FloatingOptions: Emitting toggle-calculator'); emit('toggle-calculator'); }">
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="2" width="16" height="20" rx="2" ry="2"></rect><line x1="8" y1="6" x2="16" y2="6"></line><line x1="16" y1="10" x2="16" y2="14"></line><line x1="12" y1="10" x2="12" y2="14"></line><line x1="8" y1="10" x2="8" y2="14"></line><line x1="8" y1="18" x2="16" y2="18"></line></svg>
+          Calculator
+        </button>
+        <!-- Add Coordinate System Controls button here later -->
+        <!-- Add Physics Graph Controls button here later -->
       </div>
 
     </div>
@@ -58,7 +60,7 @@ import { ref, watch, computed } from 'vue';
 import ColorPicker from './ColorPicker.vue';
 import ShapeSelector from './ShapeSelector.vue';
 import LineStyleSelector from './LineStyleSelector.vue';
-import Calculator from './Calculator.vue'; // Import Calculator
+// Calculator is now in CalculatorModal, no direct import needed here
 
 const props = defineProps({
   initialColor: { type: String, default: '#000000' },
@@ -72,7 +74,8 @@ const props = defineProps({
   showAdvancedOptions: { type: Boolean, default: false } // Prop to show advanced section
 });
 
-const emit = defineEmits(['color-changed', 'line-width-changed', 'shape-changed', 'line-style-changed', 'advanced-option-changed']); // Added advanced-option-changed emit
+// Add 'toggle-calculator' to emits
+const emit = defineEmits(['color-changed', 'line-width-changed', 'shape-changed', 'line-style-changed', 'advanced-option-changed', 'toggle-calculator']);
 
 const internalColor = ref(props.initialColor);
 const internalWidth = ref(props.initialWidth);
@@ -144,7 +147,7 @@ const positionStyle = computed(() => ({
   width: 100%;
   display: flex;
   flex-direction: column;
-  gap: 15px; /* Space between advanced components */
+  gap: 10px; /* Space between advanced components */
   border-top: 1px solid var(--border-color-light);
   padding-top: 10px;
   margin-top: 5px;
@@ -156,6 +159,28 @@ const positionStyle = computed(() => ({
   font-weight: 600;
   color: var(--text-color-secondary);
   text-align: center;
+}
+
+.adv-option-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 12px;
+  border: none;
+  background-color: var(--btn-secondary-bg);
+  color: var(--text-color);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  text-align: left;
+  transition: background-color 0.2s ease;
+}
+.adv-option-btn svg {
+  flex-shrink: 0; /* Prevent icon shrinking */
+}
+.adv-option-btn:hover {
+  background-color: var(--btn-secondary-hover-bg);
 }
 
 

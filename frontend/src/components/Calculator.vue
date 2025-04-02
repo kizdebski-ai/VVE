@@ -296,10 +296,10 @@ onMounted(() => {
 
 <style scoped>
 .calculator {
-  width: 320px; /* Default width */
+  width: 320px; /* Fixed width */
   border-radius: 24px;
   overflow: hidden;
-  background-color: rgba(30, 30, 35, 0.9);
+  background-color: rgba(30, 30, 35, 0.75); /* More transparent */
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
   box-shadow: 0 12px 35px rgba(0, 0, 0, 0.3);
@@ -309,23 +309,21 @@ onMounted(() => {
   flex-direction: column;
   color: #FFFFFF;
   position: relative;
-  transition: width 0.3s ease;
+  /* No width transition */
 }
-.calculator.scientific-mode-active {
-  width: 620px; /* Wider width */
-}
+/* Remove scientific-mode-active class */
 
 /* Internal Close Button Styling */
 .internal-close-btn {
   position: absolute;
-  top: 5px;
-  right: 5px;
+  top: 8px;
+  right: 8px;
   background: none;
   border: none;
-  font-size: 22px;
+  font-size: 24px;
   color: #AAA;
   cursor: pointer;
-  padding: 8px;
+  padding: 5px;
   line-height: 1;
   z-index: 10;
 }
@@ -365,21 +363,23 @@ onMounted(() => {
 /* Combined Buttons Container */
 .buttons {
   display: grid;
-  gap: 10px;
-  padding: 20px;
+  gap: 12px; /* Adjusted gap */
+  padding: 18px; /* Adjusted padding */
   flex-grow: 1;
-  /* Basic mode layout */
   grid-template-columns: repeat(4, 1fr);
+  /* Rows defined by mode */
+}
+/* Basic mode rows */
+.buttons:not(.scientific-mode) {
   grid-template-rows: repeat(5, 1fr);
 }
-/* Scientific mode layout */
+/* Scientific mode rows */
 .buttons.scientific-mode {
-  grid-template-columns: repeat(8, 1fr); /* 8 columns */
-  grid-template-rows: repeat(5, 1fr); /* 5 rows */
+  grid-template-rows: repeat(8, 1fr); /* 8 rows */
 }
 
 .buttons button {
-  font-size: 24px;
+  font-size: 26px; /* Adjusted base font */
   font-weight: 400;
   border: none;
   border-radius: 18px;
@@ -389,7 +389,7 @@ onMounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 55px;
+  min-height: 50px; /* Adjusted height */
 }
 .buttons button:hover {
   filter: brightness(1.15);
@@ -410,7 +410,7 @@ onMounted(() => {
   font-size: 16px;
 }
 
-/* Scientific Grid Positions */
+/* Scientific Grid Positions (Rows 1-3) */
 .buttons.scientific-mode .sin { grid-column: 1 / 2; grid-row: 1 / 2; }
 .buttons.scientific-mode .cos { grid-column: 2 / 3; grid-row: 1 / 2; }
 .buttons.scientific-mode .tan { grid-column: 3 / 4; grid-row: 1 / 2; }
@@ -450,28 +450,28 @@ onMounted(() => {
 .buttons:not(.scientific-mode) .three { grid-column: 3 / 4; grid-row: 4 / 5; }
 .buttons:not(.scientific-mode) .btn-equal { grid-column: 4 / 5; grid-row: 4 / 6; } /* Span rows 4+5 */
 .buttons:not(.scientific-mode) .sci-toggle { grid-column: 1 / 2; grid-row: 5 / 6; }
-.buttons:not(.scientific-mode) .btn-zero { grid-column: 2 / 4; grid-row: 5 / 6; } /* Span cols 2+3 */
-.buttons:not(.scientific-mode) .decimal { grid-column: 4 / 5; grid-row: 5 / 6; } /* Correct position */
+.buttons:not(.scientific-mode) .btn-zero { grid-column: 2 / 3; grid-row: 5 / 6; } /* Corrected: Col 2 */
+.buttons:not(.scientific-mode) .decimal { grid-column: 3 / 4; grid-row: 5 / 6; } /* Corrected: Col 3 */
 
-/* Adjust Basic Button Grid Positions IN Scientific Mode */
-.buttons.scientific-mode .ac { grid-column: 5 / 6; grid-row: 1 / 2; }
-.buttons.scientific-mode .divide { grid-column: 6 / 7; grid-row: 1 / 2; }
-.buttons.scientific-mode .multiply { grid-column: 7 / 8; grid-row: 1 / 2; }
-.buttons.scientific-mode .backspace { grid-column: 8 / 9; grid-row: 1 / 2; }
-.buttons.scientific-mode .seven { grid-column: 5 / 6; grid-row: 2 / 3; }
-.buttons.scientific-mode .eight { grid-column: 6 / 7; grid-row: 2 / 3; }
-.buttons.scientific-mode .nine { grid-column: 7 / 8; grid-row: 2 / 3; }
-.buttons.scientific-mode .subtract { grid-column: 8 / 9; grid-row: 2 / 3; }
-.buttons.scientific-mode .four { grid-column: 5 / 6; grid-row: 3 / 4; }
-.buttons.scientific-mode .five { grid-column: 6 / 7; grid-row: 3 / 4; }
-.buttons.scientific-mode .six { grid-column: 7 / 8; grid-row: 3 / 4; }
-.buttons.scientific-mode .add { grid-column: 8 / 9; grid-row: 3 / 4; }
-.buttons.scientific-mode .one { grid-column: 5 / 6; grid-row: 4 / 5; }
-.buttons.scientific-mode .two { grid-column: 6 / 7; grid-row: 4 / 5; }
-.buttons.scientific-mode .three { grid-column: 7 / 8; grid-row: 4 / 5; }
-.buttons.scientific-mode .btn-equal { grid-column: 8 / 9; grid-row: 4 / 6; } /* Span rows 4+5 */
+/* Adjust Basic Button Grid Positions IN Scientific Mode (Shifted Down) */
+.buttons.scientific-mode .ac { grid-column: 1 / 2; grid-row: 4 / 5; }
+.buttons.scientific-mode .divide { grid-column: 2 / 3; grid-row: 4 / 5; }
+.buttons.scientific-mode .multiply { grid-column: 3 / 4; grid-row: 4 / 5; }
+.buttons.scientific-mode .backspace { grid-column: 4 / 5; grid-row: 4 / 5; }
+.buttons.scientific-mode .seven { grid-column: 1 / 2; grid-row: 5 / 6; }
+.buttons.scientific-mode .eight { grid-column: 2 / 3; grid-row: 5 / 6; }
+.buttons.scientific-mode .nine { grid-column: 3 / 4; grid-row: 5 / 6; }
+.buttons.scientific-mode .subtract { grid-column: 4 / 5; grid-row: 5 / 6; }
+.buttons.scientific-mode .four { grid-column: 1 / 2; grid-row: 6 / 7; }
+.buttons.scientific-mode .five { grid-column: 2 / 3; grid-row: 6 / 7; }
+.buttons.scientific-mode .six { grid-column: 3 / 4; grid-row: 6 / 7; }
+.buttons.scientific-mode .add { grid-column: 4 / 5; grid-row: 6 / 7; }
+.buttons.scientific-mode .one { grid-column: 1 / 2; grid-row: 7 / 8; }
+.buttons.scientific-mode .two { grid-column: 2 / 3; grid-row: 7 / 8; }
+.buttons.scientific-mode .three { grid-column: 3 / 4; grid-row: 7 / 8; }
+.buttons.scientific-mode .btn-equal { grid-column: 4 / 5; grid-row: 7 / 9; } /* Span rows 7+8 */
 .buttons.scientific-mode .sci-toggle { display: none; } /* Hide Sci toggle in Sci mode */
-.buttons.scientific-mode .btn-zero { grid-column: 6 / 8; grid-row: 5 / 6; } /* Span cols 6+7 */
-.buttons.scientific-mode .decimal { grid-column: 8 / 9; grid-row: 5 / 6; }
+.buttons.scientific-mode .btn-zero { grid-column: 2 / 3; grid-row: 8 / 9; } /* Corrected: Col 2 */
+.buttons.scientific-mode .decimal { grid-column: 3 / 4; grid-row: 8 / 9; } /* Corrected: Col 3 */
 
 </style>

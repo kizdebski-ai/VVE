@@ -55,6 +55,7 @@
           @line-width-changed="handleLineWidthChange"
           @shape-changed="handleShapeChange"
           @line-style-changed="handleLineStyleChange"
+          @toggle-calculator="toggleCalculator"
           @export-whiteboard="handleExportRequest"
           @import-whiteboard="showImportDialog = true"
           @image-selected="handleImageSelected"
@@ -84,6 +85,10 @@
       @copy="copyToClipboard"
       @download="downloadAsFile"
     />
+
+    <!-- Calculator Modal -->
+    <CalculatorModal :visible="isCalculatorVisible" @update:visible="isCalculatorVisible = $event" />
+
   </div>
 </template>
 
@@ -91,10 +96,11 @@
 import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue';
 import WhiteboardCanvas from './components/WhiteboardCanvas.vue';
 import ToolBar from './components/ToolBar.vue';
-import TopMenu from './components/TopMenu.vue'; // Import TopMenu
+import TopMenu from './components/TopMenu.vue';
 import ImportDialog from './components/ImportDialog.vue';
 import ExportDialog from './components/ExportDialog.vue';
 import ThemeToggle from './components/ThemeToggle.vue';
+import CalculatorModal from './components/CalculatorModal.vue'; // Import CalculatorModal
 import { copyToClipboard } from './utils/fileUtils.js';
 import * as Y from 'yjs';
 import { Buffer } from 'buffer';
@@ -104,10 +110,11 @@ export default {
   components: {
     WhiteboardCanvas,
     ToolBar,
-    TopMenu, // Register TopMenu
+    TopMenu,
     ImportDialog,
     ExportDialog,
-    ThemeToggle
+    ThemeToggle,
+    CalculatorModal // Register CalculatorModal
   },
   setup() {
     // --- Template Refs ---
@@ -126,8 +133,9 @@ export default {
     const darkMode = ref(localStorage.getItem('darkMode') === 'true');
     const debugMode = ref(false);
     const roomId = ref('default_room');
-    const currentShape = ref('rectangle'); // Add state for current shape
-    const currentLineStyle = ref('solid'); // Add state for current line style
+    const currentShape = ref('rectangle');
+    const currentLineStyle = ref('solid');
+    const isCalculatorVisible = ref(false); // State for calculator modal visibility
 
     // --- Computed Properties ---
     const activeUsersCount = computed(() => {
@@ -223,18 +231,18 @@ export default {
       if (whiteboard.value) whiteboard.value.setLineWidth(width);
     };
 
-    // New handler for shape changes
     const handleShapeChange = (shape) => {
       currentShape.value = shape;
-      // No need to call whiteboard.setShape directly if WhiteboardCanvas watches the prop
       console.log('App.vue: Shape changed to', shape);
     };
 
-    // New handler for line style changes
     const handleLineStyleChange = (style) => {
       currentLineStyle.value = style;
       console.log('App.vue: Line style changed to', style);
-      // No direct call to whiteboard needed if it watches the prop
+    };
+
+    const toggleCalculator = () => {
+      isCalculatorVisible.value = !isCalculatorVisible.value;
     };
 
     const handleClearCanvas = () => {
@@ -256,7 +264,7 @@ export default {
       }
     };
 
-    const copyToClipboardLocal = () => { // Renamed to avoid conflict
+    const copyToClipboardLocal = () => {
       copyToClipboard(exportedState.value)
         .then(() => showStatus('Copied to clipboard!'))
         .catch(err => {
@@ -315,14 +323,13 @@ export default {
     };
 
     const handleImageSelected = (file) => {
-      console.log("App.vue: handleImageSelected called with:", file); // Log entry
+      console.log("App.vue: handleImageSelected called with:", file);
       if (!file) {
           console.warn("handleImageSelected: No file received.");
           return;
       }
       if (!whiteboard.value) {
           console.warn("handleImageSelected: Whiteboard ref not available yet.");
-          // Maybe queue the file or show an error?
           showNotification("Whiteboard not ready, please try again.", "warning");
           return;
       }
@@ -332,29 +339,28 @@ export default {
         const reader = new FileReader();
 
         reader.onload = (e) => {
-          console.log("FileReader onload triggered."); // Log onload
+          console.log("FileReader onload triggered.");
           const dataUrl = e.target.result;
           if (whiteboard.value?.addImageFromDataUrl) {
-            console.log("Calling whiteboard.addImageFromDataUrl with dataUrl (first 50 chars):", dataUrl.substring(0, 50)); // Log before call
+            console.log("Calling whiteboard.addImageFromDataUrl with dataUrl (first 50 chars):", dataUrl.substring(0, 50));
             whiteboard.value.addImageFromDataUrl(dataUrl);
-            console.log("Called whiteboard.addImageFromDataUrl."); // Log after call
+            console.log("Called whiteboard.addImageFromDataUrl.");
           } else {
             console.error("Whiteboard ref or addImageFromDataUrl method not available when FileReader loaded.");
             showNotification("Error processing image (internal).", "error");
           }
         };
 
-        reader.onerror = (err) => { // Add FileReader error handling
+        reader.onerror = (err) => {
             console.error("FileReader error:", err);
-            showNotification("Error reading selected file.", "error"); // Use showNotification
+            showNotification("Error reading selected file.", "error");
         };
 
         reader.readAsDataURL(file);
-        console.log("FileReader readAsDataURL called."); // Log read call
+        console.log("FileReader readAsDataURL called.");
 
       } else {
          console.warn("handleImageSelected received non-File object:", file);
-         // Attempt to call addImageFromDataUrl anyway if it's possibly a data URL
          if (whiteboard.value?.addImageFromDataUrl && typeof file === 'string') {
              console.log("Calling whiteboard.addImageFromDataUrl with non-File object (string)...");
              whiteboard.value.addImageFromDataUrl(file);
@@ -394,6 +400,19 @@ export default {
         });
     };
 
+    // --- Keyboard Shortcuts ---
+    const handleGlobalKeyDown = (event) => {
+      // Ignore if typing in an input
+      if (event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA') return;
+
+      // Shift + K for Calculator
+      if (event.shiftKey && event.key.toUpperCase() === 'K') {
+        event.preventDefault();
+        toggleCalculator();
+      }
+      // Add other global shortcuts here if needed
+    };
+
     // --- Lifecycle Hooks ---
     onMounted(() => {
       const urlParams = new URLSearchParams(window.location.search);
@@ -411,10 +430,12 @@ export default {
 
       document.body.classList.toggle('dark-mode', darkMode.value);
       window.addEventListener('beforeunload', handleBeforeUnload);
+      window.addEventListener('keydown', handleGlobalKeyDown); // Add global key listener
     });
 
     onBeforeUnmount(() => {
       window.removeEventListener('beforeunload', handleBeforeUnload);
+      window.removeEventListener('keydown', handleGlobalKeyDown); // Remove global key listener
     });
 
     // --- Return values accessible to the template ---
@@ -431,21 +452,23 @@ export default {
       darkMode,
       debugMode,
       roomId,
-      currentShape, // Return current shape
-      currentLineStyle, // Return current line style
+      currentShape,
+      currentLineStyle,
+      isCalculatorVisible, // Return state for modal
       activeUsersCount,
       localClientId,
       formattedLastSaved,
       handleToolChange,
       handleColorChange,
       handleLineWidthChange,
-      handleShapeChange, // Return shape handler
-      handleLineStyleChange, // Return line style handler
+      handleShapeChange,
+      handleLineStyleChange,
+      toggleCalculator, // Return toggle method
       handleClearCanvas,
       handleExportRequest,
       handleImportState,
-      handleImageSelected, // Make sure this is returned
-      copyToClipboard: copyToClipboardLocal, // Use renamed method
+      handleImageSelected,
+      copyToClipboard: copyToClipboardLocal,
       downloadAsFile,
       handleJsonFileImport,
       updateUsername,

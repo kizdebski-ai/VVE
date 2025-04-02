@@ -87,8 +87,8 @@ onBeforeUnmount(() => {
 .calculator-modal-wrapper {
   position: fixed; /* Use fixed to position relative to viewport */
   z-index: 1100; /* Ensure it's above other elements */
-  background-color: var(--bg-color-secondary);
-  border: 1px solid var(--border-color);
+  background-color: var(--bg-color-secondary, #ffffff); /* Ensure background color with fallback (white) */
+  border: 1px solid var(--border-color, #cccccc); /* Added fallback border */
   border-radius: 8px;
   box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
   cursor: grab;

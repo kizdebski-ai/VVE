@@ -1,18 +1,38 @@
 <template>
-  <div class="calculator" @keydown="handleKeydown" tabindex="0" ref="calculatorRef">
+  <div class="calculator" :class="{ 'scientific-mode-active': isScientificMode }" @keydown="handleKeydown" tabindex="0" ref="calculatorRef">
+     <!-- Integrated Close Button -->
+     <button class="internal-close-btn" @click="$emit('close')">&times;</button>
+
     <div class="display">
       <div class="expression">{{ currentExpression || '&nbsp;' }}</div>
       <div class="result">{{ result || '0' }}</div>
     </div>
 
-    <!-- Basic Layout Container -->
-    <div class="buttons basic-layout" v-if="!isScientificMode">
-        <button @click="clearAll" class="btn-op ac" style="background-color: #757575;">AC</button>
+    <!-- Combined Buttons Container -->
+    <div class="buttons" :class="{ 'scientific-mode': isScientificMode }">
+        <!-- Scientific Buttons (Always in DOM, positioned by CSS) -->
+        <button @click="inputFunction('sin(')" class="btn-sci sin">sin</button>
+        <button @click="inputFunction('cos(')" class="btn-sci cos">cos</button>
+        <button @click="inputFunction('tan(')" class="btn-sci tan">tan</button>
+        <button @click="inputFunction('log(')" class="btn-sci log">log</button>
+
+        <button @click="inputOperator('!')" class="btn-sci fact">n!</button>
+        <button @click="inputConstant('pi')" class="btn-sci pi">π</button>
+        <button @click="inputFunction('sqrt(')" class="btn-sci sqrt">√</button>
+        <button @click="inputOperator('^')" class="btn-sci pow">^</button>
+
+        <button @click="inputParenthesis('(')" class="btn-sci paren-l">(</button>
+        <button @click="inputParenthesis(')')" class="btn-sci paren-r">)</button>
+        <button @click="copyResult" title="Copy Result" class="btn-sci copy">Copy</button>
+        <button @click="toggleScientificMode" class="btn-sci toggle-basic">Basic</button>
+
+        <!-- Basic Buttons (Always Rendered, position adjusted by CSS) -->
+        <button @click="clearAll" class="btn-op ac">AC</button>
         <button @click="inputOperator('/')" class="btn-op divide">÷</button>
         <button @click="inputOperator('*')" class="btn-op multiply">×</button>
         <button @click="backspace" class="btn-op backspace">⌫</button>
 
-        <button @click="inputDigit('7')" class="btn-digit seven" style="background-color: #5A5A5A;">7</button>
+        <button @click="inputDigit('7')" class="btn-digit seven">7</button>
         <button @click="inputDigit('8')" class="btn-digit eight">8</button>
         <button @click="inputDigit('9')" class="btn-digit nine">9</button>
         <button @click="inputOperator('-')" class="btn-op subtract">−</button>
@@ -25,30 +45,11 @@
         <button @click="inputDigit('1')" class="btn-digit one">1</button>
         <button @click="inputDigit('2')" class="btn-digit two">2</button>
         <button @click="inputDigit('3')" class="btn-digit three">3</button>
-        <button @click="calculate" class="btn-equal" style="background-color: #E07A5F;">=</button>
+        <button @click="calculate" class="btn-equal">=</button>
 
         <button @click="toggleScientificMode" class="btn-op sci-toggle">Sci</button>
         <button @click="inputDigit('0')" class="btn-digit btn-zero">0</button>
         <button @click="inputDecimal" class="btn-digit decimal">.</button>
-    </div>
-
-    <!-- Scientific Layout Container -->
-    <div class="buttons scientific-layout" v-else>
-        <!-- Scientific Buttons -->
-        <button @click="inputFunction('sin(')" class="btn-sci">sin</button>
-        <button @click="inputFunction('cos(')" class="btn-sci">cos</button>
-        <button @click="inputFunction('tan(')" class="btn-sci">tan</button>
-        <button @click="inputFunction('log(')" class="btn-sci">log</button>
-
-        <button @click="inputOperator('!')" class="btn-sci">n!</button>
-        <button @click="inputConstant('pi')" class="btn-sci">π</button>
-        <button @click="inputFunction('sqrt(')" class="btn-sci">√</button>
-        <button @click="inputOperator('^')" class="btn-sci">^</button>
-
-        <button @click="inputParenthesis('(')" class="btn-sci">(</button>
-        <button @click="inputParenthesis(')')" class="btn-sci">)</button>
-        <button @click="copyResult" title="Copy Result" class="btn-sci">Copy</button>
-        <button @click="toggleScientificMode" class="btn-sci">Basic</button>
     </div>
   </div>
 </template>
@@ -294,129 +295,183 @@ onMounted(() => {
 </script>
 
 <style scoped>
-/* Minimal styles to test basic rendering */
 .calculator {
-  width: 320px;
+  width: 320px; /* Default width */
   border-radius: 24px;
   overflow: hidden;
-  background-color: #1E1E23; /* Dark background */
-  border: 1px solid #444;
-  font-family: sans-serif;
+  background-color: rgba(30, 30, 35, 0.9);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  box-shadow: 0 12px 35px rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
   display: flex;
   flex-direction: column;
+  color: #FFFFFF;
+  position: relative;
+  transition: width 0.3s ease;
+}
+.calculator.scientific-mode-active {
+  width: 620px; /* Wider width */
+}
+
+/* Internal Close Button Styling */
+.internal-close-btn {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  background: none;
+  border: none;
+  font-size: 22px;
+  color: #AAA;
+  cursor: pointer;
+  padding: 8px;
+  line-height: 1;
+  z-index: 10;
+}
+.internal-close-btn:hover {
   color: #FFF;
 }
 
 .display {
-  padding: 20px;
+  padding: 35px 25px 15px 25px;
   text-align: right;
-  min-height: 100px;
+  min-height: 120px;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  flex-shrink: 0;
   background: transparent;
 }
 
 .expression {
-  font-size: 20px;
-  color: #AAA;
-  min-height: 25px;
-  margin-bottom: 5px;
+  font-size: 22px;
+  color: #B0B0B0;
+  min-height: 30px;
+  word-break: break-all;
+  overflow-wrap: break-word;
+  margin-bottom: 8px;
 }
 
 .result {
-  font-size: 50px; /* Large font */
-  color: #FFF;
-  min-height: 60px;
+  font-size: 60px;
+  font-weight: 300;
+  color: #FFFFFF;
+  min-height: 70px;
+  overflow-wrap: break-word;
+  line-height: 1.1;
 }
 
-.buttons.basic-layout {
+/* Combined Buttons Container */
+.buttons {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  grid-template-rows: repeat(5, 1fr); /* 5 equal rows */
-  gap: 10px; /* Visible gap */
-  padding: 15px;
+  gap: 10px;
+  padding: 20px;
   flex-grow: 1;
+  /* Basic mode layout */
+  grid-template-columns: repeat(4, 1fr);
+  grid-template-rows: repeat(5, 1fr);
+}
+/* Scientific mode layout */
+.buttons.scientific-mode {
+  grid-template-columns: repeat(8, 1fr); /* 8 columns */
+  grid-template-rows: repeat(5, 1fr); /* 5 rows */
 }
 
-.buttons.basic-layout button {
-  font-size: 24px; /* Large font */
+.buttons button {
+  font-size: 24px;
+  font-weight: 400;
   border: none;
-  border-radius: 15px;
+  border-radius: 18px;
   color: #FFFFFF;
+  cursor: pointer;
+  transition: background-color 0.15s ease, transform 0.1s ease;
   display: flex;
   align-items: center;
   justify-content: center;
-  cursor: pointer;
-  min-height: 50px; /* Ensure buttons have height */
+  min-height: 55px;
 }
-
-/* Direct Colors */
-.buttons.basic-layout .btn-digit { background-color: #5A5A5A; }
-.buttons.basic-layout .btn-op { background-color: #E07A5F; }
-.buttons.basic-layout .btn-equal { background-color: #E07A5F; }
-.buttons.basic-layout .ac { background-color: #757575; }
-.buttons.basic-layout .sci-toggle { background-color: #757575; }
-
-/* Basic Grid Positions */
-.buttons.basic-layout .ac { grid-column: 1 / 2; grid-row: 1 / 2; }
-.buttons.basic-layout .divide { grid-column: 2 / 3; grid-row: 1 / 2; }
-.buttons.basic-layout .multiply { grid-column: 3 / 4; grid-row: 1 / 2; }
-.buttons.basic-layout .backspace { grid-column: 4 / 5; grid-row: 1 / 2; }
-.buttons.basic-layout .seven { grid-column: 1 / 2; grid-row: 2 / 3; }
-.buttons.basic-layout .eight { grid-column: 2 / 3; grid-row: 2 / 3; }
-.buttons.basic-layout .nine { grid-column: 3 / 4; grid-row: 2 / 3; }
-.buttons.basic-layout .subtract { grid-column: 4 / 5; grid-row: 2 / 3; }
-.buttons.basic-layout .four { grid-column: 1 / 2; grid-row: 3 / 4; }
-.buttons.basic-layout .five { grid-column: 2 / 3; grid-row: 3 / 4; }
-.buttons.basic-layout .six { grid-column: 3 / 4; grid-row: 3 / 4; }
-.buttons.basic-layout .add { grid-column: 4 / 5; grid-row: 3 / 4; }
-.buttons.basic-layout .one { grid-column: 1 / 2; grid-row: 4 / 5; }
-.buttons.basic-layout .two { grid-column: 2 / 3; grid-row: 4 / 5; }
-.buttons.basic-layout .three { grid-column: 3 / 4; grid-row: 4 / 5; }
-.buttons.basic-layout .btn-equal { grid-column: 4 / 5; grid-row: 4 / 6; } /* Correct: Spans row 4 and 5 */
-.buttons.basic-layout .sci-toggle { grid-column: 1 / 2; grid-row: 5 / 6; }
-.buttons.basic-layout .btn-zero { grid-column: 2 / 4; grid-row: 5 / 6; } /* Correct: Spans col 2 and 3 */
-.buttons.basic-layout .decimal { grid-column: 4 / 5; grid-row: 5 / 6; } /* Correct: Col 4, Row 5 */
-
-/* --- Scientific Layout Styling --- */
-.buttons.scientific-layout {
-    display: grid; /* Ensure it's displayed */
-    grid-template-columns: repeat(4, 1fr);
-    grid-template-rows: repeat(3, 1fr); /* 3 equal rows */
-    gap: 8px; /* Smaller gap */
-    padding: 15px; /* Less padding */
-    flex-grow: 1;
-}
-
-.buttons.scientific-layout button {
-  font-size: 18px; /* Smaller font */
-  border: none;
-  border-radius: 15px;
-  color: #FFFFFF;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  min-height: 50px;
-  background-color: #404045; /* Dark grey */
-}
-.buttons.scientific-layout button:hover {
+.buttons button:hover {
   filter: brightness(1.15);
 }
-.buttons.scientific-layout button:active {
+.buttons button:active {
   transform: scale(0.96);
   filter: brightness(0.9);
 }
 
+/* Hide scientific buttons by default */
+.buttons:not(.scientific-mode) .btn-sci {
+  display: none;
+}
+/* Show scientific buttons and assign grid positions in scientific mode */
+.buttons.scientific-mode .btn-sci {
+  display: flex;
+  background-color: #404045; /* Dark grey */
+  font-size: 16px;
+}
+
 /* Scientific Grid Positions */
-.buttons.scientific-layout .btn-sci:nth-child(1) { grid-row: 1; grid-column: 1; } /* sin */
-.buttons.scientific-layout .btn-sci:nth-child(2) { grid-row: 1; grid-column: 2; } /* cos */
-.buttons.scientific-layout .btn-sci:nth-child(3) { grid-row: 1; grid-column: 3; } /* tan */
-.buttons.scientific-layout .btn-sci:nth-child(4) { grid-row: 1; grid-column: 4; } /* log */
-.buttons.scientific-layout .btn-sci:nth-child(5) { grid-row: 2; grid-column: 1; } /* n! */
-.buttons.scientific-layout .btn-sci:nth-child(6) { grid-row: 2; grid-column: 2; } /* pi */
-.buttons.scientific-layout .btn-sci:nth-child(7) { grid-row: 2; grid-column: 3; } /* sqrt */
-.buttons.scientific-layout .btn-sci:nth-child(8) { grid-row: 2; grid-column: 4; } /* ^ */
-.buttons.scientific-layout .btn-sci:nth-child(9) { grid-row: 3; grid-column: 1; } /* ( */
-.buttons.scientific-layout .btn-sci:nth-child(10) { grid-row: 3; grid-column: 2; } /* ) */
-.buttons.scientific-layout .btn-sci:nth-child(11) { grid-row: 3; grid-column: 3; } /* Copy */
-.buttons.scientific-layout .btn-sci:nth-child(12) { grid-row: 3; grid-column: 4; } /* Basic */
+.buttons.scientific-mode .sin { grid-column: 1 / 2; grid-row: 1 / 2; }
+.buttons.scientific-mode .cos { grid-column: 2 / 3; grid-row: 1 / 2; }
+.buttons.scientific-mode .tan { grid-column: 3 / 4; grid-row: 1 / 2; }
+.buttons.scientific-mode .log { grid-column: 4 / 5; grid-row: 1 / 2; }
+.buttons.scientific-mode .fact { grid-column: 1 / 2; grid-row: 2 / 3; }
+.buttons.scientific-mode .pi { grid-column: 2 / 3; grid-row: 2 / 3; }
+.buttons.scientific-mode .sqrt { grid-column: 3 / 4; grid-row: 2 / 3; }
+.buttons.scientific-mode .pow { grid-column: 4 / 5; grid-row: 2 / 3; }
+.buttons.scientific-mode .paren-l { grid-column: 1 / 2; grid-row: 3 / 4; }
+.buttons.scientific-mode .paren-r { grid-column: 2 / 3; grid-row: 3 / 4; }
+.buttons.scientific-mode .copy { grid-column: 3 / 4; grid-row: 3 / 4; }
+.buttons.scientific-mode .toggle-basic { grid-column: 4 / 5; grid-row: 3 / 4; }
+
+
+/* Basic Button Colors */
+.buttons .btn-digit { background-color: #5A5A5A; }
+.buttons .btn-op { background-color: #E07A5F; }
+.buttons .btn-equal { background-color: #E07A5F; }
+.buttons .ac { background-color: #757575; }
+.buttons .sci-toggle { background-color: #757575; font-size: 20px; }
+
+/* Basic Button Grid Positions (When NOT in scientific mode) */
+.buttons:not(.scientific-mode) .ac { grid-column: 1 / 2; grid-row: 1 / 2; }
+.buttons:not(.scientific-mode) .divide { grid-column: 2 / 3; grid-row: 1 / 2; }
+.buttons:not(.scientific-mode) .multiply { grid-column: 3 / 4; grid-row: 1 / 2; }
+.buttons:not(.scientific-mode) .backspace { grid-column: 4 / 5; grid-row: 1 / 2; }
+.buttons:not(.scientific-mode) .seven { grid-column: 1 / 2; grid-row: 2 / 3; }
+.buttons:not(.scientific-mode) .eight { grid-column: 2 / 3; grid-row: 2 / 3; }
+.buttons:not(.scientific-mode) .nine { grid-column: 3 / 4; grid-row: 2 / 3; }
+.buttons:not(.scientific-mode) .subtract { grid-column: 4 / 5; grid-row: 2 / 3; }
+.buttons:not(.scientific-mode) .four { grid-column: 1 / 2; grid-row: 3 / 4; }
+.buttons:not(.scientific-mode) .five { grid-column: 2 / 3; grid-row: 3 / 4; }
+.buttons:not(.scientific-mode) .six { grid-column: 3 / 4; grid-row: 3 / 4; }
+.buttons:not(.scientific-mode) .add { grid-column: 4 / 5; grid-row: 3 / 4; }
+.buttons:not(.scientific-mode) .one { grid-column: 1 / 2; grid-row: 4 / 5; }
+.buttons:not(.scientific-mode) .two { grid-column: 2 / 3; grid-row: 4 / 5; }
+.buttons:not(.scientific-mode) .three { grid-column: 3 / 4; grid-row: 4 / 5; }
+.buttons:not(.scientific-mode) .btn-equal { grid-column: 4 / 5; grid-row: 4 / 6; } /* Span rows 4+5 */
+.buttons:not(.scientific-mode) .sci-toggle { grid-column: 1 / 2; grid-row: 5 / 6; }
+.buttons:not(.scientific-mode) .btn-zero { grid-column: 2 / 4; grid-row: 5 / 6; } /* Span cols 2+3 */
+.buttons:not(.scientific-mode) .decimal { grid-column: 4 / 5; grid-row: 5 / 6; } /* Correct position */
+
+/* Adjust Basic Button Grid Positions IN Scientific Mode */
+.buttons.scientific-mode .ac { grid-column: 5 / 6; grid-row: 1 / 2; }
+.buttons.scientific-mode .divide { grid-column: 6 / 7; grid-row: 1 / 2; }
+.buttons.scientific-mode .multiply { grid-column: 7 / 8; grid-row: 1 / 2; }
+.buttons.scientific-mode .backspace { grid-column: 8 / 9; grid-row: 1 / 2; }
+.buttons.scientific-mode .seven { grid-column: 5 / 6; grid-row: 2 / 3; }
+.buttons.scientific-mode .eight { grid-column: 6 / 7; grid-row: 2 / 3; }
+.buttons.scientific-mode .nine { grid-column: 7 / 8; grid-row: 2 / 3; }
+.buttons.scientific-mode .subtract { grid-column: 8 / 9; grid-row: 2 / 3; }
+.buttons.scientific-mode .four { grid-column: 5 / 6; grid-row: 3 / 4; }
+.buttons.scientific-mode .five { grid-column: 6 / 7; grid-row: 3 / 4; }
+.buttons.scientific-mode .six { grid-column: 7 / 8; grid-row: 3 / 4; }
+.buttons.scientific-mode .add { grid-column: 8 / 9; grid-row: 3 / 4; }
+.buttons.scientific-mode .one { grid-column: 5 / 6; grid-row: 4 / 5; }
+.buttons.scientific-mode .two { grid-column: 6 / 7; grid-row: 4 / 5; }
+.buttons.scientific-mode .three { grid-column: 7 / 8; grid-row: 4 / 5; }
+.buttons.scientific-mode .btn-equal { grid-column: 8 / 9; grid-row: 4 / 6; } /* Span rows 4+5 */
+.buttons.scientific-mode .sci-toggle { display: none; } /* Hide Sci toggle in Sci mode */
+.buttons.scientific-mode .btn-zero { grid-column: 6 / 8; grid-row: 5 / 6; } /* Span cols 6+7 */
+.buttons.scientific-mode .decimal { grid-column: 8 / 9; grid-row: 5 / 6; }
+
 </style>

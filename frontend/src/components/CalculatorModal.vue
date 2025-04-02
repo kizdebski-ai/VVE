@@ -4,13 +4,12 @@
     class="calculator-modal-wrapper"
     :style="modalStyle"
     ref="modalRef"
+    @mousedown="startDrag"
   >
-    <div class="modal-header" @mousedown="startDrag">
-      <span class="modal-title">Calculator</span>
-      <button class="close-btn" @click="closeModal">&times;</button>
-    </div>
+    <!-- Header removed entirely -->
     <div class="modal-content">
-      <Calculator />
+      <!-- Pass close event up -->
+      <Calculator @close="closeModal" />
     </div>
   </div>
 </template>
@@ -49,6 +48,10 @@ const closeModal = () => {
 };
 
 const startDrag = (event) => {
+  // Prevent dragging if clicking on a button inside the calculator
+  if (event.target.closest('button')) {
+    return;
+  }
   isDragging.value = true;
   dragStartOffset.value = {
     x: event.clientX - position.value.x,
@@ -102,33 +105,7 @@ onBeforeUnmount(() => {
   cursor: grabbing;
 }
 
-.modal-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 8px 12px;
-  background-color: transparent; /* Make header transparent */
-  border-bottom: none; /* Remove border */
-  /* Radius will be handled by the calculator component inside */
-}
-
-.modal-title {
-  font-weight: bold;
-  color: var(--text-color);
-}
-
-.close-btn {
-  background: none;
-  border: none;
-  font-size: 20px;
-  font-weight: bold;
-  color: var(--text-color-secondary);
-  cursor: pointer;
-  padding: 0 5px;
-}
-.close-btn:hover {
-  color: var(--text-color);
-}
+/* .modal-header styles removed */
 
 .modal-content {
   padding: 0; /* No padding needed, calculator component handles it */

@@ -2,6 +2,11 @@ import * as Y from 'yjs';
 import { Awareness } from 'y-protocols/awareness';
 import { applyAwarenessUpdate, encodeAwarenessUpdate, removeAwarenessStates } from 'y-protocols/awareness';
 
+// Define message types
+const messageSync = 0;
+const messageAwareness = 1;
+// Add other types if needed (e.g., messageAuth = 2)
+
 // Define the structure of the returned object
 interface YjsConnection {
   ydoc: Y.Doc;
@@ -70,17 +75,28 @@ export function connectToYjs(
         reconnectTimer = null;
       }
 
-      // --- Send initial states ---
+      // --- Send initial awareness state ---
+      // The backend now sends the initial document state upon connection.
       if (socket?.readyState === WebSocket.OPEN) {
-        // Send Yjs doc state
-        const docState = Y.encodeStateAsUpdate(ydoc);
-        socket.send(docState);
-        console.log('[Yjs Provider] Sent initial document state.');
+        // REMOVED: Sending initial document state (backend handles this)
+        // const docState = Y.encodeStateAsUpdate(ydoc);
+        // const syncMessage = new Uint8Array([messageSync, ...docState]);
+        // socket.send(syncMessage);
+        // console.log('[Yjs Provider] Sent initial document state.');
 
-        // Send awareness state
-        const awarenessState = encodeAwarenessUpdate(awareness, [ydoc.clientID]);
-        socket.send(awarenessState);
+        // Send awareness state (prefixed)
+        const awarenessState = encodeAwarenessUpdate(awareness, [awareness.clientID]); // Use awareness.clientID
+        const awarenessMessage = new Uint8Array([messageAwareness, ...awarenessState]);
+        socket.send(awarenessMessage);
         console.log('[Yjs Provider] Sent initial awareness state.');
+
+        // --- Attach Yjs listeners only AFTER socket is open ---
+        // Note: ydoc.on and awareness.on are typically idempotent, but attaching here ensures
+        // we don't try to send before the socket is ready after initial connect or reconnect.
+        console.log('[Yjs Provider] Attaching ydoc & awareness update listeners.');
+        ydoc.on('update', ydocUpdateHandler);
+        awareness.on('update', awarenessUpdateHandler);
+        // ---
 
       } else {
         console.error('[Yjs Provider] WebSocket not open when trying to send initial states.');
@@ -90,11 +106,22 @@ export function connectToYjs(
     socket.onmessage = (event: MessageEvent) => {
       // console.log('[Yjs Provider] Received message from server.');
       if (event.data instanceof ArrayBuffer) {
-        const update = new Uint8Array(event.data);
-        // Try applying as doc update AND awareness update.
-        // Yjs functions are designed to ignore updates not intended for them.
-        Y.applyUpdate(ydoc, update, 'websocketProvider');
-        applyAwarenessUpdate(awareness, update, 'websocketProvider');
+        const data = new Uint8Array(event.data);
+        const messageType = data[0]; // First byte is the type
+        const update = data.slice(1); // The rest is the payload
+
+        switch (messageType) {
+          case messageSync:
+            console.log('[Yjs Provider] Attempting to apply sync update (Type 0)');
+            Y.applyUpdate(ydoc, update, 'websocketProvider');
+            break;
+          case messageAwareness:
+            console.log('[Yjs Provider] Attempting to apply awareness update (Type 1)');
+            applyAwarenessUpdate(awareness, update, 'websocketProvider');
+            break;
+          default:
+            console.warn(`[Yjs Provider] Received unknown message type: ${messageType}`, data);
+        }
       } else {
         console.warn('[Yjs Provider] Received non-binary message:', event.data);
       }
@@ -122,20 +149,20 @@ export function connectToYjs(
     };
   };
 
-  // --- Yjs Document Event Handler ---
-
   // --- Yjs Document & Awareness Event Handlers ---
+  // Define handlers outside setupWebSocket so they can be referenced in onopen and disconnect
 
   const ydocUpdateHandler = (update: Uint8Array, origin: any) => {
     // Only send updates that didn't originate from the WebSocket provider itself
     if (origin !== 'websocketProvider' && socket?.readyState === WebSocket.OPEN) {
       // console.log('[Yjs Provider] Local Yjs update detected, sending to server:', update);
-      socket.send(update); // Send raw update
+      const message = new Uint8Array([messageSync, ...update]); // Prefix with type
+      socket.send(message);
     } else if (origin !== 'websocketProvider') {
+      // This warning might still appear if updates happen during reconnection attempts
       console.warn('[Yjs Provider] WebSocket not open, unable to send document update.');
     }
   };
-  ydoc.on('update', ydocUpdateHandler); // Listen for document updates
 
   const awarenessUpdateHandler = ({ added, updated, removed }: { added: number[], updated: number[], removed: number[] }, origin: any) => {
     // Only send updates that didn't originate from the WebSocket provider itself
@@ -143,12 +170,13 @@ export function connectToYjs(
     if (origin !== 'websocketProvider' && socket?.readyState === WebSocket.OPEN) {
       // console.log('[Yjs Provider] Local awareness update detected, sending to server:', changedClients);
       const update = encodeAwarenessUpdate(awareness, changedClients);
-      socket.send(update); // Send raw update
+      const message = new Uint8Array([messageAwareness, ...update]); // Prefix with type
+      socket.send(message);
     } else if (origin !== 'websocketProvider') {
+       // This warning might still appear if updates happen during reconnection attempts
        console.warn('[Yjs Provider] WebSocket not open, unable to send awareness update.');
     }
   };
-  awareness.on('update', awarenessUpdateHandler); // Listen for awareness updates
 
   // --- Disconnect Function ---
   const disconnect = () => {

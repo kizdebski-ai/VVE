@@ -11,15 +11,17 @@ import { v4 as uuidv4 } from 'uuid';
  * @param {object} coords - Transformed coordinates {x, y}
  * @param {string} color - Current color
  * @param {number} lineWidth - Current line width
+ * @param {object} [extraData={}] - Optional additional data (e.g., lineStyle)
  * @returns {object|null} - New element or null if not applicable
  */
-export const createNewElement = (tool, coords, color, lineWidth) => {
+export const createNewElement = (tool, coords, color, lineWidth, extraData = {}) => {
   const elementId = uuidv4();
 
   switch (tool) {
     case 'pen':
-      return {
-        id: elementId,
+      // Pen doesn't use start/end or lineStyle
+      const penElement = {
+        id: elementId, // Keep ID for preview consistency if needed
         type: tool,
         points: [coords],
         smoothedPoints: [],
@@ -27,22 +29,39 @@ export const createNewElement = (tool, coords, color, lineWidth) => {
         lineWidth: lineWidth,
         timestamp: Date.now()
       };
+      // Remove potential lineStyle from extraData if passed incorrectly
+      delete penElement.lineStyle;
+      return penElement;
 
     case 'eraser':
+      // Eraser preview might still be needed, but it won't be added to Yjs
       return {
         id: elementId,
         type: tool,
         points: [coords],
         smoothedPoints: [],
-        compositeOperation: 'destination-out',
-        color: 'rgba(255,255,255,1)',
-        lineWidth: lineWidth * 2,
+        // compositeOperation: 'destination-out', // No longer needed if we delete elements
+        color: 'rgba(0,0,0,0.1)', // Placeholder color for preview?
+        lineWidth: lineWidth * 2, // Eraser size
         timestamp: Date.now()
       };
 
     case 'line':
     case 'rectangle':
     case 'circle':
+    // Add new shape types here as well
+    case 'square':
+    case 'triangle':
+    case 'trapezoid':
+    case 'parallelogram':
+    case 'deltoid':
+    case 'cube':
+    case 'cuboid':
+    case 'sphere':
+    case 'cylinder':
+    case 'cone':
+    case 'pyramid':
+    case 'tetrahedron':
       return {
         id: elementId,
         type: tool,
@@ -50,7 +69,8 @@ export const createNewElement = (tool, coords, color, lineWidth) => {
         end: coords,
         color: color,
         lineWidth: lineWidth,
-        timestamp: Date.now()
+        timestamp: Date.now(),
+        ...extraData // Spread additional data like lineStyle
       };
 
     case 'text':
@@ -90,32 +110,34 @@ export const createTextElement = (position, text, color, fontSize) => {
  * @param {Number} centerX - Center X position
  * @param {Number} centerY - Center Y position
  * @param {Number} maxDimension - Maximum width/height
- * @returns {Promise<Object>} - Promise resolving to image element
+ * @returns {Promise<Object>} - Promise resolving to image element object { id, type, position, width, height, dataUrl, timestamp }
  */
 export const createImageElement = (dataUrl, centerX, centerY, maxDimension = 500) => {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => { // Add reject parameter
     const img = new Image();
 
     img.onload = () => {
       // Calculate size (max dimension, keeping aspect ratio)
-      let width = img.width;
-      let height = img.height;
+      let width = img.naturalWidth; // Use naturalWidth/Height for original dimensions
+      let height = img.naturalHeight;
 
-      if (width > maxDimension || height > maxDimension) {
-        if (width > height) {
-          height = height * (maxDimension / width);
-          width = maxDimension;
-        } else {
-          width = width * (maxDimension / height);
-          height = maxDimension;
-        }
+      if (!width || !height) {
+          console.error("Image loaded but has zero dimensions:", dataUrl.substring(0,30));
+          reject(new Error("Image has zero dimensions"));
+          return;
       }
 
-      // Create image element
+      if (width > maxDimension || height > maxDimension) {
+        const ratio = Math.min(maxDimension / width, maxDimension / height);
+        width *= ratio;
+        height *= ratio;
+      }
+
+      // Create image element data object
       resolve({
-        id: uuidv4(),
+        // id: uuidv4(), // ID can be handled by Yjs Map structure if needed later
         type: 'image',
-        position: {
+        position: { // Calculate top-left corner from center and final dimensions
           x: centerX - width / 2,
           y: centerY - height / 2
         },
@@ -126,14 +148,21 @@ export const createImageElement = (dataUrl, centerX, centerY, maxDimension = 500
       });
     };
 
+    // Add error handling
+    img.onerror = (err) => {
+        console.error("Failed to load image in createImageElement:", err, dataUrl.substring(0, 30));
+        reject(new Error("Failed to load image from data URL")); // Reject the promise
+    };
+
     img.src = dataUrl;
   });
 };
 
+
 /**
  * Get appropriate cursor style for current tool
  * @param {String} tool - Current tool
- * @param {String} color - Current color 
+ * @param {String} color - Current color
  * @param {String} eraserMode - Eraser mode ('erase' or 'delete')
  * @returns {String} - CSS cursor value
  */
@@ -145,11 +174,13 @@ export const getCursorStyle = (tool, color, eraserMode = 'erase') => {
       return `url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="${encodedColor}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3" fill="${encodedColor}"/></svg>') 12 12, crosshair`;
 
     case 'eraser':
-      if (eraserMode === 'erase') {
-        return `url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13l-6 6-8-8 6-6 8 8z"/></svg>') 12 12, auto`;
-      } else {
-        return `url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="red" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>') 12 12, auto`;
-      }
+      // Use a consistent eraser cursor now that it deletes elements
+       return `url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13l-6 6-8-8 6-6 8 8z"/></svg>') 12 12, auto`;
+      // if (eraserMode === 'erase') { // Keep old logic commented if needed
+      //   return `url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13l-6 6-8-8 6-6 8 8z"/></svg>') 12 12, auto`;
+      // } else {
+      //   return `url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="red" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>') 12 12, auto`;
+      // }
 
     case 'line':
       return `url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="${encodedColor}" stroke-width="2"><circle cx="12" cy="12" r="3" fill="${encodedColor}"/><circle cx="12" cy="12" r="8" stroke="${encodedColor}" stroke-width="1" fill="none"/></svg>') 12 12, crosshair`;

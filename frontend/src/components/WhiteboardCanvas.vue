@@ -70,16 +70,16 @@
 </template>
 
 <script>
-import { ref, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'; // Removed computed as yDrawings is now a direct ref
+import { ref, onMounted, onBeforeUnmount, watch, nextTick } from 'vue';
 import * as Y from 'yjs';
-// import { v4 as uuidv4 } from 'uuid'; // Use Yjs mechanisms for IDs if possible
+import { UndoManager } from 'yjs';
 import Collaborators from './Collaborators.vue';
 import ZoomPanControls from './ZoomPanControls.vue';
 import EraserModeControls from './EraserModeControls.vue';
 import StatusMessage from './StatusMessage.vue';
-import { connectToYjs } from '../services/connectToYjs'; // Import the new provider
+import { connectToYjs } from '../services/connectToYjs';
 import { drawElement, throttle, isPointInElement, distanceToSegment } from '../utils/canvasDrawing.js';
-import { createNewElement, createTextElement, createImageElement, getCursorStyle } from '../utils/canvasTools.js'; // Adapt these for Yjs maps
+import { createNewElement, createTextElement, createImageElement, getCursorStyle } from '../utils/canvasTools.js';
 import { drawGrid } from '../utils/canvasGrid.js';
 
 // Debounce function
@@ -105,13 +105,11 @@ export default {
     StatusMessage,
   },
   props: {
-    // Removed ydoc and awareness props - connection handled internally now
-    debugMode: {
-      type: Boolean,
-      default: false,
-    },
+    debugMode: { type: Boolean, default: false },
+    currentShape: { type: String, default: 'rectangle' }, // Already exists
+    currentLineStyle: { type: String, default: 'solid' } // Declare currentLineStyle prop
   },
-  emits: ['state-updated'], // Keep for now if needed by parent for autosave/export trigger
+  emits: ['state-updated'],
 
   setup(props, { emit }) {
     const canvas = ref(null);
@@ -130,27 +128,30 @@ export default {
     const statusTimeout = ref(null);
     const darkMode = ref(false);
     const eraserMode = ref('erase');
-    const lastReleasedElementIndex = ref(-1); // Keep for delete mode highlight? Needs Yjs adaptation.
-    const currentElementPreview = ref(null); // For drawing preview
-    const pointsBuffer = ref([]); // For smoothing preview
+    const lastReleasedElementIndex = ref(-1);
+    const currentElementPreview = ref(null);
+    const pointsBuffer = ref([]);
     const smoothingFactor = ref(0.2);
+    const shiftPressedAtStart = ref(false); // Track shift key state at mousedown
+    const startCoordsForShiftLine = ref(null); // Store start coords specifically for Shift+Pen
     const notifications = ref([]);
     const notificationId = ref(0);
-    const clipboardInput = ref(null); // Ref for clipboard input
+    const clipboardInput = ref(null);
+    const imageCache = ref(new Map());
+    const hoveredElementIndex = ref(-1);
 
     // --- Yjs specific state (managed internally) ---
-    const yjsConnection = ref(null); // Stores the connection object { ydoc, socket, yDrawings, disconnect }
-    const ydoc = ref(null); // Y.Doc instance from the provider
-    const yDrawings = ref(null); // Y.Array for drawings from the provider
-    // Awareness will be handled later via yjsConnection if needed
+    const yjsConnection = ref(null);
+    const ydoc = ref(null);
+    const yDrawings = ref(null);
+    const undoManager = ref(null);
+    const canUndo = ref(false);
+    const canRedo = ref(false);
 
-    // --- Local component state ---
-    // const localAwarenessState = ref({}); // Awareness state is not handled by this provider yet
 
     // --- Methods ---
 
     const redrawCanvas = () => {
-      // Use the local yDrawings ref
       if (!context.value || !yDrawings.value) return;
 
       const ctx = context.value;
@@ -164,39 +165,110 @@ export default {
         panOffset.value.x, panOffset.value.y
       );
 
-      // Draw elements from Yjs array (now yDrawings)
       yDrawings.value.forEach((elementMap, index) => {
-        // Convert Y.Map to plain JS object for drawing function
-        const element = elementMap.toJSON();
-        // TODO: Adapt highlighting logic if needed for delete mode
-        const isHighlighted = false; // index === lastReleasedElementIndex.value;
-        drawElement(ctx, element, isHighlighted, smoothingFactor.value);
+        let element;
+        const type = elementMap.get('type');
+
+        if (type === 'image') {
+            const rawPosition = elementMap.get('position');
+            let finalPosition = { x: 0, y: 0 };
+
+            if (rawPosition instanceof Y.Map) {
+                finalPosition = rawPosition.toJSON();
+            } else if (rawPosition && typeof rawPosition === 'object' && typeof rawPosition.x === 'number' && typeof rawPosition.y === 'number') {
+                finalPosition = rawPosition;
+            } else {
+                console.error("[redrawCanvas] Image position data is invalid:", rawPosition);
+                return;
+            }
+
+            element = {
+              type: type,
+              position: finalPosition,
+              dataUrl: elementMap.get('dataUrl'),
+              width: elementMap.get('width'),
+              height: elementMap.get('height')
+            };
+
+        } else {
+            try {
+                // Ensure all properties are extracted, especially lineStyle
+                element = {};
+                for (const [key, value] of elementMap.entries()) {
+                    if (value instanceof Y.Array || value instanceof Y.Map) {
+                         // Check if the value is a Y.Map representing coordinates
+                         if ((key === 'start' || key === 'end' || key === 'position') && value instanceof Y.Map) {
+                             element[key] = value.toJSON();
+                         } else {
+                             // For other Y types (like potentially points array if using Y.Array)
+                             // This might need adjustment if points become collaborative
+                             element[key] = value.toJSON();
+                         }
+                    } else {
+                        element[key] = value;
+                    }
+                }
+                 // DEBUG: Log the element data being passed to drawElement
+                 console.log(`[redrawCanvas] Element ${index} data from Yjs:`, JSON.stringify(element)); // ADDED LOG
+            } catch (e) {
+                console.error("Error converting elementMap to JSON:", elementMap, e);
+                return;
+            }
+        }
+
+        if (!element || typeof element !== 'object') {
+            console.error("Invalid element data after conversion:", element);
+            return;
+        }
+
+
+        const isHighlighted = index === hoveredElementIndex.value && currentTool.value === 'eraser';
+        drawElement(ctx, element, isHighlighted, smoothingFactor.value, imageCache.value, redrawCanvas);
       });
 
-      // Draw the preview of the element currently being drawn
       if (isDrawing.value && currentElementPreview.value) {
         drawElement(ctx, currentElementPreview.value, false, smoothingFactor.value);
       }
 
       ctx.restore();
-
-      // Emit state update if needed (e.g., for autosave trigger)
-      // emit('state-updated', {}); // Pass relevant info if needed
     };
 
-    // Debounced redraw for performance during rapid updates
-    const debouncedRedraw = debounce(redrawCanvas, 16); // ~60fps
+    const debouncedRedraw = debounce(redrawCanvas, 16);
 
-    const handleYjsUpdate = (events, transaction) => { // Y.Array observeDeep provides events and transaction
-      // Check if the update originated locally (optional, provider handles echo prevention)
-      // if (transaction.local) return;
-
-      // Redraw whenever the shared array changes
-      console.log(`Yjs update detected for drawings. yDrawings length: ${yDrawings.value?.length || 0}. Redrawing.`);
+    const handleYjsUpdate = (events, transaction) => {
+      // console.log(`Yjs update detected for drawings. yDrawings length: ${yDrawings.value?.length || 0}. Redrawing.`);
       debouncedRedraw();
-
-      // Trigger state update for parent if needed
       emit('state-updated', {});
+    };
+
+    const updateUndoRedoState = () => {
+      if (undoManager.value) {
+        canUndo.value = undoManager.value.canUndo();
+        canRedo.value = undoManager.value.canRedo();
+      } else {
+        canUndo.value = false;
+        canRedo.value = false;
+      }
+    };
+
+    const initializeUndoManager = () => {
+      if (ydoc.value && yDrawings.value instanceof Y.Array) {
+        if (undoManager.value) {
+          undoManager.value.off('stack-item-added', updateUndoRedoState);
+          undoManager.value.off('stack-item-popped', updateUndoRedoState);
+          undoManager.value.destroy();
+          undoManager.value = null;
+        }
+        undoManager.value = new UndoManager(yDrawings.value);
+        undoManager.value.on('stack-item-added', updateUndoRedoState);
+        undoManager.value.on('stack-item-popped', updateUndoRedoState);
+        updateUndoRedoState();
+        console.log('[Canvas] UndoManager initialized successfully for yDrawings.');
+      } else {
+        console.warn('[Canvas] Cannot initialize UndoManager: ydoc or yDrawings (Y.Array) not available or not ready.', { ydoc: ydoc.value, yDrawings: yDrawings.value });
+        canUndo.value = false;
+        canRedo.value = false;
+      }
     };
 
     const initCanvas = () => {
@@ -225,7 +297,7 @@ export default {
       if (container) {
         canvasWidth.value = container.clientWidth;
         canvasHeight.value = container.clientHeight;
-        nextTick(() => { // Ensure DOM updates before redraw
+        nextTick(() => {
            if (canvas.value) {
              canvas.value.width = canvasWidth.value;
              canvas.value.height = canvasHeight.value;
@@ -245,16 +317,32 @@ export default {
 
     const darkModeObserver = new MutationObserver(handleDarkModeChange);
 
+    const handleKeyDown = (event) => {
+      if (event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA') return;
+
+      if ((event.ctrlKey || event.metaKey) && !event.shiftKey && event.key.toLowerCase() === 'z') {
+          event.preventDefault();
+          undo();
+      }
+      if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 'z') {
+          event.preventDefault();
+          redo();
+      }
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'y') {
+          event.preventDefault();
+          redo();
+      }
+    };
+
     onMounted(() => {
       initCanvas();
       initClipboardHandler();
       window.addEventListener('resize', handleResize);
       window.addEventListener('keydown', handleKeyDown);
-      window.addEventListener('paste', handlePaste); // Keep global paste listener
+      window.addEventListener('paste', handlePaste);
       darkModeObserver.observe(document.body, { attributes: true });
-      handleResize(); // Initial size calculation
+      handleResize();
 
-      // --- Yjs Setup ---
       const urlParams = new URLSearchParams(window.location.search);
       const roomId = urlParams.get('room');
 
@@ -264,16 +352,9 @@ export default {
           yjsConnection.value = connection;
           ydoc.value = connection.ydoc;
           yDrawings.value = connection.yDrawings;
-
-          // Observe the shared drawings array for changes
           yDrawings.value.observeDeep(handleYjsUpdate);
-
-          // Initial draw based on Yjs state
+          initializeUndoManager();
           redrawCanvas();
-
-          // TODO: Setup awareness handling here when implemented in the provider
-          // Example: setupAwareness(connection.ydoc, connection.socket);
-
         } catch (error) {
           console.error("Failed to connect Yjs provider:", error);
           showToast("Error connecting to collaboration session.", "error");
@@ -289,13 +370,15 @@ export default {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('paste', handlePaste);
       darkModeObserver.disconnect();
-
-      // --- Yjs Cleanup ---
-      // Unobserve before disconnecting
       yDrawings.value?.unobserveDeep(handleYjsUpdate);
-      // Disconnect the WebSocket connection
+      if (undoManager.value) {
+        undoManager.value.off('stack-item-added', updateUndoRedoState);
+        undoManager.value.off('stack-item-popped', updateUndoRedoState);
+        undoManager.value.destroy();
+        undoManager.value = null;
+        console.log('[Canvas] UndoManager destroyed');
+      }
       yjsConnection.value?.disconnect();
-      // TODO: Cleanup awareness handling here
     });
 
     // --- Input Handlers ---
@@ -310,7 +393,7 @@ export default {
         };
       }
       return {
-        offsetX: event.clientX - rect.left, // Use clientX/Y for consistency
+        offsetX: event.clientX - rect.left,
         offsetY: event.clientY - rect.top
       };
     };
@@ -323,23 +406,19 @@ export default {
     };
 
     const updateLocalAwarenessCursor = throttle((coords) => {
-        if (yjsConnection.value?.awareness) { // Check if awareness exists
-            // Also send user info if available (example)
+        if (yjsConnection.value?.awareness) {
             const userState = yjsConnection.value.awareness.getLocalState()?.user || { name: 'Anonymous', color: '#000000' };
             yjsConnection.value.awareness.setLocalStateField('cursor', {
                 x: coords.x,
                 y: coords.y,
             });
-             // Keep user info when updating cursor
             yjsConnection.value.awareness.setLocalStateField('user', userState);
         }
-    }, 50); // Throttle cursor updates
+    }, 50);
 
     const handleMouseMove = (e) => {
       const coords = getCoordinates(e);
       const transformedCoords = transformCoordinates(coords.offsetX, coords.offsetY);
-
-      // Update local awareness state (cursor position)
       updateLocalAwarenessCursor(transformedCoords);
 
       if (isPanning.value && lastPanPoint.value) {
@@ -351,22 +430,61 @@ export default {
         return;
       }
 
-      if (isDrawing.value) {
-        draw(transformedCoords);
+      if (isDrawing.value && currentTool.value !== 'eraser') {
+        draw(transformedCoords, e.shiftKey); // Pass shift key state
+      } else if (currentTool.value === 'eraser') {
+        let foundIndex = -1;
+        if (yDrawings.value) {
+            for (let i = yDrawings.value.length - 1; i >= 0; i--) {
+                const elementMap = yDrawings.value.get(i);
+                try {
+                    const element = elementMap.toJSON ? elementMap.toJSON() : elementMap;
+                    if (isPointInElement(transformedCoords, element, (element.lineWidth || 2) / 2 + 5)) {
+                        foundIndex = i;
+                        break;
+                    }
+                } catch (error) {
+                    console.error("Error processing element for eraser hover:", elementMap, error);
+                }
+            }
+        }
+        if (hoveredElementIndex.value !== foundIndex) {
+            hoveredElementIndex.value = foundIndex;
+            redrawCanvas();
+        }
+        if (isDrawing.value && foundIndex !== -1) {
+           eraseElement(foundIndex);
+        }
+      } else {
+         if (hoveredElementIndex.value !== -1) {
+             hoveredElementIndex.value = -1;
+             redrawCanvas();
+         }
       }
-      // TODO: Adapt highlight logic for delete mode if kept
-    };
+      };
 
     const handleMouseDown = (event) => {
-      if (event.button === 1 || (event.button === 0 && event.altKey)) { // Middle or Alt+Left
+      shiftPressedAtStart.value = event.shiftKey; // Record shift state on mousedown
+      startCoordsForShiftLine.value = null; // Reset shift line start point
+      // console.log(`[handleMouseDown] Shift pressed at start: ${shiftPressedAtStart.value}`); // DEBUG - Keep less verbose
+
+      if (event.button === 1 || (event.button === 0 && event.altKey)) {
         isPanning.value = true;
         const coords = getCoordinates(event);
         lastPanPoint.value = { ...transformCoordinates(coords.offsetX, coords.offsetY), screenX: coords.offsetX, screenY: coords.offsetY };
         event.preventDefault();
         return;
       }
-      if (event.button === 0) { // Left click
-        startDrawing(event);
+      if (event.button === 0) {
+        if (currentTool.value === 'eraser') {
+            if (hoveredElementIndex.value !== -1) {
+                eraseElement(hoveredElementIndex.value);
+                hoveredElementIndex.value = -1;
+            }
+            isDrawing.value = true;
+        } else {
+            startDrawing(event);
+        }
       }
     };
 
@@ -377,9 +495,12 @@ export default {
         return;
       }
       if (isDrawing.value) {
-        finishDrawing();
+         if (currentTool.value === 'eraser') {
+             isDrawing.value = false;
+         } else {
+             finishDrawing();
+         }
       }
-      // TODO: Adapt delete logic if kept
     };
 
     const handleMouseLeave = (event) => {
@@ -388,12 +509,10 @@ export default {
         lastPanPoint.value = null;
       }
       if (isDrawing.value) {
-        finishDrawing(); // Finish drawing if mouse leaves canvas
+        finishDrawing();
       }
-       // Clear local awareness cursor when mouse leaves
        if (yjsConnection.value?.awareness) {
            yjsConnection.value.awareness.setLocalStateField('cursor', null);
-           // Keep user info even when cursor is null
            const userState = yjsConnection.value.awareness.getLocalState()?.user;
            if (userState) {
                yjsConnection.value.awareness.setLocalStateField('user', userState);
@@ -401,40 +520,34 @@ export default {
        }
     };
 
-     // --- Touch Handlers ---
     const handleTouchStart = (event) => {
         if (event.touches.length === 1) {
-            // Prevent default scroll/zoom behavior
             event.preventDefault();
             startDrawing(event.touches[0]);
         }
-        // Handle panning with two fingers? (More complex)
     };
 
     const handleTouchMove = (event) => {
         if (event.touches.length === 1) {
-            // Prevent default scroll/zoom behavior
             event.preventDefault();
             const coords = getCoordinates(event);
             const transformedCoords = transformCoordinates(coords.offsetX, coords.offsetY);
-            updateLocalAwarenessCursor(transformedCoords); // Update cursor for touch
+            updateLocalAwarenessCursor(transformedCoords);
 
             if (isDrawing.value) {
-                draw(transformedCoords);
+                // Touch events don't have shiftKey, so pass false
+                draw(transformedCoords, false);
             }
         }
     };
 
     const handleTouchEnd = (event) => {
-        // Prevent default behaviors
         event.preventDefault();
         if (isDrawing.value) {
             finishDrawing();
         }
-         // Clear local awareness cursor on touch end
         if (yjsConnection.value?.awareness) {
             yjsConnection.value.awareness.setLocalStateField('cursor', null);
-            // Keep user info even when cursor is null
             const userState = yjsConnection.value.awareness.getLocalState()?.user;
             if (userState) {
                 yjsConnection.value.awareness.setLocalStateField('user', userState);
@@ -446,25 +559,53 @@ export default {
     // --- Drawing Logic (Yjs Integration) ---
 
     const startDrawing = (event) => {
-      // Use local ydoc ref
       if (!ydoc.value) return;
       isDrawing.value = true;
       const coords = getCoordinates(event);
       const transformedCoords = transformCoordinates(coords.offsetX, coords.offsetY);
-      pointsBuffer.value = []; // Reset points buffer
+      pointsBuffer.value = [];
 
-      // Create a preview element locally, don't add to Yjs yet
+      let toolType = currentTool.value;
+      let elementData = {}; // Object to hold extra data like lineStyle
+
+      // Handle Shift+Pen combination: Keep type 'pen' for now, store start point
+      if (toolType === 'pen' && shiftPressedAtStart.value) {
+          console.log("[startDrawing] Shift+Pen detected, storing start point.");
+          startCoordsForShiftLine.value = transformedCoords; // Store the starting point
+          // Preview element remains 'pen' type initially for simplicity
+      } else if (toolType === 'shapes') {
+          toolType = props.currentShape; // Use the specific shape from prop
+          console.log(`[startDrawing] Starting shape drawing with type: ${toolType}`);
+      } else if (toolType === 'lines') {
+          toolType = 'line';
+      }
+
+      // Jeśli to linia — zawsze ustaw lineStyle, nawet jeśli toolType nie był "lines"
+      if (toolType === 'line') {
+          elementData.lineStyle = props.currentLineStyle;
+          console.log(`[startDrawing] Line style set to: ${elementData.lineStyle}`);
+      }
+
+      // Create preview element based on the determined toolType
       currentElementPreview.value = createNewElement(
-        currentTool.value,
+        toolType,
         transformedCoords,
         currentColor.value,
-        currentLineWidth.value
+        currentLineWidth.value,
+        elementData // Pass extra data
       );
-      // Use the clientID from the connection's awareness object
-      const localClientId = yjsConnection.value?.awareness?.clientID || 'unknown';
-      currentElementPreview.value.id = `temp_${localClientId}_${Date.now()}`; // Temporary ID
 
-      // Special handling for text tool
+      if (currentElementPreview.value) {
+          const localClientId = yjsConnection.value?.awareness?.clientID || 'unknown';
+          currentElementPreview.value.id = `temp_${localClientId}_${Date.now()}`;
+          console.log("[startDrawing] Preview element created:", JSON.stringify(currentElementPreview.value)); // DEBUG
+      } else {
+          console.error(`[startDrawing] Failed to create preview element for tool type: ${toolType} with data:`, elementData);
+          isDrawing.value = false; // Stop drawing if preview failed
+          return;
+      }
+
+
       if (currentTool.value === 'text') {
         const text = prompt('Enter text:', '');
         if (text) {
@@ -472,81 +613,187 @@ export default {
             transformedCoords,
             text,
             currentColor.value,
-        currentLineWidth.value * 10 // Example size calculation
-      );
-      // Add directly to Yjs within a transaction using local ydoc and yDrawings
-      ydoc.value.transact(() => {
-        yDrawings.value.push([new Y.Map(Object.entries(textElementData))]);
-      });
-    }
-    isDrawing.value = false; // Text is added immediately
+            currentLineWidth.value * 10
+          );
+          ydoc.value.transact(() => {
+            yDrawings.value.push([new Y.Map(Object.entries(textElementData))]);
+          });
+        }
+        isDrawing.value = false;
         currentElementPreview.value = null;
       }
     };
 
-    const draw = (coords) => {
-      if (!isDrawing.value || !currentElementPreview.value) return;
+    const eraseElement = (index) => {
+        if (ydoc.value && yDrawings.value && index >= 0 && index < yDrawings.value.length) {
+            ydoc.value.transact(() => {
+                console.log(`Erasing element at index: ${index}`);
+                yDrawings.value.delete(index, 1);
+            });
+        }
+    };
 
-      switch (currentTool.value) {
-        case 'pen':
-        case 'eraser': // Eraser might need different logic (modifying existing elements or using blend modes)
-          currentElementPreview.value.points.push(coords);
-          pointsBuffer.value.push(coords);
-          if (pointsBuffer.value.length > 3) pointsBuffer.value.shift();
-          redrawCanvas(); // Redraw for preview
-          break;
-        case 'line':
-        case 'rectangle':
-        case 'circle':
-          currentElementPreview.value.end = coords;
-          redrawCanvas(); // Redraw for preview
-          break;
+    const draw = (coords, isShiftPressed) => { // Accept shift key state
+      if (!isDrawing.value || !currentElementPreview.value) return;
+      if (currentTool.value === 'eraser') return;
+
+      const preview = currentElementPreview.value;
+
+      // Update logic based on the actual tool and shift state
+      if (currentTool.value === 'pen') {
+          if (shiftPressedAtStart.value && startCoordsForShiftLine.value) {
+              // Update preview for Shift+Pen: Draw straight line from stored start to current coords
+              // Modify the preview element directly to represent a line for drawing purposes
+              preview.type = 'line'; // Temporarily change type for drawElement
+              preview.start = startCoordsForShiftLine.value;
+              preview.end = coords;
+              delete preview.points; // Remove points array for line preview
+              // console.log(`[draw] Shift+Pen preview update (as line): [${startCoordsForShiftLine.value.x}, ${startCoordsForShiftLine.value.y}] -> [${coords.x}, ${coords.y}]`); // DEBUG
+          } else if (!shiftPressedAtStart.value) {
+              // Normal pen drawing - ensure preview type is 'pen'
+              preview.type = 'pen';
+              if (!preview.points) preview.points = []; // Initialize if needed
+              preview.points.push(coords);
+              pointsBuffer.value.push(coords);
+              if (pointsBuffer.value.length > 3) pointsBuffer.value.shift();
+          }
+      } else if (currentTool.value === 'shapes' || currentTool.value === 'lines') {
+          // Update end coordinates for shapes and regular lines
+          preview.end = coords;
+
+          // Special handling for square aspect ratio during preview
+          if (preview.type === 'square') {
+              const dx = Math.abs(coords.x - preview.start.x); // Use coords directly here
+              const dy = Math.abs(coords.y - preview.start.y);
+              const size = Math.max(dx, dy);
+              preview.end = {
+                  x: preview.start.x + size * Math.sign(coords.x - preview.start.x),
+                  y: preview.start.y + size * Math.sign(coords.y - preview.start.y)
+              };
+          }
       }
+      // Redraw after updating preview element
+      redrawCanvas();
     };
 
     const finishDrawing = () => {
-      // Use local ydoc and yDrawings refs
-      if (!isDrawing.value || !currentElementPreview.value || !ydoc.value || !yDrawings.value) return;
+      const wasShiftPressed = shiftPressedAtStart.value; // Capture state before resetting
+      const shiftStartPoint = startCoordsForShiftLine.value; // Capture start point
+      const originalTool = currentTool.value; // Capture the tool selected in the toolbar
+      shiftPressedAtStart.value = false; // Reset shift state
+      startCoordsForShiftLine.value = null; // Reset start point
+
+      if (!isDrawing.value || !currentElementPreview.value || !ydoc.value || !yDrawings.value) {
+          isDrawing.value = false; // Ensure drawing state is reset
+          currentElementPreview.value = null;
+          return;
+      }
       isDrawing.value = false;
 
       let elementToAdd = null;
       const preview = currentElementPreview.value;
 
-      // Finalize element data and check if it's valid to add
-      switch (preview.type) {
-        case 'pen':
-        case 'eraser':
-          if (preview.points && preview.points.length > 1) {
-            elementToAdd = { ...preview };
-          }
-          break;
-        case 'line':
-        case 'rectangle':
-        case 'circle':
-          if (preview.start.x !== preview.end.x || preview.start.y !== preview.end.y) {
-             elementToAdd = { ...preview };
-          }
-          break;
-      }
+      // Check if the element is valid (e.g., has size)
+      const isValidElement = preview.start && preview.end && (preview.start.x !== preview.end.x || preview.start.y !== preview.end.y);
+      // Pen needs at least two distinct points unless it was a Shift+Pen action
+      const isValidPen = preview.type === 'pen' && preview.points && preview.points.length >= 2 && !wasShiftPressed;
+      // Shift+Pen is valid if we have the start point and the preview end point
+      const isValidShiftPen = originalTool === 'pen' && wasShiftPressed && shiftStartPoint && preview.end && (shiftStartPoint.x !== preview.end.x || shiftStartPoint.y !== preview.end.y);
 
-      // Add the finalized element to Yjs within a transaction
-      if (elementToAdd) {
-         // Assign a permanent ID (optional, Yjs handles object identity)
-         // elementToAdd.id = `elem_${props.awareness.clientID}_${Date.now()}`;
-         // Assign a permanent ID (optional, Yjs handles object identity)
-         // elementToAdd.id = `elem_${props.awareness.clientID}_${Date.now()}`;
-         delete elementToAdd.id; // Remove temporary ID
-         console.log('Adding element to Yjs drawings array:', JSON.stringify(elementToAdd)); // Log element being added
 
-         // Use local ydoc and yDrawings
-         ydoc.value.transact(() => {
-           yDrawings.value.push([new Y.Map(Object.entries(elementToAdd))]);
-         });
+      if (isValidPen || (preview.type !== 'pen' && isValidElement) || isValidShiftPen) {
+
+          // If Shift was held with the pen tool, create a 'line' element
+          if (wasShiftPressed && originalTool === 'pen' && isValidShiftPen) {
+              console.log("[finishDrawing] Shift held with Pen, creating Line element."); // DEBUG
+              elementToAdd = {
+                  type: 'line',
+                  start: shiftStartPoint, // Use the stored start point
+                  end: preview.end, // Use the final end point from the preview
+                  color: preview.color,
+                  lineWidth: preview.lineWidth,
+                  timestamp: Date.now(), // Use current timestamp
+                  lineStyle: 'solid' // Force solid line style for Shift+Pen
+              };
+          } else {
+              // Otherwise, use the preview element as is
+              elementToAdd = { ...preview };
+              delete elementToAdd.id; // Remove temporary ID
+
+              // Ensure lineStyle is included if the original tool was 'lines'
+              if (originalTool === 'lines' && elementToAdd.type === 'line') {
+                 // Always assign the style from props when the tool was 'lines'
+                 const styleFromProps = props.currentLineStyle || 'solid';
+                 console.log(`[finishDrawing] lineStyle missing or needs override, setting from prop: ${styleFromProps}`); // DEBUG
+                 elementToAdd.lineStyle = styleFromProps;
+                 // console.log(`[finishDrawing] Adding Line element with style from prop: ${styleFromProps}`); // DEBUG - Redundant with below
+              }
+          }
+
+          // DEBUG: Log the final element object before saving
+          console.log('[finishDrawing] Final elementToAdd before Yjs transaction:', JSON.stringify(elementToAdd));
+
+          // Add only if elementToAdd is not null
+          if (elementToAdd) {
+             // console.log('[finishDrawing] Attempting to save element:', JSON.stringify(elementToAdd)); // DEBUG - Reduced verbosity
+              ydoc.value.transact(() => {
+                  const yElementMap = new Y.Map();
+                  // Explicitly set known properties
+                  yElementMap.set('type', elementToAdd.type);
+                  yElementMap.set('color', elementToAdd.color);
+                  yElementMap.set('lineWidth', elementToAdd.lineWidth);
+                  yElementMap.set('timestamp', elementToAdd.timestamp);
+
+                  if (elementToAdd.type === 'pen') {
+                      // Store points as a plain array for simplicity
+                      yElementMap.set('points', elementToAdd.points);
+                      // smoothedPoints might also be needed if calculated
+                      if (elementToAdd.smoothedPoints) {
+                          yElementMap.set('smoothedPoints', elementToAdd.smoothedPoints);
+                      }
+                  } else if (elementToAdd.start && elementToAdd.end) {
+                      // Store start/end as nested Y.Maps
+                      const startMap = new Y.Map();
+                      startMap.set('x', elementToAdd.start.x);
+                      startMap.set('y', elementToAdd.start.y);
+                      yElementMap.set('start', startMap);
+
+                      const endMap = new Y.Map();
+                      endMap.set('x', elementToAdd.end.x);
+                      endMap.set('y', elementToAdd.end.y);
+                      yElementMap.set('end', endMap);
+
+                      // Explicitly add lineStyle if the original tool was 'lines'
+                      if (originalTool === 'lines' && elementToAdd.type === 'line') {
+                          const styleToSave = props.currentLineStyle || 'solid'; // Directly use prop value
+                          console.log(`[finishDrawing] Setting lineStyle on Y.Map from prop: ${styleToSave}`); // DEBUG
+                          yElementMap.set('lineStyle', styleToSave);
+                      }
+                      // Handle Shift+Pen case (already has lineStyle: 'solid' set in elementToAdd)
+                      else if (elementToAdd.type === 'line' && elementToAdd.lineStyle) {
+                           yElementMap.set('lineStyle', elementToAdd.lineStyle);
+                      }
+                  } else if (elementToAdd.type === 'text' && elementToAdd.position) {
+                      const positionMap = new Y.Map();
+                      positionMap.set('x', elementToAdd.position.x);
+                      positionMap.set('y', elementToAdd.position.y);
+                      yElementMap.set('position', positionMap);
+                      yElementMap.set('text', elementToAdd.text);
+                      yElementMap.set('fontSize', elementToAdd.fontSize);
+                  }
+                  // Add other potential types like 'image' if needed
+
+                  yDrawings.value.push([yElementMap]);
+                  console.log('[finishDrawing] Pushed Y.Map to yDrawings.'); // DEBUG
+              });
+          }
+      } else {
+          console.log('Drawing finished but element was too small or invalid, not adding.');
       }
 
       currentElementPreview.value = null;
       pointsBuffer.value = [];
-      redrawCanvas(); // Redraw final state
+      redrawCanvas(); // Redraw to remove the preview
     };
 
     // --- Tool and Style Setters ---
@@ -554,10 +801,18 @@ export default {
     const setColor = (color) => { currentColor.value = color; updateCursor(); };
     const setLineWidth = (width) => { currentLineWidth.value = Number(width) || 2; updateCursor(); };
     const setEraserMode = (mode) => { eraserMode.value = mode; updateCursor(); };
+    // Note: setShape and setLineStyle are handled by props now
 
     const updateCursor = () => {
       if (canvas.value) {
-        canvas.value.style.cursor = getCursorStyle(currentTool.value, currentColor.value, eraserMode.value);
+        let toolForCursor = currentTool.value;
+        if (toolForCursor === 'shapes') {
+            toolForCursor = props.currentShape;
+        } else if (toolForCursor === 'lines') {
+            // Maybe use a specific cursor for lines/vectors? For now, use default crosshair.
+            toolForCursor = 'line'; // Or keep 'lines' if getCursorStyle handles it
+        }
+        canvas.value.style.cursor = getCursorStyle(toolForCursor, currentColor.value, eraserMode.value);
       }
     };
 
@@ -587,7 +842,6 @@ export default {
         panOffset.value.x = centerX - (centerX - panOffset.value.x) * zoomRatio;
         panOffset.value.y = centerY - (centerY - panOffset.value.y) * zoomRatio;
         redrawCanvas();
-        // showStatus(`Zoom: ${Math.round(zoomLevel.value * 100)}%`); // Reduce status spam
     };
     const zoomOut = () => {
         const prevZoom = zoomLevel.value;
@@ -598,43 +852,26 @@ export default {
         panOffset.value.x = centerX - (centerX - panOffset.value.x) * zoomRatio;
         panOffset.value.y = centerY - (centerY - panOffset.value.y) * zoomRatio;
         redrawCanvas();
-        // showStatus(`Zoom: ${Math.round(zoomLevel.value * 100)}%`); // Reduce status spam
     };
     const resetZoom = () => {
         zoomLevel.value = 1;
         panOffset.value = { x: 0, y: 0 };
         redrawCanvas();
-        // showStatus('View reset'); // Reduce status spam
     };
 
     // --- Other Actions ---
-    const handleKeyDown = (event) => {
-      if (event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA') return;
-      // Basic tool shortcuts (adapt as needed)
-      if (!event.ctrlKey && !event.metaKey && !event.altKey) {
-        switch (event.key.toLowerCase()) {
-          case 'p': setTool('pen'); break;
-          case 'e': setTool('eraser'); break;
-          case 'l': setTool('line'); break;
-          // Add other tool shortcuts
-        }
-      }
-      // Undo/Redo shortcuts are typically handled by UndoManager listener in Toolbar/App
-    };
-
     const handlePaste = (event) => {
        event.preventDefault();
        const items = (event.clipboardData || window.clipboardData).items;
-       // Use local ydoc ref
        if (!items || !ydoc.value) return;
 
        for (let i = 0; i < items.length; i++) {
          if (items[i].type.indexOf('image') !== -1) {
            const blob = items[i].getAsFile();
            const reader = new FileReader();
-           reader.onload = (e) => addImageFromDataUrl(e.target.result); // Add image via Yjs
+           reader.onload = (e) => addImageFromDataUrl(e.target.result);
            reader.readAsDataURL(blob);
-           return; // Handle first image found
+           return;
          }
        }
 
@@ -642,30 +879,42 @@ export default {
        if (text) {
          const centerX = (canvasWidth.value / 2 - panOffset.value.x) / zoomLevel.value;
          const centerY = (canvasHeight.value / 2 - panOffset.value.y) / zoomLevel.value;
-         addTextElement({ x: centerX, y: centerY }, text); // Add text via Yjs
+         addTextElement({ x: centerX, y: centerY }, text);
        }
     };
 
     const addImageFromDataUrl = (dataUrl) => {
-        // Use local ydoc and yDrawings refs
         if (!ydoc.value || !yDrawings.value) return;
         const centerX = (canvasWidth.value / 2 - panOffset.value.x) / zoomLevel.value;
         const centerY = (canvasHeight.value / 2 - panOffset.value.y) / zoomLevel.value;
         createImageElement(dataUrl, centerX, centerY).then(imageData => {
-            ydoc.value.transact(() => {
-                yDrawings.value.push([new Y.Map(Object.entries(imageData))]);
-            });
+             const imageMap = new Y.Map();
+             imageMap.set('type', 'image');
+             // FIX: Store position as a nested Y.Map for consistency
+             const positionMap = new Y.Map();
+             positionMap.set('x', imageData.x);
+             positionMap.set('y', imageData.y);
+             imageMap.set('position', positionMap);
+             imageMap.set('dataUrl', imageData.dataUrl);
+             imageMap.set('width', imageData.width);
+             imageMap.set('height', imageData.height);
+             ydoc.value.transact(() => {
+                 yDrawings.value.push([imageMap]);
+             });
+             console.log('Added image Y.Map to yDrawings');
+        }).catch(err => {
+            console.error("Error creating image element:", err);
+            showToast("Failed to process image.", "error");
         });
     };
 
      const addTextElement = (position, text) => {
-        // Use local ydoc and yDrawings refs
         if (!ydoc.value || !yDrawings.value || !text) return;
         const textElementData = createTextElement(
             position,
             text,
             currentColor.value,
-            currentLineWidth.value * 10 // Example size
+            currentLineWidth.value * 10
         );
         ydoc.value.transact(() => {
             yDrawings.value.push([new Y.Map(Object.entries(textElementData))]);
@@ -689,26 +938,37 @@ export default {
     };
 
     // --- Public methods exposed via ref ---
-    // (These might be called by parent or Toolbar)
-    const clearCanvas = () => { // Called by App.vue via ref
-        // Use local ydoc and yDrawings refs
+    const clearCanvas = () => {
         if (ydoc.value && yDrawings.value && confirm('Are you sure you want to clear the canvas?')) {
             ydoc.value.transact(() => {
-                // Clear the drawings array
                 while (yDrawings.value.length > 0) {
                     yDrawings.value.delete(0);
                 }
             });
             showStatus('Canvas cleared');
-        }
+      }
     };
-    const undo = () => { /* Handled by UndoManager */ };
-    const redo = () => { /* Handled by UndoManager */ };
-    const getSerializableState = () => { /* Needs Yjs adaptation if still needed */ return {}; };
-    const loadState = (state) => { /* Needs Yjs adaptation */ return false; };
-    const exportAsText = () => { /* Needs Yjs adaptation */ return ''; };
-    const importFromText = (text) => { /* Needs Yjs adaptation */ return false; };
-    const toggleDebug = (enabled) => { /* Keep if needed */ };
+    const undo = () => {
+      if (undoManager.value && undoManager.value.canUndo()) {
+        undoManager.value.undo();
+        console.log('[Canvas] Undo triggered');
+      } else {
+        console.log('[Canvas] Cannot undo');
+      }
+    };
+    const redo = () => {
+      if (undoManager.value && undoManager.value.canRedo()) {
+        undoManager.value.redo();
+        console.log('[Canvas] Redo triggered');
+      } else {
+        console.log('[Canvas] Cannot redo');
+      }
+    };
+    const getSerializableState = () => { return {}; };
+    const loadState = (state) => { return false; };
+    const exportAsText = () => { return ''; };
+    const importFromText = (text) => { return false; };
+    const toggleDebug = (enabled) => { };
     const getViewportCenter = () => ({
         x: (canvasWidth.value / 2 - panOffset.value.x) / zoomLevel.value,
         y: (canvasHeight.value / 2 - panOffset.value.y) / zoomLevel.value,
@@ -716,61 +976,120 @@ export default {
 
 
     // --- Watchers ---
-    // Removed watchers for props.ydoc and props.awareness as they are no longer props
+    watch(() => props.currentShape, (newShape) => {
+        if (currentTool.value === 'shapes') {
+            updateCursor();
+        }
+    });
 
+    // Watch line style changes to update cursor if 'lines' tool is active
+    watch(() => props.currentLineStyle, (newLineStyle) => {
+        console.log(`[Canvas Watcher] currentLineStyle prop changed to: ${newLineStyle}`); // DEBUG
+        if (currentTool.value === 'lines') {
+            updateCursor();
+        }
+    });
 
     return {
+      // Canvas & Context
       canvas,
+      context, // Expose context if needed externally, otherwise keep internal
+
+      // Dimensions
       canvasWidth,
       canvasHeight,
+
+      // Drawing State
       isDrawing,
-      currentTool,
-      currentColor,
-      currentLineWidth,
+      currentTool, // Keep internal? Or controlled by parent? Assuming internal for now.
+      currentColor, // Keep internal?
+      currentLineWidth, // Keep internal?
+      currentElementPreview, // Internal preview state
+      pointsBuffer, // Internal buffer
+
+      // View State
       zoomLevel,
       panOffset,
       isPanning,
-      lastPanPoint,
-      statusMessage,
-      darkMode,
+      lastPanPoint, // Internal panning state
+      darkMode, // Internal dark mode state
+
+      // Tool Specific State
       eraserMode,
-      notifications,
+      hoveredElementIndex, // Internal hover state
+
+      // Yjs & Collaboration
+      yjsConnection, // Expose connection details if needed
+      ydoc, // Expose ydoc if needed
+      yDrawings, // Expose yDrawings if needed
+      undoManager, // Expose undoManager if needed
+      canUndo, // Expose undo state
+      canRedo, // Expose redo state
+      collaborators: ref(null), // Ref for Collaborators component
+
+      // UI Elements Refs
       clipboardInput,
-      yjsConnection, // Expose the connection object which contains awareness
-      // Methods
+
+      // Notifications & Status
+      notifications,
+      statusMessage,
+
+      // --- Methods ---
+
+      // Input Handlers (Expose if needed, e.g., for testing, otherwise keep internal)
       handleMouseDown,
       handleMouseMove,
       handleMouseUp,
       handleMouseLeave,
       handleZoom,
-      handleKeyDown,
       handlePaste,
-      handleResize,
+      handleResize, // Expose if parent needs to trigger resize
       handleTouchStart,
       handleTouchMove,
       handleTouchEnd,
-      zoomIn,
-      zoomOut,
-      resetZoom,
+
+      // Drawing Control (Internal)
+      // startDrawing, draw, finishDrawing - likely internal
+
+      // Tool Setters (Public API for parent component)
       setTool,
       setColor,
       setLineWidth,
-      setEraserMode,
-      showToast, // Expose for parent
-      clearCanvas, // Expose for parent
-      undo, // Expose for parent (delegates to UndoManager)
-      redo, // Expose for parent (delegates to UndoManager)
-      getSerializableState, // Expose if needed
-      loadState, // Expose if needed
-      exportAsText, // Expose if needed
-      importFromText, // Expose if needed
-      toggleDebug, // Expose for parent
-      addImageFromDataUrl, // Expose if needed by parent/toolbar
-      getViewportCenter, // Expose for image placement etc.
-      redrawCanvas // Expose for parent (e.g., after theme change)
+      setEraserMode, // Expose if parent controls eraser mode
+
+      // Zoom/Pan Controls (Public API)
+      zoomIn,
+      zoomOut,
+      resetZoom,
+
+      // Undo/Redo (Public API)
+      undo,
+      redo,
+
+      // Canvas Actions (Public API)
+      clearCanvas,
+      showToast, // Expose if parent needs to show toasts
+      // showStatus, // Likely internal
+
+      // Data Handling (Public API if needed)
+      getSerializableState,
+      loadState,
+      exportAsText,
+      importFromText,
+      addImageFromDataUrl, // Expose if parent triggers image adding
+      getViewportCenter, // Expose if parent needs viewport info
+
+      // Debugging (Public API if needed)
+      toggleDebug,
+
+      // Lifecycle related (Internal)
+      // initCanvas, initClipboardHandler, handleYjsUpdate, redrawCanvas etc.
+
+      // Expose redrawCanvas if external trigger is needed
+      redrawCanvas,
     };
-  }
-}
+  },
+};
 </script>
 
 <style scoped>
@@ -839,7 +1158,6 @@ export default {
   opacity: 0;
   transform: translateY(10px);
 }
-
 </style>
 
 <style>

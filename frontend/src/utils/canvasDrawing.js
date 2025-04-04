@@ -26,7 +26,7 @@ export const throttle = (fn, delay) => {
  */
 export const drawElement = (context, element, isHighlighted = false, smoothingFactor = 0.2, imageCache = null, requestRedraw = null) => {
   if (!element || typeof element !== 'object') {
-      console.error("drawElement received invalid element:", element);
+      // console.error("drawElement received invalid element:", element);
       return;
   }
   // Ensure essential properties exist, especially for lines/shapes
@@ -34,13 +34,13 @@ export const drawElement = (context, element, isHighlighted = false, smoothingFa
       if (!element.start || !element.end) {
           // Allow text elements which use 'position' instead of 'start'/'end'
           if (element.type !== 'text' && element.type !== 'image') {
-             console.error(`drawElement received element type ${element.type} without start/end points:`, element);
+             // console.error(`drawElement received element type ${element.type} without start/end points:`, element);
              return;
           }
       }
   }
   if (element.type === 'pen' && (!element.points || element.points.length === 0)) {
-      console.error("drawElement received pen element without points:", element);
+      // console.error("drawElement received pen element without points:", element);
       return;
   }
 
@@ -123,11 +123,11 @@ export const drawElement = (context, element, isHighlighted = false, smoothingFa
       drawText(context, element);
       break;
     case 'image':
-      // Pass cache and redraw request to drawImage
+      // Pass cache and redraw request to drawImage (Reverted to previous working version)
       drawImage(context, element, imageCache, requestRedraw);
       break;
     default:
-        console.warn(`[drawElement] Unknown element type: ${element.type}`);
+        // console.warn(`[drawElement] Unknown element type: ${element.type}`);
   }
 
   // Reset composite operation and shadow
@@ -214,7 +214,7 @@ const drawPath = (context, element, smoothingFactor) => {
  */
 const drawLine = (context, element) => {
   // DEBUG: Log line element details more thoroughly
-  console.log(`[drawLine] Element received:`, JSON.stringify(element));
+  // console.log(`[drawLine] Element received:`, JSON.stringify(element));
 
   context.save(); // Save context state before potentially changing dash/fill
   context.beginPath();
@@ -224,7 +224,7 @@ const drawLine = (context, element) => {
   const lineStyle = element.lineStyle || 'solid'; // Default to solid
   const lw = Math.max(1, element.lineWidth || 1); // Ensure positive line width for dash calculation
   let dashPattern = [];
-  console.log(`[drawLine] Processing style: ${lineStyle}, lineWidth: ${lw}`); // DEBUG
+  // console.log(`[drawLine] Processing style: ${lineStyle}, lineWidth: ${lw}`); // DEBUG
 
   if (lineStyle === 'dotted' || lineStyle === 'dotted_vector') {
     // Use fixed small values for dotted lines, scaled slightly by line width
@@ -237,10 +237,10 @@ const drawLine = (context, element) => {
   if (dashPattern.length > 0) {
     // Ensure dash pattern values are not zero
     dashPattern = dashPattern.map(val => Math.max(0.1, val));
-    console.log(`[drawLine] Applying dash pattern: [${dashPattern.join(', ')}]`); // DEBUG
+    // console.log(`[drawLine] Applying dash pattern: [${dashPattern.join(', ')}]`); // DEBUG
     context.setLineDash(dashPattern);
   } else {
-     console.log(`[drawLine] No dash pattern applied (solid line).`); // DEBUG
+     // console.log(`[drawLine] No dash pattern applied (solid line).`); // DEBUG
   }
 
   context.lineTo(element.end.x, element.end.y);
@@ -658,7 +658,7 @@ const drawText = (context, element) => {
  */
 const drawImage = (context, element, imageCache, requestRedraw) => {
   if (!element || !element.dataUrl || !imageCache || !element.position) {
-      console.error("drawImage called with invalid element data:", element);
+      // console.error("drawImage called with invalid element data:", element);
       return;
   }
 
@@ -675,7 +675,7 @@ const drawImage = (context, element, imageCache, requestRedraw) => {
     // Image is in cache
     if (img.complete && img.naturalWidth > 0) {
       // Log drawing parameters using direct access
-      console.log(`Drawing image: ${dataUrl.substring(0,20)}... at (${element.position?.x}, ${element.position?.y}) size ${width}x${height}`);
+      // console.log(`Drawing image: ${dataUrl.substring(0,20)}... at (${element.position?.x}, ${element.position?.y}) size ${width}x${height}`);
       // Image loaded, draw it using direct access
       context.drawImage(img, element.position.x, element.position.y, width, height);
 
@@ -684,23 +684,23 @@ const drawImage = (context, element, imageCache, requestRedraw) => {
       // console.log(`Image ${dataUrl.substring(0, 20)}... is loading`);
     } else {
       // Image failed to load (e.g., broken dataUrl)
-      console.warn(`Cached image for ${dataUrl.substring(0, 20)}... failed to load previously.`);
+      // console.warn(`Cached image for ${dataUrl.substring(0, 20)}... failed to load previously.`);
       // Optionally draw an error indicator
     }
   } else {
     // Image not in cache, start loading
     img = new Image();
     img.onload = () => { // Remove async/await
-      console.log(`Image ${dataUrl.substring(0, 20)}... loaded successfully.`);
+      // console.log(`Image ${dataUrl.substring(0, 20)}... loaded successfully.`); // Keep this one for debugging image loading itself
       // Image loaded, request a redraw to display it
       if (requestRedraw) {
         // await new Promise(resolve => setTimeout(resolve, 0)); // Remove await
         requestRedraw(); // Direct call
-        console.log(`Requested redraw after image load: ${dataUrl.substring(0, 20)}...`);
+        // console.log(`Requested redraw after image load: ${dataUrl.substring(0, 20)}...`);
       }
     };
     img.onerror = (err) => {
-      console.error(`Failed to load image: ${dataUrl.substring(0, 20)}...`, err);
+      // console.error(`Failed to load image: ${dataUrl.substring(0, 20)}...`, err);
       // Mark as failed in cache? Or remove? For now, just log.
       // Consider removing from cache to allow retry?
       // imageCache.delete(dataUrl);

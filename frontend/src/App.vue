@@ -59,10 +59,8 @@
           @export-whiteboard="handleExportRequest"
           @import-whiteboard="showImportDialog = true"
           @image-selected="handleImageSelected"
-          :can-undo="whiteboard?.canUndo"
-          :can-redo="whiteboard?.canRedo"
-          :undo="callWhiteboardUndo"
-          :redo="callWhiteboardRedo"
+          @undo-clicked="callWhiteboardUndo"  
+          @redo-clicked="callWhiteboardRedo"
          ></ToolBar>
       </div>
 
@@ -89,6 +87,13 @@
     <!-- Calculator Modal -->
     <CalculatorModal :visible="isCalculatorVisible" @update:visible="isCalculatorVisible = $event" />
 
+    <!-- 1. Add debug tool -->
+    <div v-if="debugMode" class="debug-panel">
+      <div>UndoRedo Global: {{globalUndoRedoState.canUndo}}/{{globalUndoRedoState.canRedo}}</div>
+      <div>Local Canvas: {{whiteboard?.canUndo}}/{{whiteboard?.canRedo}}</div>
+      <button @click="forceUpdateUndoRedo">Wymuś update</button>
+    </div>
+
   </div>
 </template>
 
@@ -104,6 +109,7 @@ import CalculatorModal from './components/CalculatorModal.vue'; // Import Calcul
 import { copyToClipboard } from './utils/fileUtils.js';
 import * as Y from 'yjs';
 import { Buffer } from 'buffer';
+import { undoRedoState } from './utils/undoRedoState'; // 2. Add import
 
 export default {
   name: 'App',
@@ -136,6 +142,7 @@ export default {
     const currentShape = ref('rectangle');
     const currentLineStyle = ref('solid');
     const isCalculatorVisible = ref(false); // State for calculator modal visibility
+    const globalUndoRedoState = undoRedoState; // 3. Add global state ref
 
     // --- Computed Properties ---
     const activeUsersCount = computed(() => {
@@ -176,6 +183,32 @@ export default {
         console.warn('Whiteboard ref not available for redo');
       }
     };
+
+    // 3. Add forceUpdateUndoRedo method
+    const forceUpdateUndoRedo = () => {
+      // Accessing undoManager directly on the whiteboard component instance
+      // This assumes WhiteboardCanvas exposes undoManager via defineExpose
+      // If not, this needs adjustment based on how WhiteboardCanvas exposes its state/methods.
+      // For now, we assume direct access for the debug panel.
+      const um = whiteboard.value?.undoManager; // Access potentially exposed ref
+      if (um?.value) { // Check if the ref and its value exist
+        const canUndoVal = um.value.canUndo();
+        const canRedoVal = um.value.canRedo();
+        
+        console.log(`[App] Wymuszam aktualizację: canUndo=${canUndoVal}, canRedo=${canRedoVal}`);
+        undoRedoState.update(canUndoVal, canRedoVal);
+      } else {
+        console.error("[App] Brak dostępu do UndoManager przez whiteboard ref (może nie być 'exposed')");
+        // Fallback: try accessing the local state if exposed (less ideal)
+        if (whiteboard.value?.canUndo !== undefined && whiteboard.value?.canRedo !== undefined) {
+           console.log("[App] Fallback: Using local canUndo/canRedo from whiteboard ref");
+           undoRedoState.update(whiteboard.value.canUndo, whiteboard.value.canRedo);
+        } else {
+           console.error("[App] Fallback failed: Cannot access undo/redo state from whiteboard ref.");
+        }
+      }
+    };
+
 
     const showStatus = (message, duration = 3000) => {
       statusMessage.value = message;
@@ -478,7 +511,10 @@ export default {
       showStatus,
       showNotification,
       callWhiteboardUndo,
-      callWhiteboardRedo
+      callWhiteboardRedo,
+      // 4. Add new variables to return
+      globalUndoRedoState,
+      forceUpdateUndoRedo
     };
   }
 }
@@ -569,4 +605,18 @@ export default {
 .notification-success { background-color: #4CAF50; }
 .notification-warning { background-color: #FF9800; }
 .notification-error { background-color: #F44336; }
+
+/* 3. Add CSS for panel debug */
+.debug-panel {
+  position: fixed;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(0,0,0,0.8);
+  color: white;
+  padding: 10px;
+  border-radius: 4px;
+  z-index: 9999;
+  font-size: 12px;
+}
 </style>

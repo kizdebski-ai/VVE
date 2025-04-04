@@ -174,7 +174,7 @@ export default {
         // Aktualizuj stan globalny
         undoRedoState.update(hasUndo, hasRedo);
         
-        console.log(`[Canvas] UndoManager stan: canUndo=${hasUndo}, canRedo=${hasRedo}`);
+        // console.log(`[Canvas] UndoManager stan: canUndo=${hasUndo}, canRedo=${hasRedo}`); // Commented out
       } else {
         canUndo.value = false;
         canRedo.value = false;
@@ -184,24 +184,27 @@ export default {
 
     // 2. Zastąp całą implementację UndoManager
     const initializeUndoManager = () => {
-      console.log("[Canvas] Inicjalizacja UndoManager...");
+      // console.log("[Canvas] Inicjalizacja UndoManager..."); // Commented out
       
       if (undoManager.value) {
         try {
           undoManager.value.destroy();
         } catch (e) {
-          console.error("Błąd podczas czyszczenia UndoManagera:", e);
+          // console.error("Błąd podczas czyszczenia UndoManagera:", e); // Commented out
         }
         undoManager.value = null;
       }
       
       if (!ydoc.value || !yDrawings.value) {
-        console.error("initializeUndoManager: Brak ydoc lub yDrawings");
+        // console.error("initializeUndoManager: Brak ydoc lub yDrawings"); // Commented out
         return;
       }
       
-      // Najprostsza konfiguracja UndoManager
-      undoManager.value = new Y.UndoManager(yDrawings.value);
+      // Konfiguracja UndoManager ze śledzeniem origin 'image'
+      undoManager.value = new Y.UndoManager(yDrawings.value, {
+        // Rejestruj zarówno transakcje bez origin jak i te z origin 'image'
+        trackedOrigins: new Set([null, undefined, 'image'])
+      });
       
       // Use the externally defined updateGlobalState function
       undoManager.value.on('stack-item-added', updateGlobalState);
@@ -210,17 +213,17 @@ export default {
       // Inicjalne ustawienie stanu
       updateGlobalState();
       
-      console.log("[Canvas] UndoManager zainicjalizowany");
+      // console.log("[Canvas] UndoManager zainicjalizowany"); // Commented out
     };
 
     // 3. Zastąp metody undo/redo
     const undo = () => {
-      console.log("[Canvas] Undo - próba wykonania");
+      // console.log("[Canvas] Undo - próba wykonania"); // Commented out
       
       try {
         if (undoManager.value && undoManager.value.canUndo()) {
           undoManager.value.undo();
-          console.log("[Canvas] Undo wykonane");
+          // console.log("[Canvas] Undo wykonane"); // Commented out
           
           // Dodatkowa aktualizacja globalnego stanu (już obsłużona przez listener 'stack-item-popped')
           // undoRedoState.update(undoManager.value.canUndo(), undoManager.value.canRedo());
@@ -230,20 +233,20 @@ export default {
             redrawCanvas();
           });
         } else {
-          console.log("[Canvas] Undo niemożliwe");
+          // console.log("[Canvas] Undo niemożliwe"); // Commented out
         }
       } catch (error) {
-        console.error("[Canvas] Błąd podczas undo:", error);
+        // console.error("[Canvas] Błąd podczas undo:", error); // Commented out
       }
     };
 
     const redo = () => {
-      console.log("[Canvas] Redo - próba wykonania");
+      // console.log("[Canvas] Redo - próba wykonania"); // Commented out
       
       try {
         if (undoManager.value && undoManager.value.canRedo()) {
           undoManager.value.redo();
-          console.log("[Canvas] Redo wykonane");
+          // console.log("[Canvas] Redo wykonane"); // Commented out
           
           // Dodatkowa aktualizacja globalnego stanu (już obsłużona przez listener 'stack-item-added')
           // undoRedoState.update(undoManager.value.canUndo(), undoManager.value.canRedo());
@@ -253,10 +256,10 @@ export default {
             redrawCanvas();
           });
         } else {
-          console.log("[Canvas] Redo niemożliwe");
+          // console.log("[Canvas] Redo niemożliwe"); // Commented out
         }
       } catch (error) {
-        console.error("[Canvas] Błąd podczas redo:", error);
+        // console.error("[Canvas] Błąd podczas redo:", error); // Commented out
       }
     };
 
@@ -284,23 +287,36 @@ export default {
             const rawPosition = elementMap.get('position');
             let finalPosition = { x: 0, y: 0 };
 
+            // Spróbuj różne sposoby odczytania pozycji
             if (rawPosition instanceof Y.Map) {
-                finalPosition = rawPosition.toJSON();
-            } else if (rawPosition && typeof rawPosition === 'object' && typeof rawPosition.x === 'number' && typeof rawPosition.y === 'number') {
-                finalPosition = rawPosition;
-            } else {
-                console.error("[redrawCanvas] Image position data is invalid:", rawPosition);
-                return;
+                finalPosition = { 
+                    x: rawPosition.get('x') || 0, 
+                    y: rawPosition.get('y') || 0 
+                };
+            } else if (rawPosition && typeof rawPosition === 'object') {
+                if (typeof rawPosition.x === 'number' && typeof rawPosition.y === 'number') {
+                    finalPosition = { x: rawPosition.x, y: rawPosition.y };
+                } else if (typeof rawPosition.toJSON === 'function') {
+                    const posJSON = rawPosition.toJSON();
+                    finalPosition = { 
+                        x: posJSON.x || 0, 
+                        y: posJSON.y || 0 
+                    };
+                }
             }
 
             element = {
-              type: type,
-              position: finalPosition,
-              dataUrl: elementMap.get('dataUrl'),
-              width: elementMap.get('width'),
-              height: elementMap.get('height')
+                type: type,
+                position: finalPosition,
+                dataUrl: elementMap.get('dataUrl'),
+                width: elementMap.get('width') || 300,
+                height: elementMap.get('height') || 200
             };
 
+            console.log(`[redrawCanvas] Image Element ${index} data:`, JSON.stringify({
+                ...element,
+                dataUrl: element.dataUrl ? element.dataUrl.substring(0, 30) + '...' : 'undefined' // skróć dataUrl w logach
+            }));
         } else {
             try {
                 // Ensure all properties are extracted, especially lineStyle
@@ -324,13 +340,13 @@ export default {
                     console.log(`[redrawCanvas] Element ${index} data from Yjs:`, JSON.stringify(element));
                  }
             } catch (e) {
-                console.error("Error converting elementMap to JSON:", elementMap, e);
+                // console.error("Error converting elementMap to JSON:", elementMap, e); // Commented out
                 return;
             }
         }
 
         if (!element || typeof element !== 'object') {
-            console.error("Invalid element data after conversion:", element);
+            // console.error("Invalid element data after conversion:", element); // Commented out
             return;
         }
 
@@ -475,7 +491,7 @@ export default {
                         break;
                     }
                 } catch (error) {
-                    console.error("Error processing element for eraser hover:", elementMap, error);
+                    // console.error("Error processing element for eraser hover:", elementMap, error); // Commented out
                 }
             }
         }
@@ -637,7 +653,7 @@ export default {
               console.log("[startDrawing] Preview element created:", JSON.stringify(currentElementPreview.value));
           }
       } else {
-          console.error(`[startDrawing] Failed to create preview element for tool type: ${toolType} with data:`, elementData);
+          // console.error(`[startDrawing] Failed to create preview element for tool type: ${toolType} with data:`, elementData); // Commented out
           isDrawing.value = false; // Stop drawing if preview failed
           return;
       }
@@ -681,7 +697,7 @@ export default {
     // ===== FRAGMENT 3 Modification START (eraseElement) =====
     const eraseElement = (index) => {
       if (ydoc.value && yDrawings.value && index >= 0 && index < yDrawings.value.length) {
-        console.log(`[eraseElement] Usuwanie elementu pod indeksem: ${index}`);
+        // console.log(`[eraseElement] Usuwanie elementu pod indeksem: ${index}`); // Commented out
         
         ydoc.value.transact(() => {
           yDrawings.value.delete(index, 1);
@@ -867,7 +883,7 @@ export default {
                      }
                   });
               } catch (error) {
-                  console.error('[finishDrawing] Error during Yjs transaction:', error);
+                  // console.error('[finishDrawing] Error during Yjs transaction:', error); // Commented out
                   showToast("Error saving drawing element.", "error");
               }
           }
@@ -991,47 +1007,84 @@ export default {
 
     // ===== FRAGMENT 3 Modification START (addImageFromDataUrl) =====
     const addImageFromDataUrl = (dataUrl) => {
-        if (!ydoc.value || !yDrawings.value) return;
+        console.log("[WhiteboardCanvas] addImageFromDataUrl called with dataUrl (first 50 chars):", dataUrl.substring(0, 50));
+        
+        if (!ydoc.value || !yDrawings.value) {
+            console.error("[addImageFromDataUrl] Error: ydoc or yDrawings not available!");
+            showToast("Cannot add image - connection issue", "error");
+            return;
+        }
+        
+        // Calculate center position
         const centerX = (canvasWidth.value / 2 - panOffset.value.x) / zoomLevel.value;
         const centerY = (canvasHeight.value / 2 - panOffset.value.y) / zoomLevel.value;
         
-        createImageElement(dataUrl, centerX, centerY).then(imageData => {
-             try {
-                 ydoc.value.transact(() => {
-                   const imageMap = new Y.Map();
-                   imageMap.set('type', 'image');
-                   
-                   // Store position as a nested Y.Map
-                   const positionMap = new Y.Map();
-                   positionMap.set('x', imageData.x);
-                   positionMap.set('y', imageData.y);
-                   imageMap.set('position', positionMap);
-                   
-                   imageMap.set('dataUrl', imageData.dataUrl);
-                   imageMap.set('width', imageData.width);
-                   imageMap.set('height', imageData.height);
-                   
-                   yDrawings.value.push([imageMap]);
-                 }); // BEZ trzeciego parametru
-                 
-                 // Remove the manual nextTick update; rely on UndoManager listeners
-                 // nextTick(() => {
-                 //    if (undoManager.value) {
-                 //       updateGlobalState(); // Use the shared function
-                 //    }
-                 // });
-                 
-                 if (props.debugMode) {
-                     console.log('Added image Y.Map to yDrawings');
-                 }
-             } catch (error) {
-                 console.error("Error adding image to Yjs:", error);
-                 showToast("Failed to add image to whiteboard.", "error");
-             }
-        }).catch(err => {
-            console.error("Error creating image element:", err);
-            showToast("Failed to process image.", "error");
-        });
+        console.log("[addImageFromDataUrl] Creating image at position:", centerX, centerY);
+        
+        // Use createImageElement to get proper dimensions and position
+        createImageElement(dataUrl, centerX, centerY)
+            .then(imageData => {
+                console.log("[addImageFromDataUrl] Image created:", imageData);
+                
+                try {
+                    // Create transaction WITHOUT origin parameter for compatibility
+                    ydoc.value.transact(() => {
+                        console.log("[addImageFromDataUrl] Creating Y.Map for image");
+                        const imageMap = new Y.Map();
+                        
+                        // Set basic properties
+                        imageMap.set('type', 'image');
+                        imageMap.set('timestamp', Date.now());
+                        
+                        // Set position as Y.Map
+                        const posMap = new Y.Map();
+                        posMap.set('x', imageData.x);
+                        posMap.set('y', imageData.y);
+                        imageMap.set('position', posMap);
+                        
+                        // Set image data
+                        imageMap.set('dataUrl', imageData.dataUrl);
+                        imageMap.set('width', imageData.width);
+                        imageMap.set('height', imageData.height);
+                        
+                        // Push to shared array
+                        console.log("[addImageFromDataUrl] Pushing image to yDrawings");
+                        yDrawings.value.push([imageMap]);
+                    });
+                    
+                    // Force redraw
+                    console.log("[addImageFromDataUrl] Forcing redraw after adding image");
+                    nextTick(() => {
+                        redrawCanvas();
+                        
+                        // Update undo state
+                        if (undoManager.value) {
+                            const hasUndo = undoManager.value.canUndo();
+                            const hasRedo = undoManager.value.canRedo();
+                            canUndo.value = hasUndo;
+                            canRedo.value = hasRedo;
+                            
+                            // Update global state
+                            if (typeof undoRedoState !== 'undefined') {
+                                undoRedoState.update(hasUndo, hasRedo);
+                            }
+                            
+                            console.log(`[addImageFromDataUrl] Updated undo state: canUndo=${hasUndo}, canRedo=${hasRedo}`);
+                        }
+                    });
+                    
+                    // Show success message
+                    showToast("Image added successfully", "success");
+                }
+                catch (error) {
+                    console.error("[addImageFromDataUrl] Error adding image:", error);
+                    showToast("Failed to add image", "error");
+                }
+            })
+            .catch(error => {
+                console.error("[addImageFromDataUrl] Error creating image:", error);
+                showToast("Failed to process image", "error");
+            });
     };
     // ===== FRAGMENT 3 Modification END (addImageFromDataUrl) =====
 
@@ -1068,7 +1121,7 @@ export default {
                }
             });
         } catch (error) {
-            console.error("Error adding text element:", error);
+            // console.error("Error adding text element:", error); // Commented out
             showToast("Failed to add text to whiteboard.", "error");
         }
     };
@@ -1096,7 +1149,7 @@ export default {
     const clearCanvas = () => {
         if (ydoc.value && yDrawings.value) {
             if (confirm('Are you sure you want to clear the canvas?')) {
-                console.log('[clearCanvas] Clearing all elements');
+                // console.log('[clearCanvas] Clearing all elements'); // Commented out
                 
                 try {
                     ydoc.value.transact(() => {
@@ -1116,7 +1169,7 @@ export default {
                        }
                     });
                 } catch (error) {
-                    console.error('[clearCanvas] Error clearing canvas:', error);
+                    // console.error('[clearCanvas] Error clearing canvas:', error); // Commented out
                     showToast("Error clearing canvas.", "error");
                 }
             }
@@ -1141,7 +1194,7 @@ export default {
 
     // ===== FRAGMENT 5 START =====
     const testUndoManager = () => {
-      console.log("=== TEST UNDOMANAGER ===");
+      // console.log("=== TEST UNDOMANAGER ==="); // Commented out
       
       try {
         if (!ydoc.value || !yDrawings.value) {
@@ -1149,7 +1202,7 @@ export default {
           return;
         }
         
-        console.log("Dodaję testowy element...");
+        // console.log("Dodaję testowy element..."); // Commented out
         
         ydoc.value.transact(() => {
           const testElement = new Y.Map();
@@ -1171,11 +1224,11 @@ export default {
         });
         
         nextTick(() => {
-          console.log("Test element dodany. canUndo =", undoManager.value?.canUndo());
+          // console.log("Test element dodany. canUndo =", undoManager.value?.canUndo()); // Commented out
           alert(`Test wykonany. canUndo = ${canUndo.value}`);
         });
       } catch (error) {
-        console.error("Błąd testu:", error);
+        // console.error("Błąd testu:", error); // Commented out
         alert("Błąd testu: " + error.message);
       }
     };
@@ -1216,39 +1269,39 @@ export default {
 
       if (roomId) {
         try {
-          console.log("[onMounted] Łączenie z Yjs dla pokoju:", roomId);
+          // console.log("[onMounted] Łączenie z Yjs dla pokoju:", roomId); // Commented out
           const connection = connectToYjs(roomId);
           yjsConnection.value = connection;
           ydoc.value = connection.ydoc;
           yDrawings.value = connection.yDrawings;
           
           if (!yDrawings.value) {
-            console.error("[onMounted] Błąd: yDrawings not available after connection!");
+            // console.error("[onMounted] Błąd: yDrawings not available after connection!"); // Commented out
             return;
           }
           
-          console.log("[onMounted] yDrawings zainicjalizowany, długość:", yDrawings.value.length);
+          // console.log("[onMounted] yDrawings zainicjalizowany, długość:", yDrawings.value.length); // Commented out
           
           // Obserwuj zmiany w yDrawings
           yDrawings.value.observe(event => {
-            console.log("[yDrawings.observe] Zmiana w yDrawings:", event);
+            // console.log("[yDrawings.observe] Zmiana w yDrawings:", event); // Commented out
             redrawCanvas(); // Use direct redraw instead of debounced for immediate feedback
           });
           
           // Inicjalizuj UndoManager po krótkim opóźnieniu
           setTimeout(() => {
-            console.log("[onMounted] Inicjalizacja UndoManager po opóźnieniu...");
+            // console.log("[onMounted] Inicjalizacja UndoManager po opóźnieniu..."); // Commented out
             initializeUndoManager();
             redrawCanvas(); // Redraw after UndoManager init
           }, 100);
           
-          console.log('[onMounted] Yjs connection established successfully.');
+          // console.log('[onMounted] Yjs connection established successfully.'); // Commented out
         } catch (error) {
-          console.error("Failed to connect Yjs provider:", error);
+          // console.error("Failed to connect Yjs provider:", error); // Commented out
           showToast("Error connecting to collaboration session.", "error");
         }
       } else {
-        console.error("WhiteboardCanvas: 'room' parameter missing in URL!");
+        // console.error("WhiteboardCanvas: 'room' parameter missing in URL!"); // Commented out
         showToast("Room ID missing. Collaboration disabled.", "error");
       }
     });
@@ -1273,7 +1326,7 @@ export default {
         undoManager.value.off('stack-item-popped', updateGlobalState);
         undoManager.value.destroy();
         undoManager.value = null;
-        console.log('[Canvas] UndoManager destroyed');
+        // console.log('[Canvas] UndoManager destroyed'); // Commented out
       }
       
       // Disconnect from Yjs

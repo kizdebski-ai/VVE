@@ -122,12 +122,16 @@ export const createImageElement = (dataUrl, centerX, centerY, maxDimension = 500
       let height = img.naturalHeight;
 
       if (!width || !height) {
-          console.error("Image loaded but has zero dimensions:", dataUrl.substring(0,30));
-          reject(new Error("Image has zero dimensions"));
-          return;
+          // Log a warning instead of rejecting, as dimensions might update later
+          console.warn("Image loaded with zero dimensions, proceeding anyway:", dataUrl.substring(0,30));
+          // Optionally set a default small size or let the browser handle it
+          width = width || 50; // Example: Default width if zero
+          height = height || 50; // Example: Default height if zero
+          // Do not reject or return here
       }
 
-      if (width > maxDimension || height > maxDimension) {
+      // Ensure width/height are positive before proceeding with ratio calculation
+      if (width > 0 && height > 0 && (width > maxDimension || height > maxDimension)) {
         const ratio = Math.min(maxDimension / width, maxDimension / height);
         width *= ratio;
         height *= ratio;

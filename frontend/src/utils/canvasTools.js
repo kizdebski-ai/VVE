@@ -1,4 +1,4 @@
-/**
+ /**
  * Canvas Tools Module
  * Provides functionality for different drawing tools
  */
@@ -109,55 +109,47 @@ export const createTextElement = (position, text, color, fontSize) => {
  * @param {String} dataUrl - Image data URL
  * @param {Number} centerX - Center X position
  * @param {Number} centerY - Center Y position
- * @param {Number} maxDimension - Maximum width/height
- * @returns {Promise<Object>} - Promise resolving to image element object { id, type, position, width, height, dataUrl, timestamp }
+ * @param {Number} x - Center X position (renamed from centerX for clarity)
+ * @param {Number} y - Center Y position (renamed from centerY for clarity)
+ * @returns {Promise<Object>} - Promise resolving to image element object { type, x, y, position, width, height, dataUrl, timestamp }
  */
-export const createImageElement = (dataUrl, centerX, centerY, maxDimension = 500) => {
-  return new Promise((resolve, reject) => { // Add reject parameter
+export const createImageElement = (dataUrl, x, y) => {
+  return new Promise((resolve, reject) => {
     const img = new Image();
-
+    
     img.onload = () => {
-      // Calculate size (max dimension, keeping aspect ratio)
-      let width = img.naturalWidth; // Use naturalWidth/Height for original dimensions
-      let height = img.naturalHeight;
-
-      if (!width || !height) {
-          // Log a warning instead of rejecting, as dimensions might update later
-          console.warn("Image loaded with zero dimensions, proceeding anyway:", dataUrl.substring(0,30));
-          // Optionally set a default small size or let the browser handle it
-          width = width || 50; // Example: Default width if zero
-          height = height || 50; // Example: Default height if zero
-          // Do not reject or return here
-      }
-
-      // Ensure width/height are positive before proceeding with ratio calculation
-      if (width > 0 && height > 0 && (width > maxDimension || height > maxDimension)) {
-        const ratio = Math.min(maxDimension / width, maxDimension / height);
+      // Calculate reasonable size (adjust as needed)
+      let width = img.width;
+      let height = img.height;
+      
+      // Scale down large images proportionally
+      const MAX_SIZE = 500;
+      if (width > MAX_SIZE || height > MAX_SIZE) {
+        const ratio = Math.min(MAX_SIZE / width, MAX_SIZE / height);
         width *= ratio;
         height *= ratio;
       }
+      
+      // Calculate top-left from center for the position object
+      const topLeftX = x - width / 2;
+      const topLeftY = y - height / 2;
 
-      // Create image element data object
       resolve({
-        // id: uuidv4(), // ID can be handled by Yjs Map structure if needed later
         type: 'image',
-        position: { // Calculate top-left corner from center and final dimensions
-          x: centerX - width / 2,
-          y: centerY - height / 2
-        },
+        x: topLeftX, // Store top-left x
+        y: topLeftY, // Store top-left y
+        position: { x: topLeftX, y: topLeftY }, // Ensure position object uses top-left
+        dataUrl,
         width,
         height,
-        dataUrl,
         timestamp: Date.now()
       });
     };
-
-    // Add error handling
-    img.onerror = (err) => {
-        console.error("Failed to load image in createImageElement:", err, dataUrl.substring(0, 30));
-        reject(new Error("Failed to load image from data URL")); // Reject the promise
+    
+    img.onerror = () => {
+      reject(new Error("Failed to load image"));
     };
-
+    
     img.src = dataUrl;
   });
 };

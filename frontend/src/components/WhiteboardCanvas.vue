@@ -1,5 +1,9 @@
 <template>
   <div class="whiteboard-container" :class="{ 'dark-mode': darkMode }">
+    <div v-if="debugMode" style="position: absolute; top: 5px; left: 5px; z-index: 9999; 
+     background: rgba(0,0,0,0.7); color: white; padding: 5px; border-radius: 4px; font-size: 12px;">
+  UndoManager: CanUndo={{canUndo}}, CanRedo={{canRedo}}
+</div>
     <canvas
       ref="canvas"
       :width="canvasWidth"
@@ -35,7 +39,7 @@
       @reset-zoom="resetZoom"
     />
 
-    <!-- Eraser mode controls (Keep if eraser logic remains local or adapted) -->
+    <!-- Eraser mode controls -->
     <EraserModeControls
       v-if="currentTool === 'eraser'"
       :mode="eraserMode"
@@ -45,7 +49,7 @@
     <!-- Status message -->
     <StatusMessage :message="statusMessage" />
 
-    <!-- Clipboard handler (Keep for paste functionality) -->
+    <!-- Clipboard handler -->
     <input
       ref="clipboardInput"
       type="text"
@@ -53,7 +57,7 @@
       @paste="handlePaste"
     />
 
-    <!-- Toast powiadomień -->
+    <!-- Toast notifications -->
     <div class="notifications">
       <transition-group name="fade">
         <div
@@ -66,13 +70,21 @@
         </div>
       </transition-group>
     </div>
+    <button v-if="debugMode" 
+      style="position: absolute; bottom: 10px; left: 10px; z-index: 9999; 
+             background: #2196F3; color: white; border: none; padding: 5px 10px; 
+             border-radius: 4px; cursor: pointer;"
+      @click="testUndoManager">
+      Test UndoManager
+    </button>
   </div>
 </template>
 
 <script>
 import { ref, onMounted, onBeforeUnmount, watch, nextTick } from 'vue';
 import * as Y from 'yjs';
-import { UndoManager } from 'yjs';
+// Removed explicit UndoManager import as it's part of Y.* now
+import { undoRedoState } from '../utils/undoRedoState'; // 1. Add import
 import Collaborators from './Collaborators.vue';
 import ZoomPanControls from './ZoomPanControls.vue';
 import EraserModeControls from './EraserModeControls.vue';
@@ -106,8 +118,8 @@ export default {
   },
   props: {
     debugMode: { type: Boolean, default: false },
-    currentShape: { type: String, default: 'rectangle' }, // Already exists
-    currentLineStyle: { type: String, default: 'solid' } // Declare currentLineStyle prop
+    currentShape: { type: String, default: 'rectangle' },
+    currentLineStyle: { type: String, default: 'solid' }
   },
   emits: ['state-updated'],
 
@@ -140,6 +152,7 @@ export default {
     const imageCache = ref(new Map());
     const hoveredElementIndex = ref(-1);
 
+    // ===== FRAGMENT 1 START =====
     // --- Yjs specific state (managed internally) ---
     const yjsConnection = ref(null);
     const ydoc = ref(null);
@@ -148,6 +161,104 @@ export default {
     const canUndo = ref(false);
     const canRedo = ref(false);
 
+    // Define updateGlobalState outside initializeUndoManager to make it accessible in onBeforeUnmount
+    const updateGlobalState = () => {
+      if (undoManager.value) {
+        const hasUndo = undoManager.value.canUndo();
+        const hasRedo = undoManager.value.canRedo();
+        
+        // Aktualizuj stan lokalny (nadal potrzebny dla debug panelu w tym komponencie)
+        canUndo.value = hasUndo;
+        canRedo.value = hasRedo;
+        
+        // Aktualizuj stan globalny
+        undoRedoState.update(hasUndo, hasRedo);
+        
+        console.log(`[Canvas] UndoManager stan: canUndo=${hasUndo}, canRedo=${hasRedo}`);
+      } else {
+        canUndo.value = false;
+        canRedo.value = false;
+        undoRedoState.update(false, false);
+      }
+    };
+
+    // 2. Zastąp całą implementację UndoManager
+    const initializeUndoManager = () => {
+      console.log("[Canvas] Inicjalizacja UndoManager...");
+      
+      if (undoManager.value) {
+        try {
+          undoManager.value.destroy();
+        } catch (e) {
+          console.error("Błąd podczas czyszczenia UndoManagera:", e);
+        }
+        undoManager.value = null;
+      }
+      
+      if (!ydoc.value || !yDrawings.value) {
+        console.error("initializeUndoManager: Brak ydoc lub yDrawings");
+        return;
+      }
+      
+      // Najprostsza konfiguracja UndoManager
+      undoManager.value = new Y.UndoManager(yDrawings.value);
+      
+      // Use the externally defined updateGlobalState function
+      undoManager.value.on('stack-item-added', updateGlobalState);
+      undoManager.value.on('stack-item-popped', updateGlobalState);
+      
+      // Inicjalne ustawienie stanu
+      updateGlobalState();
+      
+      console.log("[Canvas] UndoManager zainicjalizowany");
+    };
+
+    // 3. Zastąp metody undo/redo
+    const undo = () => {
+      console.log("[Canvas] Undo - próba wykonania");
+      
+      try {
+        if (undoManager.value && undoManager.value.canUndo()) {
+          undoManager.value.undo();
+          console.log("[Canvas] Undo wykonane");
+          
+          // Dodatkowa aktualizacja globalnego stanu (już obsłużona przez listener 'stack-item-popped')
+          // undoRedoState.update(undoManager.value.canUndo(), undoManager.value.canRedo());
+          
+          // Wymuś redraw
+          nextTick(() => {
+            redrawCanvas();
+          });
+        } else {
+          console.log("[Canvas] Undo niemożliwe");
+        }
+      } catch (error) {
+        console.error("[Canvas] Błąd podczas undo:", error);
+      }
+    };
+
+    const redo = () => {
+      console.log("[Canvas] Redo - próba wykonania");
+      
+      try {
+        if (undoManager.value && undoManager.value.canRedo()) {
+          undoManager.value.redo();
+          console.log("[Canvas] Redo wykonane");
+          
+          // Dodatkowa aktualizacja globalnego stanu (już obsłużona przez listener 'stack-item-added')
+          // undoRedoState.update(undoManager.value.canUndo(), undoManager.value.canRedo());
+          
+          // Wymuś redraw
+          nextTick(() => {
+            redrawCanvas();
+          });
+        } else {
+          console.log("[Canvas] Redo niemożliwe");
+        }
+      } catch (error) {
+        console.error("[Canvas] Błąd podczas redo:", error);
+      }
+    };
 
     // --- Methods ---
 
@@ -208,8 +319,10 @@ export default {
                         element[key] = value;
                     }
                 }
-                 // DEBUG: Log the element data being passed to drawElement
-                 console.log(`[redrawCanvas] Element ${index} data from Yjs:`, JSON.stringify(element)); // ADDED LOG
+                 // DEBUG: Log the element data being passed to drawElement if in debug mode
+                 if (props.debugMode) {
+                    console.log(`[redrawCanvas] Element ${index} data from Yjs:`, JSON.stringify(element));
+                 }
             } catch (e) {
                 console.error("Error converting elementMap to JSON:", elementMap, e);
                 return;
@@ -220,7 +333,6 @@ export default {
             console.error("Invalid element data after conversion:", element);
             return;
         }
-
 
         const isHighlighted = index === hoveredElementIndex.value && currentTool.value === 'eraser';
         drawElement(ctx, element, isHighlighted, smoothingFactor.value, imageCache.value, redrawCanvas);
@@ -236,40 +348,23 @@ export default {
     const debouncedRedraw = debounce(redrawCanvas, 16);
 
     const handleYjsUpdate = (events, transaction) => {
-      // console.log(`Yjs update detected for drawings. yDrawings length: ${yDrawings.value?.length || 0}. Redrawing.`);
+      // Only log detailed info if debugging is enabled
+      if (props.debugMode) {
+        console.log(`[handleYjsUpdate] Yjs update detected. Origin: ${transaction.origin || 'unspecified'}`);
+      }
+      
       debouncedRedraw();
-      emit('state-updated', {});
+      
+      // Only emit state-updated for non-undo/redo transactions to prevent circular updates
+      // Note: This check might need adjustment based on the new UndoManager logic
+      // if (transaction.origin !== 'undo' && transaction.origin !== 'redo') {
+      //   emit('state-updated', {});
+      // }
+      // For simplicity with the new UndoManager, let's always redraw on Yjs update
+      redrawCanvas();
     };
 
-    const updateUndoRedoState = () => {
-      if (undoManager.value) {
-        canUndo.value = undoManager.value.canUndo();
-        canRedo.value = undoManager.value.canRedo();
-      } else {
-        canUndo.value = false;
-        canRedo.value = false;
-      }
-    };
-
-    const initializeUndoManager = () => {
-      if (ydoc.value && yDrawings.value instanceof Y.Array) {
-        if (undoManager.value) {
-          undoManager.value.off('stack-item-added', updateUndoRedoState);
-          undoManager.value.off('stack-item-popped', updateUndoRedoState);
-          undoManager.value.destroy();
-          undoManager.value = null;
-        }
-        undoManager.value = new UndoManager(yDrawings.value);
-        undoManager.value.on('stack-item-added', updateUndoRedoState);
-        undoManager.value.on('stack-item-popped', updateUndoRedoState);
-        updateUndoRedoState();
-        console.log('[Canvas] UndoManager initialized successfully for yDrawings.');
-      } else {
-        console.warn('[Canvas] Cannot initialize UndoManager: ydoc or yDrawings (Y.Array) not available or not ready.', { ydoc: ydoc.value, yDrawings: yDrawings.value });
-        canUndo.value = false;
-        canRedo.value = false;
-      }
-    };
+    // Removed original updateUndoRedoState and initializeUndoManager as they are replaced by Fragment 1
 
     const initCanvas = () => {
       if (!canvas.value) return;
@@ -297,7 +392,7 @@ export default {
       if (container) {
         canvasWidth.value = container.clientWidth;
         canvasHeight.value = container.clientHeight;
-        nextTick(() => {
+        nextTick(() => { // Ensure DOM updates before redraw
            if (canvas.value) {
              canvas.value.width = canvasWidth.value;
              canvas.value.height = canvasHeight.value;
@@ -316,70 +411,6 @@ export default {
     };
 
     const darkModeObserver = new MutationObserver(handleDarkModeChange);
-
-    const handleKeyDown = (event) => {
-      if (event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA') return;
-
-      if ((event.ctrlKey || event.metaKey) && !event.shiftKey && event.key.toLowerCase() === 'z') {
-          event.preventDefault();
-          undo();
-      }
-      if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 'z') {
-          event.preventDefault();
-          redo();
-      }
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'y') {
-          event.preventDefault();
-          redo();
-      }
-    };
-
-    onMounted(() => {
-      initCanvas();
-      initClipboardHandler();
-      window.addEventListener('resize', handleResize);
-      window.addEventListener('keydown', handleKeyDown);
-      window.addEventListener('paste', handlePaste);
-      darkModeObserver.observe(document.body, { attributes: true });
-      handleResize();
-
-      const urlParams = new URLSearchParams(window.location.search);
-      const roomId = urlParams.get('room');
-
-      if (roomId) {
-        try {
-          const connection = connectToYjs(roomId);
-          yjsConnection.value = connection;
-          ydoc.value = connection.ydoc;
-          yDrawings.value = connection.yDrawings;
-          yDrawings.value.observeDeep(handleYjsUpdate);
-          initializeUndoManager();
-          redrawCanvas();
-        } catch (error) {
-          console.error("Failed to connect Yjs provider:", error);
-          showToast("Error connecting to collaboration session.", "error");
-        }
-      } else {
-        console.error("WhiteboardCanvas: 'room' parameter missing in URL!");
-        showToast("Room ID missing. Collaboration disabled.", "error");
-      }
-    });
-
-    onBeforeUnmount(() => {
-      window.removeEventListener('resize', handleResize);
-      window.removeEventListener('keydown', handleKeyDown);
-      window.removeEventListener('paste', handlePaste);
-      darkModeObserver.disconnect();
-      yDrawings.value?.unobserveDeep(handleYjsUpdate);
-      if (undoManager.value) {
-        undoManager.value.off('stack-item-added', updateUndoRedoState);
-        undoManager.value.off('stack-item-popped', updateUndoRedoState);
-        undoManager.value.destroy();
-        undoManager.value = null;
-        console.log('[Canvas] UndoManager destroyed');
-      }
-      yjsConnection.value?.disconnect();
-    });
 
     // --- Input Handlers ---
 
@@ -461,12 +492,11 @@ export default {
              redrawCanvas();
          }
       }
-      };
+    };
 
     const handleMouseDown = (event) => {
       shiftPressedAtStart.value = event.shiftKey; // Record shift state on mousedown
       startCoordsForShiftLine.value = null; // Reset shift line start point
-      // console.log(`[handleMouseDown] Shift pressed at start: ${shiftPressedAtStart.value}`); // DEBUG - Keep less verbose
 
       if (event.button === 1 || (event.button === 0 && event.altKey)) {
         isPanning.value = true;
@@ -555,7 +585,6 @@ export default {
         }
     };
 
-
     // --- Drawing Logic (Yjs Integration) ---
 
     const startDrawing = (event) => {
@@ -570,20 +599,26 @@ export default {
 
       // Handle Shift+Pen combination: Keep type 'pen' for now, store start point
       if (toolType === 'pen' && shiftPressedAtStart.value) {
-          console.log("[startDrawing] Shift+Pen detected, storing start point.");
+          if (props.debugMode) {
+              console.log("[startDrawing] Shift+Pen detected, storing start point.");
+          }
           startCoordsForShiftLine.value = transformedCoords; // Store the starting point
           // Preview element remains 'pen' type initially for simplicity
       } else if (toolType === 'shapes') {
           toolType = props.currentShape; // Use the specific shape from prop
-          console.log(`[startDrawing] Starting shape drawing with type: ${toolType}`);
+          if (props.debugMode) {
+              console.log(`[startDrawing] Starting shape drawing with type: ${toolType}`);
+          }
       } else if (toolType === 'lines') {
           toolType = 'line';
       }
 
-      // Jeśli to linia — zawsze ustaw lineStyle, nawet jeśli toolType nie był "lines"
+      // If it's a line - always set lineStyle, even if toolType wasn't "lines"
       if (toolType === 'line') {
           elementData.lineStyle = props.currentLineStyle;
-          console.log(`[startDrawing] Line style set to: ${elementData.lineStyle}`);
+          if (props.debugMode) {
+              console.log(`[startDrawing] Line style set to: ${elementData.lineStyle}`);
+          }
       }
 
       // Create preview element based on the determined toolType
@@ -598,13 +633,14 @@ export default {
       if (currentElementPreview.value) {
           const localClientId = yjsConnection.value?.awareness?.clientID || 'unknown';
           currentElementPreview.value.id = `temp_${localClientId}_${Date.now()}`;
-          console.log("[startDrawing] Preview element created:", JSON.stringify(currentElementPreview.value)); // DEBUG
+          if (props.debugMode) {
+              console.log("[startDrawing] Preview element created:", JSON.stringify(currentElementPreview.value));
+          }
       } else {
           console.error(`[startDrawing] Failed to create preview element for tool type: ${toolType} with data:`, elementData);
           isDrawing.value = false; // Stop drawing if preview failed
           return;
       }
-
 
       if (currentTool.value === 'text') {
         const text = prompt('Enter text:', '');
@@ -615,8 +651,26 @@ export default {
             currentColor.value,
             currentLineWidth.value * 10
           );
+          // 4. Zmodyfikuj finishDrawing, addTextElement, addImageFromDataUrl i eraseElement
           ydoc.value.transact(() => {
-            yDrawings.value.push([new Y.Map(Object.entries(textElementData))]);
+            const textMap = new Y.Map();
+            for (const [key, value] of Object.entries(textElementData)) {
+              if (key === 'position') {
+                const posMap = new Y.Map();
+                posMap.set('x', value.x);
+                posMap.set('y', value.y);
+                textMap.set(key, posMap);
+              } else {
+                textMap.set(key, value);
+              }
+            }
+            yDrawings.value.push([textMap]);
+          }); // BEZ trzeciego parametru
+          // Po każdej transakcji dodaj (inside try block):
+          nextTick(() => {
+            if (undoManager.value) {
+              updateGlobalState(); // Use the shared function
+            }
           });
         }
         isDrawing.value = false;
@@ -624,13 +678,22 @@ export default {
       }
     };
 
+    // ===== FRAGMENT 3 Modification START (eraseElement) =====
     const eraseElement = (index) => {
-        if (ydoc.value && yDrawings.value && index >= 0 && index < yDrawings.value.length) {
-            ydoc.value.transact(() => {
-                console.log(`Erasing element at index: ${index}`);
-                yDrawings.value.delete(index, 1);
-            });
-        }
+      if (ydoc.value && yDrawings.value && index >= 0 && index < yDrawings.value.length) {
+        console.log(`[eraseElement] Usuwanie elementu pod indeksem: ${index}`);
+        
+        ydoc.value.transact(() => {
+          yDrawings.value.delete(index, 1);
+        }); // BEZ trzeciego parametru
+        
+        // Po każdej transakcji dodaj (inside try block):
+        nextTick(() => {
+          if (undoManager.value) {
+             updateGlobalState(); // Use the shared function
+          }
+        });
+      }
     };
 
     const draw = (coords, isShiftPressed) => { // Accept shift key state
@@ -648,7 +711,6 @@ export default {
               preview.start = startCoordsForShiftLine.value;
               preview.end = coords;
               delete preview.points; // Remove points array for line preview
-              // console.log(`[draw] Shift+Pen preview update (as line): [${startCoordsForShiftLine.value.x}, ${startCoordsForShiftLine.value.y}] -> [${coords.x}, ${coords.y}]`); // DEBUG
           } else if (!shiftPressedAtStart.value) {
               // Normal pen drawing - ensure preview type is 'pen'
               preview.type = 'pen';
@@ -688,6 +750,7 @@ export default {
           currentElementPreview.value = null;
           return;
       }
+      
       isDrawing.value = false;
 
       let elementToAdd = null;
@@ -700,12 +763,12 @@ export default {
       // Shift+Pen is valid if we have the start point and the preview end point
       const isValidShiftPen = originalTool === 'pen' && wasShiftPressed && shiftStartPoint && preview.end && (shiftStartPoint.x !== preview.end.x || shiftStartPoint.y !== preview.end.y);
 
-
       if (isValidPen || (preview.type !== 'pen' && isValidElement) || isValidShiftPen) {
-
           // If Shift was held with the pen tool, create a 'line' element
           if (wasShiftPressed && originalTool === 'pen' && isValidShiftPen) {
-              console.log("[finishDrawing] Shift held with Pen, creating Line element."); // DEBUG
+              if (props.debugMode) {
+                  console.log("[finishDrawing] Shift held with Pen, creating Line element.");
+              }
               elementToAdd = {
                   type: 'line',
                   start: shiftStartPoint, // Use the stored start point
@@ -724,71 +787,94 @@ export default {
               if (originalTool === 'lines' && elementToAdd.type === 'line') {
                  // Always assign the style from props when the tool was 'lines'
                  const styleFromProps = props.currentLineStyle || 'solid';
-                 console.log(`[finishDrawing] lineStyle missing or needs override, setting from prop: ${styleFromProps}`); // DEBUG
+                 if (props.debugMode) {
+                     console.log(`[finishDrawing] lineStyle missing or needs override, setting from prop: ${styleFromProps}`);
+                 }
                  elementToAdd.lineStyle = styleFromProps;
-                 // console.log(`[finishDrawing] Adding Line element with style from prop: ${styleFromProps}`); // DEBUG - Redundant with below
               }
           }
 
-          // DEBUG: Log the final element object before saving
-          console.log('[finishDrawing] Final elementToAdd before Yjs transaction:', JSON.stringify(elementToAdd));
-
           // Add only if elementToAdd is not null
           if (elementToAdd) {
-             // console.log('[finishDrawing] Attempting to save element:', JSON.stringify(elementToAdd)); // DEBUG - Reduced verbosity
-              ydoc.value.transact(() => {
-                  const yElementMap = new Y.Map();
-                  // Explicitly set known properties
-                  yElementMap.set('type', elementToAdd.type);
-                  yElementMap.set('color', elementToAdd.color);
-                  yElementMap.set('lineWidth', elementToAdd.lineWidth);
-                  yElementMap.set('timestamp', elementToAdd.timestamp);
-
-                  if (elementToAdd.type === 'pen') {
-                      // Store points as a plain array for simplicity
-                      yElementMap.set('points', elementToAdd.points);
-                      // smoothedPoints might also be needed if calculated
-                      if (elementToAdd.smoothedPoints) {
-                          yElementMap.set('smoothedPoints', elementToAdd.smoothedPoints);
+              if (props.debugMode) {
+                  console.log('[finishDrawing] Final elementToAdd before Yjs transaction:', JSON.stringify(elementToAdd));
+              }
+              
+              try {
+                  ydoc.value.transact(() => {
+                      const yElementMap = new Y.Map();
+                      
+                      // Set basic properties that all elements have
+                      yElementMap.set('type', elementToAdd.type);
+                      yElementMap.set('color', elementToAdd.color);
+                      yElementMap.set('lineWidth', elementToAdd.lineWidth);
+                      yElementMap.set('timestamp', Date.now());
+                      
+                      // Handle type-specific properties
+                      if (elementToAdd.type === 'pen') {
+                          // Store points as an array (not a Y.Array)
+                          yElementMap.set('points', elementToAdd.points);
+                      } 
+                      else if (elementToAdd.type === 'line') {
+                          // Store start/end as nested Y.Maps
+                          const startMap = new Y.Map();
+                          startMap.set('x', elementToAdd.start.x);
+                          startMap.set('y', elementToAdd.start.y);
+                          yElementMap.set('start', startMap);
+                          
+                          const endMap = new Y.Map();
+                          endMap.set('x', elementToAdd.end.x);
+                          endMap.set('y', elementToAdd.end.y);
+                          yElementMap.set('end', endMap);
+                          
+                          // Explicitly add lineStyle
+                          const lineStyle = elementToAdd.lineStyle || props.currentLineStyle || 'solid';
+                          yElementMap.set('lineStyle', lineStyle);
                       }
-                  } else if (elementToAdd.start && elementToAdd.end) {
-                      // Store start/end as nested Y.Maps
-                      const startMap = new Y.Map();
-                      startMap.set('x', elementToAdd.start.x);
-                      startMap.set('y', elementToAdd.start.y);
-                      yElementMap.set('start', startMap);
-
-                      const endMap = new Y.Map();
-                      endMap.set('x', elementToAdd.end.x);
-                      endMap.set('y', elementToAdd.end.y);
-                      yElementMap.set('end', endMap);
-
-                      // Explicitly add lineStyle if the original tool was 'lines'
-                      if (originalTool === 'lines' && elementToAdd.type === 'line') {
-                          const styleToSave = props.currentLineStyle || 'solid'; // Directly use prop value
-                          console.log(`[finishDrawing] Setting lineStyle on Y.Map from prop: ${styleToSave}`); // DEBUG
-                          yElementMap.set('lineStyle', styleToSave);
+                      else if (elementToAdd.type === 'text') {
+                          // Handled separately in startDrawing
                       }
-                      // Handle Shift+Pen case (already has lineStyle: 'solid' set in elementToAdd)
-                      else if (elementToAdd.type === 'line' && elementToAdd.lineStyle) {
-                           yElementMap.set('lineStyle', elementToAdd.lineStyle);
+                      else if (elementToAdd.type === 'image') {
+                          // Handled separately in addImageFromDataUrl
                       }
-                  } else if (elementToAdd.type === 'text' && elementToAdd.position) {
-                      const positionMap = new Y.Map();
-                      positionMap.set('x', elementToAdd.position.x);
-                      positionMap.set('y', elementToAdd.position.y);
-                      yElementMap.set('position', positionMap);
-                      yElementMap.set('text', elementToAdd.text);
-                      yElementMap.set('fontSize', elementToAdd.fontSize);
-                  }
-                  // Add other potential types like 'image' if needed
-
-                  yDrawings.value.push([yElementMap]);
-                  console.log('[finishDrawing] Pushed Y.Map to yDrawings.'); // DEBUG
-              });
+                      else {
+                          // Handle shapes and other element types with start/end points
+                          const startMap = new Y.Map();
+                          startMap.set('x', elementToAdd.start.x);
+                          startMap.set('y', elementToAdd.start.y);
+                          yElementMap.set('start', startMap);
+                          
+                          const endMap = new Y.Map();
+                          endMap.set('x', elementToAdd.end.x);
+                          endMap.set('y', elementToAdd.end.y);
+                          yElementMap.set('end', endMap);
+                      }
+                      
+                      // Push to the shared array only if not text/image (handled elsewhere)
+                      if (elementToAdd.type !== 'text' && elementToAdd.type !== 'image') {
+                        yDrawings.value.push([yElementMap]);
+                      }
+                      
+                      if (props.debugMode) {
+                          console.log('[finishDrawing] Successfully pushed Y.Map to yDrawings');
+                      }
+                  }); // BEZ trzeciego parametru
+                  
+                  // Po każdej transakcji dodaj (inside try block):
+                  nextTick(() => {
+                     if (undoManager.value) {
+                        updateGlobalState(); // Use the shared function
+                     }
+                  });
+              } catch (error) {
+                  console.error('[finishDrawing] Error during Yjs transaction:', error);
+                  showToast("Error saving drawing element.", "error");
+              }
           }
       } else {
-          console.log('Drawing finished but element was too small or invalid, not adding.');
+          if (props.debugMode) {
+              console.log('Drawing finished but element was too small or invalid, not adding.');
+          }
       }
 
       currentElementPreview.value = null;
@@ -801,7 +887,6 @@ export default {
     const setColor = (color) => { currentColor.value = color; updateCursor(); };
     const setLineWidth = (width) => { currentLineWidth.value = Number(width) || 2; updateCursor(); };
     const setEraserMode = (mode) => { eraserMode.value = mode; updateCursor(); };
-    // Note: setShape and setLineStyle are handled by props now
 
     const updateCursor = () => {
       if (canvas.value) {
@@ -809,8 +894,7 @@ export default {
         if (toolForCursor === 'shapes') {
             toolForCursor = props.currentShape;
         } else if (toolForCursor === 'lines') {
-            // Maybe use a specific cursor for lines/vectors? For now, use default crosshair.
-            toolForCursor = 'line'; // Or keep 'lines' if getCursorStyle handles it
+            toolForCursor = 'line';
         }
         canvas.value.style.cursor = getCursorStyle(toolForCursor, currentColor.value, eraserMode.value);
       }
@@ -833,6 +917,7 @@ export default {
       redrawCanvas();
       showStatus(`Zoom: ${Math.round(zoomLevel.value * 100)}%`);
     };
+    
     const zoomIn = () => {
         const prevZoom = zoomLevel.value;
         zoomLevel.value = Math.min(5, zoomLevel.value * 1.2);
@@ -843,6 +928,7 @@ export default {
         panOffset.value.y = centerY - (centerY - panOffset.value.y) * zoomRatio;
         redrawCanvas();
     };
+    
     const zoomOut = () => {
         const prevZoom = zoomLevel.value;
         zoomLevel.value = Math.max(0.1, zoomLevel.value / 1.2);
@@ -853,10 +939,30 @@ export default {
         panOffset.value.y = centerY - (centerY - panOffset.value.y) * zoomRatio;
         redrawCanvas();
     };
+    
     const resetZoom = () => {
         zoomLevel.value = 1;
         panOffset.value = { x: 0, y: 0 };
         redrawCanvas();
+    };
+
+    // --- Keyboard handling ---
+    const handleKeyDown = (event) => {
+      if (event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA') return;
+
+      // Handle Undo/Redo shortcuts
+      if ((event.ctrlKey || event.metaKey) && !event.shiftKey && event.key.toLowerCase() === 'z') {
+          event.preventDefault();
+          undo();
+      }
+      if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 'z') {
+          event.preventDefault();
+          redo();
+      }
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'y') {
+          event.preventDefault();
+          redo();
+      }
     };
 
     // --- Other Actions ---
@@ -883,32 +989,54 @@ export default {
        }
     };
 
+    // ===== FRAGMENT 3 Modification START (addImageFromDataUrl) =====
     const addImageFromDataUrl = (dataUrl) => {
         if (!ydoc.value || !yDrawings.value) return;
         const centerX = (canvasWidth.value / 2 - panOffset.value.x) / zoomLevel.value;
         const centerY = (canvasHeight.value / 2 - panOffset.value.y) / zoomLevel.value;
+        
         createImageElement(dataUrl, centerX, centerY).then(imageData => {
-             const imageMap = new Y.Map();
-             imageMap.set('type', 'image');
-             // FIX: Store position as a nested Y.Map for consistency
-             const positionMap = new Y.Map();
-             positionMap.set('x', imageData.x);
-             positionMap.set('y', imageData.y);
-             imageMap.set('position', positionMap);
-             imageMap.set('dataUrl', imageData.dataUrl);
-             imageMap.set('width', imageData.width);
-             imageMap.set('height', imageData.height);
-             ydoc.value.transact(() => {
-                 yDrawings.value.push([imageMap]);
-             });
-             console.log('Added image Y.Map to yDrawings');
+             try {
+                 ydoc.value.transact(() => {
+                   const imageMap = new Y.Map();
+                   imageMap.set('type', 'image');
+                   
+                   // Store position as a nested Y.Map
+                   const positionMap = new Y.Map();
+                   positionMap.set('x', imageData.x);
+                   positionMap.set('y', imageData.y);
+                   imageMap.set('position', positionMap);
+                   
+                   imageMap.set('dataUrl', imageData.dataUrl);
+                   imageMap.set('width', imageData.width);
+                   imageMap.set('height', imageData.height);
+                   
+                   yDrawings.value.push([imageMap]);
+                 }); // BEZ trzeciego parametru
+                 
+                 // Remove the manual nextTick update; rely on UndoManager listeners
+                 // nextTick(() => {
+                 //    if (undoManager.value) {
+                 //       updateGlobalState(); // Use the shared function
+                 //    }
+                 // });
+                 
+                 if (props.debugMode) {
+                     console.log('Added image Y.Map to yDrawings');
+                 }
+             } catch (error) {
+                 console.error("Error adding image to Yjs:", error);
+                 showToast("Failed to add image to whiteboard.", "error");
+             }
         }).catch(err => {
             console.error("Error creating image element:", err);
             showToast("Failed to process image.", "error");
         });
     };
+    // ===== FRAGMENT 3 Modification END (addImageFromDataUrl) =====
 
-     const addTextElement = (position, text) => {
+    // ===== FRAGMENT 3 Modification START (addTextElement - outer call) =====
+    const addTextElement = (position, text) => {
         if (!ydoc.value || !yDrawings.value || !text) return;
         const textElementData = createTextElement(
             position,
@@ -916,11 +1044,37 @@ export default {
             currentColor.value,
             currentLineWidth.value * 10
         );
-        ydoc.value.transact(() => {
-            yDrawings.value.push([new Y.Map(Object.entries(textElementData))]);
-        });
+        
+        try {
+            ydoc.value.transact(() => {
+              const textMap = new Y.Map();
+              for (const [key, value] of Object.entries(textElementData)) {
+                if (key === 'position') {
+                  const posMap = new Y.Map();
+                  posMap.set('x', value.x);
+                  posMap.set('y', value.y);
+                  textMap.set(key, posMap);
+                } else {
+                  textMap.set(key, value);
+                }
+              }
+              yDrawings.value.push([textMap]);
+            }); // BEZ trzeciego parametru
+            
+            // Po każdej transakcji dodaj (inside try block):
+            nextTick(() => {
+               if (undoManager.value) {
+                  updateGlobalState(); // Use the shared function
+               }
+            });
+        } catch (error) {
+            console.error("Error adding text element:", error);
+            showToast("Failed to add text to whiteboard.", "error");
+        }
     };
+    // ===== FRAGMENT 3 Modification END (addTextElement - outer call) =====
 
+    // --- Undo/Redo Methods --- (Replaced by Fragment 1)
 
     // --- Status & Notifications ---
     const showStatus = (message, duration = 2000) => {
@@ -938,158 +1092,253 @@ export default {
     };
 
     // --- Public methods exposed via ref ---
+    // ===== FRAGMENT 3 Modification START (clearCanvas) =====
     const clearCanvas = () => {
-        if (ydoc.value && yDrawings.value && confirm('Are you sure you want to clear the canvas?')) {
-            ydoc.value.transact(() => {
-                while (yDrawings.value.length > 0) {
-                    yDrawings.value.delete(0);
+        if (ydoc.value && yDrawings.value) {
+            if (confirm('Are you sure you want to clear the canvas?')) {
+                console.log('[clearCanvas] Clearing all elements');
+                
+                try {
+                    ydoc.value.transact(() => {
+                      // Store current length for better performance
+                      const length = yDrawings.value.length;
+                      if (length > 0) {
+                        yDrawings.value.delete(0, length);
+                      }
+                    }); // BEZ trzeciego parametru
+                    
+                    showStatus('Canvas cleared');
+                    
+                    // Po każdej transakcji dodaj (inside try block):
+                    nextTick(() => {
+                       if (undoManager.value) {
+                          updateGlobalState(); // Use the shared function
+                       }
+                    });
+                } catch (error) {
+                    console.error('[clearCanvas] Error clearing canvas:', error);
+                    showToast("Error clearing canvas.", "error");
                 }
-            });
-            showStatus('Canvas cleared');
-      }
+            }
+        }
     };
-    const undo = () => {
-      if (undoManager.value && undoManager.value.canUndo()) {
-        undoManager.value.undo();
-        console.log('[Canvas] Undo triggered');
-      } else {
-        console.log('[Canvas] Cannot undo');
-      }
+    // ===== FRAGMENT 3 Modification END (clearCanvas) =====
+
+    const getSerializableState = () => { return {}; }; // Placeholder
+    const loadState = (state) => { return false; }; // Placeholder
+    const exportAsText = () => { return ''; }; // Placeholder
+    const importFromText = (text) => { return false; }; // Placeholder
+    
+    const toggleDebug = (enabled) => {
+        props.debugMode = enabled;
+        redrawCanvas();
     };
-    const redo = () => {
-      if (undoManager.value && undoManager.value.canRedo()) {
-        undoManager.value.redo();
-        console.log('[Canvas] Redo triggered');
-      } else {
-        console.log('[Canvas] Cannot redo');
-      }
-    };
-    const getSerializableState = () => { return {}; };
-    const loadState = (state) => { return false; };
-    const exportAsText = () => { return ''; };
-    const importFromText = (text) => { return false; };
-    const toggleDebug = (enabled) => { };
+    
     const getViewportCenter = () => ({
         x: (canvasWidth.value / 2 - panOffset.value.x) / zoomLevel.value,
         y: (canvasHeight.value / 2 - panOffset.value.y) / zoomLevel.value,
     });
 
+    // ===== FRAGMENT 5 START =====
+    const testUndoManager = () => {
+      console.log("=== TEST UNDOMANAGER ===");
+      
+      try {
+        if (!ydoc.value || !yDrawings.value) {
+          alert("Brak ydoc lub yDrawings!");
+          return;
+        }
+        
+        console.log("Dodaję testowy element...");
+        
+        ydoc.value.transact(() => {
+          const testElement = new Y.Map();
+          testElement.set('type', 'test');
+          testElement.set('timestamp', Date.now());
+          testElement.set('color', '#ff0000');
+          
+          const startMap = new Y.Map();
+          startMap.set('x', 100);
+          startMap.set('y', 100);
+          testElement.set('start', startMap);
+          
+          const endMap = new Y.Map();
+          endMap.set('x', 200);
+          endMap.set('y', 200);
+          testElement.set('end', endMap);
+          
+          yDrawings.value.push([testElement]);
+        });
+        
+        nextTick(() => {
+          console.log("Test element dodany. canUndo =", undoManager.value?.canUndo());
+          alert(`Test wykonany. canUndo = ${canUndo.value}`);
+        });
+      } catch (error) {
+        console.error("Błąd testu:", error);
+        alert("Błąd testu: " + error.message);
+      }
+    };
+    // ===== FRAGMENT 5 END =====
 
     // --- Watchers ---
     watch(() => props.currentShape, (newShape) => {
+        if (props.debugMode) {
+            console.log(`[Watch] currentShape changed to: ${newShape}`);
+        }
         if (currentTool.value === 'shapes') {
             updateCursor();
         }
     });
 
-    // Watch line style changes to update cursor if 'lines' tool is active
     watch(() => props.currentLineStyle, (newLineStyle) => {
-        console.log(`[Canvas Watcher] currentLineStyle prop changed to: ${newLineStyle}`); // DEBUG
+        if (props.debugMode) {
+            console.log(`[Watch] currentLineStyle changed to: ${newLineStyle}`);
+        }
         if (currentTool.value === 'lines') {
             updateCursor();
         }
     });
 
-    return {
-      // Canvas & Context
-      canvas,
-      context, // Expose context if needed externally, otherwise keep internal
+    // --- Lifecycle Hooks ---
+    // ===== FRAGMENT 6 START =====
+    onMounted(() => {
+      initCanvas();
+      initClipboardHandler();
+      window.addEventListener('resize', handleResize);
+      window.addEventListener('keydown', handleKeyDown);
+      window.addEventListener('paste', handlePaste);
+      darkModeObserver.observe(document.body, { attributes: true });
+      handleResize(); // Initial resize call
 
-      // Dimensions
+      const urlParams = new URLSearchParams(window.location.search);
+      const roomId = urlParams.get('room');
+
+      if (roomId) {
+        try {
+          console.log("[onMounted] Łączenie z Yjs dla pokoju:", roomId);
+          const connection = connectToYjs(roomId);
+          yjsConnection.value = connection;
+          ydoc.value = connection.ydoc;
+          yDrawings.value = connection.yDrawings;
+          
+          if (!yDrawings.value) {
+            console.error("[onMounted] Błąd: yDrawings not available after connection!");
+            return;
+          }
+          
+          console.log("[onMounted] yDrawings zainicjalizowany, długość:", yDrawings.value.length);
+          
+          // Obserwuj zmiany w yDrawings
+          yDrawings.value.observe(event => {
+            console.log("[yDrawings.observe] Zmiana w yDrawings:", event);
+            redrawCanvas(); // Use direct redraw instead of debounced for immediate feedback
+          });
+          
+          // Inicjalizuj UndoManager po krótkim opóźnieniu
+          setTimeout(() => {
+            console.log("[onMounted] Inicjalizacja UndoManager po opóźnieniu...");
+            initializeUndoManager();
+            redrawCanvas(); // Redraw after UndoManager init
+          }, 100);
+          
+          console.log('[onMounted] Yjs connection established successfully.');
+        } catch (error) {
+          console.error("Failed to connect Yjs provider:", error);
+          showToast("Error connecting to collaboration session.", "error");
+        }
+      } else {
+        console.error("WhiteboardCanvas: 'room' parameter missing in URL!");
+        showToast("Room ID missing. Collaboration disabled.", "error");
+      }
+    });
+    // ===== FRAGMENT 6 END =====
+
+    onBeforeUnmount(() => {
+      window.removeEventListener('resize', handleResize);
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('paste', handlePaste);
+      darkModeObserver.disconnect();
+      
+      // Clean up Yjs observers
+      if (yDrawings.value) {
+        // Use the correct unobserve method based on how it was observed in onMounted
+        yDrawings.value.unobserve(handleYjsUpdate); // Assuming observe was used, adjust if observeDeep was intended
+      }
+      
+      // Clean up UndoManager
+      if (undoManager.value) {
+        // Use the externally defined updateGlobalState function reference
+        undoManager.value.off('stack-item-added', updateGlobalState);
+        undoManager.value.off('stack-item-popped', updateGlobalState);
+        undoManager.value.destroy();
+        undoManager.value = null;
+        console.log('[Canvas] UndoManager destroyed');
+      }
+      
+      // Disconnect from Yjs
+      if (yjsConnection.value) {
+        yjsConnection.value.disconnect();
+      }
+    });
+
+    return {
+      // Refs
+      canvas,
+      
+      // State
       canvasWidth,
       canvasHeight,
-
-      // Drawing State
       isDrawing,
-      currentTool, // Keep internal? Or controlled by parent? Assuming internal for now.
-      currentColor, // Keep internal?
-      currentLineWidth, // Keep internal?
-      currentElementPreview, // Internal preview state
-      pointsBuffer, // Internal buffer
-
-      // View State
+      currentTool,
+      currentColor,
+      currentLineWidth,
       zoomLevel,
       panOffset,
-      isPanning,
-      lastPanPoint, // Internal panning state
-      darkMode, // Internal dark mode state
-
-      // Tool Specific State
+      darkMode,
       eraserMode,
-      hoveredElementIndex, // Internal hover state
-
-      // Yjs & Collaboration
-      yjsConnection, // Expose connection details if needed
-      ydoc, // Expose ydoc if needed
-      yDrawings, // Expose yDrawings if needed
-      undoManager, // Expose undoManager if needed
-      canUndo, // Expose undo state
-      canRedo, // Expose redo state
-      collaborators: ref(null), // Ref for Collaborators component
-
-      // UI Elements Refs
-      clipboardInput,
-
-      // Notifications & Status
       notifications,
       statusMessage,
-
-      // --- Methods ---
-
-      // Input Handlers (Expose if needed, e.g., for testing, otherwise keep internal)
+      yjsConnection,
+      canUndo,
+      canRedo,
+      
+      // Methods
       handleMouseDown,
       handleMouseMove,
       handleMouseUp,
       handleMouseLeave,
       handleZoom,
       handlePaste,
-      handleResize, // Expose if parent needs to trigger resize
+      handleResize,
       handleTouchStart,
       handleTouchMove,
       handleTouchEnd,
-
-      // Drawing Control (Internal)
-      // startDrawing, draw, finishDrawing - likely internal
-
-      // Tool Setters (Public API for parent component)
+      
+      // Public API
       setTool,
       setColor,
       setLineWidth,
-      setEraserMode, // Expose if parent controls eraser mode
-
-      // Zoom/Pan Controls (Public API)
+      setEraserMode,
       zoomIn,
       zoomOut,
       resetZoom,
-
-      // Undo/Redo (Public API)
       undo,
       redo,
-
-      // Canvas Actions (Public API)
       clearCanvas,
-      showToast, // Expose if parent needs to show toasts
-      // showStatus, // Likely internal
-
-      // Data Handling (Public API if needed)
+      showToast,
       getSerializableState,
       loadState,
       exportAsText,
       importFromText,
-      addImageFromDataUrl, // Expose if parent triggers image adding
-      getViewportCenter, // Expose if parent needs viewport info
-
-      // Debugging (Public API if needed)
+      addImageFromDataUrl,
+      getViewportCenter,
       toggleDebug,
-
-      // Lifecycle related (Internal)
-      // initCanvas, initClipboardHandler, handleYjsUpdate, redrawCanvas etc.
-
-      // Expose redrawCanvas if external trigger is needed
       redrawCanvas,
+      testUndoManager // ===== FRAGMENT 7 =====
     };
-  },
-};
+  }
+}
 </script>
 
 <style scoped>

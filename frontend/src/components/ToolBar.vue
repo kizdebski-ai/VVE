@@ -70,7 +70,7 @@
     <!-- Floating Options Panel -->
     <FloatingOptions
       ref="floatingOptionsRef"
-      v-show="floatingOptionsPosition.visible" 
+      v-show="floatingOptionsPosition.visible"
       :style="{ /* Use fixed positioning */
         position: 'fixed',
         top: `${floatingOptionsPosition.top}px`,
@@ -93,13 +93,22 @@
 
     <!-- Action Tools Category -->
     <div class="tool-category action-tools">
-      <button class="tool-btn" @click="undo" title="Undo (Ctrl+Z)" :disabled="!canUndo">
+       <!-- 7 & 8. Update button bindings -->
+      <button
+        class="tool-btn"
+        @click="$emit('undo-clicked')"
+        title="Undo (Ctrl+Z)"
+        :disabled="!localCanUndo">
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M3 7v6h6"></path>
           <path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"></path>
         </svg>
       </button>
-      <button class="tool-btn" @click="redo" title="Redo (Ctrl+Y)" :disabled="!canRedo">
+      <button
+        class="tool-btn"
+        @click="$emit('redo-clicked')"
+        title="Redo (Ctrl+Y)"
+        :disabled="!localCanRedo">
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M21 7v6h-6"></path>
           <path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3L21 13"></path>
@@ -147,19 +156,35 @@
 <script>
 import { ref, onMounted, onBeforeUnmount, watch, nextTick, reactive } from 'vue';
 import FloatingOptions from './FloatingOptions.vue';
+import { undoRedoState } from '../utils/undoRedoState'; // 1. Add import
 
 export default {
   name: 'ToolBar',
   components: {
     FloatingOptions
   },
-  props: {
-    canUndo: { type: Boolean, default: false },
-    canRedo: { type: Boolean, default: false },
-    undo: { type: Function, required: true },
-    redo: { type: Function, required: true }
-  },
-  emits: [
+  // 2. Remove old props
+  // props: {
+  //   canUndo: {
+  //     type: Boolean,
+  //     default: false
+  //   },
+  //   canRedo: {
+  //     type: Boolean,
+  //     default: false
+  //   },
+  //   undo: {
+  //     type: Function,
+  //     required: true
+  //   },
+  //   redo: {
+  //     type: Function,
+  //     required: true
+  //   }
+  // },
+  emits: [ // 9. Add emits
+    'undo-clicked',
+    'redo-clicked',
     'tool-changed',
     'color-changed',
     'line-width-changed',
@@ -184,6 +209,30 @@ export default {
     const toolbarRef = ref(null);
     const floatingOptionsRef = ref(null);
     const lastOpenedByButton = ref(null); // Track which button opened the panel
+
+    // 3. Add setupUndoRedoButtons function
+    const setupUndoRedoButtons = () => {
+      // Stwórz lokalne zmienne reaktywne wyłącznie do celów debugowania
+      const localCanUndo = ref(undoRedoState.canUndo);
+      const localCanRedo = ref(undoRedoState.canRedo);
+
+      // Obserwuj zmiany w globalnym stanie
+      watch(() => undoRedoState.canUndo, (newVal) => {
+        localCanUndo.value = newVal;
+        console.log(`[ToolBar] Globalna zmiana canUndo: ${newVal}`);
+      });
+
+      watch(() => undoRedoState.canRedo, (newVal) => {
+        localCanRedo.value = newVal;
+        console.log(`[ToolBar] Globalna zmiana canRedo: ${newVal}`);
+      });
+
+      return { localCanUndo, localCanRedo };
+    };
+
+    // 4. Call setupUndoRedoButtons
+    const { localCanUndo, localCanRedo } = setupUndoRedoButtons();
+
 
     // --- Click Outside Handler (Refined) ---
     const handleClickOutside = (event) => {
@@ -381,10 +430,14 @@ export default {
       shareWhiteboard,
       uploadImage,
       onImageSelected,
-      undo: props.undo,
-      redo: props.redo,
-      canUndo: props.canUndo,
-      canRedo: props.canRedo
+      // 7. Remove props from setup return
+      // undo: props.undo,
+      // redo: props.redo,
+      // canUndo: props.canUndo,
+      // canRedo: props.canRedo,
+      // 4. Add new variables to return
+      localCanUndo,
+      localCanRedo
     };
   }
 }

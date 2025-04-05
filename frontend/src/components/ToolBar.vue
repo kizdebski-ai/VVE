@@ -57,15 +57,28 @@
       </button>
     </div>
 
-    <!-- Advanced Tools Category -->
-    <div class="tool-category">
-      <button :class="['tool-btn', { active: currentTool === 'advanced' }]" @click="selectTool('advanced', $event)" title="Advanced (A)">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <circle cx="12" cy="12" r="3"></circle>
-          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
-        </svg>
-      </button>
-    </div>
+<!-- Advanced Tools Category -->
+<div class="tool-category">
+  <!-- Główna ikona do aktywowania kategorii advanced -->
+  <button
+    :class="['tool-btn', { active: currentTool === 'advanced' }]"
+    @click="selectTool('advanced', $event)"
+    title="Advanced (A)"
+  >
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="none"
+      stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="3"></circle>
+      <path
+        d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z">
+      </path>
+    </svg>
+  </button>
+
+ 
+
+  
+</div>
+
 
     <!-- Floating Options Panel -->
     <FloatingOptions
@@ -89,6 +102,8 @@
       @shape-changed="handleShapeChange"
       @line-style-changed="handleLineStyleChange"
       @toggle-calculator="handleToggleCalculator"
+      @toggle-math-plot="showMathPlot = true"
+      @toggle-physics-plot="showPhysicsPlot = true"
     ></FloatingOptions>
 
     <!-- Action Tools Category -->
@@ -448,8 +463,8 @@ export default {
   display: flex;
   flex-direction: column;
   position: relative; /* Needed for absolute positioning of children */
-  gap: 15px;
-  padding: 5px 0;
+  gap: 12px;
+  padding: 8px 0;
   width: 100%;
   height: 100%;
   overflow-y: auto; /* Allows scrolling within the toolbar */
@@ -469,9 +484,9 @@ export default {
   gap: 10px;
   width: 100%;
   align-items: center;
-  padding-bottom: 10px; /* Add some space below each category */
-  margin-bottom: 10px; /* Add some space below each category */
-  border-bottom: 1px solid var(--border-color-light, #eee); /* Separator line */
+  padding-bottom: px; /* Add some space below each category */
+  margin-bottom: px; /* Add some space below each category */
+  border-bottom: 0px solid var(--border-color-light, #eee); /* Separator line */
 }
 
 .tool-category:last-child {
@@ -507,7 +522,7 @@ export default {
 
 .tool-btn:hover {
   background-color: var(--btn-hover-bg);
-  transform: translateY(-2px);
+  transform: translateY(-8px);
 }
 
 .tool-btn.active {

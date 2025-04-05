@@ -93,8 +93,11 @@
       <div>Local Canvas: {{whiteboard?.canUndo}}/{{whiteboard?.canRedo}}</div>
       <button @click="forceUpdateUndoRedo">Wymuś update</button>
     </div>
+    
 
   </div>
+  <MathGraphPanel v-if="showMathGraphPanel" @close="showMathGraphPanel = false" />
+    <PhysicsGraphPanel v-if="showPhysicsGraphPanel" @close="showPhysicsGraphPanel = false" />
 </template>
 
 <script>
@@ -110,6 +113,8 @@ import { copyToClipboard } from './utils/fileUtils.js';
 import * as Y from 'yjs';
 import { Buffer } from 'buffer';
 import { undoRedoState } from './utils/undoRedoState'; // 2. Add import
+import MathGraphPanel from './components/MathGraphPanel.vue';
+import PhysicsGraphPanel from './components/PhysicsGraphPanel.vue';
 
 export default {
   name: 'App',
@@ -126,7 +131,8 @@ export default {
     // --- Template Refs ---
     const whiteboard = ref(null);
     const toolbar = ref(null);
-
+    const showMathGraphPanel = ref(false);
+    const showPhysicsGraphPanel = ref(false);
     // --- Reactive State ---
     const lastSaved = ref(null);
     const showExportDialog = ref(false);
@@ -143,7 +149,7 @@ export default {
     const currentLineStyle = ref('solid');
     const isCalculatorVisible = ref(false); // State for calculator modal visibility
     const globalUndoRedoState = undoRedoState; // 3. Add global state ref
-
+   
     // --- Computed Properties ---
     const activeUsersCount = computed(() => {
       const awareness = whiteboard.value?.yjsConnection?.awareness;

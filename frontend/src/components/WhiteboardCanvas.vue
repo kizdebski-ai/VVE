@@ -30,6 +30,8 @@
       :pan-offset="panOffset"
       :local-client-id="yjsConnection.awareness.clientID"
     />
+    
+
 
     <!-- Zoom and pan controls -->
     <ZoomPanControls
@@ -56,7 +58,28 @@
       class="clipboard-input"
       @paste="handlePaste"
     />
+    <!-- ... existing template ... -->
 
+  <!-- Math Plot Configuration Panel -->
+  <MathPlot
+    v-if="activeConfigPanel === 'math'"
+    :initial-coords="configPanelCoords"
+    @close="closeConfigPanel"
+    @add-plot="addElementFromPanel"
+  />
+
+  <!-- Physics Plot Configuration Panel -->
+  <PhysicsPlot
+    v-if="activeConfigPanel === 'physics'"
+    :initial-coords="configPanelCoords"
+    @close="closeConfigPanel"
+    @add-plot="addElementFromPanel"
+  />
+
+  <!-- TODO: Add similar conditional rendering for CoordSystem2D/3D panels if they are separate components -->
+  <!-- Or handle their creation directly if simple enough -->
+
+  <!-- ... rest of existing template ... -->
     <!-- Toast notifications -->
     <div class="notifications">
       <transition-group name="fade">
@@ -91,8 +114,20 @@ import EraserModeControls from './EraserModeControls.vue';
 import StatusMessage from './StatusMessage.vue';
 import { connectToYjs } from '../services/connectToYjs';
 import { drawElement, throttle, isPointInElement, distanceToSegment } from '../utils/canvasDrawing.js';
-import { createNewElement, createTextElement, createImageElement, getCursorStyle } from '../utils/canvasTools.js';
+import {
+  createNewElement,
+  createTextElement,
+  createImageElement,
+  getCursorStyle,
+  createCoordinateSystem2DElement, // Added
+  createMathFunctionPlotElement,   // Added
+  createPhysicsDataPlotElement,  // Added
+  createCoordinateSystem3DElement    // Added
+} from '../utils/canvasTools.js';
 import { drawGrid } from '../utils/canvasGrid.js';
+import MovableObject from './MovableObject.vue';
+import MathPlot from './MathPlot.vue';         // Added: Import MathPlot panel
+import PhysicsPlot from './PhysicsPlot.vue';   // Added: Import PhysicsPlot panel
 
 // Debounce function
 function debounce(func, wait) {
@@ -115,6 +150,8 @@ export default {
     ZoomPanControls,
     EraserModeControls,
     StatusMessage,
+    MathPlot,     // Added
+    PhysicsPlot,  // Added
   },
   props: {
     debugMode: { type: Boolean, default: false },
@@ -152,6 +189,11 @@ export default {
     const imageCache = ref(new Map());
     const hoveredElementIndex = ref(-1);
 
+    // State for graph/coord system configuration panels
+    const activeConfigPanel = ref(null); // 'math', 'physics', 'coord2D', 'coord3D'
+    const configPanelCoords = ref({ x: 0, y: 0 }); // Canvas coords where user clicked
+
+
     // ===== FRAGMENT 1 START =====
     // --- Yjs specific state (managed internally) ---
     const yjsConnection = ref(null);
@@ -160,7 +202,7 @@ export default {
     const undoManager = ref(null);
     const canUndo = ref(false);
     const canRedo = ref(false);
-
+    
     // Define updateGlobalState outside initializeUndoManager to make it accessible in onBeforeUnmount
     const updateGlobalState = () => {
       if (undoManager.value) {
@@ -265,6 +307,68 @@ export default {
 
     // --- Methods ---
 
+    // Method to open a configuration panel
+    const openConfigPanel = (panelType, coords) => {
+      configPanelCoords.value = coords; // Store transformed coords
+      activeConfigPanel.value = panelType;
+      // Prevent drawing while config panel is open
+      isDrawing.value = false;
+      currentElementPreview.value = null;
+    };
+
+    // Method to close the active configuration panel
+    const closeConfigPanel = () => {
+      activeConfigPanel.value = null;
+    };
+
+    // Method to add a plot/coord system from panel data
+    const addElementFromPanel = (elementData) => {
+      if (!ydoc.value || !yDrawings.value || !elementData || !elementData.type) {
+        console.error("Invalid data received from panel or Yjs not ready", elementData);
+        closeConfigPanel();
+        return;
+      }
+
+      console.log(`[addElementFromPanel] Received data for type: ${elementData.type}`, elementData);
+
+      try {
+        ydoc.value.transact(() => {
+          const yElementMap = new Y.Map();
+
+          // Convert JS object/array properties to Yjs types
+          for (const [key, value] of Object.entries(elementData)) {
+            if (key === 'position' && typeof value === 'object' && value !== null) {
+              const posMap = new Y.Map();
+              posMap.set('x', value.x);
+              posMap.set('y', value.y);
+              yElementMap.set(key, posMap);
+            } else if (Array.isArray(value)) {
+              // Store plain arrays directly for data points (simpler for now)
+              yElementMap.set(key, value);
+            } else {
+              yElementMap.set(key, value);
+            }
+          }
+          yDrawings.value.push([yElementMap]);
+          console.log('[addElementFromPanel] Pushed Y.Map to yDrawings:', yElementMap.toJSON());
+        });
+
+        nextTick(() => {
+          if (undoManager.value) {
+            updateGlobalState();
+          }
+          redrawCanvas(); // Redraw to show the new element
+        });
+
+      } catch (error) {
+        console.error('[addElementFromPanel] Error during Yjs transaction:', error);
+        showToast("Error saving element.", "error");
+      } finally {
+        closeConfigPanel(); // Close panel after adding
+      }
+    };
+
+    
     const redrawCanvas = () => {
       if (!context.value || !yDrawings.value) return;
 
@@ -468,6 +572,9 @@ export default {
       const transformedCoords = transformCoordinates(coords.offsetX, coords.offsetY);
       updateLocalAwarenessCursor(transformedCoords);
 
+      // Don't handle drawing/panning if a config panel is active
+      if (activeConfigPanel.value) return;
+
       if (isPanning.value && lastPanPoint.value) {
         const currentPanPoint = transformCoordinates(coords.offsetX, coords.offsetY);
         panOffset.value.x += coords.offsetX - lastPanPoint.value.screenX;
@@ -514,6 +621,9 @@ export default {
       shiftPressedAtStart.value = event.shiftKey; // Record shift state on mousedown
       startCoordsForShiftLine.value = null; // Reset shift line start point
 
+      // Don't handle clicks if a config panel is active
+      if (activeConfigPanel.value) return;
+
       if (event.button === 1 || (event.button === 0 && event.altKey)) {
         isPanning.value = true;
         const coords = getCoordinates(event);
@@ -529,12 +639,36 @@ export default {
             }
             isDrawing.value = true;
         } else {
-            startDrawing(event);
+            const coords = getCoordinates(event);
+            const transformedCoords = transformCoordinates(coords.offsetX, coords.offsetY);
+
+            // Check tool type
+            if (currentTool.value === 'mathPlot') {
+              openConfigPanel('math', transformedCoords);
+            } else if (currentTool.value === 'physicsPlot') {
+              openConfigPanel('physics', transformedCoords);
+            } else if (currentTool.value === 'coordSystem2D') {
+              // Directly add 2D coordinate system
+              const elementData = createCoordinateSystem2DElement(transformedCoords);
+              addElementFromPanel(elementData); // Reuse the add logic
+              // Tool remains active for potentially placing multiple systems
+            } else if (currentTool.value === 'coordSystem3D') {
+              // Directly add 3D coordinate system
+              const elementData = createCoordinateSystem3DElement(transformedCoords);
+              addElementFromPanel(elementData); // Reuse the add logic
+              // Tool remains active
+            } else {
+              // Otherwise, start regular drawing (pen, shapes, lines, text)
+              startDrawing(event); // Pass the original event object
+            }
         }
       }
     };
 
     const handleMouseUp = (event) => {
+      // Don't handle mouse up if a config panel is active
+      if (activeConfigPanel.value) return;
+
       if (isPanning.value) {
         isPanning.value = false;
         lastPanPoint.value = null;
@@ -550,6 +684,9 @@ export default {
     };
 
     const handleMouseLeave = (event) => {
+      // Don't handle mouse leave if a config panel is active
+      if (activeConfigPanel.value) return;
+
       if (isPanning.value) {
         isPanning.value = false;
         lastPanPoint.value = null;
@@ -605,6 +742,12 @@ export default {
 
     const startDrawing = (event) => {
       if (!ydoc.value) return;
+      // Don't start drawing if a graph tool is selected (handled by handleMouseDown)
+      const graphTools = ['mathPlot', 'physicsPlot', 'coordSystem2D', 'coordSystem3D'];
+      if (graphTools.includes(currentTool.value)) {
+          return;
+      }
+
       isDrawing.value = true;
       const coords = getCoordinates(event);
       const transformedCoords = transformCoordinates(coords.offsetX, coords.offsetY);
@@ -905,6 +1048,12 @@ export default {
     const setEraserMode = (mode) => { eraserMode.value = mode; updateCursor(); };
 
     const updateCursor = () => {
+      // Use default cursor if config panel is open
+      if (activeConfigPanel.value) {
+        if (canvas.value) canvas.value.style.cursor = 'default';
+        return;
+      }
+
       if (canvas.value) {
         let toolForCursor = currentTool.value;
         if (toolForCursor === 'shapes') {
@@ -1388,11 +1537,20 @@ export default {
       getViewportCenter,
       toggleDebug,
       redrawCanvas,
-      testUndoManager // ===== FRAGMENT 7 =====
+      testUndoManager, // ===== FRAGMENT 7 =====
+
+      // Graph/Coord System Panel State & Handlers
+      activeConfigPanel,
+      configPanelCoords,
+      closeConfigPanel,
+      addElementFromPanel,
     };
   }
 }
 </script>
+
+
+
 
 <style scoped>
 .whiteboard-container {
@@ -1403,6 +1561,8 @@ export default {
   position: relative;
   flex: 1; /* Ensure it fills space if in flex container */
   cursor: crosshair; /* Default cursor */
+  /* Ensure container allows absolute positioning of panels */
+  position: relative;
 }
 
 .whiteboard-container.dark-mode {

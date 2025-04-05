@@ -3,6 +3,8 @@
  * Provides functions for drawing different elements on the canvas
  */
 
+import * as math from 'mathjs'; // Import mathjs
+
 // Throttle function to limit the rate of function calls
 export const throttle = (fn, delay) => {
   let lastCall = 0;
@@ -29,15 +31,17 @@ export const drawElement = (context, element, isHighlighted = false, smoothingFa
       // console.error("drawElement received invalid element:", element);
       return;
   }
-  // Ensure essential properties exist, especially for lines/shapes
-  if (['line', 'rectangle', 'circle', 'square', 'triangle', 'trapezoid', 'parallelogram', 'deltoid', 'cube', 'cuboid', 'sphere', 'cylinder', 'cone', 'pyramid', 'tetrahedron'].includes(element.type)) {
-      if (!element.start || !element.end) {
-          // Allow text elements which use 'position' instead of 'start'/'end'
-          if (element.type !== 'text' && element.type !== 'image') {
-             // console.error(`drawElement received element type ${element.type} without start/end points:`, element);
-             return;
-          }
-      }
+  // Ensure essential properties exist, especially for lines/shapes/plots
+  const needsPosition = ['text', 'image', 'coordinateSystem2D', 'mathFunctionPlot', 'physicsDataPlot', 'coordinateSystem3D'];
+  const needsStartEnd = ['line', 'rectangle', 'circle', 'square', 'triangle', 'trapezoid', 'parallelogram', 'deltoid', 'cube', 'cuboid', 'sphere', 'cylinder', 'cone', 'pyramid', 'tetrahedron'];
+
+  if (needsStartEnd.includes(element.type) && (!element.start || !element.end)) {
+      // console.error(`drawElement received element type ${element.type} without start/end points:`, element);
+      return;
+  }
+  if (needsPosition.includes(element.type) && !element.position) {
+      // console.error(`drawElement received element type ${element.type} without position:`, element);
+      return;
   }
   if (element.type === 'pen' && (!element.points || element.points.length === 0)) {
       // console.error("drawElement received pen element without points:", element);
@@ -123,8 +127,20 @@ export const drawElement = (context, element, isHighlighted = false, smoothingFa
       drawText(context, element);
       break;
     case 'image':
-      // Pass cache and redraw request to drawImage (Reverted to previous working version)
       drawImage(context, element, imageCache, requestRedraw);
+      break;
+    // Add cases for new graph/coordinate system types
+    case 'coordinateSystem2D':
+      drawCoordinateSystem2D(context, element);
+      break;
+    case 'mathFunctionPlot':
+      drawMathFunctionPlot(context, element);
+      break;
+    case 'physicsDataPlot':
+      drawPhysicsDataPlot(context, element);
+      break;
+    case 'coordinateSystem3D':
+      drawCoordinateSystem3D(context, element);
       break;
     default:
         // console.warn(`[drawElement] Unknown element type: ${element.type}`);
@@ -711,6 +727,335 @@ const drawImage = (context, element, imageCache, requestRedraw) => {
   }
 };
 
+// --- NEW Graph/Coordinate System Drawing Functions ---
+
+/**
+ * Draw a 2D Coordinate System
+ */
+const drawCoordinateSystem2D = (context, element) => {
+  const { x, y } = element.position;
+  const { width, height, color, lineWidth, grid, xLabel, yLabel } = element;
+  const axisColor = color || '#000000';
+  const axisLineWidth = lineWidth || 1;
+  const labelFont = '12px Arial';
+  const labelColor = '#333';
+  const gridColor = '#e0e0e0';
+  const tickLength = 5;
+  const numTicks = 5; // Number of ticks on each side of the origin
+
+  context.save();
+  context.strokeStyle = axisColor;
+  context.lineWidth = axisLineWidth;
+  context.font = labelFont;
+  context.fillStyle = labelColor;
+  context.textAlign = 'center';
+  context.textBaseline = 'middle';
+
+  // Draw axes
+  context.beginPath();
+  // X-axis
+  context.moveTo(x, y + height / 2);
+  context.lineTo(x + width, y + height / 2);
+  // Y-axis
+  context.moveTo(x + width / 2, y);
+  context.lineTo(x + width / 2, y + height);
+  context.stroke();
+
+  // Draw grid lines (optional)
+  if (grid) {
+    context.strokeStyle = gridColor;
+    context.lineWidth = 0.5;
+    context.beginPath();
+    // Vertical grid lines
+    for (let i = 1; i <= numTicks; i++) {
+      const gridXPos = x + width / 2 + (i * (width / 2) / numTicks);
+      const gridXNeg = x + width / 2 - (i * (width / 2) / numTicks);
+      context.moveTo(gridXPos, y);
+      context.lineTo(gridXPos, y + height);
+      context.moveTo(gridXNeg, y);
+      context.lineTo(gridXNeg, y + height);
+    }
+    // Horizontal grid lines
+    for (let i = 1; i <= numTicks; i++) {
+      const gridYPos = y + height / 2 + (i * (height / 2) / numTicks);
+      const gridYNeg = y + height / 2 - (i * (height / 2) / numTicks);
+      context.moveTo(x, gridYPos);
+      context.lineTo(x + width, gridYPos);
+      context.moveTo(x, gridYNeg);
+      context.lineTo(x + width, gridYNeg);
+    }
+    context.stroke();
+  }
+
+  // Draw ticks and labels
+  context.strokeStyle = axisColor; // Reset for ticks
+  context.lineWidth = axisLineWidth;
+  context.beginPath();
+  // X-axis ticks
+  for (let i = -numTicks; i <= numTicks; i++) {
+    if (i === 0) continue;
+    const tickX = x + width / 2 + (i * (width / 2) / numTicks);
+    context.moveTo(tickX, y + height / 2 - tickLength);
+    context.lineTo(tickX, y + height / 2 + tickLength);
+  }
+  // Y-axis ticks
+  for (let i = -numTicks; i <= numTicks; i++) {
+    if (i === 0) continue;
+    const tickY = y + height / 2 + (i * (height / 2) / numTicks);
+    context.moveTo(x + width / 2 - tickLength, tickY);
+    context.lineTo(x + width / 2 + tickLength, tickY);
+  }
+  context.stroke();
+
+  // Labels
+  context.fillText(xLabel || 'x', x + width - 10, y + height / 2 + 15);
+  context.fillText(yLabel || 'y', x + width / 2 + 10, y + 10);
+
+  context.restore();
+};
+
+/**
+ * Draw a Math Function Plot
+ */
+const drawMathFunctionPlot = (context, element) => {
+  const { x: plotX, y: plotY } = element.position;
+  const { width, height, expression, color, lineWidth } = element;
+  const plotColor = color || '#007bff';
+  const plotLineWidth = lineWidth || 2;
+  const steps = 100; // Number of points to calculate
+
+  context.save();
+  context.strokeStyle = plotColor;
+  context.lineWidth = plotLineWidth;
+  context.beginPath();
+
+  // --- Basic Coordinate System within the plot area ---
+  const axisColor = '#aaaaaa';
+  const axisLineWidth = 0.5;
+  context.strokeStyle = axisColor;
+  context.lineWidth = axisLineWidth;
+  // X-axis (relative to plot origin)
+  context.moveTo(plotX, plotY + height / 2);
+  context.lineTo(plotX + width, plotY + height / 2);
+  // Y-axis (relative to plot origin)
+  context.moveTo(plotX + width / 2, plotY);
+  context.lineTo(plotX + width / 2, plotY + height);
+  context.stroke();
+  // --- End Basic Coordinate System ---
+
+  // Reset for function plot
+  context.strokeStyle = plotColor;
+  context.lineWidth = plotLineWidth;
+  context.beginPath();
+
+  let firstPoint = true;
+  try {
+    const compiledExpr = math.compile(expression || 'x');
+    const scope = {};
+
+    // Determine plot domain (e.g., map width to -10 to 10)
+    const xMin = -10;
+    const xMax = 10;
+    const yMin = -10;
+    const yMax = 10;
+
+    for (let i = 0; i <= steps; i++) {
+      const xVal = xMin + (xMax - xMin) * (i / steps);
+      scope.x = xVal;
+      let yVal;
+      try {
+        yVal = compiledExpr.evaluate(scope);
+      } catch (evalError) {
+        // Skip points where evaluation fails (e.g., tan(pi/2))
+        firstPoint = true; // Start new line segment after discontinuity
+        continue;
+      }
+
+
+      // Check if yVal is a valid number
+      if (typeof yVal !== 'number' || !isFinite(yVal)) {
+        firstPoint = true; // Start new line segment after discontinuity
+        continue;
+      }
+
+      // Scale to canvas coordinates within the plot area
+      const canvasX = plotX + ((xVal - xMin) / (xMax - xMin)) * width;
+      // Invert Y-axis for canvas (0,0 is top-left)
+      const canvasY = plotY + height - ((yVal - yMin) / (yMax - yMin)) * height;
+
+      // Clip drawing to the plot area
+      if (canvasX >= plotX && canvasX <= plotX + width && canvasY >= plotY && canvasY <= plotY + height) {
+        if (firstPoint) {
+          context.moveTo(canvasX, canvasY);
+          firstPoint = false;
+        } else {
+          context.lineTo(canvasX, canvasY);
+        }
+      } else {
+        // If point is outside, start a new line segment when it re-enters
+        firstPoint = true;
+      }
+    }
+    context.stroke();
+  } catch (err) {
+    // console.error("Error evaluating or drawing math function:", err);
+    // Optionally draw an error message on the canvas
+    context.fillStyle = 'red';
+    context.font = '12px Arial';
+    context.fillText('Error in function', plotX + 10, plotY + 20);
+  }
+
+  context.restore();
+};
+
+/**
+ * Draw a Physics Data Plot
+ */
+const drawPhysicsDataPlot = (context, element) => {
+  const { x: plotX, y: plotY } = element.position;
+  const { width, height, xData, yData, color, lineWidth, mode } = element;
+  const plotColor = color || '#dc3545';
+  const plotLineWidth = lineWidth || 1;
+  const plotMode = mode || 'lines+markers'; // 'lines', 'markers', 'lines+markers'
+  const markerSize = Math.max(3, plotLineWidth * 1.5);
+
+  if (!xData || !yData || xData.length !== yData.length || xData.length === 0) {
+    // console.warn("Invalid or empty data for physics plot:", element);
+    // Optionally draw a message
+    context.save();
+    context.fillStyle = '#888';
+    context.font = '12px Arial';
+    context.fillText('No data', plotX + 10, plotY + 20);
+    context.restore();
+    return;
+  }
+
+  context.save();
+  context.strokeStyle = plotColor;
+  context.fillStyle = plotColor;
+  context.lineWidth = plotLineWidth;
+
+  // --- Basic Coordinate System within the plot area ---
+  const axisColor = '#aaaaaa';
+  const axisLineWidth = 0.5;
+  context.strokeStyle = axisColor;
+  context.lineWidth = axisLineWidth;
+  // X-axis
+  context.moveTo(plotX, plotY + height / 2);
+  context.lineTo(plotX + width, plotY + height / 2);
+  // Y-axis
+  context.moveTo(plotX + width / 2, plotY);
+  context.lineTo(plotX + width / 2, plotY + height);
+  context.stroke();
+  // --- End Basic Coordinate System ---
+
+  // Reset for data plot
+  context.strokeStyle = plotColor;
+  context.fillStyle = plotColor;
+  context.lineWidth = plotLineWidth;
+
+  // Determine data range
+  const xMin = Math.min(...xData);
+  const xMax = Math.max(...xData);
+  const yMin = Math.min(...yData);
+  const yMax = Math.max(...yData);
+
+  // Add padding to range if min === max
+  const xRange = (xMax === xMin) ? 1 : xMax - xMin;
+  const yRange = (yMax === yMin) ? 1 : yMax - yMin;
+
+  const scaleX = (val) => plotX + ((val - xMin) / xRange) * width;
+  const scaleY = (val) => plotY + height - ((val - yMin) / yRange) * height; // Invert Y
+
+  // Draw lines
+  if (plotMode.includes('lines')) {
+    context.beginPath();
+    for (let i = 0; i < xData.length; i++) {
+      const canvasX = scaleX(xData[i]);
+      const canvasY = scaleY(yData[i]);
+      if (i === 0) {
+        context.moveTo(canvasX, canvasY);
+      } else {
+        context.lineTo(canvasX, canvasY);
+      }
+    }
+    context.stroke();
+  }
+
+  // Draw markers
+  if (plotMode.includes('markers')) {
+    for (let i = 0; i < xData.length; i++) {
+      const canvasX = scaleX(xData[i]);
+      const canvasY = scaleY(yData[i]);
+      context.beginPath();
+      context.arc(canvasX, canvasY, markerSize / 2, 0, Math.PI * 2);
+      context.fill();
+    }
+  }
+
+  context.restore();
+};
+
+/**
+ * Draw a 3D Coordinate System (Basic Projection)
+ */
+const drawCoordinateSystem3D = (context, element) => {
+  const { x: centerX, y: centerY } = element.position; // Center point
+  const { size, color, lineWidth, xLabel, yLabel, zLabel } = element;
+  const axisColor = color || '#000000';
+  const axisLineWidth = lineWidth || 1;
+  const labelFont = '12px Arial';
+  const labelColor = '#333';
+  const perspectiveFactor = 0.5; // How much the Z axis is foreshortened/angled
+
+  context.save();
+  context.strokeStyle = axisColor;
+  context.lineWidth = axisLineWidth;
+  context.font = labelFont;
+  context.fillStyle = labelColor;
+  context.textAlign = 'center';
+  context.textBaseline = 'middle';
+
+  const halfSize = size / 2;
+
+  // Projected endpoints
+  const xEnd = { x: centerX + halfSize, y: centerY };
+  const yEnd = { x: centerX, y: centerY - halfSize }; // Y goes up
+  const zEnd = {
+    x: centerX - halfSize * perspectiveFactor,
+    y: centerY + halfSize * perspectiveFactor * 0.8 // Angle Z slightly down-left
+  };
+
+  // Draw axes
+  context.beginPath();
+  // X-axis
+  context.moveTo(centerX, centerY);
+  context.lineTo(xEnd.x, xEnd.y);
+  // Y-axis
+  context.moveTo(centerX, centerY);
+  context.lineTo(yEnd.x, yEnd.y);
+  // Z-axis (dashed for 'negative' part if needed, simple line for now)
+  context.moveTo(centerX, centerY);
+  context.lineTo(zEnd.x, zEnd.y);
+  context.stroke();
+
+  // Draw arrowheads
+  context.fillStyle = axisColor; // Use axis color for arrowheads
+  drawArrowhead(context, { x: centerX, y: centerY }, xEnd, axisLineWidth * 3);
+  drawArrowhead(context, { x: centerX, y: centerY }, yEnd, axisLineWidth * 3);
+  drawArrowhead(context, { x: centerX, y: centerY }, zEnd, axisLineWidth * 3);
+
+  // Labels
+  context.fillText(xLabel || 'x', xEnd.x + 10, xEnd.y);
+  context.fillText(yLabel || 'y', yEnd.x, yEnd.y - 15);
+  context.fillText(zLabel || 'z', zEnd.x - 10, zEnd.y + 10);
+
+  context.restore();
+};
+
+
+// --- End NEW Graph/Coordinate System Drawing Functions ---
+
 
 /**
  * Calculate distance from point to line segment
@@ -738,6 +1083,9 @@ export const distanceToSegment = (p, v, w) => {
  * Check if a point is inside or near an element
  */
 export const isPointInElement = (point, element, hitDistance = 10) => {
+  // Add a check for element validity
+  if (!element || !element.type) return false;
+
   switch (element.type) {
     case 'pen':
     case 'eraser': // Eraser hit detection might need refinement based on new logic
@@ -759,12 +1107,13 @@ export const isPointInElement = (point, element, hitDistance = 10) => {
       return false;
 
     case 'line':
+      if (!element.start || !element.end) return false;
       // Consider line width for hit detection
-      // Also check if lineStyle includes 'vector' to potentially increase hit area near arrowhead? (For simplicity, keep it the same for now)
       return distanceToSegment(point, element.start, element.end) < (element.lineWidth / 2 + hitDistance);
 
     case 'rectangle':
     case 'square': // Same hit detection as rectangle
+      if (!element.start || !element.end) return false;
       // Check if point is close to any edge of the rectangle
       const width = element.end.x - element.start.x;
       const height = element.end.y - element.start.y;
@@ -781,6 +1130,7 @@ export const isPointInElement = (point, element, hitDistance = 10) => {
       );
 
     case 'circle':
+      if (!element.start || !element.end) return false;
       // Calculate center and radius of circle
       const centerX = (element.start.x + element.end.x) / 2;
       const centerY = (element.start.y + element.end.y) / 2;
@@ -803,6 +1153,7 @@ export const isPointInElement = (point, element, hitDistance = 10) => {
     // More accurate point-in-polygon tests could be implemented if needed.
 
     case 'triangle': {
+      if (!element.start || !element.end) return false;
       const midX = element.start.x + (element.end.x - element.start.x) / 2;
       const p1 = { x: midX, y: element.start.y };
       const p2 = { x: element.end.x, y: element.end.y };
@@ -812,6 +1163,7 @@ export const isPointInElement = (point, element, hitDistance = 10) => {
              distanceToSegment(point, p3, p1) < hitDistance;
     }
     case 'trapezoid': {
+      if (!element.start || !element.end) return false;
       const width = element.end.x - element.start.x;
       const inset = width * 0.2;
       const p1 = { x: element.start.x + inset, y: element.start.y };
@@ -824,6 +1176,7 @@ export const isPointInElement = (point, element, hitDistance = 10) => {
              distanceToSegment(point, p4, p1) < hitDistance;
     }
     case 'parallelogram': {
+       if (!element.start || !element.end) return false;
        const width = element.end.x - element.start.x;
        const slant = width * 0.2;
        const p1 = { x: element.start.x + slant, y: element.start.y };
@@ -836,6 +1189,7 @@ export const isPointInElement = (point, element, hitDistance = 10) => {
               distanceToSegment(point, p4, p1) < hitDistance;
     }
     case 'deltoid': {
+      if (!element.start || !element.end) return false;
       const midX = element.start.x + (element.end.x - element.start.x) / 2;
       const midY = element.start.y + (element.end.y - element.start.y) / 2;
       const p1 = { x: midX, y: element.start.y };
@@ -855,6 +1209,7 @@ export const isPointInElement = (point, element, hitDistance = 10) => {
     case 'cone':
     case 'pyramid':
     case 'tetrahedron': {
+      if (!element.start || !element.end) return false;
       // Simple bounding box check for all 3D representations
       const minX = Math.min(element.start.x, element.end.x) - hitDistance;
       const maxX = Math.max(element.start.x, element.end.x) + hitDistance;
@@ -865,6 +1220,7 @@ export const isPointInElement = (point, element, hitDistance = 10) => {
     }
 
     case 'text':
+      if (!element.position || !element.text || !element.fontSize) return false;
       // Use a rectangular area around text
       // This is a simplification - actual text measurement would be better
       const textWidth = element.text.length * (element.fontSize / 2); // Approximation
@@ -878,6 +1234,7 @@ export const isPointInElement = (point, element, hitDistance = 10) => {
       );
 
     case 'image':
+      if (!element.position || !element.width || !element.height) return false;
       // Check if point is inside the image rectangle
       // Add hitDistance buffer around the image
       return (
@@ -887,9 +1244,31 @@ export const isPointInElement = (point, element, hitDistance = 10) => {
         point.y <= element.position.y + element.height + hitDistance
       );
 
+    // --- Hit detection for new graph types ---
+    case 'coordinateSystem2D':
+    case 'mathFunctionPlot':
+    case 'physicsDataPlot':
+      if (!element.position || !element.width || !element.height) return false;
+      // Simple bounding box check for plots/coordinate systems
+      return (
+        point.x >= element.position.x - hitDistance &&
+        point.x <= element.position.x + element.width + hitDistance &&
+        point.y >= element.position.y - hitDistance &&
+        point.y <= element.position.y + element.height + hitDistance
+      );
+    case 'coordinateSystem3D':
+      if (!element.position || !element.size) return false;
+      // Bounding box based on center and size (approximate)
+      const halfSize = element.size / 2;
+      const perspectiveFactor = 0.5; // Match drawing logic
+      const minX = element.position.x - halfSize * perspectiveFactor - hitDistance;
+      const maxX = element.position.x + halfSize + hitDistance;
+      const minY = element.position.y - halfSize - hitDistance;
+      const maxY = element.position.y + halfSize * perspectiveFactor * 0.8 + hitDistance;
+      return point.x >= minX && point.x <= maxX && point.y >= minY && point.y <= maxY;
+
+
     default:
       return false;
   }
 };
-
-

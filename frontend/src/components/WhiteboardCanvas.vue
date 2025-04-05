@@ -117,13 +117,23 @@ export default {
     StatusMessage,
   },
   props: {
+    roomId: { // 1. Add new prop
+      type: String,
+      required: true
+    },
     debugMode: { type: Boolean, default: false },
     currentShape: { type: String, default: 'rectangle' },
     currentLineStyle: { type: String, default: 'solid' }
   },
-  emits: ['state-updated'],
+  emits: ['state-updated', 'ready'], // 2. Add 'ready' event
 
   setup(props, { emit }) {
+    // 3. Define emitReady function
+    const emitReady = () => {
+      console.log('WhiteboardCanvas: Emitting ready event');
+      emit('ready');
+    };
+
     const canvas = ref(null);
     const context = ref(null);
     const canvasWidth = ref(1200);
@@ -160,6 +170,7 @@ export default {
     const undoManager = ref(null);
     const canUndo = ref(false);
     const canRedo = ref(false);
+    const isYjsReady = ref(false); // Signal for Yjs initialization completion
 
     // Define updateGlobalState outside initializeUndoManager to make it accessible in onBeforeUnmount
     const updateGlobalState = () => {
@@ -264,6 +275,95 @@ export default {
     };
 
     // --- Methods ---
+
+    // Add normalizeRoomId function
+    const normalizeRoomId = (roomIdInput) => {
+      if (!roomIdInput) {
+        return 'default';
+      }
+      // Jeśli to już jest UUID lub ma prefiks board_, pozostaw jak jest
+      if (roomIdInput.includes('-') || roomIdInput.startsWith('board_') || 
+          roomIdInput === 'default' || roomIdInput === 'landing_page') {
+        return roomIdInput;
+      }
+      // W przeciwnym razie dodaj prefiks
+      return `board_${roomIdInput}`;
+    };
+
+    // 4. Modify initYjs
+    const initYjs = () => {
+      // Zamknij istniejące połączenie jeśli istnieje
+      if (yjsConnection.value) { // Check .value
+        console.log("Cleaning up existing Yjs connection...");
+        yjsConnection.value.disconnect();
+        if (undoManager.value) {
+          undoManager.value.destroy();
+          undoManager.value = null;
+        }
+        yDrawings.value?.unobserve(handleYjsUpdate);
+        yjsConnection.value = null;
+        ydoc.value = null;
+        yDrawings.value = null;
+        isYjsReady.value = false;
+      }
+
+      // Pobierz roomId z props i znormalizuj
+      const rawRoomId = props.roomId || 'default';
+      const roomName = normalizeRoomId(rawRoomId); // Use normalize function
+      
+      console.log(`WhiteboardCanvas: Initializing Yjs with normalized roomId: '${roomName}' (original: '${rawRoomId}')`);
+      
+      // Upewnij się, że roomId jest niepuste - This check seems redundant now with normalization
+      // if (!roomName || roomName.trim() === '') {
+      //   console.error('initYjs: Room ID missing or empty!');
+      //   showToast("Room ID missing. Collaboration disabled.", "error");
+      //   // roomActual.value = 'default_' + Math.random().toString(36).substring(2, 9); // roomActual is not defined here
+      //   // console.log(`Using fallback room ID: ${roomActual.value}`);
+      // } else {
+      //   // roomActual.value = roomName; // roomActual is not defined here
+      // }
+
+      try {
+        // Use the normalized roomName for connection
+        const connection = connectToYjs(roomName); 
+        yjsConnection.value = connection;
+        ydoc.value = connection.ydoc;
+        yDrawings.value = connection.yDrawings;
+
+        if (!yDrawings.value) {
+          console.error("[initYjs] Error: yDrawings not available after connection!");
+          showToast("Error initializing collaboration.", "error");
+          return;
+        }
+
+        yDrawings.value.observe(handleYjsUpdate); // Observe changes
+
+        // Initialize UndoManager after Yjs setup
+        initializeUndoManager();
+
+        // Add Yjs update listener for debugging
+        ydoc.value.on('update', (update, origin) => {
+          console.log('Yjs document updated:', {
+            updateSize: update.byteLength,
+            origin,
+            canExport: !!yjsConnection?.value?.ydoc,
+            drawingsCount: yDrawings.value?.length || 0 // Use optional chaining and provide default
+          });
+        });
+        
+        isYjsReady.value = true; // Signal Yjs is ready
+        console.log('Yjs initialized successfully');
+        
+        // Poczekaj chwilę, aby upewnić się, że wszystko jest gotowe
+        setTimeout(emitReady, 500); // Call emitReady
+
+      } catch (error) {
+        console.error("Failed to connect Yjs provider:", error);
+        showToast("Error connecting to collaboration session.", "error");
+        isYjsReady.value = false;
+      }
+    };
+
 
     const redrawCanvas = () => {
       if (!context.value || !yDrawings.value) return;
@@ -378,6 +478,83 @@ export default {
       // }
       // For simplicity with the new UndoManager, let's always redraw on Yjs update
       redrawCanvas();
+    };
+
+    /**
+     * Eksportuje stan tablicy jako string Base64
+     * @returns {string | null} Zakodowany stan tablicy lub null w przypadku błędu
+     */
+    // 7. Napraw funkcję exportStateAsBase64:
+    const exportStateAsBase64 = () => {
+      try {
+        if (!yjsConnection.value || !yjsConnection.value.ydoc) {
+          console.error('Cannot export: Yjs document not initialized');
+          return null;
+        }
+        
+        // Zakoduj stan jako update YJS
+        const update = Y.encodeStateAsUpdate(yjsConnection.value.ydoc);
+        if (!update || update.byteLength === 0) {
+          console.warn('Empty state or no changes to export');
+          return null;
+        }
+        
+        // Konwertuj do Base64
+        return btoa(
+          Array.from(new Uint8Array(update))
+            .map(b => String.fromCharCode(b))
+            .join('')
+        );
+      } catch (error) {
+        console.error('Error exporting state:', error);
+        return null;
+      }
+    };
+
+    /**
+     * Importuje stan tablicy z zakodowanego stringa Base64
+     * @param {string} base64State - Zakodowany stan tablicy
+     * @returns {boolean} Czy import się powiódł
+     */
+    const importStateFromBase64 = (base64State) => {
+      if (!base64State || !yjsConnection.value || !yjsConnection.value.ydoc) {
+        console.error('Cannot import: Missing data or Yjs not initialized');
+        showToast('Error importing: Connection not ready or no data', 'error');
+        return false;
+      }
+      
+      try {
+        // Dekoduj Base64 do binarnego stanu
+        // Use atob for browser environments
+        const binaryString = atob(base64State);
+        const bytes = new Uint8Array(binaryString.length);
+        
+        for (let i = 0; i < binaryString.length; i++) {
+          bytes[i] = binaryString.charCodeAt(i);
+        }
+        
+        // Zastosuj zaktualizowany stan do dokumentu Yjs
+        // Wrap in transact to ensure atomicity and proper event handling
+        ydoc.value.transact(() => {
+            Y.applyUpdate(yjsConnection.value.ydoc, bytes);
+        });
+        
+        console.log('State imported successfully');
+        showToast('Whiteboard state loaded', 'success');
+        // Force redraw after applying update
+        nextTick(() => {
+            redrawCanvas();
+            // Also update undo/redo state after import
+            if (undoManager.value) {
+                updateGlobalState();
+            }
+        });
+        return true;
+      } catch (error) {
+        console.error('Error importing state:', error);
+        showToast('Error importing whiteboard state (invalid format?)', 'error');
+        return false;
+      }
     };
 
     // Removed original updateUndoRedoState and initializeUndoManager as they are replaced by Fragment 1
@@ -1235,6 +1412,20 @@ export default {
     // ===== FRAGMENT 5 END =====
 
     // --- Watchers ---
+    // Watcher for props.roomId (already added, but ensure it uses normalizeRoomId)
+    watch(() => props.roomId, (newRoomId, oldRoomId) => {
+      const newNormalizedId = normalizeRoomId(newRoomId);
+      const oldNormalizedId = normalizeRoomId(oldRoomId);
+      
+      if (newNormalizedId !== oldNormalizedId) {
+        console.log(`WhiteboardCanvas: props.roomId changed from '${oldRoomId}' to '${newRoomId}'`);
+        console.log(`WhiteboardCanvas: normalized roomId changed from '${oldNormalizedId}' to '${newNormalizedId}'`);
+        
+        // Reinicjalizacja Yjs z nowym roomId
+        initYjs();
+      }
+    }); // This replaces the watcher added in the previous step, ensuring normalization is used.
+
     watch(() => props.currentShape, (newShape) => {
         if (props.debugMode) {
             console.log(`[Watch] currentShape changed to: ${newShape}`);
@@ -1253,11 +1444,19 @@ export default {
         }
     });
 
+    // Watcher for roomId changes is now handled above with normalization
+
     // --- Lifecycle Hooks ---
     // ===== FRAGMENT 6 START =====
+    // 5. Modify onMounted
     onMounted(() => {
+      console.log('WhiteboardCanvas: onMounted');
       initCanvas();
-      initClipboardHandler();
+      initClipboardHandler(); // Keep clipboard handler init
+      
+      // Inicjalizacja Yjs z roomId z props
+      initYjs(); // Call the updated initYjs
+
       window.addEventListener('resize', handleResize);
       window.addEventListener('keydown', handleKeyDown);
       window.addEventListener('paste', handlePaste);
@@ -1296,6 +1495,7 @@ export default {
           }, 100);
           
           // console.log('[onMounted] Yjs connection established successfully.'); // Commented out
+          isYjsReady.value = true; // Signal that Yjs is ready
         } catch (error) {
           // console.error("Failed to connect Yjs provider:", error); // Commented out
           showToast("Error connecting to collaboration session.", "error");
@@ -1388,10 +1588,26 @@ export default {
       getViewportCenter,
       toggleDebug,
       redrawCanvas,
-      testUndoManager // ===== FRAGMENT 7 =====
+      testUndoManager, // ===== FRAGMENT 7 =====
+      // Expose new functions
+      exportStateAsBase64,
+      importStateFromBase64,
+      isYjsReady, // Expose the readiness signal
+      // Expose methods needed by App.vue
+      undo,
+      redo,
+      clearCanvas,
+      setTool,
+      setColor,
+      setLineWidth,
+      addImageFromDataUrl,
+      toggleDebug,
+      redrawCanvas, // Might be useful for parent component
+      // 8. W defineExpose dodaj canvasReady:
+      canvasReady: () => !!yjsConnection?.value?.ydoc // Check if ydoc exists
     };
   }
-}
+};
 </script>
 
 <style scoped>

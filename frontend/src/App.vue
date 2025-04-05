@@ -11,6 +11,7 @@
         :username="username"
         :current-shape="currentShape"
         :current-line-style="currentLineStyle"
+        @ready="handleCanvasReady"  
        ></WhiteboardCanvas>
 
       <!-- User info in top-right corner -->
@@ -98,7 +99,8 @@
 </template>
 
 <script>
-import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue';
+import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch, watchEffect } from 'vue'; // Add watchEffect
+import { useRoute } from 'vue-router'; // Import useRoute
 import WhiteboardCanvas from './components/WhiteboardCanvas.vue';
 import ToolBar from './components/ToolBar.vue';
 import TopMenu from './components/TopMenu.vue';
@@ -110,6 +112,7 @@ import { copyToClipboard } from './utils/fileUtils.js';
 import * as Y from 'yjs';
 import { Buffer } from 'buffer';
 import { undoRedoState } from './utils/undoRedoState'; // 2. Add import
+import apiService from './services/apiService'; // Corrected casing
 
 export default {
   name: 'App',
@@ -122,7 +125,61 @@ export default {
     ThemeToggle,
     CalculatorModal // Register CalculatorModal
   },
-  setup() {
+  props: { // Define the roomId prop
+    roomId: {
+      type: String,
+      // The router provides the actual value based on the URL,
+      // or undefined if the route doesn't have :roomId.
+      // A default might be needed if App renders on '/' without a redirect.
+      // Let's assume the router handles providing a valid string or undefined.
+      required: false, // Not strictly required if '/' route also uses App
+      default: null // Use null to explicitly check if a room ID is passed
+    }
+  },
+  setup(props) { // Accept props
+    // W sekcji setup dodaj funkcję normalizacji roomId:
+    const normalizeRoomId = (roomIdInput) => {
+      if (!roomIdInput) {
+        return 'default';
+      }
+      
+      // Jeśli to już jest UUID lub ma prefiks board_, pozostaw jak jest
+      if (roomIdInput.includes('-') || roomIdInput.startsWith('board_') || 
+          roomIdInput === 'default' || roomIdInput === 'landing_page') {
+        return roomIdInput;
+      }
+      
+      // W przeciwnym razie dodaj prefiks
+      return `board_${roomIdInput}`;
+    };
+
+    // Aktualizuj pobranie roomId z parametrów URL:
+    const route = useRoute();
+    const roomId = ref('default'); // Initialize with default
+
+    // Obserwuj zmiany w route.params.roomId i aktualizuj roomId
+    watchEffect(() => {
+      const rawRoomIdFromRoute = route.params.roomId;
+      if (rawRoomIdFromRoute) {
+        const normalizedId = normalizeRoomId(rawRoomIdFromRoute);
+        
+        if (normalizedId !== roomId.value) {
+          console.log(`Room ID changed from '${roomId.value}' to '${normalizedId}' (raw: '${rawRoomIdFromRoute}')`);
+          roomId.value = normalizedId;
+        }
+      } else {
+        // Ustaw domyślne roomId dla ścieżki głównej (jeśli nie jest już 'default')
+        if (roomId.value !== 'default') {
+          console.log(`No roomId in route parameters, setting to default`);
+          roomId.value = 'default';
+        }
+      }
+    });
+
+    // Dodaj flagę do śledzenia stanu inicjalizacji
+    const isCanvasReady = ref(false);
+    const pendingStateData = ref(null);
+
     // --- Template Refs ---
     const whiteboard = ref(null);
     const toolbar = ref(null);
@@ -138,13 +195,18 @@ export default {
     const statusTimeout = ref(null);
     const darkMode = ref(localStorage.getItem('darkMode') === 'true');
     const debugMode = ref(false);
-    const roomId = ref('default_room');
+    // const roomId = ref('default_room'); // Removed local ref, using props.roomId now
     const currentShape = ref('rectangle');
     const currentLineStyle = ref('solid');
     const isCalculatorVisible = ref(false); // State for calculator modal visibility
     const globalUndoRedoState = undoRedoState; // 3. Add global state ref
+    const autoSaveIntervalRef = ref(null); // Ref to store auto-save interval ID
+    const pendingImportState = ref(null); // Store fetched state if canvas isn't ready
 
     // --- Computed Properties ---
+    // Use props.roomId, provide a fallback if it's null/undefined (e.g., for the '/' route if App is used there)
+    const currentRoomId = computed(() => props.roomId || 'landing_page'); 
+
     const activeUsersCount = computed(() => {
       const awareness = whiteboard.value?.yjsConnection?.awareness;
       return awareness ? awareness.getStates().size : 0;
@@ -166,6 +228,108 @@ export default {
       if (hours < 24) return `${hours} hour${hours > 1 ? 's' : ''} ago`;
       return saved.toLocaleString();
     });
+
+    // Funkcja wywoływana, gdy canvas jest gotowy
+    const handleCanvasReady = () => {
+      console.log('Canvas is now ready!');
+      isCanvasReady.value = true;
+      
+      // Jeśli mamy oczekujące dane stanu, zaimportuj je teraz
+      if (pendingStateData.value) {
+        console.log('Importing pending state data...');
+        whiteboard.value.importStateFromBase64(pendingStateData.value);
+        pendingStateData.value = null;
+      }
+    };
+
+    // --- State Management Functions ---
+    // Funkcja do wczytywania stanu
+    const loadBoardState = async () => {
+      if (!roomId.value) {
+        showStatus('Error: No room ID', 'error');
+        return;
+      }
+      
+      const normalizedId = normalizeRoomId(roomId.value); // Use normalized ID
+      console.log(`Loading board state for room: '${normalizedId}'...`);
+      showStatus(`Loading whiteboard...`); // Keep generic message
+      
+      try {
+        const data = await apiService.loadBoardState(normalizedId); // Use normalizedId
+        
+        if (data && data.success && data.state) {
+          console.log('State data loaded successfully, size:', data.state.length);
+          
+          // Sprawdź, czy canvas jest gotowy
+          if (isCanvasReady.value && whiteboard.value && whiteboard.value.importStateFromBase64) {
+            console.log('Canvas is ready, importing state now...');
+            const success = whiteboard.value.importStateFromBase64(data.state);
+            
+            if (success) {
+              showStatus('Whiteboard state loaded successfully');
+            } else {
+              showStatus('Error importing whiteboard state', 'error');
+            }
+          } else {
+            // Zapisz dane do późniejszego importu
+            console.log('Canvas not ready, storing state for later import.');
+            pendingStateData.value = data.state;
+            showStatus('Whiteboard state loaded, waiting for canvas...');
+          }
+        } else {
+          console.log('No previous state found for this room');
+          showStatus('Starting new whiteboard session');
+        }
+      } catch (error) {
+        console.error('Error loading board state:', error);
+        showStatus('Error loading previous session', 'error');
+      }
+    };
+
+    // The watcher logic is now handled by handleCanvasReady and the updated loadBoardState
+
+    const saveBoardState = async () => {
+      if (!roomId.value) {
+        showStatus('Error: No room ID', 'error');
+        return;
+      }
+      
+      const normalizedId = normalizeRoomId(roomId.value); // Use normalized ID
+      
+      // Sprawdź czy canvas jest gotowy
+      if (!isCanvasReady.value || !whiteboard.value || !whiteboard.value.exportStateAsBase64) {
+        showStatus('Error: Whiteboard not ready', 'error');
+        return;
+      }
+      
+      console.log(`Saving board state for room: '${normalizedId}'...`);
+      showStatus('Saving whiteboard state...'); // Keep generic message
+      
+      try {
+        const stateData = whiteboard.value.exportStateAsBase64();
+        
+        if (!stateData) {
+          showStatus('Error: No state data to save', 'error');
+          return;
+        }
+        
+        const result = await apiService.saveBoardState(normalizedId, stateData); // Use normalizedId
+        
+        if (result && result.success) {
+          lastSaved.value = new Date().toISOString(); // Keep using ISO string for consistency
+          // Use showStatus for user feedback
+          showStatus('Whiteboard state saved'); 
+        } else {
+          // Use showStatus for user feedback
+          showStatus('Error saving whiteboard state', 'error'); 
+          console.error('Error saving board state:', result); // Keep console error for details
+        }
+      } catch (error) {
+        // Use showStatus for user feedback
+        showStatus('Error saving session', 'error'); 
+        console.error('Exception during save:', error); // Keep console error for details
+      }
+    };
 
     // --- Methods ---
     const callWhiteboardUndo = () => {
@@ -311,7 +475,8 @@ export default {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `whiteboard_${roomId.value}_${new Date().toISOString().replace(/:/g, '-')}.txt`;
+      // Use props.roomId here
+      a.download = `whiteboard_${props.roomId || 'shared'}_${new Date().toISOString().replace(/:/g, '-')}.txt`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -421,7 +586,13 @@ export default {
     };
 
     const shareRoom = () => {
-      const shareableUrl = `${window.location.origin}${window.location.pathname}?room=${roomId.value}`;
+      // Use props.roomId here, ensuring it exists before creating the URL
+      if (!props.roomId) {
+        showStatus('Cannot share: No room ID specified.', 3000);
+        showNotification('Cannot share: No room ID specified.', 'warning');
+        return;
+      }
+      const shareableUrl = `${window.location.origin}/board/${props.roomId}`; // Use the router path
       navigator.clipboard.writeText(shareableUrl)
         .then(() => {
           showStatus('Room link copied! Share to collaborate.');
@@ -446,21 +617,38 @@ export default {
       // Add other global shortcuts here if needed
     };
 
+    // --- Watchers ---
+    watch(() => props.roomId, (newRoomId) => {
+      if (newRoomId) {
+        console.log(`Room ID changed via prop: ${newRoomId}. Updating localStorage.`);
+        localStorage.setItem('last_room_id', newRoomId);
+      }
+    }, { immediate: true }); // immediate: true to run on initial load
+
     // --- Lifecycle Hooks ---
     onMounted(() => {
-      const urlParams = new URLSearchParams(window.location.search);
-      let initialRoomId = urlParams.get('room');
-      if (!initialRoomId) {
-        initialRoomId = localStorage.getItem('last_room_id') || `board_${Math.random().toString(36).substr(2, 9)}`;
-        const newUrl = new URL(window.location);
-        newUrl.searchParams.set('room', initialRoomId);
-        window.history.replaceState({}, '', newUrl);
-      } else {
-        localStorage.setItem('last_room_id', initialRoomId);
-      }
-      roomId.value = initialRoomId;
-      console.log(`App mounted. Room ID: ${roomId.value}`);
-
+      console.log('App mounted. Room ID from route:', roomId.value);
+      
+      // Opóźnij ładowanie stanu, aby dać czas na inicjalizację
+      setTimeout(() => {
+        if (!isCanvasReady.value) {
+          console.log('Canvas still not ready after timeout, will load state when ready');
+        }
+        loadBoardState();
+      }, 1000);
+      
+      // Ustaw interwał automatycznego zapisywania
+      const autoSaveInterval = setInterval(() => {
+        console.log('Auto-saving whiteboard state...');
+        if (isCanvasReady.value) {
+          saveBoardState();
+        } else {
+          console.log('Skipping auto-save: Canvas not ready');
+        }
+      }, 60000); // 1 minuta
+      
+      autoSaveIntervalRef.value = autoSaveInterval;
+      
       document.body.classList.toggle('dark-mode', darkMode.value);
       window.addEventListener('beforeunload', handleBeforeUnload);
       window.addEventListener('keydown', handleGlobalKeyDown); // Add global key listener
@@ -469,6 +657,14 @@ export default {
     onBeforeUnmount(() => {
       window.removeEventListener('beforeunload', handleBeforeUnload);
       window.removeEventListener('keydown', handleGlobalKeyDown); // Remove global key listener
+
+      // Save state one last time before leaving
+      saveBoardState();
+
+      // Clear the auto-save interval
+      if (autoSaveIntervalRef.value) {
+        clearInterval(autoSaveIntervalRef.value);
+      }
     });
 
     // --- Return values accessible to the template ---
@@ -484,7 +680,7 @@ export default {
       statusMessage,
       darkMode,
       debugMode,
-      roomId,
+      roomId: currentRoomId, // Return the computed property for the template
       currentShape,
       currentLineStyle,
       isCalculatorVisible, // Return state for modal
@@ -512,12 +708,18 @@ export default {
       showNotification,
       callWhiteboardUndo,
       callWhiteboardRedo,
-      // 4. Add new variables to return
+      // 4. Add new variables/functions to return
       globalUndoRedoState,
-      forceUpdateUndoRedo
+      forceUpdateUndoRedo,
+      loadBoardState, // Expose if needed for manual refresh button, etc.
+      saveBoardState,  // Expose if needed for manual save button, etc.
+      // Add newly added functions/refs
+      handleCanvasReady,
+      isCanvasReady, // Expose if needed in template
+      pendingStateData // Expose if needed in template
     };
   }
-}
+};
 </script>
 
 <style>

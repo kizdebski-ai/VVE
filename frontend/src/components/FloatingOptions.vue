@@ -47,8 +47,22 @@
           <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="2" width="16" height="20" rx="2" ry="2"></rect><line x1="8" y1="6" x2="16" y2="6"></line><line x1="16" y1="10" x2="16" y2="14"></line><line x1="12" y1="10" x2="12" y2="14"></line><line x1="8" y1="10" x2="8" y2="14"></line><line x1="8" y1="18" x2="16" y2="18"></line></svg>
           Calculator
         </button>
-        <!-- Add Coordinate System Controls button here later -->
-        <!-- Add Physics Graph Controls button here later -->
+        
+  <!-- Math Graph -->
+<button  @click="() => {  emit('toggle-math-graph'); }" class="adv-option-btn">
+  <svg xmlns="http://www.w3.org/2000/svg"  width="18" height="18" class="w-5 h-5 mr-2 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+    <path d="M4 20L20 4M4 4l16 16" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  </svg>
+  Math Graph
+</button>
+
+<!-- Physics Graph -->
+<button @click="emit('toggle-physics-graph')" class="adv-option-btn">
+  <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" class="w-5 h-5 mr-2 text-yellow-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+    <path d="M13 10V3L4 14h7v7l9-11h-7z" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  </svg>
+  Physics Graph
+</button>
       </div>
 
     </div>
@@ -75,7 +89,7 @@ const props = defineProps({
 });
 
 // Add 'toggle-calculator' to emits
-const emit = defineEmits(['color-changed', 'line-width-changed', 'shape-changed', 'line-style-changed', 'advanced-option-changed', 'toggle-calculator']);
+const emit = defineEmits(['color-changed', 'line-width-changed', 'shape-changed', 'line-style-changed', 'advanced-option-changed', 'toggle-calculator','toggle-math-plot','toggle-physics-plot',]);
 
 const internalColor = ref(props.initialColor);
 const internalWidth = ref(props.initialWidth);
@@ -126,12 +140,12 @@ const positionStyle = computed(() => ({
   z-index: 1001;
   background-color: var(--toolbar-bg, #ffffff);
   border: 1px solid var(--border-color, #e0e0e0);
-  border-radius: 8px;
+  border-radius: 12px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-  padding: 15px; /* Increased padding */
+  padding: 18px; /* Increased padding */
   display: flex;
   flex-direction: column;
-  min-width: 150px; /* Ensure a minimum width */
+  min-width: 180px; /* Ensure a minimum width */
   /* max-width: 300px; /* Allow it to grow but not excessively - Removed for calculator */
   gap: 10px;
 }
@@ -140,7 +154,7 @@ const positionStyle = computed(() => ({
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 10px;
+  gap: 1px;
 }
 
 .advanced-options-section {
@@ -148,15 +162,15 @@ const positionStyle = computed(() => ({
   display: flex;
   flex-direction: column;
   gap: 10px; /* Space between advanced components */
-  border-top: 1px solid var(--border-color-light);
-  padding-top: 10px;
-  margin-top: 5px;
+  border-top: 12px solid var(--border-color-light);
+  padding-top: 1px;
+  margin-top: 10px;
 }
 
 .advanced-options-section h4 {
-  margin: 0 0 5px 0;
-  font-size: 14px;
-  font-weight: 600;
+  margin: 2 0 5px 0;
+  font-size: 15px;
+  font-weight: 500;
   color: var(--text-color-secondary);
   text-align: center;
 }
@@ -164,12 +178,12 @@ const positionStyle = computed(() => ({
 .adv-option-btn {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap:5px;
   width: 100%;
   padding: 8px 12px;
   border: none;
   background-color: var(--btn-secondary-bg);
-  color: var(--text-color);
+  color: var(--text-color-secondary);
   border-radius: 6px;
   cursor: pointer;
   font-size: 14px;
@@ -187,14 +201,27 @@ const positionStyle = computed(() => ({
 /* Styles for Shape Selector and Line Style Selector are now in their respective components */
 /* Keep common styles for ColorPicker and LineWidthSelector */
 
+
+.floating-btn {
+  display: flex;
+  align-items: center;
+  padding: 5px 10px;
+  background-color: var(--btn-secondary-bg);
+  border-radius: 12px;
+  color: var(--text-color-secondary);
+  font-size: 14px;
+  transition: background-color 0.2s ease;
+  width: 100%;
+  text-align: left;
+}
+
 .line-width-selector {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  align-items: center;
+  gap: 10px;
+  align-items: right;
   width: 100%;
 }
-
 .line-width-preview {
   width: 40px;
   height: 20px;

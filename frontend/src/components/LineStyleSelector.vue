@@ -51,7 +51,7 @@ const selectLineStyle = (style) => {
 .line-style-selector {
   display: flex;
   flex-wrap: wrap; /* Allow wrapping */
-  gap: 8px;
+  gap: 6px;
   padding: 5px; /* Add some padding */
   margin-bottom: 10px; /* Space below */
   /* border-bottom: 1px solid var(--border-color-light, #eee); REMOVED border */

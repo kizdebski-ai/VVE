@@ -1,11 +1,12 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import App from './App.vue'
 
+
 const routes = [
   {
+    // Redirect the root path to a default board
     path: '/',
-    name: 'Home',
-    component: App,
+    redirect: '/board/default' 
   },
   {
     path: '/board/:roomId',

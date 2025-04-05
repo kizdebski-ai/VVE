@@ -137,40 +137,28 @@ export default {
     }
   },
   setup(props) { // Accept props
-    // W sekcji setup dodaj funkcję normalizacji roomId:
-    const normalizeRoomId = (roomIdInput) => {
-      if (!roomIdInput) {
-        return 'default';
-      }
-      
-      // Jeśli to już jest UUID lub ma prefiks board_, pozostaw jak jest
-      if (roomIdInput.includes('-') || roomIdInput.startsWith('board_') || 
-          roomIdInput === 'default' || roomIdInput === 'landing_page') {
-        return roomIdInput;
-      }
-      
-      // W przeciwnym razie dodaj prefiks
-      return `board_${roomIdInput}`;
-    };
+    // Removed normalizeRoomId function
 
-    // Aktualizuj pobranie roomId z parametrów URL:
+    // Pobierz route z vue-router
     const route = useRoute();
+
+    // Inicjalizuj roomId bezpośrednio z parametrów URL
     const roomId = ref('default'); // Initialize with default
 
     // Obserwuj zmiany w route.params.roomId i aktualizuj roomId
     watchEffect(() => {
-      const rawRoomIdFromRoute = route.params.roomId;
-      if (rawRoomIdFromRoute) {
-        const normalizedId = normalizeRoomId(rawRoomIdFromRoute);
-        
-        if (normalizedId !== roomId.value) {
-          console.log(`Room ID changed from '${roomId.value}' to '${normalizedId}' (raw: '${rawRoomIdFromRoute}')`);
-          roomId.value = normalizedId;
+      const newRoomId = route.params.roomId;
+      if (newRoomId) {
+        // WAŻNA ZMIANA: Użyj dokładnie tego identyfikatora, który jest w URL
+        // Nie próbuj go normalizować ani modyfikować
+        if (newRoomId !== roomId.value) {
+          console.log(`Room ID from URL: '${newRoomId}'`);
+          roomId.value = newRoomId;
         }
       } else {
         // Ustaw domyślne roomId dla ścieżki głównej (jeśli nie jest już 'default')
         if (roomId.value !== 'default') {
-          console.log(`No roomId in route parameters, setting to default`);
+          console.log(`No roomId in URL parameters, using default`);
           roomId.value = 'default';
         }
       }
@@ -204,8 +192,7 @@ export default {
     const pendingImportState = ref(null); // Store fetched state if canvas isn't ready
 
     // --- Computed Properties ---
-    // Use props.roomId, provide a fallback if it's null/undefined (e.g., for the '/' route if App is used there)
-    const currentRoomId = computed(() => props.roomId || 'landing_page'); 
+    // Removed unused currentRoomId computed property
 
     const activeUsersCount = computed(() => {
       const awareness = whiteboard.value?.yjsConnection?.awareness;
@@ -250,12 +237,12 @@ export default {
         return;
       }
       
-      const normalizedId = normalizeRoomId(roomId.value); // Use normalized ID
-      console.log(`Loading board state for room: '${normalizedId}'...`);
-      showStatus(`Loading whiteboard...`); // Keep generic message
+      // WAŻNA ZMIANA: Użyj dokładnie tego identyfikatora, który jest w roomId
+      console.log(`Loading board state for room: '${roomId.value}'...`);
+      showStatus(`Loading whiteboard...`);
       
       try {
-        const data = await apiService.loadBoardState(normalizedId); // Use normalizedId
+        const data = await apiService.loadBoardState(roomId.value); // Use exact roomId.value
         
         if (data && data.success && data.state) {
           console.log('State data loaded successfully, size:', data.state.length);
@@ -294,16 +281,15 @@ export default {
         return;
       }
       
-      const normalizedId = normalizeRoomId(roomId.value); // Use normalized ID
+      // WAŻNA ZMIANA: Użyj dokładnie tego identyfikatora, który jest w roomId
+      console.log(`Saving board state for room: '${roomId.value}'...`);
+      showStatus('Saving whiteboard state...');
       
       // Sprawdź czy canvas jest gotowy
       if (!isCanvasReady.value || !whiteboard.value || !whiteboard.value.exportStateAsBase64) {
         showStatus('Error: Whiteboard not ready', 'error');
         return;
       }
-      
-      console.log(`Saving board state for room: '${normalizedId}'...`);
-      showStatus('Saving whiteboard state...'); // Keep generic message
       
       try {
         const stateData = whiteboard.value.exportStateAsBase64();
@@ -313,7 +299,7 @@ export default {
           return;
         }
         
-        const result = await apiService.saveBoardState(normalizedId, stateData); // Use normalizedId
+        const result = await apiService.saveBoardState(roomId.value, stateData); // Use exact roomId.value
         
         if (result && result.success) {
           lastSaved.value = new Date().toISOString(); // Keep using ISO string for consistency
@@ -629,6 +615,10 @@ export default {
     onMounted(() => {
       console.log('App mounted. Room ID from route:', roomId.value);
       
+      // Inicjalizuj tylko jeden pokój - ten z URL
+      // NIE inicjalizuj żadnych dodatkowych pokojów jak "landing_page"
+      // NIE łącz się z żadnymi innymi pokojami WebSocket
+      
       // Opóźnij ładowanie stanu, aby dać czas na inicjalizację
       setTimeout(() => {
         if (!isCanvasReady.value) {
@@ -680,7 +670,7 @@ export default {
       statusMessage,
       darkMode,
       debugMode,
-      roomId: currentRoomId, // Return the computed property for the template
+      roomId, // Return the ref directly for the template
       currentShape,
       currentLineStyle,
       isCalculatorVisible, // Return state for modal

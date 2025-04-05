@@ -178,12 +178,13 @@ CORS_ALLOW_HEADERS = [
 CORS_ALLOW_CREDENTIALS = True
 
 # Również dodaj/aktualizuj konfigurację logowania dla lepszego debugowania:
+# Rozbudowana konfiguracja logowania 
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
     'formatters': {
         'verbose': {
-            'format': '{levelname} {asctime} {module} {message}',
+            'format': '{levelname} {asctime} {message}',
             'style': '{',
         },
     },
@@ -200,17 +201,23 @@ LOGGING = {
             'level': 'INFO',
             'propagate': True,
         },
-        'core.views': {
+        'board.sync': {  # logger dla naszego modułu consumers
+            'handlers': ['console'],
+            'level': 'WARNING',
+            'propagate': False,
+        },
+        'db_utils': { # Changed from 'db-utils' to match logger name in db_utils.py if used
+            'handlers': ['console'],
+            'level': 'INFO', # Changed level to INFO as per feedback
+            'propagate': False,
+        },
+        # Keep other loggers if needed, or remove if this replaces all
+        'core.views': { # Kept existing logger
             'handlers': ['console'],
             'level': 'DEBUG',
             'propagate': False,
         },
-        'api.debug': {
-            'handlers': ['console'],
-            'level': 'DEBUG',
-            'propagate': False,
-        },
-        'db-utils': {
+        'api.debug': { # Kept existing logger
             'handlers': ['console'],
             'level': 'DEBUG',
             'propagate': False,

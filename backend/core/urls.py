@@ -10,4 +10,7 @@ urlpatterns = [
     path('api/health/', views.health_check, name='health_check'),
     path('api/load/<str:room_id>/', views.load_whiteboard_state, name='load_whiteboard_state'),
     path('api/save/<str:room_id>/', views.save_whiteboard_state, name='save_whiteboard_state'),
+    
+    # Debug endpoint (updated to use debug_rooms)
+    path('api/debug/rooms/', views.debug_rooms, name='debug_rooms'),
 ]

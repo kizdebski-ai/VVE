@@ -83,6 +83,7 @@
 <script>
 import { ref, onMounted, onBeforeUnmount, watch, nextTick } from 'vue';
 import * as Y from 'yjs';
+import { WebsocketProvider } from 'y-websocket'; // Import WebsocketProvider
 // Removed explicit UndoManager import as it's part of Y.* now
 import { undoRedoState } from '../utils/undoRedoState'; // 1. Add import
 import Collaborators from './Collaborators.vue';
@@ -164,10 +165,10 @@ export default {
 
     // ===== FRAGMENT 1 START =====
     // --- Yjs specific state (managed internally) ---
-    const yjsConnection = ref(null);
-    const ydoc = ref(null);
-    const yDrawings = ref(null);
-    const undoManager = ref(null);
+    const yjsConnection = ref(null); // Changed to ref
+    const ydoc = ref(null); // Changed to ref
+    const yDrawings = ref(null); // Changed to ref
+    const undoManager = ref(null); // Changed to ref
     const canUndo = ref(false);
     const canRedo = ref(false);
     const isYjsReady = ref(false); // Signal for Yjs initialization completion
@@ -276,92 +277,143 @@ export default {
 
     // --- Methods ---
 
-    // Add normalizeRoomId function
-    const normalizeRoomId = (roomIdInput) => {
-      if (!roomIdInput) {
-        return 'default';
-      }
-      // Jeśli to już jest UUID lub ma prefiks board_, pozostaw jak jest
-      if (roomIdInput.includes('-') || roomIdInput.startsWith('board_') || 
-          roomIdInput === 'default' || roomIdInput === 'landing_page') {
-        return roomIdInput;
-      }
-      // W przeciwnym razie dodaj prefiks
-      return `board_${roomIdInput}`;
-    };
+    // Removed normalizeRoomId function as per feedback
 
-    // 4. Modify initYjs
+    // Replace initYjs function as per feedback
     const initYjs = () => {
       // Zamknij istniejące połączenie jeśli istnieje
       if (yjsConnection.value) { // Check .value
-        console.log("Cleaning up existing Yjs connection...");
-        yjsConnection.value.disconnect();
-        if (undoManager.value) {
-          undoManager.value.destroy();
-          undoManager.value = null;
-        }
-        yDrawings.value?.unobserve(handleYjsUpdate);
-        yjsConnection.value = null;
-        ydoc.value = null;
-        yDrawings.value = null;
+        console.log("[CANVAS] Cleaning up existing Yjs connection...");
+        // Use cleanupYjs function
+        cleanupYjs();
+      }
+    
+      // WAŻNA ZMIANA: Używaj dokładnie tego roomId, które dostałeś z props
+      // Nie modyfikuj ani nie normalizuj go w żaden sposób
+      const roomName = props.roomId || ''; // Use empty string if undefined/null
+      
+      // Dodatkowe logowanie dla celów debugowania
+      console.log(`[CANVAS] Initializing Yjs with EXACT room_id: '${roomName}'`);
+      
+      // Upewnij się, że roomId jest niepuste
+      if (!roomName || roomName.trim() === '') {
+        console.error('[CANVAS] Room ID missing or empty!');
+        showToast("Room ID missing. Collaboration disabled.", "error");
+        return; // Stop initialization if roomName is invalid
+      }
+    
+      try {
+        // Inicjalizuj dokument Yjs
+        const newYDoc = new Y.Doc();
+        ydoc.value = newYDoc; // Assign to ref
+        
+        // Uzyskaj dostęp do współdzielonej tablicy rysunków
+        const newYDrawings = newYDoc.getArray('drawings');
+        yDrawings.value = newYDrawings; // Assign to ref
+        
+        // Inicjalizacja WebSocket
+        const wsUrl = import.meta.env.VITE_WS_URL || 'ws://localhost:8000/ws/whiteboard';
+        
+        console.log(`[CANVAS] Connecting to WebSocket at: ${wsUrl}/${roomName}`);
+        
+        // Inicjalizacja provider'a - używaj dokładnie tego samego roomName bez modyfikacji
+        const provider = new WebsocketProvider(
+          wsUrl,
+          roomName,
+          newYDoc // Pass the new Y.Doc instance
+        );
+    
+        // Ustawienie UndoManager
+        const newUndoManager = new Y.UndoManager(newYDrawings); // Use new Y.Array
+        undoManager.value = newUndoManager; // Assign to ref
+    
+        // Ustawienie obiektu Awareness
+        const awareness = provider.awareness;
+        
+        // Ustaw początkowy stan awareness
+        awareness.setLocalStateField('user', { 
+          name: props.username || 'Anonymous', 
+          color: '#' + Math.floor(Math.random()*16777215).toString(16) // Simple random color
+        });
+    
+        // Provider events handling
+        provider.on('status', (event) => {
+          console.log(`[CANVAS] WebSocket status changed: ${event.status}`);
+          // Optionally show toast on connection status change
+          // showToast(`Connection: ${event.status}`, event.status === 'connected' ? 'success' : 'warning');
+        });
+    
+        // Zapisz połączenia do zmiennej yjsConnection (as a plain object now)
+        yjsConnection.value = { ydoc: newYDoc, provider, undoManager: newUndoManager, awareness, yDrawings: newYDrawings };
+        
+        // Subskrybuj zdarzenia Yjs
+        setupYjsEventListeners(); // Call the setup function
+        
+        isYjsReady.value = true; // Signal Yjs is ready
+        console.log('[CANVAS] Yjs initialized successfully!');
+        
+        // Emituj zdarzenie ready po udanej inicjalizacji
+        setTimeout(() => {
+          console.log('[CANVAS] Emitting ready event');
+          emit('ready');
+        }, 500); // Delay slightly to ensure listeners are attached
+    
+      } catch (error) {
+        console.error('[CANVAS] Error initializing Yjs:', error);
+        showToast(`Error initializing collaboration: ${error.message}`, "error");
         isYjsReady.value = false;
       }
+    };
 
-      // Pobierz roomId z props i znormalizuj
-      const rawRoomId = props.roomId || 'default';
-      const roomName = normalizeRoomId(rawRoomId); // Use normalize function
+    // Helper function to setup Yjs listeners
+    const setupYjsEventListeners = () => {
+      if (!yjsConnection.value) return;
       
-      console.log(`WhiteboardCanvas: Initializing Yjs with normalized roomId: '${roomName}' (original: '${rawRoomId}')`);
+      const { yDrawings: currentYDrawings, undoManager: currentUndoManager, ydoc: currentYDoc } = yjsConnection.value;
       
-      // Upewnij się, że roomId jest niepuste - This check seems redundant now with normalization
-      // if (!roomName || roomName.trim() === '') {
-      //   console.error('initYjs: Room ID missing or empty!');
-      //   showToast("Room ID missing. Collaboration disabled.", "error");
-      //   // roomActual.value = 'default_' + Math.random().toString(36).substring(2, 9); // roomActual is not defined here
-      //   // console.log(`Using fallback room ID: ${roomActual.value}`);
-      // } else {
-      //   // roomActual.value = roomName; // roomActual is not defined here
-      // }
-
-      try {
-        // Use the normalized roomName for connection
-        const connection = connectToYjs(roomName); 
-        yjsConnection.value = connection;
-        ydoc.value = connection.ydoc;
-        yDrawings.value = connection.yDrawings;
-
-        if (!yDrawings.value) {
-          console.error("[initYjs] Error: yDrawings not available after connection!");
-          showToast("Error initializing collaboration.", "error");
-          return;
-        }
-
-        yDrawings.value.observe(handleYjsUpdate); // Observe changes
-
-        // Initialize UndoManager after Yjs setup
-        initializeUndoManager();
-
-        // Add Yjs update listener for debugging
-        ydoc.value.on('update', (update, origin) => {
-          console.log('Yjs document updated:', {
+      if (currentYDrawings) {
+        currentYDrawings.observe(handleYjsUpdate);
+      }
+      if (currentUndoManager) {
+        currentUndoManager.on('stack-item-added', updateGlobalState);
+        currentUndoManager.on('stack-item-popped', updateGlobalState);
+        updateGlobalState(); // Initial state update
+      }
+      if (currentYDoc && props.debugMode) {
+        currentYDoc.on('update', (update, origin) => {
+          console.log('[CANVAS] Yjs document updated:', {
             updateSize: update.byteLength,
             origin,
             canExport: !!yjsConnection?.value?.ydoc,
-            drawingsCount: yDrawings.value?.length || 0 // Use optional chaining and provide default
+            drawingsCount: yDrawings.value?.length || 0
           });
         });
-        
-        isYjsReady.value = true; // Signal Yjs is ready
-        console.log('Yjs initialized successfully');
-        
-        // Poczekaj chwilę, aby upewnić się, że wszystko jest gotowe
-        setTimeout(emitReady, 500); // Call emitReady
-
-      } catch (error) {
-        console.error("Failed to connect Yjs provider:", error);
-        showToast("Error connecting to collaboration session.", "error");
-        isYjsReady.value = false;
       }
+    };
+
+    // Helper function to clean up Yjs resources
+    const cleanupYjs = () => {
+      if (!yjsConnection.value) return;
+      
+      const { provider, undoManager: currentUndoManager, yDrawings: currentYDrawings } = yjsConnection.value;
+      
+      provider?.disconnect();
+      
+      if (currentUndoManager) {
+        currentUndoManager.off('stack-item-added', updateGlobalState);
+        currentUndoManager.off('stack-item-popped', updateGlobalState);
+        currentUndoManager.destroy();
+      }
+      
+      currentYDrawings?.unobserve(handleYjsUpdate);
+      
+      // Clear refs
+      yjsConnection.value = null;
+      ydoc.value = null;
+      yDrawings.value = null;
+      undoManager.value = null;
+      isYjsReady.value = false;
+      console.log("[CANVAS] Yjs resources cleaned up.");
     };
 
 
@@ -1412,19 +1464,15 @@ export default {
     // ===== FRAGMENT 5 END =====
 
     // --- Watchers ---
-    // Watcher for props.roomId (already added, but ensure it uses normalizeRoomId)
+    // Watcher for props.roomId (updated to remove normalization)
     watch(() => props.roomId, (newRoomId, oldRoomId) => {
-      const newNormalizedId = normalizeRoomId(newRoomId);
-      const oldNormalizedId = normalizeRoomId(oldRoomId);
-      
-      if (newNormalizedId !== oldNormalizedId) {
+      // WAŻNA ZMIANA: Porównuj bezpośrednio ID z props, bez normalizacji
+      if (newRoomId !== oldRoomId) {
         console.log(`WhiteboardCanvas: props.roomId changed from '${oldRoomId}' to '${newRoomId}'`);
-        console.log(`WhiteboardCanvas: normalized roomId changed from '${oldNormalizedId}' to '${newNormalizedId}'`);
-        
-        // Reinicjalizacja Yjs z nowym roomId
+        // Reinicjalizacja Yjs z nowym roomId (który jest już dokładnym ID)
         initYjs();
       }
-    }); // This replaces the watcher added in the previous step, ensuring normalization is used.
+    });
 
     watch(() => props.currentShape, (newShape) => {
         if (props.debugMode) {
@@ -1444,8 +1492,6 @@ export default {
         }
     });
 
-    // Watcher for roomId changes is now handled above with normalization
-
     // --- Lifecycle Hooks ---
     // ===== FRAGMENT 6 START =====
     // 5. Modify onMounted
@@ -1463,47 +1509,10 @@ export default {
       darkModeObserver.observe(document.body, { attributes: true });
       handleResize(); // Initial resize call
 
-      const urlParams = new URLSearchParams(window.location.search);
-      const roomId = urlParams.get('room');
-
-      if (roomId) {
-        try {
-          // console.log("[onMounted] Łączenie z Yjs dla pokoju:", roomId); // Commented out
-          const connection = connectToYjs(roomId);
-          yjsConnection.value = connection;
-          ydoc.value = connection.ydoc;
-          yDrawings.value = connection.yDrawings;
-          
-          if (!yDrawings.value) {
-            // console.error("[onMounted] Błąd: yDrawings not available after connection!"); // Commented out
-            return;
-          }
-          
-          // console.log("[onMounted] yDrawings zainicjalizowany, długość:", yDrawings.value.length); // Commented out
-          
-          // Obserwuj zmiany w yDrawings
-          yDrawings.value.observe(event => {
-            // console.log("[yDrawings.observe] Zmiana w yDrawings:", event); // Commented out
-            redrawCanvas(); // Use direct redraw instead of debounced for immediate feedback
-          });
-          
-          // Inicjalizuj UndoManager po krótkim opóźnieniu
-          setTimeout(() => {
-            // console.log("[onMounted] Inicjalizacja UndoManager po opóźnieniu..."); // Commented out
-            initializeUndoManager();
-            redrawCanvas(); // Redraw after UndoManager init
-          }, 100);
-          
-          // console.log('[onMounted] Yjs connection established successfully.'); // Commented out
-          isYjsReady.value = true; // Signal that Yjs is ready
-        } catch (error) {
-          // console.error("Failed to connect Yjs provider:", error); // Commented out
-          showToast("Error connecting to collaboration session.", "error");
-        }
-      } else {
-        // console.error("WhiteboardCanvas: 'room' parameter missing in URL!"); // Commented out
-        showToast("Room ID missing. Collaboration disabled.", "error");
-      }
+      // Removed URL param logic as roomId comes from props now
+      // const urlParams = new URLSearchParams(window.location.search);
+      // const roomId = urlParams.get('room');
+      // ... (rest of the old logic removed) ...
     });
     // ===== FRAGMENT 6 END =====
 
@@ -1530,8 +1539,8 @@ export default {
       }
       
       // Disconnect from Yjs
-      if (yjsConnection.value) {
-        yjsConnection.value.disconnect();
+      if (yjsConnection.value?.provider) { // Check for provider before disconnecting
+        yjsConnection.value.provider.disconnect();
       }
     });
 

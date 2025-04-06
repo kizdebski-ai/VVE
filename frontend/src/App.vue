@@ -113,8 +113,7 @@ import { copyToClipboard } from './utils/fileUtils.js';
 import * as Y from 'yjs';
 import { Buffer } from 'buffer';
 import { undoRedoState } from './utils/undoRedoState'; // 2. Add import
-import MathGraphPanel from './components/MathGraphPanel.vue';
-import PhysicsGraphPanel from './components/PhysicsGraphPanel.vue';
+
 
 export default {
   name: 'App',

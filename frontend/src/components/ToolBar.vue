@@ -173,15 +173,13 @@
 import { ref, onMounted, onBeforeUnmount, watch, nextTick, reactive } from 'vue';
 import FloatingOptions from './FloatingOptions.vue';
 import { undoRedoState } from '../utils/undoRedoState'; // 1. Add import
-import MathChartIcon from './MathChartIcon.vue'; // Added
-import PhysicsChartIcon from './PhysicsChartIcon.vue'; // Added
+
 
 export default {
   name: 'ToolBar',
   components: {
     FloatingOptions,
-    MathChartIcon,    // Added
-    PhysicsChartIcon, // Added
+    
   },
   // 2. Remove old props
   // props: {

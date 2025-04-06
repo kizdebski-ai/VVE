@@ -192,7 +192,7 @@ const drawPath = (context, element, smoothingFactor) => {
         }
       } else {
         // Calculate curves on the fly with adaptive smoothing
-        const adaptiveSmoothingFactor = Math.min(0.4, smoothingFactor * 2);
+        const adaptiveSmoothingFactor = Math.min(0.9, smoothingFactor * 2);
 
         for (let i = 0; i < element.points.length - 1; i++) {
           const p0 = i > 0 ? element.points[i - 1] : element.points[i];
@@ -207,7 +207,7 @@ const drawPath = (context, element, smoothingFactor) => {
 
           // Adjust tension based on point distances (simplified)
           const tensionFactor = (d1 + d2 + d3 > 0) ? Math.min(d1, d2, d3) / Math.max(d1, d2, d3) : 0;
-          const tension = adaptiveSmoothingFactor * (0.5 + (isNaN(tensionFactor) ? 0 : tensionFactor) / 2);
+          const tension = adaptiveSmoothingFactor * (0.9 + (isNaN(tensionFactor) ? 0 : tensionFactor) / 2);
 
 
           // Control points with adaptive tension

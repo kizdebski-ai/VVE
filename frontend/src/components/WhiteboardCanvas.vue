@@ -60,21 +60,7 @@
     />
     <!-- ... existing template ... -->
 
-  <!-- Math Plot Configuration Panel -->
-  <MathPlot
-    v-if="activeConfigPanel === 'math'"
-    :initial-coords="configPanelCoords"
-    @close="closeConfigPanel"
-    @add-plot="addElementFromPanel"
-  />
-
-  <!-- Physics Plot Configuration Panel -->
-  <PhysicsPlot
-    v-if="activeConfigPanel === 'physics'"
-    :initial-coords="configPanelCoords"
-    @close="closeConfigPanel"
-    @add-plot="addElementFromPanel"
-  />
+  
 
   <!-- TODO: Add similar conditional rendering for CoordSystem2D/3D panels if they are separate components -->
   <!-- Or handle their creation directly if simple enough -->
@@ -120,14 +106,12 @@ import {
   createImageElement,
   getCursorStyle,
   createCoordinateSystem2DElement, // Added
-  createMathFunctionPlotElement,   // Added
-  createPhysicsDataPlotElement,  // Added
+  
   createCoordinateSystem3DElement    // Added
 } from '../utils/canvasTools.js';
 import { drawGrid } from '../utils/canvasGrid.js';
 import MovableObject from './MovableObject.vue';
-import MathPlot from './MathPlot.vue';         // Added: Import MathPlot panel
-import PhysicsPlot from './PhysicsPlot.vue';   // Added: Import PhysicsPlot panel
+
 
 // Debounce function
 function debounce(func, wait) {
@@ -150,8 +134,7 @@ export default {
     ZoomPanControls,
     EraserModeControls,
     StatusMessage,
-    MathPlot,     // Added
-    PhysicsPlot,  // Added
+    
   },
   props: {
     debugMode: { type: Boolean, default: false },
@@ -180,7 +163,7 @@ export default {
     const lastReleasedElementIndex = ref(-1);
     const currentElementPreview = ref(null);
     const pointsBuffer = ref([]);
-    const smoothingFactor = ref(0.2);
+    const smoothingFactor = ref(0.5);
     const shiftPressedAtStart = ref(false); // Track shift key state at mousedown
     const startCoordsForShiftLine = ref(null); // Store start coords specifically for Shift+Pen
     const notifications = ref([]);

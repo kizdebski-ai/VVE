@@ -43,6 +43,36 @@
           </svg>
           <span>Shortcuts</span>
         </button>
+        <!-- Experimental AI Buttons -->
+        <button class="menu-btn" @click="handleAIStyles" title="AI Styles (Experimental)">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M15 3l-3 3m0 0l-3 3m3-3l6 6m-6-6L3 15m12-12l3 3m0 0l3 3m-3-3l-6 6m6-6l-3 3"/>
+            <path d="M9 12l-6 6m6-6l3 3m-3-3l-3-3"/>
+            <path d="M19 19l2 2"/>
+          </svg>
+          <span>AI Styles</span>
+        </button>
+        <button class="menu-btn" @click="handleAILine" title="AI Line Alignment (Experimental)">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+            <line x1="3" y1="9" x2="21" y2="9"/>
+            <line x1="3" y1="15" x2="21" y2="15"/>
+            <line x1="9" y1="3" x2="9" y2="21"/>
+            <line x1="15" y1="3" x2="15" y2="21"/>
+          </svg>
+          <span>AI Line</span>
+        </button>
+        <button class="menu-btn" @click="handleAIExpression" title="AI Expression Computation (Experimental)">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="4" y="3" width="16" height="18" rx="2" ry="2"/>
+            <line x1="8" y1="7" x2="16" y2="7"/>
+            <line x1="8" y1="11" x2="16" y2="11"/>
+            <line x1="8" y1="15" x2="10" y2="15"/>
+            <line x1="14" y1="15" x2="16" y2="15"/>
+            <line x1="12" y1="13" x2="12" y2="17"/>
+          </svg>
+          <span>AI Calc</span>
+        </button>
         <!-- Add more buttons here later -->
       </div>
     </transition>
@@ -173,6 +203,22 @@ const toggleShortcuts = () => {
       // If closing shortcuts, allow normal hide behavior
       handleMouseLeave();
   }
+};
+
+// Placeholder handlers for AI features
+const handleAIStyles = () => {
+  console.log('AI Styles button clicked (Experimental)');
+  // Future implementation
+};
+
+const handleAILine = () => {
+  console.log('AI Line button clicked (Experimental)');
+  // Future implementation
+};
+
+const handleAIExpression = () => {
+  console.log('AI Expression Computation button clicked (Experimental)');
+  // Future implementation
 };
 
 </script>

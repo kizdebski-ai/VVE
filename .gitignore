@@ -35,3 +35,6 @@ lerna-debug.log*
 *.njsproj
 *.sln
 *.sw?
+
+# === PLAYGROUND ===
+frontend-playground/

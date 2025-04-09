@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "function-plot": "^1.25.1",
+    "katex": "^0.16.21",
     "mathjs": "^14.4.0",
     "plotly.js-dist-min": "^3.0.1",
     "uuid": "^11.1.0",

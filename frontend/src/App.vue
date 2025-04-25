@@ -95,25 +95,25 @@
            </div>
          </div>
        </div>
-
+      
       <!-- User info in top-right corner -->
       <div class="floating-user-info">
         <div class="username-container">
-          <input
-            type="text"
-            v-model="username"
+          <input 
+            type="text" 
+            v-model="username" 
             placeholder="Your Name"
             class="username-input"
             @blur="updateUsername"
           />
         </div>
-
+        
         <div class="user-count">
           <!-- Display count from Yjs awareness -->
           <span class="user-count-badge">{{ activeUsersCount }}</span>
           <span class="user-count-label">Online</span>
         </div>
-
+        
         <button class="share-btn" @click="shareRoom">
           <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"></path>
@@ -128,7 +128,7 @@
           Debug {{ debugMode ? 'ON' : 'OFF' }}
         </button>
       </div>
-
+      
       <!-- Floating toolbar -->
       <div class="floating-toolbar"> <!-- Check styles for this container -->
         <ToolBar
@@ -152,15 +152,15 @@
         <span>Room: {{ roomId }}</span>
       </div>
     </div>
-
+    
     <!-- Dialogs -->
-    <ImportDialog
-      :show="showImportDialog"
+    <ImportDialog 
+      :show="showImportDialog" 
       @close="showImportDialog = false"
       @import="handleImportState"
     />
-    <ExportDialog
-      :show="showExportDialog"
+    <ExportDialog 
+      :show="showExportDialog" 
       :export-text="exportedState"
       @close="showExportDialog = false"
       @copy="copyToClipboard"
@@ -283,7 +283,7 @@ export default {
       const diffMins = Math.floor(diffMs / 60000);
       if (diffMins < 1) return 'Just now';
       if (diffMins < 60) return `${diffMins} minute${diffMins > 1 ? 's' : ''} ago`;
-      const hours = Math.floor(diffMins / 60);
+        const hours = Math.floor(diffMins / 60);
       if (hours < 24) return `${hours} hour${hours > 1 ? 's' : ''} ago`;
       return saved.toLocaleString();
     });
@@ -341,7 +341,7 @@ export default {
       console.log(`[Notification] ${type}: ${message}`);
       if (whiteboard.value?.showToast) {
         whiteboard.value.showToast(message, type);
-      } else {
+    } else {
         const notification = document.createElement('div');
         notification.className = `notification notification-${type}`;
         notification.textContent = message;

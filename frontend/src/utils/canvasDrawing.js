@@ -662,7 +662,28 @@ const drawCircle = (context, element) => {
  */
 const drawText = (context, element) => {
   context.font = `${element.fontSize}px Arial, sans-serif`;
-  context.fillText(element.text, element.position.x, element.position.y);
+  // Use element's width and height if available, otherwise rely on canvas transform
+  // The position (x, y) is the top-left corner of the text bounding box in whiteboard coordinates
+  const x = element.position.x;
+  const y = element.position.y;
+  const width = element.width; // Use stored width
+  const height = element.height; // Use stored height
+
+  // For text, fillText draws from the baseline. Adjust y position to account for height.
+  // Assuming element.position.y is the top of the bounding box.
+  const textBaseline = 'top'; // Set text baseline to top for consistent positioning
+  context.textBaseline = textBaseline;
+
+  // If width and height are available, we could potentially scale or wrap text,
+  // but for now, just drawing at the correct transformed position is the goal.
+  // The canvas transform already handles scaling based on zoomLevel.
+  context.fillText(element.text, x, y);
+
+  // Optional: Draw bounding box for debugging
+  // if (width && height) {
+  //   context.strokeStyle = 'rgba(0, 0, 255, 0.5)';
+  //   context.strokeRect(x, y, width, height);
+  // }
 };
 
 /**

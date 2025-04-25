@@ -118,7 +118,12 @@ interface MovableObjectData {
 const props = defineProps<{
   object: Y.Map<any>; // Expecting a Y.Map here for direct updates
   isSelectedInitially?: boolean; // Optional prop to control initial selection state
+  zoomLevel: number; // Add zoomLevel prop
+  panOffset: { x: number; y: number }; // Add panOffset prop
 }>();
+
+// Explicitly define the type of props for clarity and potential TS help
+const typedProps: typeof props = props;
 
 // Emit event for selection changes
 const emit = defineEmits(['selected', 'deselected']);
@@ -175,20 +180,30 @@ const syncDataFromYMap = () => {
     objectData.fontSize = props.object.get('fontSize');
 };
 
-const objectStyle = computed(() => ({
-  position: 'absolute' as const,
-  left: `${objectData.x}px`,
-  top: `${objectData.y}px`,
-  width: `${objectData.width}px`,
-  height: `${objectData.height}px`,
-  transform: `rotate(${objectData.rotation}deg)`,
-  cursor: isDragging.value ? 'grabbing' : 'grab',
-  border: isSelected.value ? '2px solid dodgerblue' : '1px solid transparent',
-  transformOrigin: 'center center',
-  userSelect: 'none' as const,
-  boxSizing: 'border-box' as const,
-  zIndex: isSelected.value ? 10 : 1,
-}));
+const objectStyle = computed(() => {
+  // Calculate screen position based on canvas coordinates, zoom, and pan
+  const screenX = objectData.x * props.zoomLevel + props.panOffset.x;
+  const screenY = objectData.y * props.zoomLevel + props.panOffset.y;
+
+  // Scale width and height by zoom level
+  const scaledWidth = objectData.width * props.zoomLevel;
+  const scaledHeight = objectData.height * props.zoomLevel;
+
+  return {
+    position: 'absolute' as const,
+    left: `${screenX}px`,
+    top: `${screenY}px`,
+    width: `${scaledWidth}px`,
+    height: `${scaledHeight}px`,
+    transform: `rotate(${objectData.rotation}deg)`, // Rotation is independent of zoom/pan
+    cursor: isDragging.value ? 'grabbing' : 'grab',
+    border: isSelected.value ? '2px solid dodgerblue' : '1px solid transparent',
+    transformOrigin: 'top left', // Apply rotation around the top-left corner after positioning
+    userSelect: 'none' as const,
+    boxSizing: 'border-box' as const,
+    zIndex: isSelected.value ? 10 : 1,
+  };
+});
 
 // --- State for Dragging/Rotating ---
 const startCoords = reactive({ x: 0, y: 0 });

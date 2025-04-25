@@ -4,8 +4,8 @@
      background: rgba(0,0,0,0.7); color: white; padding: 5px; border-radius: 4px; font-size: 12px;">
   UndoManager: CanUndo={{canUndo}}, CanRedo={{canRedo}}
 </div>
-    <canvas
-      ref="canvas"
+    <canvas 
+      ref="canvas" 
       :width="canvasWidth"
       :height="canvasHeight"
       class="whiteboard-canvas"
@@ -32,7 +32,7 @@
     />
 
     <!-- Zoom and pan controls -->
-    <ZoomPanControls
+    <ZoomPanControls 
       :zoomLevel="zoomLevel"
       @zoom-in="zoomIn"
       @zoom-out="zoomOut"
@@ -40,7 +40,7 @@
     />
 
     <!-- Eraser mode controls -->
-    <EraserModeControls
+    <EraserModeControls 
       v-if="currentTool === 'eraser'"
       :mode="eraserMode"
       @update:mode="setEraserMode"
@@ -50,9 +50,9 @@
     <StatusMessage :message="statusMessage" />
 
     <!-- Clipboard handler -->
-    <input
+    <input 
       ref="clipboardInput"
-      type="text"
+      type="text" 
       class="clipboard-input"
       @paste="handlePaste"
     />
@@ -377,7 +377,7 @@ export default {
             } else if (Array.isArray(value)) {
               // Store plain arrays directly for data points (simpler for now)
               yElementMap.set(key, value);
-            } else {
+        } else {
               yElementMap.set(key, value);
             }
           }
@@ -453,8 +453,6 @@ export default {
       ctx.restore();
     };
 
-    const debouncedRedraw = debounce(redrawCanvas, 16);
-
     const handleYjsUpdate = (events, transaction) => {
       // Only log detailed info if debugging is enabled
       if (props.debugMode) {
@@ -467,7 +465,8 @@ export default {
           syncModulesWithYjs();
       }
 
-      debouncedRedraw();
+      // Directly call redrawCanvas without throttling
+      redrawCanvas();
       // State update is handled by undoManager listeners now
     };
 
@@ -594,7 +593,7 @@ export default {
                     }
                     if (isPointInElement(transformedCoords, element, (element.lineWidth || 2) / 2 + 5)) {
                         foundIndex = i;
-                        break;
+          break;
                     }
                 } catch (error) {
                     // console.error("Error processing element for eraser hover:", elementMap, error); // Commented out
@@ -671,8 +670,8 @@ export default {
       if (isPanning.value) {
         isPanning.value = false;
         lastPanPoint.value = null;
-        return;
-      }
+          return;
+        }
       if (isDrawing.value) {
          if (currentTool.value === 'eraser') {
              isDrawing.value = false;
@@ -782,7 +781,7 @@ export default {
       // Create preview element based on the determined toolType
       currentElementPreview.value = createNewElement(
         toolType,
-        transformedCoords,
+        transformedCoords, 
         currentColor.value,
         currentLineWidth.value,
         elementData // Pass extra data
@@ -804,8 +803,8 @@ export default {
         const text = prompt('Enter text:', '');
         if (text) {
           const textElementData = createTextElement(
-            transformedCoords,
-            text,
+            transformedCoords, 
+            text, 
             currentColor.value,
             currentLineWidth.value * 10
           );
@@ -1260,17 +1259,28 @@ export default {
     // ===== FRAGMENT 3 Modification START (addTextElement - outer call) =====
     const addTextElement = (position, text) => {
         if (!ydoc.value || !yDrawings.value || !text) return;
-        const textElementData = createTextElement(
-            position,
-            text,
-            currentColor.value,
-            currentLineWidth.value * 10
-        );
-        textElementData.id = `${yjsConnection.value?.awareness?.clientID || 'local'}-${Date.now()}`; // Assign ID
+        // Temporarily create a canvas element to measure text
+        const tempCanvas = document.createElement('canvas');
+        const tempCtx = tempCanvas.getContext('2d');
+        tempCtx.font = `${currentLineWidth.value * 10}px Arial, sans-serif`; // Use the same font style as drawText
+        const textMetrics = tempCtx.measureText(text);
+
+        const textElementData = {
+            type: 'text',
+            position: position,
+            text: text,
+            color: currentColor.value,
+            fontSize: currentLineWidth.value * 10, // Store font size
+            width: textMetrics.width, // Store calculated width
+            height: textMetrics.actualBoundingBoxAscent + textMetrics.actualBoundingBoxDescent, // Store calculated height
+            id: `${yjsConnection.value?.awareness?.clientID || 'local'}-${Date.now()}`, // Assign ID
+            timestamp: Date.now(),
+        };
 
         try {
             ydoc.value.transact(() => {
               const textMap = new Y.Map();
+              // Store all properties from textElementData
               for (const [key, value] of Object.entries(textElementData)) {
                 if (key === 'position') {
                   const posMap = new Y.Map();
@@ -1283,6 +1293,7 @@ export default {
               }
               yDrawings.value.push([textMap]);
             }, 'local-text'); // Add origin
+            // No need to remove tempCanvas, it will be garbage collected
 
             // Po każdej transakcji dodaj (inside try block):
             nextTick(() => {
@@ -1448,7 +1459,7 @@ export default {
                         // Update points in the Y.Map
                         yMap.set('points', updatedStroke.points);
                         yMap.set('aligned', true); // Mark as aligned
-                    } else {
+      } else {
                         // Log if a changed stroke ID wasn't found in yDrawings (shouldn't happen often)
                         // if (changedStrokes.some(s => s.id === strokeId)) {
                         //     console.warn(`[alignToGrid] Mismatch: Changed stroke ${strokeId} present but not found during Y.Map iteration?`);

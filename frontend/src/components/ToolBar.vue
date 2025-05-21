@@ -22,7 +22,17 @@
      </button>
     </div>
 
-    <!-- Shapes Category -->
+    <!-- Selection Tool -->
+    <div class="tool-category">
+      <button :class="['tool-btn', { active: currentTool === 'select' }]" @click="selectTool('select', $event)" title="Select (V)">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M17 3L7 14l-5 1 1-5 11-10 4 4z"></path>
+          <path d="M14.5 4.5l5 5"></path>
+        </svg>
+      </button>
+    </div>
+
+    <!-- Drawing Tools Category -->
     <div class="tool-category">
       <button :class="['tool-btn', { active: currentTool === 'shapes' }]" @click="selectTool('shapes', $event)" title="Shapes (S)">
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -315,9 +325,9 @@ export default {
       }
     };
 
-    const toolsWithOptions = ['pen', 'highlighter', 'shapes', 'lines', 'advanced']; // Added 'advanced'
+    const toolsWithOptions = ['pen', 'highlighter', 'shapes', 'lines', 'advanced'];
     // Define tools that don't open the floating panel
-    const toolsWithoutOptions = ['text', 'image', 'mathPlot', 'physicsPlot', 'coordSystem2D', 'coordSystem3D', 'eraser'];
+    const toolsWithoutOptions = ['text', 'image', 'mathPlot', 'physicsPlot', 'coordSystem2D', 'coordSystem3D', 'eraser', 'select']; // Added 'select'
 
 
     const selectTool = (tool, event = null) => {

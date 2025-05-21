@@ -50,6 +50,21 @@ export const drawElement = (context, element, isHighlighted = false, smoothingFa
 
 
   context.save();
+  // Apply rotation if element.rotation exists
+  if (typeof element.rotation === 'number' && element.rotation !== 0) {
+    const angle = element.rotation * (Math.PI / 180);
+    let cx = 0, cy = 0;
+    if (needsStartEnd.includes(element.type)) {
+      cx = (element.start.x + element.end.x) / 2;
+      cy = (element.start.y + element.end.y) / 2;
+    } else if (needsPosition.includes(element.type) && element.width != null && element.height != null) {
+      cx = element.position.x + element.width / 2;
+      cy = element.position.y + element.height / 2;
+    }
+    context.translate(cx, cy);
+    context.rotate(angle);
+    context.translate(-cx, -cy);
+  }
 
   // Set styles
   context.strokeStyle = element.color || '#000000'; // Default color

@@ -4,88 +4,88 @@
     class="movable-object"
     :class="{ 'is-selected': isSelected }"
     :style="objectStyle"
-    @mousedown.stop="handleSelect"
+    @pointerdown.stop.self="handleSelect"
   >
     <!-- Rotation Handle -->
     <div
       v-if="isSelected"
       class="rotation-handle"
-      @mousedown.stop="startRotate"
+      @pointerdown.stop="startRotate"
+    ></div>
+    <!-- Scale handles -->
+    <div
+      v-if="isSelected"
+      class="scale-handle top-left"
+      @pointerdown.stop="startScale('tl', $event)"
+    ></div>
+    <div
+      v-if="isSelected"
+      class="scale-handle top-right"
+      @pointerdown.stop="startScale('tr', $event)"
+    ></div>
+    <div
+      v-if="isSelected"
+      class="scale-handle bottom-left"
+      @pointerdown.stop="startScale('bl', $event)"
+    ></div>
+    <div
+      v-if="isSelected"
+      class="scale-handle bottom-right"
+      @pointerdown.stop="startScale('br', $event)"
     ></div>
 
     <!-- Object Content -->
-    <div class="object-content" @mousedown.stop="startDrag">
+    <div class="object-content" @pointerdown.stop.self="startDrag">
       <img
         v-if="objectData.type === 'image'"
         :src="objectData.src"
-        :alt="'Object ' + objectData.id"
+        :alt="`Object ${objectData.id}`"
         draggable="false"
-        style="width: 100%; height: 100%; user-select: none; object-fit: contain;"
       />
-      <!-- SVG Rendering for Shapes/Lines -->
-      <svg v-else-if="['rectangle', 'circle', 'line', 'square'].includes(objectData.type)"
-           width="100%"
-           height="100%"
-           viewBox="0 0 100 100"
-           preserveAspectRatio="none"
-           style="display: block; overflow: visible;">
-
-        <!-- Rectangle / Square -->
-        <rect v-if="objectData.type === 'rectangle' || objectData.type === 'square'"
-              x="0" y="0" width="100" height="100"
-              fill="transparent"
-              :stroke="objectData.color || '#000000'"
-              :stroke-width="objectData.lineWidth || 1"
-              vector-effect="non-scaling-stroke" />
-
-        <!-- Circle -->
-        <ellipse v-else-if="objectData.type === 'circle'"
-                 cx="50" cy="50" rx="50" ry="50"
-                 fill="transparent"
-                 :stroke="objectData.color || '#000000'"
-                 :stroke-width="objectData.lineWidth || 1"
-                 vector-effect="non-scaling-stroke" />
-
-        <!-- Line -->
-        <!-- Scale relative coordinates (startX, endX etc.) to the 0-100 viewBox -->
-        <line v-else-if="objectData.type === 'line'"
-              :x1="objectData.width ? ((objectData.startX ?? 0) / objectData.width) * 100 : 0"
-              :y1="objectData.height ? ((objectData.startY ?? 0) / objectData.height) * 100 : 0"
-              :x2="objectData.width ? ((objectData.endX ?? objectData.width) / objectData.width) * 100 : 100"
-              :y2="objectData.height ? ((objectData.endY ?? objectData.height) / objectData.height) * 100 : 100"
-              :stroke="objectData.color || '#000000'"
-              :stroke-width="objectData.lineWidth || 1"
-              :stroke-dasharray="objectData.lineStyle === 'dashed' ? '5,5' : (objectData.lineStyle === 'dotted' ? '1,3' : 'none')"
-              stroke-linecap="round"
-              vector-effect="non-scaling-stroke" />
-
+      <svg
+        v-else-if="['rectangle','square','circle','line'].includes(objectData.type)"
+        width="100%" height="100%" viewBox="0 0 100 100" preserveAspectRatio="none"
+      >
+        <rect
+          v-if="['rectangle','square'].includes(objectData.type)"
+          x="0" y="0" width="100" height="100"
+          fill="transparent"
+          :stroke="objectData.color||'#000'"
+          :stroke-width="objectData.lineWidth||1"
+          vector-effect="non-scaling-stroke"
+        />
+        <ellipse
+          v-else-if="objectData.type==='circle'"
+          cx="50" cy="50" rx="50" ry="50"
+          fill="transparent"
+          :stroke="objectData.color||'#000'"
+          :stroke-width="objectData.lineWidth||1"
+          vector-effect="non-scaling-stroke"
+        />
+        <line
+          v-else-if="objectData.type==='line'"
+          :x1="(objectData.startX||0)/objectData.width*100"
+          :y1="(objectData.startY||0)/objectData.height*100"
+          :x2="(objectData.endX||objectData.width)/objectData.width*100"
+          :y2="(objectData.endY||objectData.height)/objectData.height*100"
+          :stroke="objectData.color||'#000'"
+          :stroke-width="objectData.lineWidth||1"
+          :stroke-dasharray="objectData.lineStyle==='dashed'? '5,5' : (objectData.lineStyle==='dotted'? '1,3':'')"
+          stroke-linecap="round"
+          vector-effect="non-scaling-stroke"
+        />
       </svg>
-       <!-- Text Rendering -->
-      <div v-else-if="objectData.type === 'text'"
-           :style="{
-             color: objectData.color || '#000000',
-             fontSize: `${objectData.fontSize || 16}px`,
-             width: '100%',
-             height: '100%',
-             display: 'flex',
-             alignItems: 'center',
-             justifyContent: 'center',
-             textAlign: 'center',
-             overflowWrap: 'break-word',
-             whiteSpace: 'pre-wrap', /* Respect newlines */
-             userSelect: 'none',
-             cursor: 'grab'
-           }"
-           @mousedown.stop="startDrag">
+      <div
+        v-else-if="objectData.type==='text'"
+        class="text-content"
+      >
         {{ objectData.text }}
       </div>
-      <!-- Fallback for unknown types -->
-      <div v-else>
-        Unknown Type: {{ objectData.type }}
-      </div>
+      <div v-else class="fallback">Unknown Type: {{ objectData.type }}</div>
     </div>
   </div>
 </template>
+
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, reactive, watch } from 'vue';
@@ -117,7 +117,7 @@ interface MovableObjectData {
 // Define props using defineProps
 const props = defineProps<{
   object: Y.Map<any>; // Expecting a Y.Map here for direct updates
-  isSelectedInitially?: boolean; // Optional prop to control initial selection state
+  isSelected: boolean;             // <- spójne z WhiteboardCanvas
   zoomLevel: number; // Add zoomLevel prop
   panOffset: { x: number; y: number }; // Add panOffset prop
 }>();
@@ -129,13 +129,17 @@ const typedProps: typeof props = props;
 const emit = defineEmits(['selected', 'deselected']);
 
 const movableObjectRef = ref<HTMLElement | null>(null);
-const isSelected = ref(props.isSelectedInitially ?? false);
+const isSelected = ref(props.isSelected);
 const isDragging = ref(false);
 const isRotating = ref(false);
+const isScaling = ref(false);
+const scaleDirection = ref('');
+const scaleStartCoords = reactive({ x: 0, y: 0 });
+const initialObjectScale = reactive({ x: 0, y: 0, width: 0, height: 0 });
 
 // Watch the prop in case parent controls selection
-watch(() => props.isSelectedInitially, (newValue) => {
-    isSelected.value = newValue ?? false;
+watch(() => props.isSelected, (newValue) => {
+    isSelected.value = newValue;
 });
 
 // Reactive wrapper around Y.Map data
@@ -286,6 +290,76 @@ const stopRotate = () => {
   }
 };
 
+// --- Scaling handlers ---
+const startScale = (dir, event) => {
+  if (!movableObjectRef.value) return;
+  isScaling.value = true;
+  scaleDirection.value = dir;
+  scaleStartCoords.x = event.clientX;
+  scaleStartCoords.y = event.clientY;
+  initialObjectScale.x = objectData.x;
+  initialObjectScale.y = objectData.y;
+  initialObjectScale.width = objectData.width;
+  initialObjectScale.height = objectData.height;
+  document.addEventListener('mousemove', handleScale);
+  document.addEventListener('mouseup', stopScale);
+};
+
+const handleScale = (event) => {
+  if (!isScaling.value) return;
+  const dx = event.clientX - scaleStartCoords.x;
+  const dy = event.clientY - scaleStartCoords.y;
+  let newX = initialObjectScale.x;
+  let newY = initialObjectScale.y;
+  let newWidth = initialObjectScale.width;
+  let newHeight = initialObjectScale.height;
+
+  switch (scaleDirection.value) {
+    case 'tl':
+      newX = initialObjectScale.x + dx;
+      newY = initialObjectScale.y + dy;
+      newWidth = initialObjectScale.width - dx;
+      newHeight = initialObjectScale.height - dy;
+      break;
+    case 'tr':
+      newY = initialObjectScale.y + dy;
+      newWidth = initialObjectScale.width + dx;
+      newHeight = initialObjectScale.height - dy;
+      break;
+    case 'bl':
+      newX = initialObjectScale.x + dx;
+      newWidth = initialObjectScale.width - dx;
+      newHeight = initialObjectScale.height + dy;
+      break;
+    case 'br':
+      newWidth = initialObjectScale.width + dx;
+      newHeight = initialObjectScale.height + dy;
+      break;
+  }
+
+  // Prevent negative sizes
+  newWidth = Math.max(1, newWidth);
+  newHeight = Math.max(1, newHeight);
+
+  props.object.set('x', newX);
+  props.object.set('y', newY);
+  props.object.set('width', newWidth);
+  props.object.set('height', newHeight);
+
+  objectData.x = newX;
+  objectData.y = newY;
+  objectData.width = newWidth;
+  objectData.height = newHeight;
+};
+
+const stopScale = () => {
+  if (isScaling.value) {
+    isScaling.value = false;
+    document.removeEventListener('mousemove', handleScale);
+    document.removeEventListener('mouseup', stopScale);
+  }
+};
+
 const handleClickOutside = (event: MouseEvent) => {
     if (isSelected.value && movableObjectRef.value && !movableObjectRef.value.contains(event.target as Node)) {
          isSelected.value = false;
@@ -359,4 +433,18 @@ onUnmounted(() => {
   z-index: 11;
   box-shadow: 0 0 3px rgba(0, 0, 0, 0.5);
 }
+
+/* Scale handles */
+.scale-handle {
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  background-color: white;
+  border: 1px solid #333;
+  z-index: 11;
+}
+.scale-handle.top-left { top: -4px; left: -4px; cursor: nwse-resize; }
+.scale-handle.top-right { top: -4px; right: -4px; cursor: nesw-resize; }
+.scale-handle.bottom-left { bottom: -4px; left: -4px; cursor: nesw-resize; }
+.scale-handle.bottom-right { bottom: -4px; right: -4px; cursor: nwse-resize; }
 </style>

@@ -19,7 +19,19 @@
       @touchmove="handleTouchMove"
       @touchend="handleTouchEnd"
       @touchcancel="handleTouchEnd"
+      @click="handleCanvasClick"
+      :style="{ cursor: currentTool === 'select' ? 'pointer' : '' }"
     ></canvas>
+    <MovableObject
+      v-for="(map, index) in yDrawings"
+      :key="map.get('id')"
+      :object="map"
+      :isSelected="selectedElementId === map.get('id')"
+      :zoomLevel="zoomLevel"
+      :panOffset="panOffset"
+      @selected="selectElement"
+      @deselected="deselectElement"
+    />
 
     <!-- Cursor overlays for other users -->
     <Collaborators
@@ -86,7 +98,7 @@
 </template>
 
 <script>
-import { ref, onMounted, onBeforeUnmount, watch, nextTick, shallowRef, defineExpose } from 'vue'; // Add shallowRef, defineExpose
+import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick, shallowRef, defineExpose } from 'vue'; // Add shallowRef, defineExpose and computed
 import * as Y from 'yjs';
 import katex from 'katex'; // Import katex
 import 'katex/dist/katex.min.css'; // Import katex CSS
@@ -136,6 +148,7 @@ export default {
     ZoomPanControls,
     EraserModeControls,
     StatusMessage,
+    MovableObject
 
   },
   props: {
@@ -162,7 +175,13 @@ export default {
 
   setup(props, { emit }) {
     const canvas = ref(null);
+const selectedElementId = ref(null);
+
+const selectElement = (id) => { selectedElementId.value = id; };
+const deselectElement = () => { selectedElementId.value = null; };
     const context = ref(null);
+    // Index of selected element for move/rotate overlay
+    const selectedElementIndex = ref(null); // This ref seems redundant now that we use selectedElementId
     const canvasWidth = ref(1200);
     const canvasHeight = ref(800);
     const isDrawing = ref(false);
@@ -381,6 +400,7 @@ export default {
               yElementMap.set(key, value);
             }
           }
+          yElementMap.set('rotation', 0);
           yDrawings.value.push([yElementMap]);
           console.log('[addElementFromPanel] Pushed Y.Map to yDrawings:', yElementMap.toJSON());
         });
@@ -548,6 +568,47 @@ export default {
         x: (x - panOffset.value.x) / zoomLevel.value,
         y: (y - panOffset.value.y) / zoomLevel.value
       };
+    };
+
+    // Handle canvas click for element selection
+    const handleCanvasClick = (event) => {
+      // Only allow selection if the current tool is "select"
+      if (currentTool.value !== 'select') return;
+      if (!yDrawings.value) return;
+
+      const coords = getCoordinates(event);
+      const transformedCoords = transformCoordinates(coords.offsetX, coords.offsetY);
+
+      let clickedElementId = null;
+
+      // Iterate through elements in reverse order (topmost first)
+      for (let i = yDrawings.value.length - 1; i >= 0; i--) {
+        const elementMap = yDrawings.value.get(i);
+        try {
+          // Convert Y.Map to plain object for hit testing
+          const element = {};
+          for (const [key, value] of elementMap.entries()) {
+            element[key] = (value instanceof Y.Map || value instanceof Y.Array) ? value.toJSON() : value;
+          }
+
+          // Check if the click point is within the element's bounds (with a small buffer)
+          // We need to pass the element's dimensions and position for accurate hit testing
+          // Assuming elements stored in Yjs have x, y, width, height, rotation
+          // For pen strokes, isPointInElement already handles points array
+          if (isPointInElement(transformedCoords, element, (element.lineWidth || 2) / 2 + 5)) {
+            clickedElementId = element.id; // Use the element's unique ID
+            break; // Found the topmost element
+          }
+        } catch (error) {
+          console.error("Error processing element for click detection:", elementMap, error);
+        }
+      }
+
+      if (clickedElementId) {
+        selectElement(clickedElementId);
+      } else {
+        deselectElement();
+      }
     };
 
     const updateLocalAwarenessCursor = throttle((coords) => {
@@ -970,6 +1031,7 @@ export default {
                       yElementMap.set('color', elementToAdd.color);
                       yElementMap.set('lineWidth', elementToAdd.lineWidth);
                       yElementMap.set('timestamp', Date.now());
+                      yElementMap.set('rotation', elementToAdd.rotation || 0);
 
                       // Handle type-specific properties
                       if (elementToAdd.type === 'pen') {
@@ -991,6 +1053,11 @@ export default {
                           // Explicitly add lineStyle
                           const lineStyle = elementToAdd.lineStyle || props.currentLineStyle || 'solid';
                           yElementMap.set('lineStyle', lineStyle);
+
+                          // Store width and height for lines based on start/end
+                          yElementMap.set('width', Math.abs(elementToAdd.end.x - elementToAdd.start.x));
+                          yElementMap.set('height', Math.abs(elementToAdd.end.y - elementToAdd.start.y));
+
                       }
                       else if (elementToAdd.type === 'text') {
                           // Handled separately in startDrawing
@@ -1009,6 +1076,10 @@ export default {
                           endMap.set('x', elementToAdd.end.x);
                           endMap.set('y', elementToAdd.end.y);
                           yElementMap.set('end', endMap);
+
+                          // Store width and height for shapes based on start/end
+                          yElementMap.set('width', Math.abs(elementToAdd.end.x - elementToAdd.start.x));
+                          yElementMap.set('height', Math.abs(elementToAdd.end.y - elementToAdd.start.y));
                       }
 
                       // Push to the shared array only if not text/image (handled elsewhere)
@@ -1808,8 +1879,11 @@ export default {
       notifications,
       statusMessage,
       yjsConnection, // Keep exposing for Collaborators
+      selectedElementId,
       canUndo, // Keep exposing for debug panel
       canRedo, // Keep exposing for debug panel
+      selectElement,
+      deselectElement,
 
       // Methods
       handleMouseDown,

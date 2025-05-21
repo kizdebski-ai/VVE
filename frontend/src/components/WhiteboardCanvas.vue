@@ -31,6 +31,18 @@
       :local-client-id="yjsConnection.awareness.clientID"
     />
 
+    <!-- Render MovableObject components -->
+    <movable-object
+      v-for="elementMap in (yDrawings ? yDrawings.toArray().map(m => m.get('id') ? m : new Y.Map(Object.entries(m.toJSON()).map(([k,v]) => [k, k === 'id' && !v ? `fallback-${Math.random().toString(36).substr(2,9)}` : v ] ))) : [])"
+      :key="elementMap.get('id') || Math.random()"
+      :object="elementMap"
+      :zoom-level="zoomLevel"
+      :pan-offset="panOffset"
+      :is-selected="elementMap.get('id') === selectedObjectId"
+      @update:object="handleObjectUpdate"
+      @request-select="handleObjectSelectionRequest"
+    ></movable-object>
+
     <!-- Zoom and pan controls -->
     <ZoomPanControls 
       :zoomLevel="zoomLevel"
@@ -102,6 +114,7 @@ import MathRecognizerModule from '../modules/MathRecognizerModule.js';
 // Utils and Services
 import { connectToYjs } from '../services/connectToYjs';
 import { drawElement, throttle, isPointInElement, distanceToSegment } from '../utils/canvasDrawing.js';
+import { isPointInRotatedRectangle } from '../utils/geometry.js'; // Added
 import {
   createNewElement,
   createTextElement,
@@ -136,7 +149,7 @@ export default {
     ZoomPanControls,
     EraserModeControls,
     StatusMessage,
-
+    MovableObject, // Register MovableObject
   },
   props: {
     debugMode: { type: Boolean, default: false },
@@ -188,6 +201,7 @@ export default {
     const clipboardInput = ref(null);
     const imageCache = ref(new Map());
     const hoveredElementIndex = ref(-1);
+    const selectedObjectId = ref(null); // Added for selection state
 
     // AI Module Instances
     const gridAlignModule = shallowRef(null);
@@ -427,9 +441,10 @@ export default {
       strokesToDraw.forEach((element, index) => {
         // Need to handle potential differences if strokesToDraw comes from the module vs Yjs
         // Assuming module returns objects compatible with drawElement for now
-        const isHighlighted = index === hoveredElementIndex.value && currentTool.value === 'eraser';
-        drawElement(ctx, element, isHighlighted, smoothingFactor.value, imageCache.value, redrawCanvas);
+      // const isHighlighted = index === hoveredElementIndex.value && currentTool.value === 'eraser';
+      // drawElement(ctx, element, isHighlighted, smoothingFactor.value, imageCache.value, redrawCanvas);
       });
+    // The above loop for drawing all elements is now handled by MovableObject components.
 
       // Draw current preview if any
       if (isDrawing.value && currentElementPreview.value) {
@@ -437,6 +452,9 @@ export default {
       }
 
       // Draw AI Module Overlays
+    // TODO: Re-evaluate how AI module overlays are drawn with MovableObject
+    // For now, keep them, but they might draw over or under MovableObjects depending on DOM order
+    // and their own drawing logic (e.g., if they directly draw on the main canvas context).
       if (props.activeFeature === 'gridAlign' && gridAlignModule.value) {
         // Draw grid (if needed, or rely on drawUtilGrid)
         // drawGrid(); // This component's grid drawing method
@@ -583,8 +601,9 @@ export default {
       } else if (currentTool.value === 'eraser') {
         let foundIndex = -1;
         if (yDrawings.value) {
-            for (let i = yDrawings.value.length - 1; i >= 0; i--) {
-                const elementMap = yDrawings.value.get(i);
+            const elementsArray = yDrawings.value.toArray(); // Get a JS array
+            for (let i = elementsArray.length - 1; i >= 0; i--) {
+                const elementMap = elementsArray[i];
                 try {
                     // Convert Y.Map to plain object for hit testing
                     const element = {};
@@ -593,7 +612,7 @@ export default {
                     }
                     if (isPointInElement(transformedCoords, element, (element.lineWidth || 2) / 2 + 5)) {
                         foundIndex = i;
-          break;
+                        break;
                     }
                 } catch (error) {
                     // console.error("Error processing element for eraser hover:", elementMap, error); // Commented out
@@ -616,52 +635,123 @@ export default {
     };
 
     const handleMouseDown = (event) => {
-      shiftPressedAtStart.value = event.shiftKey; // Record shift state on mousedown
-      startCoordsForShiftLine.value = null; // Reset shift line start point
+      shiftPressedAtStart.value = event.shiftKey; 
+      startCoordsForShiftLine.value = null; 
 
-      // Don't handle clicks if a config panel is active
       if (activeConfigPanel.value) return;
 
-      if (event.button === 1 || (event.button === 0 && event.altKey)) {
+      const coords = getCoordinates(event);
+      const transformedCoords = transformCoordinates(coords.offsetX, coords.offsetY);
+
+      if (event.button === 2) { // Right-click
+        event.preventDefault();
+        if (isDrawing.value) return; // Don't select if in the middle of drawing a new shape
+
+        let clickedObjectFoundId = null;
+        const elements = yDrawings.value.toArray().slice().reverse();
+        for (const elementMap of elements) {
+            const objProps = { 
+                x: elementMap.get('x'), 
+                y: elementMap.get('y'), 
+                width: elementMap.get('width'), 
+                height: elementMap.get('height'), 
+                rotation: elementMap.get('rotation') || 0, 
+                id: elementMap.get('id') 
+            };
+            if (isPointInRotatedRectangle(transformedCoords, objProps.x, objProps.y, objProps.width, objProps.height, objProps.rotation)) {
+                clickedObjectFoundId = objProps.id;
+                break;
+            }
+        }
+        selectedObjectId.value = clickedObjectFoundId;
+        if (props.debugMode) console.log('[WhiteboardCanvas] Right-click selected:', selectedObjectId.value);
+        redrawCanvas(); // To show selection changes on MovableObject
+        return;
+      }
+
+      if (event.button === 1 || (event.button === 0 && event.altKey)) { // Middle mouse or Alt+Left
         isPanning.value = true;
-        const coords = getCoordinates(event);
-        lastPanPoint.value = { ...transformCoordinates(coords.offsetX, coords.offsetY), screenX: coords.offsetX, screenY: coords.offsetY };
+        lastPanPoint.value = { ...transformedCoords, screenX: coords.offsetX, screenY: coords.offsetY };
         event.preventDefault();
         return;
       }
-      if (event.button === 0) {
-        if (currentTool.value === 'eraser') {
-            if (hoveredElementIndex.value !== -1) {
-                eraseElement(hoveredElementIndex.value);
-                hoveredElementIndex.value = -1;
-            }
-            isDrawing.value = true;
-        } else {
-            const coords = getCoordinates(event);
-            const transformedCoords = transformCoordinates(coords.offsetX, coords.offsetY);
+      
+      if (event.button === 0) { // Left-click
+        let hitObjectOnLeftClickId = null;
+        if (yDrawings.value) {
+          const elements = yDrawings.value.toArray().slice().reverse();
+          for (const elementMap of elements) {
+              const objProps = { 
+                  x: elementMap.get('x'), 
+                  y: elementMap.get('y'), 
+                  width: elementMap.get('width'), 
+                  height: elementMap.get('height'), 
+                  rotation: elementMap.get('rotation') || 0, 
+                  id: elementMap.get('id') 
+              };
+              if (isPointInRotatedRectangle(transformedCoords, objProps.x, objProps.y, objProps.width, objProps.height, objProps.rotation)) {
+                  hitObjectOnLeftClickId = objProps.id;
+                  break;
+              }
+          }
+        }
 
-            // Check tool type
-            if (currentTool.value === 'mathPlot') {
+        if (hitObjectOnLeftClickId) {
+            handleObjectSelectionRequest(hitObjectOnLeftClickId);
+            // If a MovableObject is clicked, we don't want to start drawing a new shape.
+            // The MovableObject itself will handle drag/resize.
+            isDrawing.value = false; // Explicitly prevent drawing
+            return; 
+        } else {
+            // Click on empty canvas
+            selectedObjectId.value = null; 
+            if (props.debugMode) console.log('[WhiteboardCanvas] Left-click on empty space, deselected all.');
+            // Proceed with drawing tools if no object was hit
+            if (currentTool.value === 'eraser') {
+                // Eraser logic (hover and click to erase is handled in mouseMove and the top of this function for left click)
+                isDrawing.value = true; // Allow dragging eraser over elements
+            } else if (currentTool.value === 'mathPlot') {
               openConfigPanel('math', transformedCoords);
             } else if (currentTool.value === 'physicsPlot') {
               openConfigPanel('physics', transformedCoords);
             } else if (currentTool.value === 'coordSystem2D') {
-              // Directly add 2D coordinate system
               const elementData = createCoordinateSystem2DElement(transformedCoords);
-              addElementFromPanel(elementData); // Reuse the add logic
-              // Tool remains active for potentially placing multiple systems
+              addElementFromPanel(elementData);
             } else if (currentTool.value === 'coordSystem3D') {
-              // Directly add 3D coordinate system
               const elementData = createCoordinateSystem3DElement(transformedCoords);
-              addElementFromPanel(elementData); // Reuse the add logic
-              // Tool remains active
+              addElementFromPanel(elementData);
             } else {
-              // Otherwise, start regular drawing (pen, shapes, lines, text)
-              startDrawing(event); // Pass the original event object
+              startDrawing(event); 
             }
         }
       }
+      redrawCanvas();
     };
+    
+    const handleObjectSelectionRequest = (objectId) => {
+      if (props.debugMode) console.log('[WhiteboardCanvas] Received object selection request for ID:', objectId);
+      
+      if (currentTool.value === 'eraser') {
+        if (yDrawings.value) {
+          const elementsArray = yDrawings.value.toArray();
+          const index = elementsArray.findIndex(elMap => elMap.get('id') === objectId);
+          if (index !== -1) {
+            if (props.debugMode) console.log(`[WhiteboardCanvas] Eraser tool active, erasing element ID ${objectId} at index ${index} due to selection request.`);
+            eraseElement(index); 
+            if (selectedObjectId.value === objectId) { 
+              selectedObjectId.value = null;
+            }
+          } else {
+             if (props.debugMode) console.warn(`[WhiteboardCanvas] Eraser tool: Element with ID ${objectId} not found for erasure via selection request.`);
+          }
+        }
+        return; 
+      }
+      selectedObjectId.value = objectId;
+      if (props.debugMode) console.log('[WhiteboardCanvas] Object selected via request:', selectedObjectId.value);
+      redrawCanvas();
+    };
+
 
     const handleMouseUp = (event) => {
       // Don't handle mouse up if a config panel is active
@@ -679,6 +769,7 @@ export default {
              finishDrawing();
          }
       }
+      redrawCanvas();
     };
 
     const handleMouseLeave = (event) => {
@@ -699,12 +790,21 @@ export default {
                yjsConnection.value.awareness.setLocalStateField('user', userState);
            }
        }
+       redrawCanvas();
     };
 
     const handleTouchStart = (event) => {
         if (event.touches.length === 1) {
-            event.preventDefault();
-            startDrawing(event.touches[0]);
+            // Convert touch event to a synthetic mouse event for handleMouseDown
+            const syntheticMouseEvent = {
+                clientX: event.touches[0].clientX,
+                clientY: event.touches[0].clientY,
+                button: 0, // Assume left-click for touch
+                shiftKey: event.shiftKey, // Pass shift state if available (though less common with touch)
+                altKey: event.altKey, // Pass alt state
+                preventDefault: () => event.preventDefault(), // Pass through preventDefault
+            };
+            handleMouseDown(syntheticMouseEvent);
         }
     };
 
@@ -724,9 +824,12 @@ export default {
 
     const handleTouchEnd = (event) => {
         event.preventDefault();
-        if (isDrawing.value) {
-            finishDrawing();
-        }
+        // Convert touch event to a synthetic mouse event for handleMouseUp
+        const syntheticMouseEvent = {
+            button: 0, // Assume left-click for touch end
+        };
+        handleMouseUp(syntheticMouseEvent);
+
         if (yjsConnection.value?.awareness) {
             yjsConnection.value.awareness.setLocalStateField('cursor', null);
             const userState = yjsConnection.value.awareness.getLocalState()?.user;
@@ -836,20 +939,30 @@ export default {
     };
 
     // ===== FRAGMENT 3 Modification START (eraseElement) =====
-    const eraseElement = (index) => {
-      if (ydoc.value && yDrawings.value && index >= 0 && index < yDrawings.value.length) {
-        // console.log(`[eraseElement] Usuwanie elementu pod indeksem: ${index}`); // Commented out
+    const eraseElement = (indexOrId) => { // Can now accept index or ID
+      if (!ydoc.value || !yDrawings.value) return;
+
+      let elementIndex = -1;
+      if (typeof indexOrId === 'number') {
+        elementIndex = indexOrId;
+      } else if (typeof indexOrId === 'string') {
+        elementIndex = yDrawings.value.toArray().findIndex(elMap => elMap.get('id') === indexOrId);
+      }
+      
+      if (elementIndex !== -1 && elementIndex >= 0 && elementIndex < yDrawings.value.length) {
+        if (props.debugMode) console.log(`[eraseElement] Removing element at index: ${elementIndex}`);
 
         ydoc.value.transact(() => {
-          yDrawings.value.delete(index, 1);
-        }, 'local-erase'); // Add origin
+          yDrawings.value.delete(elementIndex, 1);
+        }, 'local-erase'); 
 
-        // Po każdej transakcji dodaj (inside try block):
         nextTick(() => {
           if (undoManager.value) {
-             updateGlobalState(); // Use the shared function
+             updateGlobalState(); 
           }
         });
+      } else {
+        if (props.debugMode) console.warn(`[eraseElement] Element not found for index/ID: ${indexOrId}`);
       }
     };
 
@@ -970,14 +1083,44 @@ export default {
                       yElementMap.set('color', elementToAdd.color);
                       yElementMap.set('lineWidth', elementToAdd.lineWidth);
                       yElementMap.set('timestamp', Date.now());
+                      yElementMap.set('rotation', 0); // Default rotation
 
-                      // Handle type-specific properties
+                      // Handle type-specific properties and x, y, width, height
                       if (elementToAdd.type === 'pen') {
                           // Store points as an array (not a Y.Array)
                           yElementMap.set('points', elementToAdd.points);
+                          if (elementToAdd.points && elementToAdd.points.length > 0) {
+                              let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+                              elementToAdd.points.forEach(p => {
+                                  minX = Math.min(minX, p.x);
+                                  minY = Math.min(minY, p.y);
+                                  maxX = Math.max(maxX, p.x);
+                                  maxY = Math.max(maxY, p.y);
+                              });
+                              yElementMap.set('x', minX);
+                              yElementMap.set('y', minY);
+                              yElementMap.set('width', Math.max(0, maxX - minX)); // Ensure non-negative
+                              yElementMap.set('height', Math.max(0, maxY - minY)); // Ensure non-negative
+                              // TODO: Points might need to be relative to x,y for MovableObject
+                          } else {
+                              yElementMap.set('x', 0);
+                              yElementMap.set('y', 0);
+                              yElementMap.set('width', 0);
+                              yElementMap.set('height', 0);
+                          }
                       }
-                      else if (elementToAdd.type === 'line') {
-                          // Store start/end as nested Y.Maps
+                      else if (elementToAdd.type === 'line' || 
+                               (elementToAdd.start && elementToAdd.end)) { // Covers shapes
+                          const x = Math.min(elementToAdd.start.x, elementToAdd.end.x);
+                          const y = Math.min(elementToAdd.start.y, elementToAdd.end.y);
+                          const width = Math.abs(elementToAdd.start.x - elementToAdd.end.x);
+                          const height = Math.abs(elementToAdd.start.y - elementToAdd.end.y);
+                          yElementMap.set('x', x);
+                          yElementMap.set('y', y);
+                          yElementMap.set('width', width);
+                          yElementMap.set('height', height);
+
+                          // Store start/end as nested Y.Maps (can be kept for now)
                           const startMap = new Y.Map();
                           startMap.set('x', elementToAdd.start.x);
                           startMap.set('y', elementToAdd.start.y);
@@ -988,30 +1131,16 @@ export default {
                           endMap.set('y', elementToAdd.end.y);
                           yElementMap.set('end', endMap);
 
-                          // Explicitly add lineStyle
-                          const lineStyle = elementToAdd.lineStyle || props.currentLineStyle || 'solid';
-                          yElementMap.set('lineStyle', lineStyle);
+                          if (elementToAdd.type === 'line') {
+                            const lineStyle = elementToAdd.lineStyle || props.currentLineStyle || 'solid';
+                            yElementMap.set('lineStyle', lineStyle);
+                          }
                       }
-                      else if (elementToAdd.type === 'text') {
-                          // Handled separately in startDrawing
-                      }
-                      else if (elementToAdd.type === 'image') {
-                          // Handled separately in addImageFromDataUrl
-                      }
-                      else {
-                          // Handle shapes and other element types with start/end points
-                          const startMap = new Y.Map();
-                          startMap.set('x', elementToAdd.start.x);
-                          startMap.set('y', elementToAdd.start.y);
-                          yElementMap.set('start', startMap);
+                      // text and image types are handled in their respective functions (addTextElement, addImageFromDataUrl)
+                      // and should already have x, y, width, height. We just need to ensure rotation is set.
+                      // Plotting elements from addElementFromPanel also need this.
 
-                          const endMap = new Y.Map();
-                          endMap.set('x', elementToAdd.end.x);
-                          endMap.set('y', elementToAdd.end.y);
-                          yElementMap.set('end', endMap);
-                      }
-
-                      // Push to the shared array only if not text/image (handled elsewhere)
+                      // Push to the shared array only if not text/image (handled elsewhere, but they are pushed there)
                       if (elementToAdd.type !== 'text' && elementToAdd.type !== 'image') {
                         yDrawings.value.push([yElementMap]);
                       }
@@ -1056,6 +1185,25 @@ export default {
       pointsBuffer.value = [];
       redrawCanvas(); // Redraw to remove the preview
     };
+
+    const handleObjectUpdate = (updatedYMap) => {
+      // This function will be called when MovableObject emits an update.
+      // The yMap is already updated by MovableObject itself, so we might just need to
+      // trigger undo/redo state updates or redraw other parts of the UI if necessary.
+      // For now, we can log it.
+      if (props.debugMode) console.log('[WhiteboardCanvas] MovableObject updated:', updatedYMap.toJSON());
+      // Potentially update undo/redo state if the change wasn't already part of a transaction
+      // that UndoManager is tracking from MovableObject.
+      // updateGlobalState(); // This might be redundant if MovableObject uses ydoc.transact
+      redrawCanvas(); // Redraw overlays or other elements if needed
+    };
+
+    const selectObject = (objectId) => {
+      // This was the old @select handler from MovableObject.
+      // Its primary selection role is now handled by handleObjectSelectionRequest or right-click.
+      if (props.debugMode) console.log('[WhiteboardCanvas] selectObject (old handler) called with ID:', objectId);
+    };
+
 
     // --- Tool and Style Setters ---
     const setTool = (tool) => { currentTool.value = tool; updateCursor(); };
@@ -1213,16 +1361,19 @@ export default {
                         imageMap.set('type', 'image');
                         imageMap.set('timestamp', Date.now());
 
-                        // Set position as Y.Map
+                        // Set position (x,y), dimensions, and rotation
+                        imageMap.set('x', imageData.x); // Already top-left
+                        imageMap.set('y', imageData.y); // Already top-left
+                        // The 'position' Y.Map can be removed if x,y are at root, or kept for consistency
                         const posMap = new Y.Map();
                         posMap.set('x', imageData.x);
                         posMap.set('y', imageData.y);
-                        imageMap.set('position', posMap);
+                        imageMap.set('position', posMap); // Keep for now if other parts use it
 
-                        // Set image data
                         imageMap.set('dataUrl', imageData.dataUrl);
                         imageMap.set('width', imageData.width);
                         imageMap.set('height', imageData.height);
+                        imageMap.set('rotation', 0); // Default rotation
 
                         // Push to shared array
                         console.log("[addImageFromDataUrl] Pushing image to yDrawings");
@@ -1284,13 +1435,16 @@ export default {
               for (const [key, value] of Object.entries(textElementData)) {
                 if (key === 'position') {
                   const posMap = new Y.Map();
-                  posMap.set('x', value.x);
-                  posMap.set('y', value.y);
-                  textMap.set(key, posMap);
+                  posMap.set('x', value.x); // x from original position
+                  posMap.set('y', value.y); // y from original position
+                  textMap.set(key, posMap); // Keep 'position' map for now
+                  textMap.set('x', value.x); // Also store x at root
+                  textMap.set('y', value.y); // Also store y at root
                 } else {
                   textMap.set(key, value);
                 }
               }
+              textMap.set('rotation', 0); // Default rotation
               yDrawings.value.push([textMap]);
             }, 'local-text'); // Add origin
             // No need to remove tempCanvas, it will be garbage collected
@@ -1810,6 +1964,7 @@ export default {
       yjsConnection, // Keep exposing for Collaborators
       canUndo, // Keep exposing for debug panel
       canRedo, // Keep exposing for debug panel
+      selectedObjectId, // Added for selection state
 
       // Methods
       handleMouseDown,
@@ -1822,6 +1977,7 @@ export default {
       handleTouchStart,
       handleTouchMove,
       handleTouchEnd,
+      handleObjectSelectionRequest, // Added
 
       // Public API (already exposed via defineExpose)
       setTool,
@@ -1850,6 +2006,10 @@ export default {
       configPanelCoords,
       closeConfigPanel,
       addElementFromPanel,
+
+      // MovableObject handlers & selection state
+      handleObjectUpdate,
+      selectObject, 
 
       // AI Action Methods (now exposed via defineExpose)
       alignToGrid,

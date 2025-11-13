@@ -85,6 +85,107 @@ export const createNewElement = (tool, coords, color, lineWidth, extraData = {})
 };
 
 /**
+ * Create a 2D Coordinate System element
+ * @param {Object} position - Top-left corner {x, y}
+ * @param {Number} width - Initial width
+ * @param {Number} height - Initial height
+ * @param {String} color - Axis color
+ * @param {Number} lineWidth - Axis line width
+ * @returns {Object} - CoordinateSystem2D element
+ */
+export const createCoordinateSystem2DElement = (position, width = 300, height = 200, color = '#000000', lineWidth = 1) => {
+  return {
+    id: uuidv4(),
+    type: 'coordinateSystem2D',
+    position,
+    width,
+    height,
+    color,
+    lineWidth,
+    grid: true,
+    xLabel: 'x',
+    yLabel: 'y',
+    timestamp: Date.now()
+  };
+};
+
+/**
+ * Create a Math Function Plot element
+ * @param {Object} position - Top-left corner {x, y}
+ * @param {String} expression - Math function expression (e.g., 'sin(x)')
+ * @param {Number} width - Plot width
+ * @param {Number} height - Plot height
+ * @param {String} color - Plot line color
+ * @param {Number} lineWidth - Plot line width
+ * @returns {Object} - MathFunctionPlot element
+ */
+export const createMathFunctionPlotElement = (position, expression = 'x', width = 300, height = 200, color = '#007bff', lineWidth = 2) => {
+  return {
+    id: uuidv4(),
+    type: 'mathFunctionPlot',
+    position,
+    width,
+    height,
+    expression,
+    color,
+    lineWidth,
+    timestamp: Date.now()
+    // domain: [-10, 10] // Optional: Add later if needed
+  };
+};
+
+/**
+ * Create a Physics Data Plot element
+ * @param {Object} position - Top-left corner {x, y}
+ * @param {Array<Number>} xData - Array of x-coordinates
+ * @param {Array<Number>} yData - Array of y-coordinates
+ * @param {Number} width - Plot width
+ * @param {Number} height - Plot height
+ * @param {String} color - Plot color
+ * @param {Number} lineWidth - Plot line width
+ * @param {String} mode - Plot mode ('lines', 'markers', 'lines+markers')
+ * @returns {Object} - PhysicsDataPlot element
+ */
+export const createPhysicsDataPlotElement = (position, xData = [], yData = [], width = 300, height = 200, color = '#dc3545', lineWidth = 1, mode = 'lines+markers') => {
+  return {
+    id: uuidv4(),
+    type: 'physicsDataPlot',
+    position,
+    width,
+    height,
+    xData,
+    yData,
+    color,
+    lineWidth,
+    mode,
+    timestamp: Date.now()
+  };
+};
+
+/**
+ * Create a 3D Coordinate System element (basic projection)
+ * @param {Object} position - Center position {x, y}
+ * @param {Number} size - Size of the axes
+ * @param {String} color - Axis color
+ * @param {Number} lineWidth - Axis line width
+ * @returns {Object} - CoordinateSystem3D element
+ */
+export const createCoordinateSystem3DElement = (position, size = 150, color = '#000000', lineWidth = 1) => {
+  return {
+    id: uuidv4(),
+    type: 'coordinateSystem3D',
+    position, // Center position for 3D projection
+    size,
+    color,
+    lineWidth,
+    xLabel: 'x',
+    yLabel: 'y',
+    zLabel: 'z',
+    timestamp: Date.now()
+  };
+};
+
+/**
  * Create a text element
  * @param {Object} position - x, y coordinates
  * @param {String} text - Text content

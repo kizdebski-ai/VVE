@@ -165,7 +165,7 @@ export default {
   margin: 8px 0;
   width: 100%;
   display: flex; /* Center button */
-  justify-content: center;
+  justify-content: left;
 }
 
 .color-picker-btn {

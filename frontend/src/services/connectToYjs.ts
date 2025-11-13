@@ -19,9 +19,7 @@ interface YjsConnection {
 // Reconnect parameters
 const RECONNECT_TIMEOUT_BASE = 1000; // Initial timeout in ms
 const RECONNECT_TIMEOUT_MAX = 10000; // Max timeout in ms
-let reconnectTimeout = RECONNECT_TIMEOUT_BASE;
-let reconnectTimer: number | null = null;
-let explicitlyDisconnected = false; // Flag to prevent reconnect after manual disconnect
+type ReconnectTimer = ReturnType<typeof window.setTimeout> | null;
 
 /**
  * Establishes a WebSocket connection to synchronize a Yjs document and a specific Y.Array for drawings.
@@ -39,8 +37,13 @@ export function connectToYjs(
   const ydoc = new Y.Doc();
   const awareness = new Awareness(ydoc); // Create awareness instance
 
+  let reconnectTimeout = RECONNECT_TIMEOUT_BASE;
+  let reconnectTimer: ReconnectTimer = null;
+  let explicitlyDisconnected = false; // Flag to prevent reconnect after manual disconnect
+  let listenersAttached = false;
+
   // --- Set Initial Local Awareness State ---
-  // TODO: Get actual user info (name, color) from auth/store if available
+  // Replace with authenticated user info when available
   const defaultUser = {
     name: `User_${ydoc.clientID.toString().slice(-4)}`, // Simple default name
     color: `#${Math.floor(Math.random()*16777215).toString(16).padStart(6, '0')}` // Random color
@@ -53,6 +56,18 @@ export function connectToYjs(
   const yDrawings: Y.Array<any> = ydoc.getArray('drawings');
   const wsUrl = wsUrlTemplate.replace('{roomId}', roomId);
   let socket: WebSocket | null = null;
+
+  const clearAwarenessStates = (origin: string, includeLocal = false) => {
+    const knownClientIds = Array.from(awareness.getStates().keys()).filter(
+      (clientId) => includeLocal || clientId !== awareness.clientID
+    );
+    if (includeLocal && !knownClientIds.includes(awareness.clientID)) {
+      knownClientIds.push(awareness.clientID);
+    }
+    if (knownClientIds.length) {
+      removeAwarenessStates(awareness, knownClientIds, origin);
+    }
+  };
 
   const setupWebSocket = () => {
     if (explicitlyDisconnected) {
@@ -71,7 +86,7 @@ export function connectToYjs(
       // Reset reconnect timeout on successful connection
       reconnectTimeout = RECONNECT_TIMEOUT_BASE;
       if (reconnectTimer) {
-        clearTimeout(reconnectTimer);
+        window.clearTimeout(reconnectTimer);
         reconnectTimer = null;
       }
 
@@ -94,8 +109,11 @@ export function connectToYjs(
         // Note: ydoc.on and awareness.on are typically idempotent, but attaching here ensures
         // we don't try to send before the socket is ready after initial connect or reconnect.
         // console.log('[Yjs Provider] Attaching ydoc & awareness update listeners.'); // Commented out
-        ydoc.on('update', ydocUpdateHandler);
-        awareness.on('update', awarenessUpdateHandler);
+        if (!listenersAttached) {
+          ydoc.on('update', ydocUpdateHandler);
+          awareness.on('update', awarenessUpdateHandler);
+          listenersAttached = true;
+        }
         // ---
 
       } else {
@@ -135,13 +153,13 @@ export function connectToYjs(
     socket.onclose = (event: CloseEvent) => {
       // console.log(`[Yjs Provider] WebSocket connection closed (Code: ${event.code}, Reason: ${event.reason}).`); // Commented out
       // --- Clean up awareness state on close ---
-      removeAwarenessStates(awareness, Array.from(awareness.getStates().keys()).filter(client => client !== ydoc.clientID), 'websocketProvider');
+      clearAwarenessStates('websocketProvider');
       socket = null; // Clear the socket reference
 
       // Attempt to reconnect if not explicitly disconnected
       if (!explicitlyDisconnected) {
         // console.log(`[Yjs Provider] Attempting to reconnect in ${reconnectTimeout / 1000} seconds...`); // Commented out
-        if (reconnectTimer) clearTimeout(reconnectTimer); // Clear existing timer if any
+        if (reconnectTimer) window.clearTimeout(reconnectTimer); // Clear existing timer if any
         reconnectTimer = window.setTimeout(setupWebSocket, reconnectTimeout);
         // Exponential backoff for reconnect attempts
         reconnectTimeout = Math.min(reconnectTimeout * 2, RECONNECT_TIMEOUT_MAX);
@@ -183,13 +201,16 @@ export function connectToYjs(
     // console.log('[Yjs Provider] Disconnecting...'); // Commented out
     explicitlyDisconnected = true; // Set flag to prevent automatic reconnect
     if (reconnectTimer) {
-      clearTimeout(reconnectTimer); // Cancel any pending reconnect timer
+      window.clearTimeout(reconnectTimer); // Cancel any pending reconnect timer
       reconnectTimer = null;
     }
     // --- Clean up awareness state on explicit disconnect ---
-    removeAwarenessStates(awareness, [ydoc.clientID], 'disconnect');
-    ydoc.off('update', ydocUpdateHandler); // Stop listening to Yjs updates
-    awareness.off('update', awarenessUpdateHandler); // Stop listening to awareness updates
+    clearAwarenessStates('disconnect', true);
+    if (listenersAttached) {
+      ydoc.off('update', ydocUpdateHandler); // Stop listening to Yjs updates
+      awareness.off('update', awarenessUpdateHandler); // Stop listening to awareness updates
+      listenersAttached = false;
+    }
     if (socket) {
       socket.close(); // Close the WebSocket connection
       socket = null;

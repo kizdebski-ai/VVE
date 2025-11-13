@@ -59,13 +59,23 @@
 
     <!-- Advanced Tools Category -->
     <div class="tool-category">
-      <button :class="['tool-btn', { active: currentTool === 'advanced' }]" @click="selectTool('advanced', $event)" title="Advanced (A)">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <!-- Główna ikona do aktywowania kategorii advanced -->
+      <button
+        :class="['tool-btn', { active: currentTool === 'advanced' }]"
+        @click="selectTool('advanced', $event)"
+        title="Advanced (A)"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="none"
+          stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <circle cx="12" cy="12" r="3"></circle>
-          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+          <path
+            d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z">
+          </path>
         </svg>
       </button>
+
     </div>
+
 
     <!-- Floating Options Panel -->
     <FloatingOptions
@@ -89,6 +99,12 @@
       @shape-changed="handleShapeChange"
       @line-style-changed="handleLineStyleChange"
       @toggle-calculator="handleToggleCalculator"
+      @select-math-plot="handleSelectMathPlot"
+      @select-physics-plot="handleSelectPhysicsPlot"
+      @select-coord-2d="handleSelectCoord2D"
+      @select-coord-3d="handleSelectCoord3D"
+      
+      
     ></FloatingOptions>
 
     <!-- Action Tools Category -->
@@ -158,10 +174,12 @@ import { ref, onMounted, onBeforeUnmount, watch, nextTick, reactive } from 'vue'
 import FloatingOptions from './FloatingOptions.vue';
 import { undoRedoState } from '../utils/undoRedoState'; // 1. Add import
 
+
 export default {
   name: 'ToolBar',
   components: {
-    FloatingOptions
+    FloatingOptions,
+    
   },
   // 2. Remove old props
   // props: {
@@ -285,7 +303,9 @@ export default {
         const keyToolMap = {
           'p': 'pen', 'h': 'highlighter', 'e': 'eraser',
           's': 'shapes', 'l': 'lines', 't': 'text', 'i': 'image',
-          'a': 'advanced' // Added 'a' for advanced
+          'a': 'advanced', // Added 'a' for advanced
+          'm': 'mathPlot' // Added 'm' for math plot
+          // Add keys for physics, coord2D, coord3D if desired
         };
         const toolForKey = keyToolMap[event.key.toLowerCase()];
         if (toolForKey) {
@@ -296,10 +316,14 @@ export default {
     };
 
     const toolsWithOptions = ['pen', 'highlighter', 'shapes', 'lines', 'advanced']; // Added 'advanced'
+    // Define tools that don't open the floating panel
+    const toolsWithoutOptions = ['text', 'image', 'mathPlot', 'physicsPlot', 'coordSystem2D', 'coordSystem3D', 'eraser'];
+
 
     const selectTool = (tool, event = null) => {
       console.log(`[Toolbar DEBUG] selectTool called with tool: ${tool}, event: ${event ? 'present' : 'null'}`);
       const isOptionTool = toolsWithOptions.includes(tool);
+      const isNoOptionTool = toolsWithoutOptions.includes(tool);
       const isSameOptionTool = tool === currentTool.value && isOptionTool;
       const clickedButtonElement = event?.currentTarget || null;
 
@@ -340,11 +364,11 @@ export default {
         } else if (floatingOptionsPosition.visible) {
            console.log('[Toolbar DEBUG] Options visible but no event target for positioning (likely shortcut). Keeping position.');
         }
-      } else {
-        // Hide options if selecting a tool without options
+      } else if (isNoOptionTool) {
+         // Hide options if selecting a tool without options (like text, image, or our new graph tools)
         floatingOptionsPosition.visible = false;
         lastOpenedByButton.value = null;
-        console.log('[Toolbar DEBUG] Tool without options selected, hiding options.');
+        console.log(`[Toolbar DEBUG] Tool without options (${tool}) selected, hiding options.`);
       }
 
       // Emit default shape/style only when switching TO the respective tool
@@ -393,6 +417,28 @@ export default {
      const handleToggleCalculator = () => {
        console.log('ToolBar: Received toggle-calculator, re-emitting...');
        emit('toggle-calculator');
+     };
+
+     // Handlers for new events from FloatingOptions
+     const handleSelectMathPlot = () => {
+       selectTool('mathPlot');
+       floatingOptionsPosition.visible = false; // Close panel after selection
+       lastOpenedByButton.value = null;
+     };
+     const handleSelectPhysicsPlot = () => {
+       selectTool('physicsPlot');
+       floatingOptionsPosition.visible = false; // Close panel after selection
+       lastOpenedByButton.value = null;
+     };
+     const handleSelectCoord2D = () => {
+       selectTool('coordSystem2D');
+       floatingOptionsPosition.visible = false; // Close panel after selection
+       lastOpenedByButton.value = null;
+     };
+     const handleSelectCoord3D = () => {
+       selectTool('coordSystem3D');
+       floatingOptionsPosition.visible = false; // Close panel after selection
+       lastOpenedByButton.value = null;
      };
 
     const exportWhiteboard = () => { emit('export-whiteboard'); };
@@ -448,8 +494,8 @@ export default {
   display: flex;
   flex-direction: column;
   position: relative; /* Needed for absolute positioning of children */
-  gap: 15px;
-  padding: 5px 0;
+  gap: 12px;
+  padding: 8px 0;
   width: 100%;
   height: 100%;
   overflow-y: auto; /* Allows scrolling within the toolbar */
@@ -469,9 +515,9 @@ export default {
   gap: 10px;
   width: 100%;
   align-items: center;
-  padding-bottom: 10px; /* Add some space below each category */
-  margin-bottom: 10px; /* Add some space below each category */
-  border-bottom: 1px solid var(--border-color-light, #eee); /* Separator line */
+  padding-bottom: px; /* Add some space below each category */
+  margin-bottom: px; /* Add some space below each category */
+  border-bottom: 0px solid var(--border-color-light, #eee); /* Separator line */
 }
 
 .tool-category:last-child {
@@ -507,7 +553,7 @@ export default {
 
 .tool-btn:hover {
   background-color: var(--btn-hover-bg);
-  transform: translateY(-2px);
+  transform: translateY(-8px);
 }
 
 .tool-btn.active {

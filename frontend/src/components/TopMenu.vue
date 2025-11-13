@@ -3,13 +3,21 @@
     <!-- Explicit Hover Area -->
     <div class="hover-trigger-area"></div>
 
-    <!-- Gear Icon Trigger (Visible on hover container) -->
     <transition name="fade">
-      <button v-if="showGear" class="gear-btn" @click="toggleMenu" @mouseenter="cancelHide" @mouseleave="handleMouseLeave" title="Settings">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <button v-if="showGear"
+              class="gear-btn p-2 rounded-full hover:bg-gray-100 transition-colors flex items-center justify-center"
+              @click="toggleMenu"
+              @mouseenter="cancelHide"
+              @mouseleave="handleMouseLeave"
+              title="Settings">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="none"
+          stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <circle cx="12" cy="12" r="3"></circle>
-          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V15a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+          <path
+            d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z">
+          </path>
         </svg>
+
       </button>
     </transition>
 
@@ -34,6 +42,51 @@
             <line x1="18" y1="8" x2="18" y2="16"></line>
           </svg>
           <span>Shortcuts</span>
+        </button>
+        <!-- Feature Toggles -->
+        <button
+          class="menu-btn"
+          :class="{ 'active-feature': props.activeFeature === 'styleHandwriting' }"
+          @click="emit('toggle-feature', 'styleHandwriting')"
+          title="Handwriting Styler (Experimental)"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M15 3l-3 3m0 0l-3 3m3-3l6 6m-6-6L3 15m12-12l3 3m0 0l3 3m-3-3l-6 6m6-6l-3 3"/>
+            <path d="M9 12l-6 6m6-6l3 3m-3-3l-3-3"/>
+            <path d="M19 19l2 2"/>
+          </svg>
+          <span>Style</span>
+        </button>
+        <button
+          class="menu-btn"
+          :class="{ 'active-feature': props.activeFeature === 'gridAlign' }"
+          @click="emit('toggle-feature', 'gridAlign')"
+          title="Grid Align (Experimental)"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+            <line x1="3" y1="9" x2="21" y2="9"/>
+            <line x1="3" y1="15" x2="21" y2="15"/>
+            <line x1="9" y1="3" x2="9" y2="21"/>
+            <line x1="15" y1="3" x2="15" y2="21"/>
+          </svg>
+          <span>Align</span>
+        </button>
+        <button
+          class="menu-btn"
+          :class="{ 'active-feature': props.activeFeature === 'mathRecognizer' }"
+          @click="emit('toggle-feature', 'mathRecognizer')"
+          title="Math Recognizer (Experimental)"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="4" y="3" width="16" height="18" rx="2" ry="2"/>
+            <line x1="8" y1="7" x2="16" y2="7"/>
+            <line x1="8" y1="11" x2="16" y2="11"/>
+            <line x1="8" y1="15" x2="10" y2="15"/>
+            <line x1="14" y1="15" x2="16" y2="15"/>
+            <line x1="12" y1="13" x2="12" y2="17"/>
+          </svg>
+          <span>Math</span>
         </button>
         <!-- Add more buttons here later -->
       </div>
@@ -100,9 +153,18 @@
 </template>
 
 <script setup>
-import { ref } from 'vue';
+import { ref, defineProps, defineEmits } from 'vue'; // Import defineProps and defineEmits
 
-const emit = defineEmits(['clear-canvas']);
+// Define props
+const props = defineProps({
+  activeFeature: {
+    type: String,
+    default: null
+  }
+});
+
+// Define emits
+const emit = defineEmits(['clear-canvas', 'toggle-feature']);
 
 const showGear = ref(false); // Controls gear visibility
 const showMenu = ref(false); // Controls menu visibility
@@ -111,19 +173,19 @@ let hideTimeout = null; // Timeout for hiding gear/menu
 
 // Show gear on hover, clear any pending hide actions
 const handleMouseEnter = () => {
-  console.log('[TopMenu] Mouse Enter Container/Trigger Area'); // Debug log
+  // console.log('[TopMenu] Mouse Enter Container/Trigger Area'); // Debug log
   if (hideTimeout) clearTimeout(hideTimeout);
   showGear.value = true;
 };
 
 // Hide gear and menu after a delay if mouse leaves container
 const handleMouseLeave = () => {
-  console.log('[TopMenu] Mouse Leave Container/Menu'); // Debug log
+  // console.log('[TopMenu] Mouse Leave Container/Menu'); // Debug log
   if (hideTimeout) clearTimeout(hideTimeout);
   // Only hide if shortcuts dialog is not open
   if (!showShortcutsInfo.value) {
       hideTimeout = setTimeout(() => {
-        console.log('[TopMenu] Hiding gear and menu after delay'); // Debug log
+        // console.log('[TopMenu] Hiding gear and menu after delay'); // Debug log
         showGear.value = false;
         showMenu.value = false; // Also hide menu when leaving container
       }, 500); // Adjust delay as needed
@@ -132,14 +194,14 @@ const handleMouseLeave = () => {
 
 // Keep gear/menu visible if mouse moves onto them
 const cancelHide = () => {
-  console.log('[TopMenu] Cancel Hide'); // Debug log
+  // console.log('[TopMenu] Cancel Hide'); // Debug log
   if (hideTimeout) clearTimeout(hideTimeout);
 };
 
 // Toggle menu visibility on gear click
 const toggleMenu = () => {
   showMenu.value = !showMenu.value;
-  console.log(`[TopMenu DEBUG] Toggled Menu visibility to: ${showMenu.value}`);
+  // console.log(`[TopMenu DEBUG] Toggled Menu visibility to: ${showMenu.value}`);
   if (showMenu.value) {
       cancelHide(); // Prevent hiding if menu is opened
   }
@@ -153,7 +215,7 @@ const emitClear = () => {
 
 const toggleShortcuts = () => {
   showShortcutsInfo.value = !showShortcutsInfo.value;
-  console.log(`[TopMenu DEBUG] Toggled Shortcuts visibility to: ${showShortcutsInfo.value}`);
+  // console.log(`[TopMenu DEBUG] Toggled Shortcuts visibility to: ${showShortcutsInfo.value}`);
   // Keep menu/gear visible when shortcuts dialog is open
   if (showShortcutsInfo.value) {
       cancelHide();
@@ -164,6 +226,8 @@ const toggleShortcuts = () => {
       handleMouseLeave();
   }
 };
+
+// Removed placeholder handlers
 
 </script>
 
@@ -245,16 +309,31 @@ const toggleShortcuts = () => {
   padding: 6px 12px;
   border-radius: 6px;
   cursor: pointer;
-  transition: background-color 0.2s ease;
+  transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease; /* Added transitions */
   background-color: var(--btn-bg, #e9ecef);
   color: var(--btn-color, #495057);
-  border: none;
+  border: 1px solid transparent; /* Add transparent border for layout consistency */
   font-size: 14px;
 }
 
 .menu-btn:hover {
   background-color: var(--btn-hover-bg, #dee2e6);
 }
+
+/* Style for active feature button */
+.menu-btn.active-feature {
+  background-color: var(--active-feature-bg, #f0c0c0); /* Light red background */
+  color: var(--active-feature-color, #a00); /* Darker red text */
+  border: 1px solid var(--active-feature-border, #e08080); /* Red border */
+  box-shadow: inset 0 1px 3px rgba(0,0,0,0.1);
+}
+/* Optional: Dark mode specific active style */
+.dark-mode .menu-btn.active-feature {
+  background-color: var(--active-feature-bg-dark, #5a2d2d); /* Darker red background */
+  color: var(--active-feature-color-dark, #ffcccc); /* Lighter red text */
+  border: 1px solid var(--active-feature-border-dark, #a05050); /* Darker red border */
+}
+
 
 .menu-btn svg {
   width: 18px;
@@ -354,5 +433,19 @@ const toggleShortcuts = () => {
 
 .shortcut-desc {
   color: var(--text-color-secondary, #555);
+}
+
+/* Style for active feature button */
+.menu-btn.active-feature {
+  background-color: var(--active-feature-bg, #f0c0c0); /* Light red background */
+  color: var(--active-feature-color, #a00); /* Darker red text */
+  border: 1px solid var(--active-feature-border, #e08080); /* Red border */
+  box-shadow: inset 0 1px 3px rgba(0,0,0,0.1);
+}
+/* Optional: Dark mode specific active style */
+.dark-mode .menu-btn.active-feature {
+  background-color: var(--active-feature-bg-dark, #5a2d2d); /* Darker red background */
+  color: var(--active-feature-color-dark, #ffcccc); /* Lighter red text */
+  border: 1px solid var(--active-feature-border-dark, #a05050); /* Darker red border */
 }
 </style>

@@ -43,7 +43,7 @@
           </svg>
           <span>Shortcuts</span>
         </button>
-        <!-- AI Feature Buttons -->
+        <!-- Feature Toggles -->
         <button
           class="menu-btn"
           :class="{ 'active-feature': props.activeFeature === 'styleHandwriting' }"
@@ -320,7 +320,7 @@ const toggleShortcuts = () => {
   background-color: var(--btn-hover-bg, #dee2e6);
 }
 
-/* Style for active AI feature button */
+/* Style for active feature button */
 .menu-btn.active-feature {
   background-color: var(--active-feature-bg, #f0c0c0); /* Light red background */
   color: var(--active-feature-color, #a00); /* Darker red text */
@@ -435,7 +435,7 @@ const toggleShortcuts = () => {
   color: var(--text-color-secondary, #555);
 }
 
-/* Style for active AI feature button */
+/* Style for active feature button */
 .menu-btn.active-feature {
   background-color: var(--active-feature-bg, #f0c0c0); /* Light red background */
   color: var(--active-feature-color, #a00); /* Darker red text */

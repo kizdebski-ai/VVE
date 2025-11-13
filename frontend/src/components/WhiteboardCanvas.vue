@@ -33,8 +33,8 @@
 
     <!-- Render MovableObject components -->
     <movable-object
-      v-for="elementMap in (yDrawings ? yDrawings.toArray().map(m => m.get('id') ? m : new Y.Map(Object.entries(m.toJSON()).map(([k,v]) => [k, k === 'id' && !v ? `fallback-${Math.random().toString(36).substr(2,9)}` : v ] ))) : [])"
-      :key="elementMap.get('id') || Math.random()"
+      v-for="elementMap in movableElements"
+      :key="elementMap.get('id') || elementMap._tempKey || Math.random()"
       :object="elementMap"
       :zoom-level="zoomLevel"
       :pan-offset="panOffset"
@@ -68,12 +68,6 @@
       class="clipboard-input"
       @paste="handlePaste"
     />
-    <!-- ... existing template ... -->
-
-  <!-- TODO: Add similar conditional rendering for CoordSystem2D/3D panels if they are separate components -->
-  <!-- Or handle their creation directly if simple enough -->
-
-  <!-- ... rest of existing template ... -->
     <!-- Toast notifications -->
     <div class="notifications">
       <transition-group name="fade">
@@ -107,7 +101,7 @@ import Collaborators from './Collaborators.vue';
 import ZoomPanControls from './ZoomPanControls.vue';
 import EraserModeControls from './EraserModeControls.vue';
 import StatusMessage from './StatusMessage.vue';
-// Import AI Modules
+// Helper modules
 import GridAlignModule from '../modules/GridAlignModule.js';
 import HandwritingStylerModule from '../modules/HandwritingStylerModule.js';
 import MathRecognizerModule from '../modules/MathRecognizerModule.js';
@@ -155,7 +149,7 @@ export default {
     debugMode: { type: Boolean, default: false },
     currentShape: { type: String, default: 'rectangle' },
     currentLineStyle: { type: String, default: 'solid' },
-    // AI Feature Props
+    // Feature configuration
     activeFeature: { type: String, default: null },
     gridAlignOptions: { type: Object, default: () => ({}) },
     handwritingStylerOptions: { type: Object, default: () => ({}) },
@@ -193,17 +187,42 @@ export default {
     const lastReleasedElementIndex = ref(-1);
     const currentElementPreview = ref(null);
     const pointsBuffer = ref([]);
-    const smoothingFactor = ref(0.5);
+    const smoothingFactor = ref(0.65);
+    const PEN_SMOOTHING_WINDOW = 4;
+    const PEN_COORD_PRECISION = 2;
     const shiftPressedAtStart = ref(false); // Track shift key state at mousedown
     const startCoordsForShiftLine = ref(null); // Store start coords specifically for Shift+Pen
     const notifications = ref([]);
     const notificationId = ref(0);
+    const debugLog = (...args) => {
+      if (props.debugMode) {
+        console.log(...args);
+      }
+    };
+    const debugWarn = (...args) => {
+      if (props.debugMode) {
+        console.warn(...args);
+      }
+    };
     const clipboardInput = ref(null);
     const imageCache = ref(new Map());
+    const movableElementTypes = new Set([
+        'rectangle',
+        'circle',
+        'square',
+        'line',
+        'text',
+        'image',
+        'coordinateSystem2D',
+        'coordinateSystem3D',
+        'mathFunctionPlot',
+        'physicsDataPlot'
+    ]);
+    const movableElements = shallowRef([]);
     const hoveredElementIndex = ref(-1);
     const selectedObjectId = ref(null); // Added for selection state
 
-    // AI Module Instances
+    // Helper module instances
     const gridAlignModule = shallowRef(null);
     const handwritingStylerModule = shallowRef(null);
     const mathRecognizerModule = shallowRef(null);
@@ -213,11 +232,12 @@ export default {
     const configPanelCoords = ref({ x: 0, y: 0 }); // Canvas coords where user clicked
 
 
-    // ===== FRAGMENT 1 START =====
-    // --- Yjs specific state (managed internally) ---
+    // --- Realtime collaboration state ---
     const yjsConnection = ref(null);
     const ydoc = ref(null);
     const yDrawings = ref(null);
+    const activeRoomId = ref(null);
+    const latestUsername = ref(props.username);
     const undoManager = ref(null);
     const canUndo = ref(false);
     const canRedo = ref(false);
@@ -235,7 +255,7 @@ export default {
         // Aktualizuj stan globalny
         undoRedoState.update(hasUndo, hasRedo);
 
-        // console.log(`[Canvas] UndoManager stan: canUndo=${hasUndo}, canRedo=${hasRedo}`); // Commented out
+        // debugLog(`[Canvas] UndoManager stan: canUndo=${hasUndo}, canRedo=${hasRedo}`); // Commented out
       } else {
         canUndo.value = false;
         canRedo.value = false;
@@ -245,7 +265,7 @@ export default {
 
     // 2. Zastąp całą implementację UndoManager
     const initializeUndoManager = () => {
-      // console.log("[Canvas] Inicjalizacja UndoManager..."); // Commented out
+      // debugLog("[Canvas] Inicjalizacja UndoManager..."); // Commented out
 
       if (undoManager.value) {
         try {
@@ -266,7 +286,7 @@ export default {
         trackedOrigins: new Set([
           null, undefined, // Default local changes
           'local-drawing', 'local-erase', 'local-clear', 'local-text', 'local-image', 'local-plot', 'local-coordsys', // Existing origins
-          'ai-align', 'ai-style', 'ai-math' // New AI origins
+          'ai-align', 'ai-style', 'ai-math' // Reserved origins for helper modules
         ])
       });
 
@@ -277,17 +297,17 @@ export default {
       // Inicjalne ustawienie stanu
       updateGlobalState();
 
-      // console.log("[Canvas] UndoManager zainicjalizowany"); // Commented out
+      // debugLog("[Canvas] UndoManager zainicjalizowany"); // Commented out
     };
 
     // 3. Zastąp metody undo/redo
     const undo = () => {
-      // console.log("[Canvas] Undo - próba wykonania"); // Commented out
+      // debugLog("[Canvas] Undo - próba wykonania"); // Commented out
 
       try {
         if (undoManager.value && undoManager.value.canUndo()) {
           undoManager.value.undo();
-          // console.log("[Canvas] Undo wykonane"); // Commented out
+          // debugLog("[Canvas] Undo wykonane"); // Commented out
 
           // Dodatkowa aktualizacja globalnego stanu (już obsłużona przez listener 'stack-item-popped')
           // undoRedoState.update(undoManager.value.canUndo(), undoManager.value.canRedo());
@@ -297,7 +317,7 @@ export default {
             redrawCanvas();
           });
         } else {
-          // console.log("[Canvas] Undo niemożliwe"); // Commented out
+          // debugLog("[Canvas] Undo niemożliwe"); // Commented out
         }
       } catch (error) {
         // console.error("[Canvas] Błąd podczas undo:", error); // Commented out
@@ -305,12 +325,12 @@ export default {
     };
 
     const redo = () => {
-      // console.log("[Canvas] Redo - próba wykonania"); // Commented out
+      // debugLog("[Canvas] Redo - próba wykonania"); // Commented out
 
       try {
         if (undoManager.value && undoManager.value.canRedo()) {
           undoManager.value.redo();
-          // console.log("[Canvas] Redo wykonane"); // Commented out
+          // debugLog("[Canvas] Redo wykonane"); // Commented out
 
           // Dodatkowa aktualizacja globalnego stanu (już obsłużona przez listener 'stack-item-added')
           // undoRedoState.update(undoManager.value.canUndo(), undoManager.value.canRedo());
@@ -320,7 +340,7 @@ export default {
             redrawCanvas();
           });
         } else {
-          // console.log("[Canvas] Redo niemożliwe"); // Commented out
+          // debugLog("[Canvas] Redo niemożliwe"); // Commented out
         }
       } catch (error) {
         // console.error("[Canvas] Błąd podczas redo:", error); // Commented out
@@ -348,7 +368,7 @@ export default {
           // emit('update:latex-equation', `Error: ${error.message}`);
         }
       } else {
-        console.warn('LaTeX render target element #latex-render-output not found.');
+        debugWarn('LaTeX render target element #latex-render-output not found.');
       }
     };
 
@@ -375,8 +395,6 @@ export default {
         return;
       }
 
-      console.log(`[addElementFromPanel] Received data for type: ${elementData.type}`, elementData);
-
       try {
         ydoc.value.transact(() => {
           const yElementMap = new Y.Map();
@@ -396,7 +414,7 @@ export default {
             }
           }
           yDrawings.value.push([yElementMap]);
-          console.log('[addElementFromPanel] Pushed Y.Map to yDrawings:', yElementMap.toJSON());
+          refreshMovableElements();
         });
 
         nextTick(() => {
@@ -437,22 +455,21 @@ export default {
         strokesToDraw = handwritingStylerModule.value.getStrokes(); // Get potentially modified strokes
       }
 
-      // Draw elements
+      // Draw only elements that are not managed by MovableObject overlays
       strokesToDraw.forEach((element, index) => {
-        // Need to handle potential differences if strokesToDraw comes from the module vs Yjs
-        // Assuming module returns objects compatible with drawElement for now
-      // const isHighlighted = index === hoveredElementIndex.value && currentTool.value === 'eraser';
-      // drawElement(ctx, element, isHighlighted, smoothingFactor.value, imageCache.value, redrawCanvas);
+        if (movableElementTypes.has(element.type)) {
+          return; // These are rendered via MovableObject components
+        }
+        const isHighlighted = index === hoveredElementIndex.value && currentTool.value === 'eraser';
+        drawElement(ctx, element, isHighlighted, smoothingFactor.value, imageCache.value, redrawCanvas);
       });
-    // The above loop for drawing all elements is now handled by MovableObject components.
 
       // Draw current preview if any
       if (isDrawing.value && currentElementPreview.value) {
         drawElement(ctx, currentElementPreview.value, false, smoothingFactor.value);
       }
 
-      // Draw AI Module Overlays
-    // TODO: Re-evaluate how AI module overlays are drawn with MovableObject
+      // Draw helper overlays
     // For now, keep them, but they might draw over or under MovableObjects depending on DOM order
     // and their own drawing logic (e.g., if they directly draw on the main canvas context).
       if (props.activeFeature === 'gridAlign' && gridAlignModule.value) {
@@ -474,14 +491,15 @@ export default {
     const handleYjsUpdate = (events, transaction) => {
       // Only log detailed info if debugging is enabled
       if (props.debugMode) {
-        console.log(`[handleYjsUpdate] Yjs update detected. Origin: ${transaction.origin || 'unspecified'}`);
+        debugLog(`[handleYjsUpdate] Yjs update detected. Origin: ${transaction.origin || 'unspecified'}`);
       }
 
-      // Sync AI modules if the change didn't originate from them
+      // Sync helper modules if the change didn't originate from them
       const aiOrigins = ['ai-align', 'ai-style', 'ai-math'];
-      if (!aiOrigins.includes(transaction.origin)) {
+        if (!aiOrigins.includes(transaction.origin)) {
           syncModulesWithYjs();
       }
+      refreshMovableElements();
 
       // Directly call redrawCanvas without throttling
       redrawCanvas();
@@ -495,6 +513,103 @@ export default {
         if (gridAlignModule.value?.enabled) gridAlignModule.value.setStrokes(currentStrokes);
         if (handwritingStylerModule.value?.enabled) handwritingStylerModule.value.setStrokes(currentStrokes);
         if (mathRecognizerModule.value?.enabled) mathRecognizerModule.value.setStrokes(currentStrokes);
+    };
+
+    const refreshMovableElements = () => {
+        if (!yDrawings.value) {
+            movableElements.value = [];
+            return;
+        }
+        const filtered = yDrawings.value
+            .toArray()
+            .filter(map => movableElementTypes.has(map.get('type')))
+            .map(map => {
+                if (!map.get('id')) {
+                    if (!map._tempKey) {
+                        const clientId = map.doc?.clientID ?? 'local';
+                        map._tempKey = `temp-${clientId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+                    }
+                } else if (map._tempKey) {
+                    delete map._tempKey;
+                }
+                return map;
+            });
+        movableElements.value = filtered;
+    };
+
+    const updateAwarenessUser = (name = latestUsername.value) => {
+        if (!yjsConnection.value?.awareness) {
+            return;
+        }
+        const existingUser = yjsConnection.value.awareness.getLocalState()?.user || {};
+        const normalizedName = (name && name.trim().length > 0 ? name.trim() : existingUser.name) || 'Anonymous';
+        yjsConnection.value.awareness.setLocalStateField('user', {
+            ...existingUser,
+            name: normalizedName,
+            color: existingUser.color || currentColor.value || '#000000'
+        });
+    };
+
+    const teardownYjsConnection = () => {
+        if (yDrawings.value) {
+            yDrawings.value.unobserve(handleYjsUpdate);
+        }
+        if (undoManager.value) {
+            undoManager.value.off('stack-item-added', updateGlobalState);
+            undoManager.value.off('stack-item-popped', updateGlobalState);
+            undoManager.value.destroy();
+            undoManager.value = null;
+            updateGlobalState();
+        }
+        if (yjsConnection.value) {
+            yjsConnection.value.disconnect();
+        }
+        yjsConnection.value = null;
+        ydoc.value = null;
+        yDrawings.value = null;
+        activeRoomId.value = null;
+        movableElements.value = [];
+    };
+
+    const connectToRoom = (targetRoomId) => {
+        const normalizedRoomId = targetRoomId?.trim();
+        if (!normalizedRoomId) {
+            showToast("Room ID missing. Collaboration disabled.", "error");
+            return;
+        }
+        if (normalizedRoomId === activeRoomId.value) {
+            return;
+        }
+
+        teardownYjsConnection();
+        selectedObjectId.value = null;
+
+        try {
+            const connection = connectToYjs(normalizedRoomId);
+            yjsConnection.value = connection;
+            ydoc.value = connection.ydoc;
+            yDrawings.value = connection.yDrawings;
+
+            if (!yDrawings.value) {
+                throw new Error('Yjs shared drawings array is unavailable.');
+            }
+
+            yDrawings.value.observe(handleYjsUpdate);
+            activeRoomId.value = normalizedRoomId;
+            refreshMovableElements();
+
+            // Ensure modules and undo manager sync with the new document
+            syncModulesWithYjs();
+            setTimeout(() => {
+                initializeUndoManager();
+                redrawCanvas();
+            }, 100);
+
+            updateAwarenessUser(latestUsername.value);
+        } catch (error) {
+            console.error("Failed to connect Yjs provider:", error);
+            showToast("Error connecting to collaboration session.", "error");
+        }
     };
 
 
@@ -565,6 +680,28 @@ export default {
       return {
         x: (x - panOffset.value.x) / zoomLevel.value,
         y: (y - panOffset.value.y) / zoomLevel.value
+      };
+    };
+
+    const addSmoothedPenPoint = (coords) => {
+      pointsBuffer.value.push(coords);
+      if (pointsBuffer.value.length > PEN_SMOOTHING_WINDOW) {
+        pointsBuffer.value.shift();
+      }
+      const len = pointsBuffer.value.length;
+      if (!len) {
+        return coords;
+      }
+      const averaged = pointsBuffer.value.reduce(
+        (acc, point) => ({
+          x: acc.x + point.x,
+          y: acc.y + point.y,
+        }),
+        { x: 0, y: 0 }
+      );
+      return {
+        x: parseFloat((averaged.x / len).toFixed(PEN_COORD_PRECISION)),
+        y: parseFloat((averaged.y / len).toFixed(PEN_COORD_PRECISION)),
       };
     };
 
@@ -664,7 +801,7 @@ export default {
             }
         }
         selectedObjectId.value = clickedObjectFoundId;
-        if (props.debugMode) console.log('[WhiteboardCanvas] Right-click selected:', selectedObjectId.value);
+        debugLog('[WhiteboardCanvas] Right-click selected:', selectedObjectId.value);
         redrawCanvas(); // To show selection changes on MovableObject
         return;
       }
@@ -705,7 +842,7 @@ export default {
         } else {
             // Click on empty canvas
             selectedObjectId.value = null; 
-            if (props.debugMode) console.log('[WhiteboardCanvas] Left-click on empty space, deselected all.');
+            debugLog('[WhiteboardCanvas] Left-click on empty space, deselected all.');
             // Proceed with drawing tools if no object was hit
             if (currentTool.value === 'eraser') {
                 // Eraser logic (hover and click to erase is handled in mouseMove and the top of this function for left click)
@@ -729,26 +866,26 @@ export default {
     };
     
     const handleObjectSelectionRequest = (objectId) => {
-      if (props.debugMode) console.log('[WhiteboardCanvas] Received object selection request for ID:', objectId);
+      debugLog('[WhiteboardCanvas] Received object selection request for ID:', objectId);
       
       if (currentTool.value === 'eraser') {
         if (yDrawings.value) {
           const elementsArray = yDrawings.value.toArray();
           const index = elementsArray.findIndex(elMap => elMap.get('id') === objectId);
           if (index !== -1) {
-            if (props.debugMode) console.log(`[WhiteboardCanvas] Eraser tool active, erasing element ID ${objectId} at index ${index} due to selection request.`);
+            debugLog(`[WhiteboardCanvas] Eraser tool active, erasing element ID ${objectId} at index ${index} due to selection request.`);
             eraseElement(index); 
             if (selectedObjectId.value === objectId) { 
               selectedObjectId.value = null;
             }
           } else {
-             if (props.debugMode) console.warn(`[WhiteboardCanvas] Eraser tool: Element with ID ${objectId} not found for erasure via selection request.`);
+             debugWarn(`[WhiteboardCanvas] Eraser tool: Element with ID ${objectId} not found for erasure via selection request.`);
           }
         }
         return; 
       }
       selectedObjectId.value = objectId;
-      if (props.debugMode) console.log('[WhiteboardCanvas] Object selected via request:', selectedObjectId.value);
+      debugLog('[WhiteboardCanvas] Object selected via request:', selectedObjectId.value);
       redrawCanvas();
     };
 
@@ -860,14 +997,14 @@ export default {
       // Handle Shift+Pen combination: Keep type 'pen' for now, store start point
       if (toolType === 'pen' && shiftPressedAtStart.value) {
           if (props.debugMode) {
-              console.log("[startDrawing] Shift+Pen detected, storing start point.");
+              debugLog("[startDrawing] Shift+Pen detected, storing start point.");
           }
           startCoordsForShiftLine.value = transformedCoords; // Store the starting point
           // Preview element remains 'pen' type initially for simplicity
       } else if (toolType === 'shapes') {
           toolType = props.currentShape; // Use the specific shape from prop
           if (props.debugMode) {
-              console.log(`[startDrawing] Starting shape drawing with type: ${toolType}`);
+              debugLog(`[startDrawing] Starting shape drawing with type: ${toolType}`);
           }
       } else if (toolType === 'lines') {
           toolType = 'line';
@@ -877,7 +1014,7 @@ export default {
       if (toolType === 'line') {
           elementData.lineStyle = props.currentLineStyle;
           if (props.debugMode) {
-              console.log(`[startDrawing] Line style set to: ${elementData.lineStyle}`);
+              debugLog(`[startDrawing] Line style set to: ${elementData.lineStyle}`);
           }
       }
 
@@ -894,7 +1031,7 @@ export default {
           const localClientId = yjsConnection.value?.awareness?.clientID || 'unknown';
           currentElementPreview.value.id = `temp_${localClientId}_${Date.now()}`;
           if (props.debugMode) {
-              console.log("[startDrawing] Preview element created:", JSON.stringify(currentElementPreview.value));
+              debugLog("[startDrawing] Preview element created:", JSON.stringify(currentElementPreview.value));
           }
       } else {
           // console.error(`[startDrawing] Failed to create preview element for tool type: ${toolType} with data:`, elementData); // Commented out
@@ -938,7 +1075,6 @@ export default {
       }
     };
 
-    // ===== FRAGMENT 3 Modification START (eraseElement) =====
     const eraseElement = (indexOrId) => { // Can now accept index or ID
       if (!ydoc.value || !yDrawings.value) return;
 
@@ -950,11 +1086,12 @@ export default {
       }
       
       if (elementIndex !== -1 && elementIndex >= 0 && elementIndex < yDrawings.value.length) {
-        if (props.debugMode) console.log(`[eraseElement] Removing element at index: ${elementIndex}`);
+        debugLog(`[eraseElement] Removing element at index: ${elementIndex}`);
 
         ydoc.value.transact(() => {
           yDrawings.value.delete(elementIndex, 1);
         }, 'local-erase'); 
+        refreshMovableElements();
 
         nextTick(() => {
           if (undoManager.value) {
@@ -962,7 +1099,7 @@ export default {
           }
         });
       } else {
-        if (props.debugMode) console.warn(`[eraseElement] Element not found for index/ID: ${indexOrId}`);
+        debugWarn(`[eraseElement] Element not found for index/ID: ${indexOrId}`);
       }
     };
 
@@ -985,9 +1122,8 @@ export default {
               // Normal pen drawing - ensure preview type is 'pen'
               preview.type = 'pen';
               if (!preview.points) preview.points = []; // Initialize if needed
-              preview.points.push(coords);
-              pointsBuffer.value.push(coords);
-              if (pointsBuffer.value.length > 3) pointsBuffer.value.shift();
+              const smoothedPoint = addSmoothedPenPoint(coords);
+              preview.points.push(smoothedPoint);
           }
       } else if (currentTool.value === 'shapes' || currentTool.value === 'lines') {
           // Update end coordinates for shapes and regular lines
@@ -1037,7 +1173,7 @@ export default {
           // If Shift was held with the pen tool, create a 'line' element
           if (wasShiftPressed && originalTool === 'pen' && isValidShiftPen) {
               if (props.debugMode) {
-                  console.log("[finishDrawing] Shift held with Pen, creating Line element.");
+                  debugLog("[finishDrawing] Shift held with Pen, creating Line element.");
               }
               elementToAdd = {
                   type: 'line',
@@ -1058,7 +1194,7 @@ export default {
                  // Always assign the style from props when the tool was 'lines'
                  const styleFromProps = props.currentLineStyle || 'solid';
                  if (props.debugMode) {
-                     console.log(`[finishDrawing] lineStyle missing or needs override, setting from prop: ${styleFromProps}`);
+                     debugLog(`[finishDrawing] lineStyle missing or needs override, setting from prop: ${styleFromProps}`);
                  }
                  elementToAdd.lineStyle = styleFromProps;
               }
@@ -1070,7 +1206,7 @@ export default {
               elementToAdd.id = `${yjsConnection.value?.awareness?.clientID || 'local'}-${Date.now()}`;
 
               if (props.debugMode) {
-                  console.log('[finishDrawing] Final elementToAdd before Yjs transaction:', JSON.stringify(elementToAdd));
+                  debugLog('[finishDrawing] Final elementToAdd before Yjs transaction:', JSON.stringify(elementToAdd));
               }
 
               try {
@@ -1101,7 +1237,7 @@ export default {
                               yElementMap.set('y', minY);
                               yElementMap.set('width', Math.max(0, maxX - minX)); // Ensure non-negative
                               yElementMap.set('height', Math.max(0, maxY - minY)); // Ensure non-negative
-                              // TODO: Points might need to be relative to x,y for MovableObject
+                              // Points remain absolute to preserve compatibility with the renderer
                           } else {
                               yElementMap.set('x', 0);
                               yElementMap.set('y', 0);
@@ -1143,14 +1279,15 @@ export default {
                       // Push to the shared array only if not text/image (handled elsewhere, but they are pushed there)
                       if (elementToAdd.type !== 'text' && elementToAdd.type !== 'image') {
                         yDrawings.value.push([yElementMap]);
+                        refreshMovableElements();
                       }
 
                       if (props.debugMode) {
-                          console.log('[finishDrawing] Successfully pushed Y.Map to yDrawings');
+                          debugLog('[finishDrawing] Successfully pushed Y.Map to yDrawings');
                       }
                   }, 'local-drawing'); // Add origin
 
-                  // Add stroke to active AI module AFTER adding to Yjs
+                  // Notify helper modules after element is committed
                   if (props.activeFeature && elementToAdd.type !== 'text' && elementToAdd.type !== 'image') {
                       const module = getActiveModule();
                       if (module && module.addStroke) {
@@ -1177,7 +1314,7 @@ export default {
           }
       } else {
           if (props.debugMode) {
-              console.log('Drawing finished but element was too small or invalid, not adding.');
+              debugLog('Drawing finished but element was too small or invalid, not adding.');
           }
       }
 
@@ -1191,7 +1328,7 @@ export default {
       // The yMap is already updated by MovableObject itself, so we might just need to
       // trigger undo/redo state updates or redraw other parts of the UI if necessary.
       // For now, we can log it.
-      if (props.debugMode) console.log('[WhiteboardCanvas] MovableObject updated:', updatedYMap.toJSON());
+      debugLog('[WhiteboardCanvas] MovableObject updated:', updatedYMap.toJSON());
       // Potentially update undo/redo state if the change wasn't already part of a transaction
       // that UndoManager is tracking from MovableObject.
       // updateGlobalState(); // This might be redundant if MovableObject uses ydoc.transact
@@ -1201,7 +1338,7 @@ export default {
     const selectObject = (objectId) => {
       // This was the old @select handler from MovableObject.
       // Its primary selection role is now handled by handleObjectSelectionRequest or right-click.
-      if (props.debugMode) console.log('[WhiteboardCanvas] selectObject (old handler) called with ID:', objectId);
+      debugLog('[WhiteboardCanvas] selectObject (old handler) called with ID:', objectId);
     };
 
 
@@ -1279,7 +1416,7 @@ export default {
     const handleKeyDown = (event) => {
       if (event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA') return;
 
-      // Handle AI Module shortcut (Shift+Enter for Math Recognizer)
+      // Handle recognizer shortcut (Shift+Enter)
       if (props.activeFeature === 'mathRecognizer' && mathRecognizerModule.value) {
           const newStroke = mathRecognizerModule.value.handleKeyDown(event);
           if (newStroke) {
@@ -1328,32 +1465,22 @@ export default {
        }
     };
 
-    // ===== FRAGMENT 3 Modification START (addImageFromDataUrl) =====
     const addImageFromDataUrl = (dataUrl) => {
-        console.log("[WhiteboardCanvas] addImageFromDataUrl called with dataUrl (first 50 chars):", dataUrl.substring(0, 50));
-
         if (!ydoc.value || !yDrawings.value) {
             console.error("[addImageFromDataUrl] Error: ydoc or yDrawings not available!");
             showToast("Cannot add image - connection issue", "error");
             return;
         }
 
-        // Calculate center position
         const centerX = (canvasWidth.value / 2 - panOffset.value.x) / zoomLevel.value;
         const centerY = (canvasHeight.value / 2 - panOffset.value.y) / zoomLevel.value;
 
-        console.log("[addImageFromDataUrl] Creating image at position:", centerX, centerY);
-
-        // Use createImageElement to get proper dimensions and position
         createImageElement(dataUrl, centerX, centerY)
             .then(imageData => {
-                console.log("[addImageFromDataUrl] Image created:", imageData);
                 imageData.id = `${yjsConnection.value?.awareness?.clientID || 'local'}-${Date.now()}`; // Assign ID
 
                 try {
-                    // Create transaction WITH origin parameter
                     ydoc.value.transact(() => {
-                        console.log("[addImageFromDataUrl] Creating Y.Map for image");
                         const imageMap = new Y.Map();
 
                         // Set basic properties
@@ -1375,20 +1502,16 @@ export default {
                         imageMap.set('height', imageData.height);
                         imageMap.set('rotation', 0); // Default rotation
 
-                        // Push to shared array
-                        console.log("[addImageFromDataUrl] Pushing image to yDrawings");
                         yDrawings.value.push([imageMap]);
+                        refreshMovableElements();
                     }, 'local-image'); // Specify origin
 
-                    // Force redraw
-                    console.log("[addImageFromDataUrl] Forcing redraw after adding image");
                     nextTick(() => {
                         redrawCanvas();
 
                         // Update undo state
                         if (undoManager.value) {
-                            updateGlobalState(); // Use the shared function
-                            console.log(`[addImageFromDataUrl] Updated undo state: canUndo=${canUndo.value}, canRedo=${canRedo.value}`);
+                            updateGlobalState();
                         }
                     });
 
@@ -1405,9 +1528,6 @@ export default {
                 showToast("Failed to process image", "error");
             });
     };
-    // ===== FRAGMENT 3 Modification END (addImageFromDataUrl) =====
-
-    // ===== FRAGMENT 3 Modification START (addTextElement - outer call) =====
     const addTextElement = (position, text) => {
         if (!ydoc.value || !yDrawings.value || !text) return;
         // Temporarily create a canvas element to measure text
@@ -1446,6 +1566,7 @@ export default {
               }
               textMap.set('rotation', 0); // Default rotation
               yDrawings.value.push([textMap]);
+              refreshMovableElements();
             }, 'local-text'); // Add origin
             // No need to remove tempCanvas, it will be garbage collected
 
@@ -1460,7 +1581,6 @@ export default {
             showToast("Failed to add text to whiteboard.", "error");
         }
     };
-    // ===== FRAGMENT 3 Modification END (addTextElement - outer call) =====
 
     // --- Undo/Redo Methods --- (Replaced by Fragment 1)
 
@@ -1480,11 +1600,10 @@ export default {
     };
 
     // --- Public methods exposed via ref ---
-    // ===== FRAGMENT 3 Modification START (clearCanvas) =====
     const clearCanvas = () => {
         if (ydoc.value && yDrawings.value) {
             if (confirm('Are you sure you want to clear the canvas?')) {
-                // console.log('[clearCanvas] Clearing all elements'); // Commented out
+                // debugLog('[clearCanvas] Clearing all elements'); // Commented out
 
                 try {
                     ydoc.value.transact(() => {
@@ -1494,6 +1613,7 @@ export default {
                         yDrawings.value.delete(0, length);
                       }
                     }, 'local-clear'); // Add origin
+                    refreshMovableElements();
 
                     showStatus('Canvas cleared');
 
@@ -1502,7 +1622,7 @@ export default {
                        if (undoManager.value) {
                           updateGlobalState(); // Use the shared function
                        }
-                       // Clear AI module states as well
+                       // Reset helper module states as well
                        gridAlignModule.value?.clear();
                        handwritingStylerModule.value?.clear();
                        mathRecognizerModule.value?.clear();
@@ -1519,7 +1639,6 @@ export default {
             }
         }
     };
-    // ===== FRAGMENT 3 Modification END (clearCanvas) =====
 
     const getSerializableState = () => { return {}; }; // Placeholder
     const loadState = (state) => { return false; }; // Placeholder
@@ -1535,10 +1654,8 @@ export default {
         x: (canvasWidth.value / 2 - panOffset.value.x) / zoomLevel.value,
         y: (canvasHeight.value / 2 - panOffset.value.y) / zoomLevel.value,
     });
-
-    // ===== FRAGMENT 5 START =====
     const testUndoManager = () => {
-      // console.log("=== TEST UNDOMANAGER ==="); // Commented out
+      // debugLog("=== TEST UNDOMANAGER ==="); // Commented out
 
       try {
         if (!ydoc.value || !yDrawings.value) {
@@ -1546,7 +1663,7 @@ export default {
           return;
         }
 
-        // console.log("Dodaję testowy element..."); // Commented out
+        // debugLog("Dodaję testowy element..."); // Commented out
 
         ydoc.value.transact(() => {
           const testElement = new Y.Map();
@@ -1568,7 +1685,7 @@ export default {
         });
 
         nextTick(() => {
-          // console.log("Test element dodany. canUndo =", undoManager.value?.canUndo()); // Commented out
+          // debugLog("Test element dodany. canUndo =", undoManager.value?.canUndo()); // Commented out
           alert(`Test wykonany. canUndo = ${canUndo.value}`);
         });
       } catch (error) {
@@ -1576,9 +1693,8 @@ export default {
         alert("Błąd testu: " + error.message);
       }
     };
-    // ===== FRAGMENT 5 END =====
 
-    // --- AI Module Integration ---
+    // --- Helper module integration ---
 
     const getActiveModule = () => {
         switch (props.activeFeature) {
@@ -1589,18 +1705,18 @@ export default {
         }
     };
 
-    // --- AI Module Actions (called by App.vue via triggerWhiteboardAction) ---
+    // --- Helper module actions (invoked via App.vue) ---
 
     const alignToGrid = () => {
         if (!gridAlignModule.value || !ydoc.value || !yDrawings.value) {
-            console.warn('[alignToGrid] Module or Yjs not ready.');
+            debugWarn('[alignToGrid] Module or Yjs not ready.');
             return;
         }
-        if (props.debugMode) console.log('[alignToGrid] Calling module.alignToGrid()');
+        debugLog('[alignToGrid] Calling module.alignToGrid()');
         const changedStrokes = gridAlignModule.value.alignToGrid(); // Module calculates changes
 
         if (changedStrokes && changedStrokes.length > 0) {
-            if (props.debugMode) console.log(`[alignToGrid] Module returned ${changedStrokes.length} changed strokes. Applying to Yjs...`);
+            debugLog(`[alignToGrid] Module returned ${changedStrokes.length} changed strokes. Applying to Yjs...`);
             ydoc.value.transact(() => {
                 // Iterate through yDrawings directly for potentially better performance/reliability
                 for (let i = 0; i < yDrawings.value.length; i++) {
@@ -1609,7 +1725,7 @@ export default {
                     const updatedStroke = changedStrokes.find(s => s.id === strokeId);
 
                     if (updatedStroke) {
-                        if (props.debugMode) console.log(`[alignToGrid] Updating Y.Map for stroke ID: ${strokeId}`);
+                        debugLog(`[alignToGrid] Updating Y.Map for stroke ID: ${strokeId}`);
                         // Update points in the Y.Map
                         yMap.set('points', updatedStroke.points);
                         yMap.set('aligned', true); // Mark as aligned
@@ -1623,12 +1739,12 @@ export default {
             }, 'ai-align'); // Origin for undo/redo
 
             nextTick(() => {
-                if (props.debugMode) console.log('[alignToGrid] Yjs transaction complete. Updating global state and redrawing.');
+                debugLog('[alignToGrid] Yjs transaction complete. Updating global state and redrawing.');
                 updateGlobalState();
                 redrawCanvas(); // Redraw to show aligned strokes
             });
         } else {
-             if (props.debugMode) console.log('[alignToGrid] Module returned no changed strokes.');
+             debugLog('[alignToGrid] Module returned no changed strokes.');
              // Still redraw in case baselines visibility changed
              redrawCanvas();
         }
@@ -1651,14 +1767,14 @@ export default {
 
     const confirmStyleChanges = () => {
         if (!handwritingStylerModule.value || !ydoc.value || !yDrawings.value) {
-             console.warn('[confirmStyleChanges] Module or Yjs not ready.');
+            debugWarn('[confirmStyleChanges] Module or Yjs not ready.');
              return;
         }
-         if (props.debugMode) console.log('[confirmStyleChanges] Calling module.confirmStyleChanges()');
+         debugLog('[confirmStyleChanges] Calling module.confirmStyleChanges()');
         const updatedStrokes = handwritingStylerModule.value.confirmStyleChanges(); // Module returns updated strokes and resets its internal state
 
         if (updatedStrokes && updatedStrokes.length > 0) {
-             if (props.debugMode) console.log(`[confirmStyleChanges] Module returned ${updatedStrokes.length} updated strokes. Applying to Yjs...`);
+             debugLog(`[confirmStyleChanges] Module returned ${updatedStrokes.length} updated strokes. Applying to Yjs...`);
              ydoc.value.transact(() => {
                  // Iterate through yDrawings directly
                  for (let i = 0; i < yDrawings.value.length; i++) {
@@ -1667,7 +1783,7 @@ export default {
                     const updatedStroke = updatedStrokes.find(s => s.id === strokeId);
 
                     if (updatedStroke) {
-                        if (props.debugMode) console.log(`[confirmStyleChanges] Updating Y.Map for stroke ID: ${strokeId}`);
+                        debugLog(`[confirmStyleChanges] Updating Y.Map for stroke ID: ${strokeId}`);
                         yMap.set('points', updatedStroke.points); // Update points
                     } else {
                          // Log if a changed stroke ID wasn't found in yDrawings
@@ -1679,14 +1795,14 @@ export default {
             }, 'ai-style'); // Origin
 
             nextTick(() => {
-                if (props.debugMode) console.log('[confirmStyleChanges] Yjs transaction complete. Updating global state and redrawing.');
+                debugLog('[confirmStyleChanges] Yjs transaction complete. Updating global state and redrawing.');
                 updateGlobalState();
                 emit('update:has-stylized-strokes', false); // Update App state
                 emit('update:has-char-groups', false);    // Update App state
                 redrawCanvas();
             });
         } else {
-            if (props.debugMode) console.log('[confirmStyleChanges] Module returned no updated strokes. Resetting state.');
+            debugLog('[confirmStyleChanges] Module returned no updated strokes. Resetting state.');
             // If no strokes were updated (e.g., module error or nothing to confirm), just reset state and redraw
             emit('update:has-stylized-strokes', false);
             emit('update:has-char-groups', false);
@@ -1753,7 +1869,7 @@ export default {
     // --- Watchers ---
     watch(() => props.currentShape, (newShape) => {
         if (props.debugMode) {
-            console.log(`[Watch] currentShape changed to: ${newShape}`);
+            debugLog(`[Watch] currentShape changed to: ${newShape}`);
         }
         if (currentTool.value === 'shapes') {
             updateCursor();
@@ -1762,34 +1878,34 @@ export default {
 
     watch(() => props.currentLineStyle, (newLineStyle) => {
         if (props.debugMode) {
-            console.log(`[Watch] currentLineStyle changed to: ${newLineStyle}`);
+            debugLog(`[Watch] currentLineStyle changed to: ${newLineStyle}`);
         }
         if (currentTool.value === 'lines') {
             updateCursor();
         }
     });
 
-    // Watcher for AI Feature Activation/Deactivation
+    // Feature activation watcher
     watch(() => props.activeFeature, (newFeature, oldFeature) => {
-        console.log(`[Watch] Active feature changed from ${oldFeature} to ${newFeature}`);
+        debugLog(`[Watch] Active feature changed from ${oldFeature} to ${newFeature}`);
         // Disable old module
         const oldModule = getActiveModule(oldFeature); // Pass old feature name
         if (oldModule?.disable) {
             oldModule.disable();
-            console.log(`Disabled module: ${oldFeature}`);
+            debugLog(`Disabled module: ${oldFeature}`);
         }
 
         // Enable new module and sync strokes
         const newModule = getActiveModule(newFeature); // Pass new feature name
         if (newModule?.enable) {
             newModule.enable();
-            console.log(`Enabled module: ${newFeature}`);
+            debugLog(`Enabled module: ${newFeature}`);
             // Sync strokes from Yjs
             if (yDrawings.value) {
                  const currentStrokes = yDrawings.value.toArray().map(m => ({ id: m.get('id'), ...m.toJSON() }));
                  if (newModule.setStrokes) {
                      newModule.setStrokes(currentStrokes);
-                     console.log(`Synced ${currentStrokes.length} strokes to module: ${newFeature}`);
+                     debugLog(`Synced ${currentStrokes.length} strokes to module: ${newFeature}`);
                  }
             }
              // Reset specific UI states when activating a module
@@ -1805,7 +1921,7 @@ export default {
         redrawCanvas(); // Redraw to reflect module state change (e.g., hide/show overlays)
     });
 
-    // Watchers for AI Options
+    // Watchers for module options
     watch(() => props.gridAlignOptions, (newOptions) => {
         gridAlignModule.value?.setOptions(newOptions);
         if (props.activeFeature === 'gridAlign') redrawCanvas(); // Redraw if active
@@ -1819,14 +1935,24 @@ export default {
         }
     }, { deep: true });
 
-     watch(() => props.mathRecognizerOptions, (newOptions) => {
+    watch(() => props.mathRecognizerOptions, (newOptions) => {
         mathRecognizerModule.value?.setOptions(newOptions);
         if (props.activeFeature === 'mathRecognizer') redrawCanvas(); // Redraw ghost answer with new opacity
     }, { deep: true });
 
+    watch(() => props.roomId, (newRoomId, oldRoomId) => {
+        if (newRoomId && newRoomId !== oldRoomId) {
+            connectToRoom(newRoomId);
+        }
+    });
+
+    watch(() => props.username, (newUsername) => {
+        latestUsername.value = newUsername;
+        updateAwarenessUser(newUsername);
+    });
+
 
     // --- Lifecycle Hooks ---
-    // ===== FRAGMENT 6 START =====
     onMounted(() => {
       initCanvas();
       initClipboardHandler();
@@ -1836,7 +1962,7 @@ export default {
       darkModeObserver.observe(document.body, { attributes: true });
       handleResize(); // Initial resize call
 
-      // Initialize AI Modules after context is ready
+      // Initialize helper modules after context is ready
       if (context.value) {
           gridAlignModule.value = new GridAlignModule(context.value, props.gridAlignOptions);
           handwritingStylerModule.value = new HandwritingStylerModule(context.value, props.handwritingStylerOptions);
@@ -1844,79 +1970,29 @@ export default {
               ...props.mathRecognizerOptions,
               renderLatexFn: renderLatex // Pass the render function
           });
-          console.log("AI Modules Initialized");
+          debugLog("Helper modules initialised");
       } else {
-          console.error("Failed to initialize AI modules: Canvas context not available.");
+          console.error("Failed to initialize helper modules: Canvas context not available.");
       }
 
 
       const urlParams = new URLSearchParams(window.location.search);
-      const roomId = urlParams.get('room'); // Use local roomId, not prop here
+      const initialRoomId = props.roomId || urlParams.get('room'); // Prefer prop, fallback to URL
 
-      if (roomId) {
-        try {
-          // console.log("[onMounted] Łączenie z Yjs dla pokoju:", roomId); // Commented out
-          const connection = connectToYjs(roomId);
-          yjsConnection.value = connection;
-          ydoc.value = connection.ydoc;
-          yDrawings.value = connection.yDrawings;
-
-          if (!yDrawings.value) {
-            // console.error("[onMounted] Błąd: yDrawings not available after connection!"); // Commented out
-            return;
-          }
-
-          // console.log("[onMounted] yDrawings zainicjalizowany, długość:", yDrawings.value.length); // Commented out
-
-          // Obserwuj zmiany w yDrawings
-          yDrawings.value.observe(handleYjsUpdate); // Use named handler
-
-          // Inicjalizuj UndoManager po krótkim opóźnieniu
-          setTimeout(() => {
-            // console.log("[onMounted] Inicjalizacja UndoManager po opóźnieniu..."); // Commented out
-            initializeUndoManager();
-            // Initial sync of modules after Yjs data might have loaded
-            syncModulesWithYjs();
-            redrawCanvas(); // Redraw after UndoManager init and sync
-          }, 100);
-
-          // console.log('[onMounted] Yjs connection established successfully.'); // Commented out
-        } catch (error) {
-          // console.error("Failed to connect Yjs provider:", error); // Commented out
-          showToast("Error connecting to collaboration session.", "error");
-        }
+      if (initialRoomId) {
+        connectToRoom(initialRoomId);
       } else {
         // console.error("WhiteboardCanvas: 'room' parameter missing in URL!"); // Commented out
         showToast("Room ID missing. Collaboration disabled.", "error");
       }
-    });
-    // ===== FRAGMENT 6 END =====
+  });
 
     onBeforeUnmount(() => {
       window.removeEventListener('resize', handleResize);
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('paste', handlePaste);
       darkModeObserver.disconnect();
-
-      // Clean up Yjs observers
-      if (yDrawings.value) {
-        yDrawings.value.unobserve(handleYjsUpdate); // Unobserve using the named handler
-      }
-
-      // Clean up UndoManager
-      if (undoManager.value) {
-        // Use the externally defined updateGlobalState function reference
-        undoManager.value.off('stack-item-added', updateGlobalState);
-        undoManager.value.off('stack-item-popped', updateGlobalState);
-        undoManager.value.destroy();
-        undoManager.value = null;
-        // console.log('[Canvas] UndoManager destroyed'); // Commented out
-      }
-
-      // Disconnect from Yjs
-      if (yjsConnection.value) {
-        yjsConnection.value.disconnect();
-      }
+      teardownYjsConnection();
     });
 
     // Expose methods for App.vue to call
@@ -1927,11 +2003,12 @@ export default {
         setEraserMode,
         undo,
         redo,
+        // Expose UndoManager ref for external debug/force updates
+        undoManager,
         clearCanvas,
         addImageFromDataUrl,
         toggleDebug,
         redrawCanvas, // Expose redraw if needed externally
-        // AI Actions
         alignToGrid,
         groupStrokes,
         applyStyleTransformation,
@@ -1965,6 +2042,7 @@ export default {
       canUndo, // Keep exposing for debug panel
       canRedo, // Keep exposing for debug panel
       selectedObjectId, // Added for selection state
+      movableElements,
 
       // Methods
       handleMouseDown,
@@ -1999,7 +2077,7 @@ export default {
       getViewportCenter,
       toggleDebug,
       redrawCanvas,
-      testUndoManager, // ===== FRAGMENT 7 =====
+      testUndoManager,
 
       // Graph/Coord System Panel State & Handlers
       activeConfigPanel,
@@ -2011,7 +2089,7 @@ export default {
       handleObjectUpdate,
       selectObject, 
 
-      // AI Action Methods (now exposed via defineExpose)
+      // Helper action methods (now exposed via defineExpose)
       alignToGrid,
       groupStrokes,
       applyStyleTransformation,

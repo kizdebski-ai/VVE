@@ -1,5 +1,5 @@
 // MathRecognizerModule.js
-// Moduł do rozpoznawania równań matematycznych i wbudowany kalkulator AI
+// Module responsible for recognizing equations and rendering lightweight previews
 import * as math from 'mathjs'; // Import the main mathjs object
 
 export default class MathRecognizerModule {
@@ -10,16 +10,16 @@ export default class MathRecognizerModule {
     // Opcje modułu z wartościami domyślnymi
     this.options = {
       renderLatex: true, // Czy renderować LaTeX
-      useAI: options.useAI || true, // Czy używać AI do rozpoznawania (placeholder for future)
       ghostOpacity: options.ghostOpacity || 0.3, // Przezroczystość podpowiedzi
       recognitionDelay: options.recognitionDelay || 1000, // Delay after equals sign
+      debug: options.debug || false,
       ...options
     };
 
     // Stan modułu
     this.strokes = []; // Wszystkie ścieżki (managed externally, passed via setStrokes)
     this.equationStrokes = []; // Ścieżki tworzące równanie (subset of this.strokes)
-    this.ghostAnswer = null; // Podpowiedź AI { points: [], color: '', weight: number }
+    this.ghostAnswer = null; // Podpowiedź { points: [], color: '', weight: number }
     this.recognitionStatus = ''; // Status rozpoznawania
     this.latexEquation = ''; // Równanie w formacie LaTeX
     this.solution = ''; // Rozwiązanie równania
@@ -28,6 +28,12 @@ export default class MathRecognizerModule {
     // Funkcja renderująca LaTeX (można przekazać z zewnątrz)
     this.renderLatexFn = options.renderLatexFn || null;
     this.recognitionTimeout = null;
+  }
+
+  logDebug(...args) {
+    if (this.options.debug) {
+      console.log(...args);
+    }
   }
 
   // Aktywacja/deaktywacja modułu
@@ -72,19 +78,19 @@ export default class MathRecognizerModule {
     // Reset ghost answer if user edits equation
     this.ghostAnswer = null;
 
-    console.log(`[Math] addStroke called with stroke ID: ${stroke.id}`); // DEBUG
+    this.logDebug(`[Math] addStroke called with stroke ID: ${stroke.id}`); // DEBUG
     // Reset ghost answer if user edits equation
     this.ghostAnswer = null;
 
     // Schedule recognition if equals sign detected
     const equalsDetected = this.detectEqualsSign(stroke);
-    console.log(`[Math] Stroke ID ${stroke.id} - Equals sign detected: ${equalsDetected}`); // DEBUG
+    this.logDebug(`[Math] Stroke ID ${stroke.id} - Equals sign detected: ${equalsDetected}`); // DEBUG
     if (equalsDetected) {
       if (this.recognitionTimeout) {
         clearTimeout(this.recognitionTimeout);
-        console.log('[Math] Cleared previous recognition timeout.'); // DEBUG
+        this.logDebug('[Math] Cleared previous recognition timeout.'); // DEBUG
       }
-      console.log(`[Math] Scheduling equation recognition in ${this.options.recognitionDelay}ms.`); // DEBUG
+      this.logDebug(`[Math] Scheduling equation recognition in ${this.options.recognitionDelay}ms.`); // DEBUG
       this.recognitionTimeout = setTimeout(() => {
         this.recognizeEquation();
       }, this.options.recognitionDelay);
@@ -175,7 +181,7 @@ export default class MathRecognizerModule {
               horizontalCenterDiff < maxHorizontalCenterDiff &&
               Math.min(widthNew, widthOld) / Math.max(widthNew, widthOld) > widthRatioThreshold
           ) {
-              console.log(`[Math] Equals sign detected between stroke ${newStroke.id} and ${existingStroke.id}`); // DEBUG
+              this.logDebug(`[Math] Equals sign detected between stroke ${newStroke.id} and ${existingStroke.id}`); // DEBUG
               return true; // Found a pair likely forming an equals sign
           }
       }
@@ -187,10 +193,10 @@ export default class MathRecognizerModule {
   async recognizeEquation() {
     if (!this.enabled || !this.equationStrokes.length) {
       this.recognitionStatus = 'Brak równania do rozpoznania';
-      console.log('[Math] recognizeEquation skipped: disabled or no strokes.'); // DEBUG
+      this.logDebug('[Math] recognizeEquation skipped: disabled or no strokes.'); // DEBUG
       return this;
     }
-    console.log('[Math] recognizeEquation called.'); // DEBUG
+    this.logDebug('[Math] recognizeEquation called.'); // DEBUG
 
     this.recognitionStatus = 'Rozpoznawanie równania...';
     this.latexEquation = '';
@@ -199,15 +205,15 @@ export default class MathRecognizerModule {
 
     try {
       // Placeholder for actual OCR/Recognition API call
-      console.log('[Math] Calling simulateEquationRecognition...'); // DEBUG
+      this.logDebug('[Math] Calling simulateEquationRecognition...'); // DEBUG
       const recognizedEquation = await this.simulateEquationRecognition(this.equationStrokes);
 
       if (!recognizedEquation) {
           this.recognitionStatus = 'Nie udało się rozpoznać równania.';
-          console.log('[Math] Simulation failed to recognize equation.'); // DEBUG
+          this.logDebug('[Math] Simulation failed to recognize equation.'); // DEBUG
           return this;
       }
-      console.log('[Math] Simulation successful:', recognizedEquation); // DEBUG
+      this.logDebug('[Math] Simulation successful:', recognizedEquation); // DEBUG
 
       this.latexEquation = recognizedEquation.latex;
 
@@ -218,9 +224,9 @@ export default class MathRecognizerModule {
 
       // Solve the equation if needed
       if (recognizedEquation.needsSolution && recognizedEquation.text) {
-        console.log(`[Math] Solving equation: ${recognizedEquation.text}`); // DEBUG
+        this.logDebug(`[Math] Solving equation: ${recognizedEquation.text}`); // DEBUG
         this.solution = await this.solveEquation(recognizedEquation.text);
-        console.log(`[Math] Solution: ${this.solution}`); // DEBUG
+        this.logDebug(`[Math] Solution: ${this.solution}`); // DEBUG
 
         // Generate ghost answer if solution found
         if (this.solution && typeof this.solution === 'string' && !this.solution.startsWith('Błąd') && !this.solution.startsWith('Nie można')) {
@@ -253,7 +259,7 @@ export default class MathRecognizerModule {
 
   // Symulacja rozpoznawania równania (replace with actual API call)
   async simulateEquationRecognition(strokes) {
-    console.log('[Math] simulateEquationRecognition running...'); // DEBUG
+    this.logDebug('[Math] simulateEquationRecognition running...'); // DEBUG
     // Simulate network/processing delay
     await new Promise(resolve => setTimeout(resolve, 300));
 
@@ -282,11 +288,11 @@ export default class MathRecognizerModule {
 
   // Funkcja rozwiązująca równanie using mathjs
   async solveEquation(equationText) {
-    console.log(`[Math] solveEquation attempting to solve: ${equationText}`); // DEBUG
+    this.logDebug(`[Math] solveEquation attempting to solve: ${equationText}`); // DEBUG
     try {
       // Basic check for equation format
       if (!equationText || !equationText.includes('=')) {
-        console.log('[Math] solveEquation failed: Invalid format (no = sign).'); // DEBUG
+        this.logDebug('[Math] solveEquation failed: Invalid format (no = sign).'); // DEBUG
         return 'Nieprawidłowe równanie';
       }
 

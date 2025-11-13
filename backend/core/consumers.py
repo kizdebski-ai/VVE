@@ -3,7 +3,11 @@ import json
 from channels.generic.websocket import AsyncWebsocketConsumer
 # from channels.db import database_sync_to_async # Moved import lower
 import anyio # Use anyio for async locks compatible with asyncio/trio
-import y_py as Y # Import y-py
+from collections import defaultdict
+try:
+    import y_py as Y
+except ImportError:
+    Y = None
 # from .models import WhiteboardRoom # Import moved lower
 
 # Define message types (must match frontend)
@@ -13,8 +17,9 @@ MESSAGE_AWARENESS = 1
 # In-memory storage for YDoc instances per room
 # In-memory storage for YDoc instances per room.
 # Docs are now loaded from DB on first access and saved back on updates.
-room_docs: dict[str, Y.YDoc] = {}
-room_locks: dict[str, anyio.Lock] = {}
+room_docs = {}
+room_locks = {}
+room_members = defaultdict(int)
 
 # Database helper functions moved to db_utils.py
 
@@ -27,14 +32,20 @@ class WhiteboardConsumer(AsyncWebsocketConsumer):
     """
     WebSocket consumer using y-py for backend document persistence.
     """
-    doc: Y.YDoc | None = None
-    lock: anyio.Lock | None = None
+    doc = None
+    lock = None
 
 
     async def connect(self):
         """
         Called when the WebSocket is handshaking as part of the connection process.
         """
+        if Y is None:
+            # Backend lacks y-py; refuse websocket gracefully with guidance
+            await self.accept()
+            await self.close(code=1013)
+            print("WebSocket closed: y-py dependency missing. Install 'y-py' to enable realtime persistence.")
+            return
         # Extract room_id from the URL route
         self.room_id = self.scope['url_route']['kwargs']['room_id']
         self.room_group_name = f'whiteboard_{self.room_id}'
@@ -102,6 +113,9 @@ class WhiteboardConsumer(AsyncWebsocketConsumer):
                      room_docs[self.room_group_name] = self.doc
 
 
+        # Track active members to allow cleanup on disconnect
+        room_members[self.room_group_name] += 1
+
         # Accept the WebSocket connection
         await self.accept()
         print(f"WebSocket connected: {self.channel_name} to room {self.room_id}")
@@ -125,14 +139,31 @@ class WhiteboardConsumer(AsyncWebsocketConsumer):
         """
         Called when the WebSocket closes for any reason.
         """
+        room_key = getattr(self, 'room_group_name', None)
+        lock = room_locks.get(room_key)
+
         # Leave room group
-        await self.channel_layer.group_discard(
-            self.room_group_name,
+        if room_key:
+            await self.channel_layer.group_discard(
+            room_key,
             self.channel_name
         )
 
         print(f"WebSocket disconnected: {self.channel_name} from room {self.room_id}")
         # Yjs awareness protocol handles presence updates, no need for custom 'user_left' message
+        if room_key:
+            remaining = max(room_members.get(room_key, 1) - 1, 0)
+            if remaining <= 0:
+                room_members.pop(room_key, None)
+                if lock:
+                    async with lock:
+                        room_docs.pop(room_key, None)
+                else:
+                    room_docs.pop(room_key, None)
+                room_locks.pop(room_key, None)
+                print(f"Cleaned up YDoc and lock for room {self.room_id}")
+            else:
+                room_members[room_key] = remaining
 
     async def receive(self, text_data=None, bytes_data=None):
         """

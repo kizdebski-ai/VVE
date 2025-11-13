@@ -108,9 +108,9 @@ export default {
 }
 
 .line-width-preview {
-  width: 36px;
+  width: 1px;
   height: 36px;
-  background-color: #333;
+  background-color: #0b20ff;
   border-radius: 4px;
   display: flex;
   align-items: center;
@@ -125,7 +125,7 @@ export default {
 }
 
 .line-preview {
-  width: 20px;
+  width: 10px;
   min-height: 1px;
   border-radius: 2px;
 }
@@ -141,7 +141,7 @@ export default {
   position: absolute;
   top: 100%;
   left: 0;
-  width: 150px;
+  width: 100px;
   background-color: #333;
   border-radius: 4px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
@@ -200,6 +200,6 @@ export default {
 }
 
 .width-name {
-  font-size: 14px;
+  font-size: 1x;
 }
 </style>

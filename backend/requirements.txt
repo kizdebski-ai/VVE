@@ -7,5 +7,5 @@ channels-redis
 daphne
 
 # Yjs backend
-# y-py  # temporarily disabled (requires Rust toolchain)
+y-py>=0.6
 anyio

@@ -1,8 +1,11 @@
 # Django and Channels
 django
+djangorestframework
+django-cors-headers
 channels
+channels-redis
 daphne
 
 # Yjs backend
-y-py
+# y-py  # temporarily disabled (requires Rust toolchain)
 anyio

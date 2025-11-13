@@ -26,8 +26,8 @@
         @update:has-stylized-strokes="hasStylizedStrokes = $event"
        ></WhiteboardCanvas>
 
-       <!-- AI Feature Panels (Example Structure) -->
-       <div v-if="activeFeature === 'gridAlign'" class="ai-panel grid-align-panel">
+       <!-- Feature Panels -->
+       <div v-if="activeFeature === 'gridAlign'" class="feature-panel grid-align-panel">
          <div class="panel-header">
            <span>Grid Align Options</span>
            <button class="close-button" @click="toggleFeature(null)">×</button>
@@ -45,7 +45,7 @@
          </div>
        </div>
 
-       <div v-if="activeFeature === 'styleHandwriting'" class="ai-panel handwriting-styler-panel">
+       <div v-if="activeFeature === 'styleHandwriting'" class="feature-panel handwriting-styler-panel">
          <div class="panel-header">
            <span>Handwriting Styler</span>
            <button class="close-button" @click="toggleFeature(null)">×</button>
@@ -76,7 +76,7 @@
          </div>
        </div>
 
-       <div v-if="activeFeature === 'mathRecognizer'" class="ai-panel math-recognizer-panel">
+       <div v-if="activeFeature === 'mathRecognizer'" class="feature-panel math-recognizer-panel">
          <div class="panel-header">
            <span>Math Recognizer</span>
            <button class="close-button" @click="toggleFeature(null)">×</button>
@@ -184,7 +184,7 @@
 </template>
 
 <script>
-import { ref, computed, onMounted, onBeforeUnmount, nextTick, reactive } from 'vue'; // Import reactive
+import { ref, computed, onMounted, onBeforeUnmount, nextTick, reactive, watch } from 'vue'; // Import reactive
 import WhiteboardCanvas from './components/WhiteboardCanvas.vue';
 import ToolBar from './components/ToolBar.vue';
 import TopMenu from './components/TopMenu.vue';
@@ -192,13 +192,13 @@ import ImportDialog from './components/ImportDialog.vue';
 import ExportDialog from './components/ExportDialog.vue';
 import ThemeToggle from './components/ThemeToggle.vue';
 import CalculatorModal from './components/CalculatorModal.vue';
-// Import AI Panels (assuming they will be created later)
-// import GridAlignPanel from './components/ai-panels/GridAlignPanel.vue';
-// import HandwritingStylerPanel from './components/ai-panels/HandwritingStylerPanel.vue';
-// import MathRecognizerPanel from './components/ai-panels/MathRecognizerPanel.vue';
+// Placeholder imports for optional feature panels
+// import GridAlignPanel from './components/panels/GridAlignPanel.vue';
 import { copyToClipboard } from './utils/fileUtils.js';
 import * as Y from 'yjs';
 import { Buffer } from 'buffer';
+import katex from 'katex';
+import 'katex/dist/katex.min.css';
 import { undoRedoState } from './utils/undoRedoState'; // 2. Add import
 
 
@@ -230,13 +230,18 @@ export default {
     const statusTimeout = ref(null);
     const darkMode = ref(localStorage.getItem('darkMode') === 'true');
     const debugMode = ref(false);
+    const appDebugLog = (...args) => {
+      if (debugMode.value) {
+        console.log(...args);
+      }
+    };
     const roomId = ref('default_room');
     const currentShape = ref('rectangle');
     const currentLineStyle = ref('solid');
     const isCalculatorVisible = ref(false);
     const globalUndoRedoState = undoRedoState;
 
-    // --- AI Feature State ---
+    // --- Feature State ---
     const activeFeature = ref(null); // 'gridAlign', 'styleHandwriting', 'mathRecognizer', or null
     const gridAlignOptions = reactive({
       gridSize: 20, // Default, maybe sync with canvas grid later?
@@ -253,7 +258,6 @@ export default {
     });
     const mathRecognizerOptions = reactive({
       renderLatex: true,
-      useAI: true, // Placeholder
       ghostOpacity: 0.3,
       recognitionDelay: 1000,
     });
@@ -264,6 +268,18 @@ export default {
     const solution = ref('');
     const hasCharGroups = ref(false);
     const hasStylizedStrokes = ref(false);
+
+    // Render LaTeX preview in the math panel when latexEquation changes
+    watch(latexEquation, (newVal) => {
+      const el = document.getElementById('latex-render-output');
+      if (!el) return;
+      try {
+        katex.render(newVal || '', el, { throwOnError: false, displayMode: false });
+      } catch (e) {
+        console.error('KaTeX render error:', e);
+        el.textContent = `Error: ${e.message}`;
+      }
+    });
 
     // --- Computed Properties ---
     const activeUsersCount = computed(() => {
@@ -316,13 +332,13 @@ export default {
         const canUndoVal = um.value.canUndo();
         const canRedoVal = um.value.canRedo();
         
-        console.log(`[App] Wymuszam aktualizację: canUndo=${canUndoVal}, canRedo=${canRedoVal}`);
+        appDebugLog(`[App] Wymuszam aktualizację: canUndo=${canUndoVal}, canRedo=${canRedoVal}`);
         undoRedoState.update(canUndoVal, canRedoVal);
       } else {
         console.error("[App] Brak dostępu do UndoManager przez whiteboard ref (może nie być 'exposed')");
         // Fallback: try accessing the local state if exposed (less ideal)
         if (whiteboard.value?.canUndo !== undefined && whiteboard.value?.canRedo !== undefined) {
-           console.log("[App] Fallback: Using local canUndo/canRedo from whiteboard ref");
+           appDebugLog("[App] Fallback: Using local canUndo/canRedo from whiteboard ref");
            undoRedoState.update(whiteboard.value.canUndo, whiteboard.value.canRedo);
         } else {
            console.error("[App] Fallback failed: Cannot access undo/redo state from whiteboard ref.");
@@ -338,7 +354,7 @@ export default {
     };
 
     const showNotification = (message, type = 'info') => {
-      console.log(`[Notification] ${type}: ${message}`);
+      appDebugLog(`[Notification] ${type}: ${message}`);
       if (whiteboard.value?.showToast) {
         whiteboard.value.showToast(message, type);
     } else {
@@ -369,7 +385,7 @@ export default {
       if (awareness) {
         const currentUserState = awareness.getLocalState()?.user || {};
         awareness.setLocalStateField('user', { ...currentUserState, name: username.value });
-        console.log(`Updated awareness username to: ${username.value}`);
+        appDebugLog(`Updated awareness username to: ${username.value}`);
       }
     };
 
@@ -387,12 +403,12 @@ export default {
 
     const handleShapeChange = (shape) => {
       currentShape.value = shape;
-      console.log('App.vue: Shape changed to', shape);
+      appDebugLog('App.vue: Shape changed to', shape);
     };
 
     const handleLineStyleChange = (style) => {
       currentLineStyle.value = style;
-      console.log('App.vue: Line style changed to', style);
+      appDebugLog('App.vue: Line style changed to', style);
     };
 
     const toggleCalculator = () => {
@@ -477,7 +493,7 @@ export default {
     };
 
     const handleImageSelected = (file) => {
-      console.log("App.vue: handleImageSelected called with:", file);
+      appDebugLog("App.vue: handleImageSelected called with:", file);
       if (!file) {
           console.warn("handleImageSelected: No file received.");
           return;
@@ -489,16 +505,16 @@ export default {
       }
 
       if (file instanceof File) {
-        console.log(`handleImageSelected: Processing File object: ${file.name}, type: ${file.type}`);
+        appDebugLog(`handleImageSelected: Processing File object: ${file.name}, type: ${file.type}`);
         const reader = new FileReader();
 
         reader.onload = (e) => {
-          console.log("FileReader onload triggered.");
+          appDebugLog("FileReader onload triggered.");
           const dataUrl = e.target.result;
           if (whiteboard.value?.addImageFromDataUrl) {
-            console.log("Calling whiteboard.addImageFromDataUrl with dataUrl (first 50 chars):", dataUrl.substring(0, 50));
+            appDebugLog("Calling whiteboard.addImageFromDataUrl with dataUrl (first 50 chars):", dataUrl.substring(0, 50));
             whiteboard.value.addImageFromDataUrl(dataUrl);
-            console.log("Called whiteboard.addImageFromDataUrl.");
+            appDebugLog("Called whiteboard.addImageFromDataUrl.");
           } else {
             console.error("Whiteboard ref or addImageFromDataUrl method not available when FileReader loaded.");
             showNotification("Error processing image (internal).", "error");
@@ -511,12 +527,12 @@ export default {
         };
 
         reader.readAsDataURL(file);
-        console.log("FileReader readAsDataURL called.");
+        appDebugLog("FileReader readAsDataURL called.");
 
       } else {
          console.warn("handleImageSelected received non-File object:", file);
          if (whiteboard.value?.addImageFromDataUrl && typeof file === 'string') {
-             console.log("Calling whiteboard.addImageFromDataUrl with non-File object (string)...");
+             appDebugLog("Calling whiteboard.addImageFromDataUrl with non-File object (string)...");
              whiteboard.value.addImageFromDataUrl(file);
          } else {
              showNotification("Invalid image data received.", "error");
@@ -554,7 +570,7 @@ export default {
         });
     };
 
-    // --- AI Feature Methods ---
+    // --- Feature Methods ---
     const toggleFeature = (featureName) => {
       if (activeFeature.value === featureName) {
         activeFeature.value = null; // Toggle off if clicking the same feature
@@ -562,12 +578,14 @@ export default {
         activeFeature.value = featureName;
       }
       // WhiteboardCanvas watcher will handle enabling/disabling modules
-      console.log(`[App] Toggled AI Feature to: ${activeFeature.value}`);
+      if (debugMode.value) {
+        appDebugLog(`[App] Active feature: ${activeFeature.value}`);
+      }
     };
 
     const triggerWhiteboardAction = (actionName, payload = null) => {
       if (whiteboard.value && typeof whiteboard.value[actionName] === 'function') {
-        console.log(`[App] Triggering whiteboard action: ${actionName}`);
+        appDebugLog(`[App] Triggering whiteboard action: ${actionName}`);
         whiteboard.value[actionName](payload);
       } else {
         console.warn(`[App] Whiteboard ref or action '${actionName}' not available.`);
@@ -600,7 +618,7 @@ export default {
         localStorage.setItem('last_room_id', initialRoomId);
       }
       roomId.value = initialRoomId;
-      console.log(`App mounted. Room ID: ${roomId.value}`);
+      appDebugLog(`App mounted. Room ID: ${roomId.value}`);
 
       document.body.classList.toggle('dark-mode', darkMode.value);
       window.addEventListener('beforeunload', handleBeforeUnload);
@@ -657,7 +675,7 @@ export default {
       globalUndoRedoState,
       forceUpdateUndoRedo,
 
-      // AI Feature State & Methods
+      // Feature state & methods
       activeFeature,
       gridAlignOptions,
       handwritingStylerOptions,
@@ -775,8 +793,8 @@ export default {
   font-size: 12px;
 }
 
-/* AI Panel Styles */
-.ai-panel {
+/* Feature Panel Styles */
+.feature-panel {
   position: absolute;
   top: 60px; /* Adjust as needed */
   left: 50%;
@@ -792,7 +810,7 @@ export default {
   flex-direction: column;
 }
 
-.dark-mode .ai-panel {
+.dark-mode .feature-panel {
   background-color: var(--dialog-bg-dark, #2f2f2f);
   color: var(--text-color-dark, #e0e0e0);
   border: 1px solid var(--border-color-dark, #444);

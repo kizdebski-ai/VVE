@@ -3,8 +3,7 @@ import { ref, onUnmounted, nextTick, shallowRef } from 'vue';
 import * as Y from 'yjs';
 import { connectToYjs as connectYjsProvider } from '../services/connectToYjs'; // Assuming this handles the provider connection
 import { undoRedoState } from '../utils/undoRedoState';
-// TODO: Create a shared notification utility if needed, or pass showToast as an argument
-// import { showToast } from '../utils/notifications';
+// import { showToast } from '../utils/notifications'; // Inject a shared notifier when available
 
 // Placeholder for showToast if not passed or imported
 const showToast = (message, type) => {

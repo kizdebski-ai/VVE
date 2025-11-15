@@ -29,7 +29,7 @@
     <div class="object-content" @mousedown.prevent.stop="startDragIfSelectedOrRequestSelect">
       <img
         v-if="objectData.type === 'image'"
-        :src="objectData.src"
+        :src="objectData.src || objectData.dataUrl"
         :alt="'Object ' + objectData.id"
         draggable="false"
         style="width: 100%; height: 100%; user-select: none; object-fit: contain;"
@@ -101,6 +101,7 @@ interface MovableObjectData {
   width: number;
   height: number;
   src?: string; 
+  dataUrl?: string;
   color?: string; 
   lineWidth?: number; 
   startX?: number;
@@ -112,12 +113,44 @@ interface MovableObjectData {
   fontSize?: number;
 }
 
-const props = defineProps<{
+const ensureNumber = (value: any, fallback = 0) => (Number.isFinite(value) ? Number(value) : fallback);
+
+const extractPoint = (value: any) => {
+  if (!value) {
+    return { x: 0, y: 0 };
+  }
+  if (typeof value.get === 'function') {
+    return {
+      x: ensureNumber(value.get('x'), 0),
+      y: ensureNumber(value.get('y'), 0),
+    };
+  }
+  return {
+    x: ensureNumber(value.x, 0),
+    y: ensureNumber(value.y, 0),
+  };
+};
+
+const deriveBoundsFromPoints = (start: { x: number; y: number }, end: { x: number; y: number }) => {
+  const width = Math.max(1, Math.abs(end.x - start.x));
+  const height = Math.max(1, Math.abs(end.y - start.y));
+  return {
+    x: Math.min(start.x, end.x),
+    y: Math.min(start.y, end.y),
+    width,
+    height,
+  };
+};
+
+const props = withDefaults(defineProps<{
   object: Y.Map<any>; 
   isSelected: boolean; 
   zoomLevel: number; 
   panOffset: { x: number; y: number }; 
-}>();
+  interactionEnabled?: boolean;
+}>(), {
+  interactionEnabled: true,
+});
 
 const emit = defineEmits(['request-select', 'update:object']);
 
@@ -135,51 +168,65 @@ watch(() => props.isSelected, (newValue) => {
     internalIsSelected.value = newValue;
 });
 
-const objectData = reactive<MovableObjectData>({
-    id: props.object.get('id'),
-    type: props.object.get('type'),
-    x: props.object.get('x'),
-    y: props.object.get('y'),
-    rotation: props.object.get('rotation') || 0,
-    width: props.object.get('width'),
-    height: props.object.get('height'),
-    src: props.object.get('src'),
-    color: props.object.get('color'),
-    lineWidth: props.object.get('lineWidth'),
-    startX: props.object.get('startX'),
-    startY: props.object.get('startY'),
-    endX: props.object.get('endX'),
-    endY: props.object.get('endY'),
-    lineStyle: props.object.get('lineStyle'),
-    text: props.object.get('text'),
-    fontSize: props.object.get('fontSize'),
-});
+const bootstrapObjectData = () => {
+    const startPoint = extractPoint(props.object.get('start'));
+    const endPoint = extractPoint(props.object.get('end'));
+    const fallbackBounds = deriveBoundsFromPoints(startPoint, endPoint);
+
+    return {
+        id: props.object.get('id'),
+        type: props.object.get('type'),
+        x: ensureNumber(props.object.get('x'), fallbackBounds.x),
+        y: ensureNumber(props.object.get('y'), fallbackBounds.y),
+        rotation: ensureNumber(props.object.get('rotation'), 0),
+        width: ensureNumber(props.object.get('width'), fallbackBounds.width),
+        height: ensureNumber(props.object.get('height'), fallbackBounds.height),
+        src: props.object.get('src') || props.object.get('dataUrl'),
+        dataUrl: props.object.get('dataUrl'),
+        color: props.object.get('color'),
+        lineWidth: props.object.get('lineWidth'),
+        startX: startPoint.x,
+        startY: startPoint.y,
+        endX: endPoint.x,
+        endY: endPoint.y,
+        lineStyle: props.object.get('lineStyle'),
+        text: props.object.get('text'),
+        fontSize: props.object.get('fontSize'),
+    } as MovableObjectData;
+};
+
+const objectData = reactive<MovableObjectData>(bootstrapObjectData());
 
 const syncDataFromYMap = () => {
+    const startPoint = extractPoint(props.object.get('start'));
+    const endPoint = extractPoint(props.object.get('end'));
+    const fallbackBounds = deriveBoundsFromPoints(startPoint, endPoint);
+
     objectData.id = props.object.get('id');
     objectData.type = props.object.get('type');
-    objectData.x = props.object.get('x');
-    objectData.y = props.object.get('y');
-    objectData.rotation = props.object.get('rotation') || 0;
-    objectData.width = props.object.get('width');
-    objectData.height = props.object.get('height');
-    objectData.src = props.object.get('src');
+    objectData.x = ensureNumber(props.object.get('x'), fallbackBounds.x);
+    objectData.y = ensureNumber(props.object.get('y'), fallbackBounds.y);
+    objectData.rotation = ensureNumber(props.object.get('rotation'), 0);
+    objectData.width = ensureNumber(props.object.get('width'), fallbackBounds.width);
+    objectData.height = ensureNumber(props.object.get('height'), fallbackBounds.height);
+    objectData.src = props.object.get('src') || props.object.get('dataUrl');
+    objectData.dataUrl = props.object.get('dataUrl');
     objectData.color = props.object.get('color');
     objectData.lineWidth = props.object.get('lineWidth');
-    objectData.startX = props.object.get('startX');
-    objectData.startY = props.object.get('startY');
-    objectData.endX = props.object.get('endX');
-    objectData.endY = props.object.get('endY');
+    objectData.startX = startPoint.x;
+    objectData.startY = startPoint.y;
+    objectData.endX = endPoint.x;
+    objectData.endY = endPoint.y;
     objectData.lineStyle = props.object.get('lineStyle');
     objectData.text = props.object.get('text');
     objectData.fontSize = props.object.get('fontSize');
 };
 
 const objectStyle = computed(() => {
-  const screenX = objectData.x * props.zoomLevel + props.panOffset.x;
-  const screenY = objectData.y * props.zoomLevel + props.panOffset.y;
-  const scaledWidth = Math.max(1, objectData.width * props.zoomLevel);
-  const scaledHeight = Math.max(1, objectData.height * props.zoomLevel);
+  const screenX = ensureNumber(objectData.x, 0) * props.zoomLevel + props.panOffset.x;
+  const screenY = ensureNumber(objectData.y, 0) * props.zoomLevel + props.panOffset.y;
+  const scaledWidth = Math.max(1, ensureNumber(objectData.width, 1) * props.zoomLevel);
+  const scaledHeight = Math.max(1, ensureNumber(objectData.height, 1) * props.zoomLevel);
 
   return {
     position: 'absolute' as const,
@@ -188,7 +235,10 @@ const objectStyle = computed(() => {
     width: `${scaledWidth}px`,
     height: `${scaledHeight}px`,
     transform: `rotate(${objectData.rotation}deg)`,
-    cursor: isDragging.value ? 'grabbing' : (internalIsSelected.value ? 'grab' : 'pointer'),
+    cursor: props.interactionEnabled
+      ? (isDragging.value ? 'grabbing' : (internalIsSelected.value ? 'grab' : 'pointer'))
+      : 'default',
+    pointerEvents: props.interactionEnabled ? 'auto' : 'none',
     border: internalIsSelected.value ? '2px solid dodgerblue' : '1px solid transparent',
     transformOrigin: 'top left', 
     userSelect: 'none' as const,

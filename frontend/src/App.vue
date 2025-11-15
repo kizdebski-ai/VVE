@@ -559,15 +559,50 @@ export default {
 
     const shareRoom = () => {
       const shareableUrl = `${window.location.origin}${window.location.pathname}?room=${roomId.value}`;
-      navigator.clipboard.writeText(shareableUrl)
-        .then(() => {
-          showStatus('Room link copied! Share to collaborate.');
+
+      const fallbackCopy = () => {
+        try {
+          const textarea = document.createElement('textarea');
+          textarea.value = shareableUrl;
+          textarea.setAttribute('readonly', '');
+          textarea.style.position = 'absolute';
+          textarea.style.left = '-9999px';
+          document.body.appendChild(textarea);
+          textarea.select();
+          const success = document.execCommand('copy');
+          document.body.removeChild(textarea);
+          return success;
+        } catch (error) {
+          console.error('Fallback copy failed:', error);
+          return false;
+        }
+      };
+
+      if (navigator.clipboard?.writeText) {
+        navigator.clipboard.writeText(shareableUrl)
+          .then(() => {
+            showStatus('Room link copied! Share to collaborate.');
+            showNotification('Room link copied', 'success');
+          })
+          .catch(err => {
+            console.error('Failed to copy with Clipboard API:', err);
+            if (fallbackCopy()) {
+              showStatus('Room link copied!', 2000);
+              showNotification('Room link copied', 'success');
+            } else {
+              showStatus('Failed to copy room link.', 3000);
+              showNotification('Unable to copy room link', 'error');
+            }
+          });
+      } else {
+        if (fallbackCopy()) {
+          showStatus('Room link copied!', 2000);
           showNotification('Room link copied', 'success');
-        })
-        .catch(err => {
-          console.error('Failed to copy:', err);
+        } else {
           showStatus('Failed to copy room link.', 3000);
-        });
+          showNotification('Unable to copy room link', 'error');
+        }
+      }
     };
 
     // --- Feature Methods ---

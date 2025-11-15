@@ -1,5 +1,14 @@
 <template>
   <div class="toolbar" ref="toolbarRef">
+    <!-- Selection Tool -->
+    <div class="tool-category">
+      <button :class="['tool-btn', { active: currentTool === 'select' }]" @click="selectTool('select', $event)" title="Select (V)">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+          <path d="M4 3l5.5 15.5 1.8-6 6-1.8L4 3z"></path>
+        </svg>
+      </button>
+    </div>
+
     <!-- Drawing Tools Category -->
     <div class="tool-category">
       <button :class="['tool-btn', { active: currentTool === 'pen' }]" @click="selectTool('pen', $event)" title="Pen (P)">
@@ -217,7 +226,7 @@ export default {
     'share-room'
   ],
   setup(props, { emit }) {
-    const currentTool = ref('pen');
+    const currentTool = ref('select');
     const currentColor = ref('#000000');
     const currentLineWidth = ref(2);
     const currentShape = ref('rectangle');
@@ -301,6 +310,7 @@ export default {
 
       if (!event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) { // Ensure Shift isn't pressed for other shortcuts
         const keyToolMap = {
+          'v': 'select',
           'p': 'pen', 'h': 'highlighter', 'e': 'eraser',
           's': 'shapes', 'l': 'lines', 't': 'text', 'i': 'image',
           'a': 'advanced', // Added 'a' for advanced
@@ -317,7 +327,7 @@ export default {
 
     const toolsWithOptions = ['pen', 'highlighter', 'shapes', 'lines', 'advanced']; // Added 'advanced'
     // Define tools that don't open the floating panel
-    const toolsWithoutOptions = ['text', 'image', 'mathPlot', 'physicsPlot', 'coordSystem2D', 'coordSystem3D', 'eraser'];
+    const toolsWithoutOptions = ['select', 'text', 'image', 'mathPlot', 'physicsPlot', 'coordSystem2D', 'coordSystem3D', 'eraser'];
 
 
     const selectTool = (tool, event = null) => {

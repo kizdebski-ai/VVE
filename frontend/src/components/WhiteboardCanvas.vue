@@ -1,13 +1,15 @@
 <template>
-  <div class="whiteboard-container" :class="{ 'dark-mode': darkMode }">
+  <div
+    ref="containerRef"
+    class="whiteboard-container"
+    :class="{ 'dark-mode': darkMode }"
+  >
     <div v-if="debugMode" style="position: absolute; top: 5px; left: 5px; z-index: 9999;
      background: rgba(0,0,0,0.7); color: white; padding: 5px; border-radius: 4px; font-size: 12px;">
   UndoManager: CanUndo={{canUndo}}, CanRedo={{canRedo}}
 </div>
     <canvas 
       ref="canvas" 
-      :width="canvasWidth"
-      :height="canvasHeight"
       class="whiteboard-canvas"
       @mousedown="handleMouseDown"
       @mousemove="handleMouseMove"
@@ -39,6 +41,7 @@
       :zoom-level="zoomLevel"
       :pan-offset="panOffset"
       :is-selected="elementMap.get('id') === selectedObjectId"
+      :interaction-enabled="currentTool === 'select'"
       @update:object="handleObjectUpdate"
       @request-select="handleObjectSelectionRequest"
     ></movable-object>
@@ -135,6 +138,31 @@ function debounce(func, wait) {
   };
 }
 
+const MAX_DEVICE_PIXEL_RATIO = 3;
+const MIN_ZOOM = 0.1;
+const MAX_ZOOM = 5;
+
+const clampDevicePixelRatio = () => {
+  if (typeof window === 'undefined' || typeof window.devicePixelRatio === 'undefined') {
+    return 1;
+  }
+  const ratio = window.devicePixelRatio || 1;
+  return Math.min(Math.max(ratio, 1), MAX_DEVICE_PIXEL_RATIO);
+};
+
+const clampZoom = (value) => Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, value));
+
+const getTouchDistance = (touchA, touchB) => {
+  const dx = touchA.clientX - touchB.clientX;
+  const dy = touchA.clientY - touchB.clientY;
+  return Math.hypot(dx, dy);
+};
+
+const getTouchCenter = (touchA, touchB, rect) => ({
+  x: ((touchA.clientX + touchB.clientX) / 2) - rect.left,
+  y: ((touchA.clientY + touchB.clientY) / 2) - rect.top,
+});
+
 
 export default {
   name: 'WhiteboardCanvas',
@@ -168,12 +196,14 @@ export default {
   ],
 
   setup(props, { emit }) {
+    const containerRef = ref(null);
     const canvas = ref(null);
     const context = ref(null);
     const canvasWidth = ref(1200);
     const canvasHeight = ref(800);
+    const devicePixelRatio = ref(clampDevicePixelRatio());
     const isDrawing = ref(false);
-    const currentTool = ref('pen');
+    const currentTool = ref('select');
     const currentColor = ref('#000000');
     const currentLineWidth = ref(2);
     const zoomLevel = ref(1);
@@ -221,6 +251,11 @@ export default {
     const movableElements = shallowRef([]);
     const hoveredElementIndex = ref(-1);
     const selectedObjectId = ref(null); // Added for selection state
+    const spacePanActive = ref(false);
+    const panStartedWithSpace = ref(false);
+    const pinchGesture = ref(null);
+    let resizeObserver = null;
+    let clipboardFocusHandler = null;
 
     // Helper module instances
     const gridAlignModule = shallowRef(null);
@@ -437,6 +472,10 @@ export default {
       if (!context.value || !yDrawings.value) return;
 
       const ctx = context.value;
+      const ratio = devicePixelRatio.value || 1;
+
+      // Ensure base HiDPI transform before clearing
+      ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
       ctx.clearRect(0, 0, canvasWidth.value, canvasHeight.value);
 
       // Draw utility grid first
@@ -444,9 +483,9 @@ export default {
 
       ctx.save();
       ctx.setTransform(
-        zoomLevel.value, 0,
-        0, zoomLevel.value,
-        panOffset.value.x, panOffset.value.y
+        zoomLevel.value * ratio, 0,
+        0, zoomLevel.value * ratio,
+        panOffset.value.x * ratio, panOffset.value.y * ratio
       );
 
       // Determine strokes to draw (original or stylized)
@@ -535,6 +574,27 @@ export default {
                 return map;
             });
         movableElements.value = filtered;
+    };
+
+    const findMovableElementIdAtPoint = (coords) => {
+        if (!yDrawings.value) return null;
+        const elements = yDrawings.value.toArray().slice().reverse();
+        for (const elementMap of elements) {
+            const type = elementMap.get('type');
+            if (!movableElementTypes.has(type)) continue;
+            const x = elementMap.get('x');
+            const y = elementMap.get('y');
+            const width = elementMap.get('width');
+            const height = elementMap.get('height');
+            if (![x, y, width, height].every(value => typeof value === 'number' && !Number.isNaN(value))) {
+                continue;
+            }
+            const rotation = elementMap.get('rotation') || 0;
+            if (isPointInRotatedRectangle(coords, x, y, width, height, rotation)) {
+                return elementMap.get('id');
+            }
+        }
+        return null;
     };
 
     const updateAwarenessUser = (name = latestUsername.value) => {
@@ -629,24 +689,164 @@ export default {
     };
 
     const initClipboardHandler = () => {
-      document.addEventListener('click', () => {
-        if (clipboardInput.value) clipboardInput.value.focus();
-      });
+      if (clipboardFocusHandler) return;
+      clipboardFocusHandler = () => {
+        if (clipboardInput.value) {
+          clipboardInput.value.focus();
+        }
+      };
+      document.addEventListener('click', clipboardFocusHandler);
+    };
+
+    const applyHiDPIScaling = (ratio = devicePixelRatio.value) => {
+      if (!canvas.value || !context.value) return;
+      const displayWidth = canvasWidth.value;
+      const displayHeight = canvasHeight.value;
+      if (!displayWidth || !displayHeight) return;
+
+      const scaledWidth = Math.floor(displayWidth * ratio);
+      const scaledHeight = Math.floor(displayHeight * ratio);
+
+      canvas.value.width = scaledWidth;
+      canvas.value.height = scaledHeight;
+      canvas.value.style.width = `${displayWidth}px`;
+      canvas.value.style.height = `${displayHeight}px`;
+
+      if (typeof context.value.resetTransform === 'function') {
+        context.value.resetTransform();
+        context.value.scale(ratio, ratio);
+      } else {
+        context.value.setTransform(ratio, 0, 0, ratio, 0, 0);
+      }
+
+      context.value.lineCap = 'round';
+      context.value.lineJoin = 'round';
+      context.value.strokeStyle = currentColor.value;
+      context.value.lineWidth = currentLineWidth.value;
+    };
+
+    const updateCanvasSize = (width, height) => {
+      if (!canvas.value || !context.value) return;
+      const logicalWidth = Math.floor(width);
+      const logicalHeight = Math.floor(height);
+      if (logicalWidth <= 0 || logicalHeight <= 0) return;
+
+      const nextRatio = clampDevicePixelRatio();
+      const sizeChanged = logicalWidth !== canvasWidth.value || logicalHeight !== canvasHeight.value;
+      const ratioChanged = nextRatio !== devicePixelRatio.value;
+
+      if (!sizeChanged && !ratioChanged) {
+        return;
+      }
+
+      if (sizeChanged) {
+        canvasWidth.value = logicalWidth;
+        canvasHeight.value = logicalHeight;
+      }
+
+      if (ratioChanged) {
+        devicePixelRatio.value = nextRatio;
+      }
+
+      applyHiDPIScaling(nextRatio);
+      redrawCanvas();
     };
 
     const handleResize = () => {
-      const container = canvas.value?.parentElement;
-      if (container) {
-        canvasWidth.value = container.clientWidth;
-        canvasHeight.value = container.clientHeight;
-        nextTick(() => { // Ensure DOM updates before redraw
-           if (canvas.value) {
-             canvas.value.width = canvasWidth.value;
-             canvas.value.height = canvasHeight.value;
-           }
-           redrawCanvas();
-        });
+      const container = containerRef.value;
+      if (!container) return;
+      updateCanvasSize(container.clientWidth, container.clientHeight);
+    };
+
+    const initResizeObserver = () => {
+      if (resizeObserver || typeof ResizeObserver === 'undefined') return;
+      const target = containerRef.value;
+      if (!target) return;
+      resizeObserver = new ResizeObserver((entries) => {
+        const entry = entries[0];
+        if (!entry) return;
+        const { width, height } = entry.contentRect;
+        updateCanvasSize(width, height);
+      });
+      resizeObserver.observe(target);
+    };
+
+    const cancelActiveDrawing = () => {
+      if (!isDrawing.value && !currentElementPreview.value) return false;
+      isDrawing.value = false;
+      currentElementPreview.value = null;
+      pointsBuffer.value = [];
+      redrawCanvas();
+      return true;
+    };
+
+    const resetSpacePanState = (shouldRedraw = false) => {
+      spacePanActive.value = false;
+      if (panStartedWithSpace.value) {
+        isPanning.value = false;
+        panStartedWithSpace.value = false;
+        lastPanPoint.value = null;
+        if (shouldRedraw) redrawCanvas();
       }
+      updateCursor();
+    };
+
+    const startPinchGesture = (touches) => {
+      if (touches.length < 2 || !canvas.value) return;
+      const rect = canvas.value.getBoundingClientRect();
+      const touchA = touches[0];
+      const touchB = touches[1];
+      if (!touchA || !touchB) return;
+      pinchGesture.value = {
+        startDistance: getTouchDistance(touchA, touchB),
+        initialZoom: zoomLevel.value,
+        lastCanvasCenter: getTouchCenter(touchA, touchB, rect),
+      };
+      if (isDrawing.value) {
+        finishDrawing();
+      }
+      isPanning.value = true;
+      panStartedWithSpace.value = false;
+      updateCursor();
+    };
+
+    const updatePinchGesture = (touches) => {
+      if (!pinchGesture.value || touches.length < 2 || !canvas.value) return;
+      const rect = canvas.value.getBoundingClientRect();
+      const touchA = touches[0];
+      const touchB = touches[1];
+      if (!touchA || !touchB) return;
+      const canvasCenter = getTouchCenter(touchA, touchB, rect);
+      const gesture = pinchGesture.value;
+      const prevCenter = gesture.lastCanvasCenter || canvasCenter;
+
+      panOffset.value.x += canvasCenter.x - prevCenter.x;
+      panOffset.value.y += canvasCenter.y - prevCenter.y;
+
+      const distance = getTouchDistance(touchA, touchB);
+      const scale = gesture.startDistance ? distance / gesture.startDistance : 1;
+      const targetZoom = clampZoom(gesture.initialZoom * scale);
+      const prevZoom = zoomLevel.value;
+
+      const worldX = (canvasCenter.x - panOffset.value.x) / prevZoom;
+      const worldY = (canvasCenter.y - panOffset.value.y) / prevZoom;
+
+      zoomLevel.value = targetZoom;
+      panOffset.value.x = canvasCenter.x - worldX * zoomLevel.value;
+      panOffset.value.y = canvasCenter.y - worldY * zoomLevel.value;
+      gesture.lastCanvasCenter = canvasCenter;
+
+      redrawCanvas();
+      showStatus(`Zoom: ${Math.round(zoomLevel.value * 100)}%`);
+    };
+
+    const endTouchGesture = () => {
+      pinchGesture.value = null;
+      if (!panStartedWithSpace.value) {
+        isPanning.value = false;
+      }
+      lastPanPoint.value = null;
+      updateCursor();
     };
 
     const handleDarkModeChange = () => {
@@ -784,82 +984,54 @@ export default {
         event.preventDefault();
         if (isDrawing.value) return; // Don't select if in the middle of drawing a new shape
 
-        let clickedObjectFoundId = null;
-        const elements = yDrawings.value.toArray().slice().reverse();
-        for (const elementMap of elements) {
-            const objProps = { 
-                x: elementMap.get('x'), 
-                y: elementMap.get('y'), 
-                width: elementMap.get('width'), 
-                height: elementMap.get('height'), 
-                rotation: elementMap.get('rotation') || 0, 
-                id: elementMap.get('id') 
-            };
-            if (isPointInRotatedRectangle(transformedCoords, objProps.x, objProps.y, objProps.width, objProps.height, objProps.rotation)) {
-                clickedObjectFoundId = objProps.id;
-                break;
-            }
-        }
+        const clickedObjectFoundId = findMovableElementIdAtPoint(transformedCoords);
         selectedObjectId.value = clickedObjectFoundId;
         debugLog('[WhiteboardCanvas] Right-click selected:', selectedObjectId.value);
         redrawCanvas(); // To show selection changes on MovableObject
         return;
       }
 
-      if (event.button === 1 || (event.button === 0 && event.altKey)) { // Middle mouse or Alt+Left
+      const shouldSpacePan = event.button === 0 && spacePanActive.value;
+      if (event.button === 1 || (event.button === 0 && event.altKey) || shouldSpacePan) { // Middle mouse, Alt+Left, or Space+Left
         isPanning.value = true;
         lastPanPoint.value = { ...transformedCoords, screenX: coords.offsetX, screenY: coords.offsetY };
+        panStartedWithSpace.value = shouldSpacePan;
         event.preventDefault();
+        updateCursor();
         return;
       }
       
       if (event.button === 0) { // Left-click
-        let hitObjectOnLeftClickId = null;
-        if (yDrawings.value) {
-          const elements = yDrawings.value.toArray().slice().reverse();
-          for (const elementMap of elements) {
-              const objProps = { 
-                  x: elementMap.get('x'), 
-                  y: elementMap.get('y'), 
-                  width: elementMap.get('width'), 
-                  height: elementMap.get('height'), 
-                  rotation: elementMap.get('rotation') || 0, 
-                  id: elementMap.get('id') 
-              };
-              if (isPointInRotatedRectangle(transformedCoords, objProps.x, objProps.y, objProps.width, objProps.height, objProps.rotation)) {
-                  hitObjectOnLeftClickId = objProps.id;
-                  break;
-              }
-          }
+        if (currentTool.value === 'select') {
+            const hitObjectId = findMovableElementIdAtPoint(transformedCoords);
+            if (hitObjectId) {
+                handleObjectSelectionRequest(hitObjectId);
+            } else if (selectedObjectId.value) {
+                selectedObjectId.value = null;
+                redrawCanvas();
+            }
+            return;
         }
 
-        if (hitObjectOnLeftClickId) {
-            handleObjectSelectionRequest(hitObjectOnLeftClickId);
-            // If a MovableObject is clicked, we don't want to start drawing a new shape.
-            // The MovableObject itself will handle drag/resize.
-            isDrawing.value = false; // Explicitly prevent drawing
-            return; 
+        if (selectedObjectId.value) {
+            selectedObjectId.value = null;
+        }
+
+        if (currentTool.value === 'eraser') {
+            // Eraser logic (hover and click to erase is handled in mouseMove)
+            isDrawing.value = true; // Allow dragging eraser over elements
+        } else if (currentTool.value === 'mathPlot') {
+          openConfigPanel('math', transformedCoords);
+        } else if (currentTool.value === 'physicsPlot') {
+          openConfigPanel('physics', transformedCoords);
+        } else if (currentTool.value === 'coordSystem2D') {
+          const elementData = createCoordinateSystem2DElement(transformedCoords);
+          addElementFromPanel(elementData);
+        } else if (currentTool.value === 'coordSystem3D') {
+          const elementData = createCoordinateSystem3DElement(transformedCoords);
+          addElementFromPanel(elementData);
         } else {
-            // Click on empty canvas
-            selectedObjectId.value = null; 
-            debugLog('[WhiteboardCanvas] Left-click on empty space, deselected all.');
-            // Proceed with drawing tools if no object was hit
-            if (currentTool.value === 'eraser') {
-                // Eraser logic (hover and click to erase is handled in mouseMove and the top of this function for left click)
-                isDrawing.value = true; // Allow dragging eraser over elements
-            } else if (currentTool.value === 'mathPlot') {
-              openConfigPanel('math', transformedCoords);
-            } else if (currentTool.value === 'physicsPlot') {
-              openConfigPanel('physics', transformedCoords);
-            } else if (currentTool.value === 'coordSystem2D') {
-              const elementData = createCoordinateSystem2DElement(transformedCoords);
-              addElementFromPanel(elementData);
-            } else if (currentTool.value === 'coordSystem3D') {
-              const elementData = createCoordinateSystem3DElement(transformedCoords);
-              addElementFromPanel(elementData);
-            } else {
-              startDrawing(event); 
-            }
+          startDrawing(event); 
         }
       }
       redrawCanvas();
@@ -897,8 +1069,10 @@ export default {
       if (isPanning.value) {
         isPanning.value = false;
         lastPanPoint.value = null;
-          return;
-        }
+        panStartedWithSpace.value = false;
+        updateCursor();
+        return;
+      }
       if (isDrawing.value) {
          if (currentTool.value === 'eraser') {
              isDrawing.value = false;
@@ -909,6 +1083,12 @@ export default {
       redrawCanvas();
     };
 
+    const handleWindowMouseUp = (event) => {
+      if (isDrawing.value || isPanning.value) {
+        handleMouseUp(event);
+      }
+    };
+
     const handleMouseLeave = (event) => {
       // Don't handle mouse leave if a config panel is active
       if (activeConfigPanel.value) return;
@@ -916,6 +1096,8 @@ export default {
       if (isPanning.value) {
         isPanning.value = false;
         lastPanPoint.value = null;
+        panStartedWithSpace.value = false;
+        updateCursor();
       }
       if (isDrawing.value) {
         finishDrawing();
@@ -931,29 +1113,40 @@ export default {
     };
 
     const handleTouchStart = (event) => {
-        if (event.touches.length === 1) {
-            // Convert touch event to a synthetic mouse event for handleMouseDown
+        if (event.touches.length >= 2) {
+            event.preventDefault();
+            startPinchGesture(event.touches);
+            return;
+        }
+
+        if (event.touches.length === 1 && !pinchGesture.value) {
+            event.preventDefault();
             const syntheticMouseEvent = {
                 clientX: event.touches[0].clientX,
                 clientY: event.touches[0].clientY,
-                button: 0, // Assume left-click for touch
-                shiftKey: event.shiftKey, // Pass shift state if available (though less common with touch)
-                altKey: event.altKey, // Pass alt state
-                preventDefault: () => event.preventDefault(), // Pass through preventDefault
+                button: 0,
+                shiftKey: event.shiftKey,
+                altKey: event.altKey,
+                preventDefault: () => event.preventDefault(),
             };
             handleMouseDown(syntheticMouseEvent);
         }
     };
 
     const handleTouchMove = (event) => {
-        if (event.touches.length === 1) {
+        if (pinchGesture.value && event.touches.length >= 2) {
+            event.preventDefault();
+            updatePinchGesture(event.touches);
+            return;
+        }
+
+        if (event.touches.length === 1 && !pinchGesture.value) {
             event.preventDefault();
             const coords = getCoordinates(event);
             const transformedCoords = transformCoordinates(coords.offsetX, coords.offsetY);
             updateLocalAwarenessCursor(transformedCoords);
 
             if (isDrawing.value) {
-                // Touch events don't have shiftKey, so pass false
                 draw(transformedCoords, false);
             }
         }
@@ -961,13 +1154,19 @@ export default {
 
     const handleTouchEnd = (event) => {
         event.preventDefault();
-        // Convert touch event to a synthetic mouse event for handleMouseUp
-        const syntheticMouseEvent = {
-            button: 0, // Assume left-click for touch end
-        };
-        handleMouseUp(syntheticMouseEvent);
 
-        if (yjsConnection.value?.awareness) {
+        if (pinchGesture.value && event.touches.length < 2) {
+            endTouchGesture();
+        }
+
+        if (event.touches.length === 0) {
+            const syntheticMouseEvent = {
+                button: 0,
+            };
+            handleMouseUp(syntheticMouseEvent);
+        }
+
+        if (yjsConnection.value?.awareness && event.touches.length === 0) {
             yjsConnection.value.awareness.setLocalStateField('cursor', null);
             const userState = yjsConnection.value.awareness.getLocalState()?.user;
             if (userState) {
@@ -980,6 +1179,7 @@ export default {
 
     const startDrawing = (event) => {
       if (!ydoc.value) return;
+      if (currentTool.value === 'select') return;
       // Don't start drawing if a graph tool is selected (handled by handleMouseDown)
       const graphTools = ['mathPlot', 'physicsPlot', 'coordSystem2D', 'coordSystem3D'];
       if (graphTools.includes(currentTool.value)) {
@@ -1349,21 +1549,30 @@ export default {
     const setEraserMode = (mode) => { eraserMode.value = mode; updateCursor(); };
 
     const updateCursor = () => {
-      // Use default cursor if config panel is open
+      if (!canvas.value) return;
+
       if (activeConfigPanel.value) {
-        if (canvas.value) canvas.value.style.cursor = 'default';
+        canvas.value.style.cursor = 'default';
         return;
       }
 
-      if (canvas.value) {
-        let toolForCursor = currentTool.value;
-        if (toolForCursor === 'shapes') {
-            toolForCursor = props.currentShape;
-        } else if (toolForCursor === 'lines') {
-            toolForCursor = 'line';
-        }
-        canvas.value.style.cursor = getCursorStyle(toolForCursor, currentColor.value, eraserMode.value);
+      if (spacePanActive.value) {
+        canvas.value.style.cursor = isPanning.value ? 'grabbing' : 'grab';
+        return;
       }
+
+      if (isPanning.value) {
+        canvas.value.style.cursor = 'grabbing';
+        return;
+      }
+
+      let toolForCursor = currentTool.value;
+      if (toolForCursor === 'shapes') {
+          toolForCursor = props.currentShape;
+      } else if (toolForCursor === 'lines') {
+          toolForCursor = 'line';
+      }
+      canvas.value.style.cursor = getCursorStyle(toolForCursor, currentColor.value, eraserMode.value);
     };
 
     // --- Zoom/Pan ---
@@ -1374,8 +1583,9 @@ export default {
       const mouseX = event.clientX - rect.left;
       const mouseY = event.clientY - rect.top;
       const delta = event.deltaY < 0 ? 1.1 : 0.9;
-      const newZoom = Math.max(0.1, Math.min(5, zoomLevel.value * delta));
-      const zoomRatio = newZoom / zoomLevel.value;
+      const prevZoom = zoomLevel.value;
+      const newZoom = clampZoom(prevZoom * delta);
+      const zoomRatio = newZoom / prevZoom;
 
       panOffset.value.x = mouseX - (mouseX - panOffset.value.x) * zoomRatio;
       panOffset.value.y = mouseY - (mouseY - panOffset.value.y) * zoomRatio;
@@ -1386,7 +1596,7 @@ export default {
 
     const zoomIn = () => {
         const prevZoom = zoomLevel.value;
-        zoomLevel.value = Math.min(5, zoomLevel.value * 1.2);
+        zoomLevel.value = clampZoom(zoomLevel.value * 1.2);
         const centerX = canvasWidth.value / 2;
         const centerY = canvasHeight.value / 2;
         const zoomRatio = zoomLevel.value / prevZoom;
@@ -1397,7 +1607,7 @@ export default {
 
     const zoomOut = () => {
         const prevZoom = zoomLevel.value;
-        zoomLevel.value = Math.max(0.1, zoomLevel.value / 1.2);
+        zoomLevel.value = clampZoom(zoomLevel.value / 1.2);
         const centerX = canvasWidth.value / 2;
         const centerY = canvasHeight.value / 2;
         const zoomRatio = zoomLevel.value / prevZoom;
@@ -1415,6 +1625,47 @@ export default {
     // --- Keyboard handling ---
     const handleKeyDown = (event) => {
       if (event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA') return;
+
+      if (event.code === 'Space') {
+        event.preventDefault();
+        if (!spacePanActive.value) {
+          spacePanActive.value = true;
+          updateCursor();
+        }
+        return;
+      }
+
+      if (event.key === 'Escape') {
+        let handled = false;
+        if (activeConfigPanel.value) {
+          closeConfigPanel();
+          handled = true;
+        }
+        handled = cancelActiveDrawing() || handled;
+        if (handled) {
+          event.preventDefault();
+          updateCursor();
+          return;
+        }
+      }
+
+      if (!event.ctrlKey && !event.metaKey && !event.altKey) {
+        if (event.key === '+' || (event.key === '=' && event.shiftKey)) {
+          event.preventDefault();
+          zoomIn();
+          return;
+        }
+        if (event.key === '-' || event.key === '_') {
+          event.preventDefault();
+          zoomOut();
+          return;
+        }
+        if (event.key === '0') {
+          event.preventDefault();
+          resetZoom();
+          return;
+        }
+      }
 
       // Handle recognizer shortcut (Shift+Enter)
       if (props.activeFeature === 'mathRecognizer' && mathRecognizerModule.value) {
@@ -1438,6 +1689,20 @@ export default {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'y') {
           event.preventDefault();
           redo();
+      }
+    };
+
+    const handleKeyUp = (event) => {
+      if (event.code === 'Space' && spacePanActive.value) {
+        event.preventDefault();
+        resetSpacePanState(true);
+      }
+    };
+
+    const handleWindowBlur = () => {
+      resetSpacePanState(true);
+      if (pinchGesture.value) {
+        endTouchGesture();
       }
     };
 
@@ -1498,6 +1763,7 @@ export default {
                         imageMap.set('position', posMap); // Keep for now if other parts use it
 
                         imageMap.set('dataUrl', imageData.dataUrl);
+                        imageMap.set('src', imageData.dataUrl);
                         imageMap.set('width', imageData.width);
                         imageMap.set('height', imageData.height);
                         imageMap.set('rotation', 0); // Default rotation
@@ -1956,9 +2222,13 @@ export default {
     onMounted(() => {
       initCanvas();
       initClipboardHandler();
+      initResizeObserver();
       window.addEventListener('resize', handleResize);
       window.addEventListener('keydown', handleKeyDown);
+      window.addEventListener('keyup', handleKeyUp);
       window.addEventListener('paste', handlePaste);
+      window.addEventListener('blur', handleWindowBlur);
+      window.addEventListener('mouseup', handleWindowMouseUp);
       darkModeObserver.observe(document.body, { attributes: true });
       handleResize(); // Initial resize call
 
@@ -1990,8 +2260,19 @@ export default {
     onBeforeUnmount(() => {
       window.removeEventListener('resize', handleResize);
       window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
       window.removeEventListener('paste', handlePaste);
+      window.removeEventListener('blur', handleWindowBlur);
+      window.removeEventListener('mouseup', handleWindowMouseUp);
       darkModeObserver.disconnect();
+      if (resizeObserver) {
+        resizeObserver.disconnect();
+        resizeObserver = null;
+      }
+      if (clipboardFocusHandler) {
+        document.removeEventListener('click', clipboardFocusHandler);
+        clipboardFocusHandler = null;
+      }
       teardownYjsConnection();
     });
 
@@ -2023,6 +2304,7 @@ export default {
 
     return {
       // Refs
+      containerRef,
       canvas,
 
       // State

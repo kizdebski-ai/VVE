@@ -2,7 +2,7 @@ import * as Y from 'yjs';
 import { WebsocketProvider } from 'y-websocket';
 
 // Configuration (consider moving to environment variables or config file)
-// Assuming Django backend runs on localhost:8000
+// Node.js backend runs on localhost:8000 by default
 const WEBSOCKET_ENDPOINT = 'ws://localhost:8000/ws/whiteboard/';
 
 let ydoc = null;

@@ -27,63 +27,36 @@
 
     <!-- Object Content -->
     <div class="object-content" @mousedown.prevent.stop="startDragIfSelectedOrRequestSelect">
-      <img
-        v-if="objectData.type === 'image'"
-        :src="objectData.src || objectData.dataUrl"
-        :alt="'Object ' + objectData.id"
-        draggable="false"
-        style="width: 100%; height: 100%; user-select: none; object-fit: contain;"
-      />
-      <svg v-else-if="['rectangle', 'circle', 'line', 'square'].includes(objectData.type)"
-           width="100%"
-           height="100%"
-           viewBox="0 0 100 100"
-           preserveAspectRatio="none"
-           style="display: block; overflow: visible;">
-        <rect v-if="objectData.type === 'rectangle' || objectData.type === 'square'"
-              x="0" y="0" width="100" height="100"
-              fill="transparent"
-              :stroke="objectData.color || '#000000'"
-              :stroke-width="objectData.lineWidth || 1"
-              vector-effect="non-scaling-stroke" />
-        <ellipse v-else-if="objectData.type === 'circle'"
-                 cx="50" cy="50" rx="50" ry="50"
-                 fill="transparent"
-                 :stroke="objectData.color || '#000000'"
-                 :stroke-width="objectData.lineWidth || 1"
-                 vector-effect="non-scaling-stroke" />
-        <line v-else-if="objectData.type === 'line'"
-              :x1="objectData.width && objectData.width !== 0 ? ((objectData.startX ?? 0) / objectData.width) * 100 : 0"
-              :y1="objectData.height && objectData.height !== 0 ? ((objectData.startY ?? 0) / objectData.height) * 100 : 0"
-              :x2="objectData.width && objectData.width !== 0 ? ((objectData.endX ?? objectData.width) / objectData.width) * 100 : 100"
-              :y2="objectData.height && objectData.height !== 0 ? ((objectData.endY ?? objectData.height) / objectData.height) * 100 : 100"
-              :stroke="objectData.color || '#000000'"
-              :stroke-width="objectData.lineWidth || 1"
-              :stroke-dasharray="objectData.lineStyle === 'dashed' ? '5,5' : (objectData.lineStyle === 'dotted' ? '1,3' : 'none')"
-              stroke-linecap="round"
-              vector-effect="non-scaling-stroke" />
-      </svg>
-      <div v-else-if="objectData.type === 'text'"
-           :style="{
-             color: objectData.color || '#000000',
-             fontSize: `${(objectData.fontSize || 16) * props.zoomLevel}px`, 
-             width: '100%',
-             height: '100%',
-             display: 'flex',
-             alignItems: 'center',
-             justifyContent: 'center',
-             textAlign: 'center',
-             overflowWrap: 'break-word',
-             whiteSpace: 'pre-wrap',
-             userSelect: 'none',
-             cursor: 'grab'
-           }"
-           @mousedown.stop="startDragIfSelectedOrRequestSelect">
-        {{ objectData.text }}
-      </div>
-      <div v-else>
-        Unknown Type: {{ objectData.type }}
-      </div>
+      <template v-if="shouldRenderContent">
+        <img
+          v-if="objectData.type === 'image'"
+          :src="objectData.src || objectData.dataUrl"
+          :alt="'Object ' + objectData.id"
+          draggable="false"
+          style="width: 100%; height: 100%; user-select: none; object-fit: contain;"
+        />
+        <div v-else-if="objectData.type === 'text'"
+             :style="{
+               color: objectData.color || '#000000',
+               fontSize: `${(objectData.fontSize || 16) * props.zoomLevel}px`, 
+               width: '100%',
+               height: '100%',
+               display: 'flex',
+               alignItems: 'center',
+               justifyContent: 'center',
+               textAlign: 'center',
+               overflowWrap: 'break-word',
+               whiteSpace: 'pre-wrap',
+               userSelect: 'none',
+               cursor: 'grab'
+             }"
+             @mousedown.stop="startDragIfSelectedOrRequestSelect">
+          {{ objectData.text }}
+        </div>
+        <div v-else>
+          Unknown Type: {{ objectData.type }}
+        </div>
+      </template>
     </div>
   </div>
 </template>
@@ -112,6 +85,8 @@ interface MovableObjectData {
   text?: string;
   fontSize?: number;
 }
+
+const CONTENT_RENDER_TYPES = new Set(['text', 'image']);
 
 const ensureNumber = (value: any, fallback = 0) => (Number.isFinite(value) ? Number(value) : fallback);
 
@@ -142,6 +117,47 @@ const deriveBoundsFromPoints = (start: { x: number; y: number }, end: { x: numbe
   };
 };
 
+const clonePointsArray = (pointsValue: any) => {
+  if (!Array.isArray(pointsValue)) return null;
+  return pointsValue.map((pt) => ({
+    x: ensureNumber(pt.x, 0),
+    y: ensureNumber(pt.y, 0),
+  }));
+};
+
+const shiftPointsArray = (pointsValue: any, dx: number, dy: number) => {
+  if (!Array.isArray(pointsValue)) return null;
+  return pointsValue.map((pt) => ({
+    x: ensureNumber(pt.x, 0) + dx,
+    y: ensureNumber(pt.y, 0) + dy,
+  }));
+};
+
+const computeRatio = (value: number | undefined, axisStart: number, axisLength: number, fallback = 0) => {
+  if (!Number.isFinite(value) || axisLength === 0) {
+    return fallback;
+  }
+  return (value - axisStart) / axisLength;
+};
+
+const scalePointsFromSnapshot = (
+  snapshot: { x: number; y: number }[] | null,
+  initialState: { x: number; y: number; width: number; height: number },
+  newFrame: { x: number; y: number; width: number; height: number }
+) => {
+  if (!snapshot) return null;
+  const widthDenominator = initialState.width === 0 ? 1 : initialState.width;
+  const heightDenominator = initialState.height === 0 ? 1 : initialState.height;
+  return snapshot.map((pt) => {
+    const normalizedX = (pt.x - initialState.x) / widthDenominator;
+    const normalizedY = (pt.y - initialState.y) / heightDenominator;
+    return {
+      x: newFrame.x + normalizedX * newFrame.width,
+      y: newFrame.y + normalizedY * newFrame.height,
+    };
+  });
+};
+
 const props = withDefaults(defineProps<{
   object: Y.Map<any>; 
   isSelected: boolean; 
@@ -163,6 +179,17 @@ const currentResizeHandle = ref<string | null>(null);
 
 const initialObjectState = reactive({ x: 0, y: 0, width: 0, height: 0, rotation: 0 });
 const initialMousePos = reactive({ x: 0, y: 0 });
+const initialGeometrySnapshot = reactive({
+  startX: 0,
+  startY: 0,
+  endX: 0,
+  endY: 0,
+  startRatioX: 0,
+  startRatioY: 0,
+  endRatioX: 1,
+  endRatioY: 1,
+  points: null as { x: number; y: number }[] | null,
+});
 
 watch(() => props.isSelected, (newValue) => {
     internalIsSelected.value = newValue;
@@ -247,6 +274,80 @@ const objectStyle = computed(() => {
   };
 });
 
+const shouldRenderContent = computed(() => CONTENT_RENDER_TYPES.has(objectData.type));
+
+const getStartMap = () => props.object.get('start');
+const getEndMap = () => props.object.get('end');
+const getPositionMap = () => props.object.get('position');
+
+const shiftStartEndMaps = (dx: number, dy: number) => {
+  const startMap = getStartMap();
+  if (startMap instanceof Y.Map) {
+    const newStartX = ensureNumber(startMap.get('x'), objectData.startX ?? objectData.x) + dx;
+    const newStartY = ensureNumber(startMap.get('y'), objectData.startY ?? objectData.y) + dy;
+    startMap.set('x', newStartX);
+    startMap.set('y', newStartY);
+    objectData.startX = newStartX;
+    objectData.startY = newStartY;
+  }
+  const endMap = getEndMap();
+  if (endMap instanceof Y.Map) {
+    const newEndX = ensureNumber(endMap.get('x'), objectData.endX ?? (objectData.x + objectData.width)) + dx;
+    const newEndY = ensureNumber(endMap.get('y'), objectData.endY ?? (objectData.y + objectData.height)) + dy;
+    endMap.set('x', newEndX);
+    endMap.set('y', newEndY);
+    objectData.endX = newEndX;
+    objectData.endY = newEndY;
+  }
+};
+
+const updateStartEndMaps = (startX: number, startY: number, endX: number, endY: number) => {
+  let startMap = getStartMap();
+  if (!(startMap instanceof Y.Map)) {
+    startMap = new Y.Map();
+    props.object.set('start', startMap);
+  }
+  let endMap = getEndMap();
+  if (!(endMap instanceof Y.Map)) {
+    endMap = new Y.Map();
+    props.object.set('end', endMap);
+  }
+  startMap.set('x', startX);
+  startMap.set('y', startY);
+  endMap.set('x', endX);
+  endMap.set('y', endY);
+  objectData.startX = startX;
+  objectData.startY = startY;
+  objectData.endX = endX;
+  objectData.endY = endY;
+};
+
+const shiftPositionMap = (dx: number, dy: number) => {
+  const positionMap = getPositionMap();
+  if (positionMap instanceof Y.Map) {
+    const newX = ensureNumber(positionMap.get('x'), objectData.x) + dx;
+    const newY = ensureNumber(positionMap.get('y'), objectData.y) + dy;
+    positionMap.set('x', newX);
+    positionMap.set('y', newY);
+  }
+};
+
+const updatePositionMap = (x: number, y: number) => {
+  const positionMap = getPositionMap();
+  if (positionMap instanceof Y.Map) {
+    positionMap.set('x', x);
+    positionMap.set('y', y);
+  }
+};
+
+const shiftPointsInYMap = (dx: number, dy: number) => {
+  const pointsValue = props.object.get('points');
+  const shifted = shiftPointsArray(pointsValue, dx, dy);
+  if (shifted) {
+    props.object.set('points', shifted);
+  }
+};
+
 const objectCenter = reactive({ x: 0, y: 0 }); 
 const startAngle = ref(0); 
 
@@ -282,10 +383,15 @@ const handleDrag = (event: MouseEvent) => {
   const dy = (event.clientY - initialMousePos.y) / props.zoomLevel; 
   const newX = initialObjectState.x + dx;
   const newY = initialObjectState.y + dy;
+  const deltaX = newX - objectData.x;
+  const deltaY = newY - objectData.y;
   
   props.object.doc?.transact(() => {
     props.object.set('x', newX);
     props.object.set('y', newY);
+    shiftStartEndMaps(deltaX, deltaY);
+    shiftPositionMap(deltaX, deltaY);
+    shiftPointsInYMap(deltaX, deltaY);
   }, 'local-movable-drag');
 
   objectData.x = newX; 
@@ -359,6 +465,23 @@ const startResize = (event: MouseEvent, handle: string) => {
   initialObjectState.width = objectData.width;
   initialObjectState.height = objectData.height;
   initialObjectState.rotation = objectData.rotation;
+  initialGeometrySnapshot.startX = Number.isFinite(objectData.startX) ? objectData.startX! : objectData.x;
+  initialGeometrySnapshot.startY = Number.isFinite(objectData.startY) ? objectData.startY! : objectData.y;
+  initialGeometrySnapshot.endX = Number.isFinite(objectData.endX) ? objectData.endX! : objectData.x + objectData.width;
+  initialGeometrySnapshot.endY = Number.isFinite(objectData.endY) ? objectData.endY! : objectData.y + objectData.height;
+  initialGeometrySnapshot.startRatioX = Number.isFinite(objectData.startX)
+    ? computeRatio(objectData.startX, initialObjectState.x, initialObjectState.width, 0)
+    : null;
+  initialGeometrySnapshot.startRatioY = Number.isFinite(objectData.startY)
+    ? computeRatio(objectData.startY, initialObjectState.y, initialObjectState.height, 0)
+    : null;
+  initialGeometrySnapshot.endRatioX = Number.isFinite(objectData.endX)
+    ? computeRatio(objectData.endX, initialObjectState.x, initialObjectState.width, 1)
+    : null;
+  initialGeometrySnapshot.endRatioY = Number.isFinite(objectData.endY)
+    ? computeRatio(objectData.endY, initialObjectState.y, initialObjectState.height, 1)
+    : null;
+  initialGeometrySnapshot.points = clonePointsArray(props.object.get('points'));
 
   document.addEventListener('mousemove', handleResize);
   document.addEventListener('mouseup', stopResize);
@@ -418,6 +541,40 @@ const handleResize = (event: MouseEvent) => {
   objectData.y = newY;
   objectData.width = newWidth;
   objectData.height = newHeight;
+
+  props.object.doc?.transact(() => {
+    props.object.set('x', newX);
+    props.object.set('y', newY);
+    props.object.set('width', newWidth);
+    props.object.set('height', newHeight);
+    updatePositionMap(newX, newY);
+
+    if (initialGeometrySnapshot.startRatioX !== null || initialGeometrySnapshot.endRatioX !== null) {
+      const ratioStartX = initialGeometrySnapshot.startRatioX ?? 0;
+      const ratioEndX = initialGeometrySnapshot.endRatioX ?? 1;
+      const ratioStartY = initialGeometrySnapshot.startRatioY ?? 0;
+      const ratioEndY = initialGeometrySnapshot.endRatioY ?? 1;
+      const newStartX = newX + ratioStartX * newWidth;
+      const newEndX = newX + ratioEndX * newWidth;
+      const newStartY = newY + ratioStartY * newHeight;
+      const newEndY = newY + ratioEndY * newHeight;
+      updateStartEndMaps(newStartX, newStartY, newEndX, newEndY);
+    }
+
+    const scaledPoints = scalePointsFromSnapshot(initialGeometrySnapshot.points, initialObjectState, {
+      x: newX,
+      y: newY,
+      width: newWidth,
+      height: newHeight,
+    });
+    if (scaledPoints) {
+      props.object.set('points', scaledPoints);
+    }
+
+    if (typeof props.object.get('size') === 'number') {
+      props.object.set('size', Math.max(newWidth, newHeight));
+    }
+  }, 'local-movable-resize');
 };
 
 

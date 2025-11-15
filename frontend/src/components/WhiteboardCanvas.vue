@@ -237,10 +237,22 @@ export default {
     const clipboardInput = ref(null);
     const imageCache = ref(new Map());
     const movableElementTypes = new Set([
+        'pen',
+        'line',
         'rectangle',
         'circle',
         'square',
-        'line',
+        'triangle',
+        'trapezoid',
+        'parallelogram',
+        'deltoid',
+        'cube',
+        'cuboid',
+        'sphere',
+        'cylinder',
+        'cone',
+        'pyramid',
+        'tetrahedron',
         'text',
         'image',
         'coordinateSystem2D',
@@ -494,11 +506,8 @@ export default {
         strokesToDraw = handwritingStylerModule.value.getStrokes(); // Get potentially modified strokes
       }
 
-      // Draw only elements that are not managed by MovableObject overlays
+      // Draw all elements; MovableObject overlays handle interactions but canvas still renders visuals
       strokesToDraw.forEach((element, index) => {
-        if (movableElementTypes.has(element.type)) {
-          return; // These are rendered via MovableObject components
-        }
         const isHighlighted = index === hoveredElementIndex.value && currentTool.value === 'eraser';
         drawElement(ctx, element, isHighlighted, smoothingFactor.value, imageCache.value, redrawCanvas);
       });

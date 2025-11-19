@@ -91,11 +91,29 @@
       @click="testUndoManager">
       Test UndoManager
     </button>
+
+    <!-- Text Input Modal -->
+    <div v-if="showTextInput" class="text-input-modal-overlay">
+      <div class="text-input-modal">
+        <h3>Enter Text</h3>
+        <input 
+          ref="textInputRef"
+          v-model="textInputValue" 
+          @keyup.enter="confirmTextInput" 
+          @keyup.esc="cancelTextInput"
+          placeholder="Type something..."
+        />
+        <div class="modal-actions">
+          <button @click="cancelTextInput" class="btn-cancel">Cancel</button>
+          <button @click="confirmTextInput" class="btn-confirm">Add</button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
 <script>
-import { ref, onMounted, onBeforeUnmount, watch, nextTick, shallowRef, defineExpose } from 'vue'; // Add shallowRef, defineExpose
+import { ref, onMounted, onBeforeUnmount, watch, nextTick, shallowRef } from 'vue'; // Add shallowRef
 import * as Y from 'yjs';
 import katex from 'katex'; // Import katex
 import 'katex/dist/katex.min.css'; // Import katex CSS
@@ -194,16 +212,31 @@ export default {
     'update:has-char-groups',
     'update:has-stylized-strokes'
   ],
-
-  setup(props, { emit }) {
+  setup(props, { emit, expose }) {
+    const devicePixelRatio = ref(clampDevicePixelRatio());
+    
+    // Canvas refs
     const containerRef = ref(null);
     const canvas = ref(null);
     const context = ref(null);
-    const canvasWidth = ref(1200);
-    const canvasHeight = ref(800);
-    const devicePixelRatio = ref(clampDevicePixelRatio());
+    const canvasWidth = ref(0);
+    const canvasHeight = ref(0);
+
+    // Module refs
+    const gridAlignModule = ref(null);
+    const handwritingStylerModule = ref(null);
+    const mathRecognizerModule = ref(null);
+
+    // UI State Refs
+    const activeConfigPanel = ref(null);
+    const configPanelCoords = ref(null);
+    const showTextInput = ref(false);
+    const textInputValue = ref('');
+    const textInputCoords = ref(null);
+    const textInputRef = ref(null);
+
     const isDrawing = ref(false);
-    const currentTool = ref('select');
+    const currentTool = ref('pen'); // Default to pen (matches App.vue)
     const currentColor = ref('#000000');
     const currentLineWidth = ref(2);
     const zoomLevel = ref(1);
@@ -270,16 +303,6 @@ export default {
     let clipboardFocusHandler = null;
 
     // Helper module instances
-    const gridAlignModule = shallowRef(null);
-    const handwritingStylerModule = shallowRef(null);
-    const mathRecognizerModule = shallowRef(null);
-
-    // State for graph/coord system configuration panels
-    const activeConfigPanel = ref(null); // 'math', 'physics', 'coord2D', 'coord3D'
-    const configPanelCoords = ref({ x: 0, y: 0 }); // Canvas coords where user clicked
-
-
-    // --- Realtime collaboration state ---
     const yjsConnection = ref(null);
     const ydoc = ref(null);
     const yDrawings = ref(null);
@@ -456,7 +479,7 @@ export default {
             } else if (Array.isArray(value)) {
               // Store plain arrays directly for data points (simpler for now)
               yElementMap.set(key, value);
-        } else {
+            } else {
               yElementMap.set(key, value);
             }
           }
@@ -479,9 +502,35 @@ export default {
       }
     };
 
+    const applyMathAnswer = (newStrokeData) => {
+        if (!newStrokeData || !ydoc.value || !yDrawings.value) return;
+
+        try {
+            ydoc.value.transact(() => {
+                const yElementMap = new Y.Map();
+                for (const [key, value] of Object.entries(newStrokeData)) {
+                    yElementMap.set(key, value);
+                }
+                yDrawings.value.push([yElementMap]);
+            }, 'ai-math'); // Origin
+
+            nextTick(() => {
+                updateGlobalState();
+                // Reset math state in App.vue via emits
+                emit('update:recognition-status', '');
+                emit('update:latex-equation', '');
+                emit('update:solution', '');
+                redrawCanvas();
+            });
+        } catch (error) {
+            console.error("Error applying math answer:", error);
+            showToast("Failed to apply math answer.", "error");
+        }
+    };
+
 
     const redrawCanvas = () => {
-      if (!context.value || !yDrawings.value) return;
+      if (!context.value) return;
 
       const ctx = context.value;
       const ratio = devicePixelRatio.value || 1;
@@ -501,9 +550,12 @@ export default {
       );
 
       // Determine strokes to draw (original or stylized)
-      let strokesToDraw = yDrawings.value.toArray().map(map => map.toJSON()); // Convert Y.Array of Y.Map to JS Array of Objects
-      if (props.activeFeature === 'styleHandwriting' && handwritingStylerModule.value?.hasStylizedStrokes()) {
-        strokesToDraw = handwritingStylerModule.value.getStrokes(); // Get potentially modified strokes
+      let strokesToDraw = [];
+      if (yDrawings.value) {
+        strokesToDraw = yDrawings.value.toArray().map(map => map.toJSON()); // Convert Y.Array of Y.Map to JS Array of Objects
+        if (props.activeFeature === 'styleHandwriting' && handwritingStylerModule.value?.hasStylizedStrokes()) {
+          strokesToDraw = handwritingStylerModule.value.getStrokes(); // Get potentially modified strokes
+        }
       }
 
       // Draw all elements; MovableObject overlays handle interactions but canvas still renders visuals
@@ -1195,9 +1247,22 @@ export default {
           return;
       }
 
-      isDrawing.value = true;
       const coords = getCoordinates(event);
       const transformedCoords = transformCoordinates(coords.offsetX, coords.offsetY);
+
+      // Handle text tool separately – it does not use previews
+      if (currentTool.value === 'text') {
+        showTextInput.value = true;
+        textInputCoords.value = transformedCoords;
+        nextTick(() => {
+          if (textInputRef.value) textInputRef.value.focus();
+        });
+        isDrawing.value = false;
+        currentElementPreview.value = null;
+        return;
+      }
+
+      isDrawing.value = true;
       pointsBuffer.value = [];
 
       let toolType = currentTool.value;
@@ -1247,17 +1312,18 @@ export default {
           isDrawing.value = false; // Stop drawing if preview failed
           return;
       }
+    };
 
-      if (currentTool.value === 'text') {
-        const text = prompt('Enter text:', '');
-        if (text) {
+    const confirmTextInput = () => {
+      const text = textInputValue.value.trim();
+      if (text && textInputCoords.value) {
           const textElementData = createTextElement(
-            transformedCoords, 
+            textInputCoords.value, 
             text, 
             currentColor.value,
             currentLineWidth.value * 10
           );
-          // 4. Zmodyfikuj finishDrawing, addTextElement, addImageFromDataUrl i eraseElement
+          
           ydoc.value.transact(() => {
             const textMap = new Y.Map();
             for (const [key, value] of Object.entries(textElementData)) {
@@ -1271,17 +1337,25 @@ export default {
               }
             }
             yDrawings.value.push([textMap]);
-          }, 'local-text'); // Add origin
-          // Po każdej transakcji dodaj (inside try block):
+          }, 'local-text'); 
+
           nextTick(() => {
             if (undoManager.value) {
-              updateGlobalState(); // Use the shared function
+              updateGlobalState(); 
             }
           });
-        }
-        isDrawing.value = false;
-        currentElementPreview.value = null;
       }
+      closeTextInput();
+    };
+
+    const cancelTextInput = () => {
+      closeTextInput();
+    };
+
+    const closeTextInput = () => {
+      showTextInput.value = false;
+      textInputValue.value = '';
+      textInputCoords.value = null;
     };
 
     const eraseElement = (indexOrId) => { // Can now accept index or ID
@@ -1312,14 +1386,35 @@ export default {
       }
     };
 
+    // Tools that behave like shapes (use start/end points)
+    const SHAPE_TOOLS = new Set([
+      'rectangle',
+      'circle',
+      'square',
+      'triangle',
+      'trapezoid',
+      'parallelogram',
+      'deltoid',
+      'cube',
+      'cuboid',
+      'sphere',
+      'cylinder',
+      'cone',
+      'pyramid',
+      'tetrahedron',
+    ]);
+
+    const LINE_TOOLS = new Set(['line']);
+
     const draw = (coords, isShiftPressed) => { // Accept shift key state
       if (!isDrawing.value || !currentElementPreview.value) return;
       if (currentTool.value === 'eraser') return;
 
       const preview = currentElementPreview.value;
+      const tool = currentTool.value;
 
       // Update logic based on the actual tool and shift state
-      if (currentTool.value === 'pen') {
+      if (tool === 'pen') {
           if (shiftPressedAtStart.value && startCoordsForShiftLine.value) {
               // Update preview for Shift+Pen: Draw straight line from stored start to current coords
               // Modify the preview element directly to represent a line for drawing purposes
@@ -1334,7 +1429,7 @@ export default {
               const smoothedPoint = addSmoothedPenPoint(coords);
               preview.points.push(smoothedPoint);
           }
-      } else if (currentTool.value === 'shapes' || currentTool.value === 'lines') {
+      } else if (SHAPE_TOOLS.has(tool) || LINE_TOOLS.has(tool)) {
           // Update end coordinates for shapes and regular lines
           preview.end = coords;
 
@@ -1676,17 +1771,6 @@ export default {
         }
       }
 
-      // Handle recognizer shortcut (Shift+Enter)
-      if (props.activeFeature === 'mathRecognizer' && mathRecognizerModule.value) {
-          const newStroke = mathRecognizerModule.value.handleKeyDown(event);
-          if (newStroke) {
-              // Add the generated answer stroke to Yjs
-              applyMathAnswer(newStroke);
-              return; // Prevent other shortcuts if handled
-          }
-      }
-
-      // Handle Undo/Redo shortcuts
       if ((event.ctrlKey || event.metaKey) && !event.shiftKey && event.key.toLowerCase() === 'z') {
           event.preventDefault();
           undo();
@@ -1698,6 +1782,18 @@ export default {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'y') {
           event.preventDefault();
           redo();
+      }
+
+      // Handle Tab or Shift+Enter for accepting ghost answer
+      if (event.key === 'Tab' || (event.shiftKey && event.key === 'Enter')) {
+          if (props.activeFeature === 'mathRecognizer' && mathRecognizerModule.value) {
+              const newStroke = mathRecognizerModule.value.acceptGhostAnswer();
+              if (newStroke) {
+                  event.preventDefault(); // Prevent default Tab behavior
+                  applyMathAnswer(newStroke);
+                  return;
+              }
+          }
       }
     };
 
@@ -2114,32 +2210,7 @@ export default {
         }
     };
 
-    const applyMathAnswer = (newStrokeData) => {
-        if (!newStrokeData || !ydoc.value || !yDrawings.value) return;
 
-        try {
-            ydoc.value.transact(() => {
-                const yElementMap = new Y.Map();
-                for (const [key, value] of Object.entries(newStrokeData)) {
-                    // Convert nested objects like position if necessary (though this example uses simple props)
-                    yElementMap.set(key, value);
-                }
-                yDrawings.value.push([yElementMap]);
-            }, 'ai-math'); // Origin
-
-            nextTick(() => {
-                updateGlobalState();
-                // Reset math state in App.vue via emits
-                emit('update:recognition-status', '');
-                emit('update:latex-equation', '');
-                emit('update:solution', '');
-                redrawCanvas();
-            });
-        } catch (error) {
-            console.error("Error applying math answer:", error);
-            showToast("Failed to apply math answer.", "error");
-        }
-    };
 
     // --- Watchers ---
     watch(() => props.currentShape, (newShape) => {
@@ -2247,7 +2318,8 @@ export default {
           handwritingStylerModule.value = new HandwritingStylerModule(context.value, props.handwritingStylerOptions);
           mathRecognizerModule.value = new MathRecognizerModule(context.value, {
               ...props.mathRecognizerOptions,
-              renderLatexFn: renderLatex // Pass the render function
+              renderLatexFn: renderLatex, // Pass the render function
+              backendUrl: import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000'
           });
           debugLog("Helper modules initialised");
       } else {
@@ -2285,30 +2357,53 @@ export default {
       teardownYjsConnection();
     });
 
-    // Expose methods for App.vue to call
-    defineExpose({
-        setTool,
-        setColor,
-        setLineWidth,
-        setEraserMode,
-        undo,
-        redo,
-        // Expose UndoManager ref for external debug/force updates
-        undoManager,
-        clearCanvas,
-        addImageFromDataUrl,
-        toggleDebug,
-        redrawCanvas, // Expose redraw if needed externally
-        alignToGrid,
-        groupStrokes,
-        applyStyleTransformation,
-        confirmStyleChanges,
-        cancelStyleChanges,
-        recognizeEquation,
-        applyGhostAnswer: (payload) => { // Wrap applyMathAnswer if needed
-            const stroke = mathRecognizerModule.value?.applyGhostAnswer();
-            if (stroke) applyMathAnswer(stroke);
-        }
+    // Expose methods and state for App.vue to call via template ref
+    expose({
+      // Core state used by App.vue
+      yjsConnection,
+      undoManager,
+      canUndo,
+      canRedo,
+
+      // Tool / style setters
+      setTool,
+      setColor,
+      setLineWidth,
+      setEraserMode,
+
+      // Undo / redo & canvas control
+      undo,
+      redo,
+      clearCanvas,
+      redrawCanvas,
+
+      // Serialization / import-export
+      getSerializableState,
+      loadState,
+      exportAsText,
+      importFromText,
+
+      // Media helpers
+      addImageFromDataUrl,
+
+      // Misc helpers
+      getViewportCenter,
+      toggleDebug,
+
+      // Feature actions
+      alignToGrid,
+      groupStrokes,
+      applyStyleTransformation,
+      confirmStyleChanges,
+      cancelStyleChanges,
+      recognizeEquation,
+      applyGhostAnswer: (payload) => { 
+        const stroke = mathRecognizerModule.value?.applyGhostAnswer();
+        if (stroke) applyMathAnswer(stroke);
+      },
+
+      // Graph / panel integration
+      addElementFromPanel,
     });
 
     return {
@@ -2329,10 +2424,10 @@ export default {
       eraserMode,
       notifications,
       statusMessage,
-      yjsConnection, // Keep exposing for Collaborators
-      canUndo, // Keep exposing for debug panel
-      canRedo, // Keep exposing for debug panel
-      selectedObjectId, // Added for selection state
+      yjsConnection,
+      canUndo,
+      canRedo,
+      selectedObjectId,
       movableElements,
 
       // Methods
@@ -2346,9 +2441,9 @@ export default {
       handleTouchStart,
       handleTouchMove,
       handleTouchEnd,
-      handleObjectSelectionRequest, // Added
+      handleObjectSelectionRequest,
 
-      // Public API (already exposed via defineExpose)
+      // Public API
       setTool,
       setColor,
       setLineWidth,
@@ -2380,22 +2475,28 @@ export default {
       handleObjectUpdate,
       selectObject, 
 
-      // Helper action methods (now exposed via defineExpose)
+      // Text Input State
+      showTextInput,
+      textInputValue,
+      textInputRef,
+      confirmTextInput,
+      cancelTextInput,
+
+      // Helper action methods (also exposed)
       alignToGrid,
       groupStrokes,
       applyStyleTransformation,
       confirmStyleChanges,
       cancelStyleChanges,
       recognizeEquation,
-      applyGhostAnswer: (payload) => { // Need wrapper here too for template access if needed, though App.vue calls exposed method
+      applyGhostAnswer: (payload) => { 
             const stroke = mathRecognizerModule.value?.applyGhostAnswer();
             if (stroke) applyMathAnswer(stroke);
       }
     };
   }
-}
+};
 </script>
-
 
 
 
@@ -2498,5 +2599,68 @@ export default {
 .toast-info { background-color: #2196F3; }
 .toast-success { background-color: #4CAF50; }
 .toast-warning { background-color: #FF9800; }
+.toast-warning { background-color: #FF9800; }
 .toast-error { background-color: #F44336; }
+
+/* Text Input Modal Styles */
+.text-input-modal-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 2000;
+}
+
+.text-input-modal {
+  background: white;
+  padding: 20px;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 300px;
+}
+
+.text-input-modal h3 {
+  margin: 0;
+  font-size: 18px;
+  color: #333;
+}
+
+.text-input-modal input {
+  padding: 8px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  font-size: 16px;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.btn-cancel, .btn-confirm {
+  padding: 8px 16px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.btn-cancel {
+  background: #f0f0f0;
+  color: #333;
+}
+
+.btn-confirm {
+  background: #2196F3;
+  color: white;
+}
 </style>

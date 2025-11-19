@@ -1,9 +1,14 @@
 <!-- In App.vue, update the template structure -->
 <template>
   <div id="app" :class="{ 'dark-mode': darkMode }">
+    <Lobby v-if="!roomId" @join="handleJoinRoom" />
+    <template v-else>
     <TopMenu
       @clear-canvas="handleClearCanvas"
       @toggle-feature="toggleFeature"
+      @open-room-manager="handleOpenRoomManager"
+      @export-whiteboard="handleExportRequest"
+      @import-whiteboard="showImportDialog = true"
       :active-feature="activeFeature"
      ></TopMenu>
     <!-- Canvas container takes full screen -->
@@ -93,9 +98,37 @@
              <label>Ghost Opacity: {{ mathRecognizerOptions.ghostOpacity }}</label>
              <input type="range" min="0" max="1" step="0.05" v-model.number="mathRecognizerOptions.ghostOpacity">
            </div>
+           <div class="checkbox-container">
+             <input type="checkbox" id="show-hint" v-model="mathRecognizerOptions.showHint">
+             <label for="show-hint">Show AI Hint</label>
+           </div>
          </div>
        </div>
       
+      <!-- Floating Toolbar (Left) -->
+      <div class="floating-toolbar">
+        <ToolBar 
+          :active-tool="currentTool"
+          :color="currentColor"
+          :line-width="currentLineWidth"
+          :is-math-panel-open="showMathGraphPanel"
+          :is-physics-panel-open="showPhysicsGraphPanel"
+          orientation="vertical"
+          @update:activeTool="handleToolChange"
+          @update:color="handleColorChange"
+          @update:lineWidth="handleLineWidthChange"
+          @update:eraserSize="handleEraserSizeChange"
+          @undo="callWhiteboardUndo"
+          @redo="callWhiteboardRedo"
+          @clear="handleClearCanvas"
+          @toggle-math-panel="toggleMathGraphPanel"
+          @toggle-physics-panel="togglePhysicsGraphPanel"
+          @add-coordinate-system="handleAddCoordinateSystem('3d')"
+          @toggle-calculator="toggleCalculator"
+          @toggle-debug="toggleDebugMode"
+        />
+      </div>
+
       <!-- User info in top-right corner -->
       <div class="floating-user-info">
         <div class="username-container">
@@ -128,29 +161,6 @@
           Debug {{ debugMode ? 'ON' : 'OFF' }}
         </button>
       </div>
-      
-      <!-- Floating toolbar -->
-      <div class="floating-toolbar"> <!-- Check styles for this container -->
-        <ToolBar
-          ref="toolbar"
-          @tool-changed="handleToolChange"
-          @color-changed="handleColorChange"
-          @line-width-changed="handleLineWidthChange"
-          @shape-changed="handleShapeChange"
-          @line-style-changed="handleLineStyleChange"
-          @toggle-calculator="toggleCalculator"
-          @export-whiteboard="handleExportRequest"
-          @import-whiteboard="showImportDialog = true"
-          @image-selected="handleImageSelected"
-          @undo-clicked="callWhiteboardUndo"  
-          @redo-clicked="callWhiteboardRedo"
-         ></ToolBar>
-      </div>
-
-      <!-- Room info display -->
-      <div class="room-info">
-        <span>Room: {{ roomId }}</span>
-      </div>
     </div>
     
     <!-- Dialogs -->
@@ -178,13 +188,23 @@
     </div>
     
 
+    <MathGraphPanel v-if="showMathGraphPanel" @close="showMathGraphPanel = false" @plot-function="handleAddElement" />
+    <PhysicsGraphPanel v-if="showPhysicsGraphPanel" @close="showPhysicsGraphPanel = false" @plot-data="handleAddElement" />
+    </template>
+
+    <!-- Global Error Display -->
+    <div v-if="globalError" class="global-error-overlay">
+      <div class="error-box">
+        <h3>Something went wrong</h3>
+        <pre>{{ globalError }}</pre>
+        <button @click="globalError = null; window.location.reload()">Reload</button>
+      </div>
+    </div>
   </div>
-  <MathGraphPanel v-if="showMathGraphPanel" @close="showMathGraphPanel = false" />
-    <PhysicsGraphPanel v-if="showPhysicsGraphPanel" @close="showPhysicsGraphPanel = false" />
 </template>
 
 <script>
-import { ref, computed, onMounted, onBeforeUnmount, nextTick, reactive, watch } from 'vue'; // Import reactive
+import { ref, computed, onMounted, onBeforeUnmount, nextTick, reactive, watch, onErrorCaptured } from 'vue'; // Import reactive, onErrorCaptured
 import WhiteboardCanvas from './components/WhiteboardCanvas.vue';
 import ToolBar from './components/ToolBar.vue';
 import TopMenu from './components/TopMenu.vue';
@@ -200,6 +220,9 @@ import { Buffer } from 'buffer';
 import katex from 'katex';
 import 'katex/dist/katex.min.css';
 import { undoRedoState } from './utils/undoRedoState'; // 2. Add import
+import Lobby from './components/Lobby.vue';
+import MathGraphPanel from './components/MathGraphPanel.vue';
+import PhysicsGraphPanel from './components/PhysicsGraphPanel.vue';
 
 
 export default {
@@ -211,7 +234,10 @@ export default {
     ImportDialog,
     ExportDialog,
     ThemeToggle,
-    CalculatorModal // Register CalculatorModal
+    CalculatorModal, // Register CalculatorModal
+    Lobby,
+    MathGraphPanel,
+    PhysicsGraphPanel
   },
   setup() {
     // --- Template Refs ---
@@ -235,11 +261,21 @@ export default {
         console.log(...args);
       }
     };
-    const roomId = ref('default_room');
+    const roomId = ref(null);
+    const currentTool = ref('pen');
+    const currentColor = ref('#000000');
+    const currentLineWidth = ref(2);
     const currentShape = ref('rectangle');
     const currentLineStyle = ref('solid');
     const isCalculatorVisible = ref(false);
     const globalUndoRedoState = undoRedoState;
+    const globalError = ref(null);
+
+    onErrorCaptured((err, instance, info) => {
+      console.error("Global Error Captured:", err, info);
+      globalError.value = err.toString() + "\n" + info;
+      return false; // Prevent propagation
+    });
 
     // --- Feature State ---
     const activeFeature = ref(null); // 'gridAlign', 'styleHandwriting', 'mathRecognizer', or null
@@ -260,6 +296,7 @@ export default {
       renderLatex: true,
       ghostOpacity: 0.3,
       recognitionDelay: 1000,
+      showHint: true,
     });
 
     // UI Feedback State for Panels (to be updated by whiteboard events or methods)
@@ -390,15 +427,29 @@ export default {
     };
 
     const handleToolChange = (tool) => {
+      currentTool.value = tool;
       if (whiteboard.value) whiteboard.value.setTool(tool);
+      
+      // Handle shape selection implicitly
+      if (['rectangle', 'circle', 'triangle', 'line', 'cube', 'cylinder', 'cone', 'pyramid'].includes(tool)) {
+          currentShape.value = tool;
+      }
     };
 
     const handleColorChange = (color) => {
+      currentColor.value = color;
       if (whiteboard.value) whiteboard.value.setColor(color);
     };
 
     const handleLineWidthChange = (width) => {
+      currentLineWidth.value = width;
       if (whiteboard.value) whiteboard.value.setLineWidth(width);
+    };
+
+    const handleEraserSizeChange = (size) => {
+        if (whiteboard.value && whiteboard.value.setEraserSize) {
+            whiteboard.value.setEraserSize(size);
+        }
     };
 
     const handleShapeChange = (shape) => {
@@ -409,6 +460,14 @@ export default {
     const handleLineStyleChange = (style) => {
       currentLineStyle.value = style;
       appDebugLog('App.vue: Line style changed to', style);
+    };
+
+    const toggleMathGraphPanel = () => {
+      showMathGraphPanel.value = !showMathGraphPanel.value;
+    };
+
+    const togglePhysicsGraphPanel = () => {
+      showPhysicsGraphPanel.value = !showPhysicsGraphPanel.value;
     };
 
     const toggleCalculator = () => {
@@ -454,6 +513,12 @@ export default {
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
       showStatus('File downloaded!');
+    };
+
+    const handleOpenRoomManager = () => {
+      // Disconnect or clean up if needed
+      roomId.value = null;
+      window.history.pushState({}, '', '/'); // Clear URL
     };
 
     const handleImportState = (base64State) => {
@@ -640,20 +705,42 @@ export default {
       // Add other global shortcuts here if needed
     };
 
+    const handleJoinRoom = (id) => {
+      roomId.value = id;
+      localStorage.setItem('last_room_id', id);
+      
+      // Update URL
+      const newUrl = new URL(window.location);
+      newUrl.searchParams.set('room', id);
+      window.history.pushState({}, '', newUrl);
+
+      // Save to recent rooms
+      try {
+        const stored = localStorage.getItem('whitevue_recent_rooms');
+        let recent = stored ? JSON.parse(stored) : [];
+        // Remove if exists to move to top
+        recent = recent.filter(r => r.id !== id);
+        recent.unshift({ id, lastVisited: new Date().toISOString() });
+        // Keep last 5
+        recent = recent.slice(0, 5);
+        localStorage.setItem('whitevue_recent_rooms', JSON.stringify(recent));
+      } catch (e) {
+        console.error('Error saving recent rooms', e);
+      }
+    };
+
     // --- Lifecycle Hooks ---
     onMounted(() => {
       const urlParams = new URLSearchParams(window.location.search);
       let initialRoomId = urlParams.get('room');
-      if (!initialRoomId) {
-        initialRoomId = localStorage.getItem('last_room_id') || `board_${Math.random().toString(36).substr(2, 9)}`;
-        const newUrl = new URL(window.location);
-        newUrl.searchParams.set('room', initialRoomId);
-        window.history.replaceState({}, '', newUrl);
-      } else {
+      
+      if (initialRoomId) {
+        roomId.value = initialRoomId;
         localStorage.setItem('last_room_id', initialRoomId);
+        appDebugLog(`App mounted. Room ID: ${roomId.value}`);
+      } else {
+        roomId.value = null;
       }
-      roomId.value = initialRoomId;
-      appDebugLog(`App mounted. Room ID: ${roomId.value}`);
 
       document.body.classList.toggle('dark-mode', darkMode.value);
       window.addEventListener('beforeunload', handleBeforeUnload);
@@ -679,6 +766,9 @@ export default {
       darkMode,
       debugMode,
       roomId,
+      currentTool,
+      currentColor,
+      currentLineWidth,
       currentShape,
       currentLineStyle,
       isCalculatorVisible, // Return state for modal
@@ -688,6 +778,7 @@ export default {
       handleToolChange,
       handleColorChange,
       handleLineWidthChange,
+      handleEraserSizeChange,
       handleShapeChange,
       handleLineStyleChange,
       toggleCalculator, // Return toggle method
@@ -700,6 +791,7 @@ export default {
       handleJsonFileImport,
       updateUsername,
       shareRoom,
+      handleOpenRoomManager,
       toggleDebugMode,
       toggleDarkMode,
       showStatus,
@@ -709,6 +801,7 @@ export default {
       // 4. Add new variables to return
       globalUndoRedoState,
       forceUpdateUndoRedo,
+      globalError,
 
       // Feature state & methods
       activeFeature,
@@ -721,7 +814,30 @@ export default {
       hasCharGroups,
       hasStylizedStrokes,
       toggleFeature,
+      toggleMathGraphPanel,
+      togglePhysicsGraphPanel,
       triggerWhiteboardAction,
+      handleJoinRoom,
+      showMathGraphPanel,
+      showPhysicsGraphPanel,
+      handleAddElement: (data) => {
+        if (whiteboard.value && whiteboard.value.addElementFromPanel) {
+          whiteboard.value.addElementFromPanel(data);
+        }
+      },
+      handleAddCoordinateSystem: (type) => {
+        // Create default coordinate system element
+        const elementData = {
+          type: type === '2d' ? 'coordinateSystem2D' : 'coordinateSystem3D',
+          position: { x: 100, y: 100 },
+          width: 400,
+          height: 300,
+          // Add default properties if needed
+        };
+        if (whiteboard.value && whiteboard.value.addElementFromPanel) {
+          whiteboard.value.addElementFromPanel(elementData);
+        }
+      }
       // Need to add computed for renderedLatex if KaTeX is used here
     };
   }
@@ -740,6 +856,35 @@ export default {
 .logo svg { stroke: #4285f4; }
 .logo h1 { margin: 0; font-size: 18px; font-weight: 500; }
 .username-container { margin-left: 20px; }
+
+
+.global-error-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0,0,0,0.8);
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.error-box {
+  background: white;
+  padding: 20px;
+  border-radius: 8px;
+  max-width: 80%;
+  color: red;
+}
+.error-box pre {
+  white-space: pre-wrap;
+  background: #eee;
+  padding: 10px;
+  margin: 10px 0;
+  color: black;
+}
+
 .username-input {
   background-color: var(--btn-bg);
   border: 1px solid var(--border-color);
@@ -765,47 +910,41 @@ export default {
   color: var(--text-color); padding: 8px 12px; font-size: 14px;
   cursor: pointer; transition: all 0.2s;
 }
-.import-export-btn:hover { background-color: var(--btn-hover-bg); }
-.import-export-btn svg { stroke: currentColor; }
-.status-info, .version-info { color: var(--text-color); font-size: 13px; }
-.status-message { color: #4285f4; }
-.whiteboard-container { position: relative; width: 100vw; height: 100vh; overflow: hidden; }
+
 .floating-toolbar {
-  position: absolute !important; left: 15px; top: 50%;
-  transform: translateY(-50%); width: auto !important;
-  background-color: rgba(40, 40, 40, 0.8); border-radius: 10px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3); z-index: 1000;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  /* overflow: visible !important; */ /* Ensure overflow is not hidden */
+  position: absolute !important;
+  left: 15px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  pointer-events: none;
+  z-index: 3000;
+}
+
+/* Keep the toolbar wrapper fully transparent – the ToolBar
+   component itself provides the glass/floating background */
+.floating-toolbar {
+  background: transparent;
 }
 .floating-user-info {
-  position: absolute; top: 15px; right: 15px; display: flex;
-  align-items: center; gap: 10px; background-color: rgba(40, 40, 40, 0.7);
-  border-radius: 8px; padding: 8px 12px; z-index: 1000;
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  z-index: 3000;
+  background: rgba(255, 255, 255, 0.9);
+  backdrop-filter: blur(8px);
+  padding: 8px 16px;
+  border-radius: 12px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+  border: 1px solid rgba(0,0,0,0.05);
 }
-:not(.dark-mode) .floating-toolbar { background-color: rgba(240, 240, 240, 0.8); }
-:not(.dark-mode) .floating-user-info { background-color: rgba(240, 240, 240, 0.8); }
+
+:not(.dark-mode) .floating-user-info { background-color: rgba(255, 255, 255, 0.9); }
 .share-btn {
-  display: flex; align-items: center; gap: 5px; padding: 6px 10px;
-  background-color: #4285f4; color: white; border: none;
-  border-radius: 4px; cursor: pointer; font-size: 14px;
-}
-.share-btn:hover { background-color: #3367d6; }
-.debug-btn {
-  padding: 6px 10px; background-color: #ff9800; color: white;
-  border: none; border-radius: 4px; cursor: pointer; font-size: 14px;
-}
-.debug-btn:hover { background-color: #f57c00; }
-.room-info {
-  position: absolute; bottom: 15px; right: 15px; display: flex;
-  align-items: center; gap: 10px; background-color: rgba(40, 40, 40, 0.7);
-  border-radius: 8px; padding: 8px 12px; color: white; font-size: 14px; z-index: 1000;
-}
-:not(.dark-mode) .room-info { background-color: rgba(240, 240, 240, 0.8); color: #333; }
-.notification {
-  position: fixed; bottom: 20px; left: 20px; padding: 12px 16px;
-  background-color: #333; color: white; border-radius: 6px;
-  box-shadow: 0 3px 10px rgba(0,0,0,0.3); z-index: 9999;
   transition: all 0.3s ease; transform: translateY(100px); opacity: 0;
 }
 .notification.show { transform: translateY(0); opacity: 1; }

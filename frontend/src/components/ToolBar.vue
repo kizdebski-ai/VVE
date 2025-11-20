@@ -1,632 +1,870 @@
 <template>
-  <div class="toolbar" ref="toolbarRef">
-    <!-- Selection Tool -->
-    <div class="tool-category">
-      <button :class="['tool-btn', { active: currentTool === 'select' }]" @click="selectTool('select', $event)" title="Select (V)">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
-          <path d="M4 3l5.5 15.5 1.8-6 6-1.8L4 3z"></path>
-        </svg>
-      </button>
-    </div>
+  <div class="toolbar-container" :class="orientation">
+    <!-- Main Toolbar -->
+    <div class="toolbar glass-panel">
+      <!-- Tools Group -->
+      <div class="tool-group" :class="{ vertical: orientation === 'vertical' }">
+        <button
+          v-for="tool in mainTools"
+          :key="tool.name"
+          class="tool-btn"
+          :class="{ active: currentTool === tool.name }"
+          @click="selectTool(tool.name)"
+          :title="tool.label"
+        >
+          <component :is="tool.icon" :size="20" />
+        </button>
+      </div>
 
-    <!-- Drawing Tools Category -->
-    <div class="tool-category">
-      <button :class="['tool-btn', { active: currentTool === 'pen' }]" @click="selectTool('pen', $event)" title="Pen (P)">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/>
-        </svg>
-      </button>
-      <button :class="['tool-btn', { active: currentTool === 'highlighter' }]" @click="selectTool('highlighter', $event)" title="Highlighter (H)">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M9 11l-6 6v3h9l3-3"/>
-          <path d="M22 12L9 21"/>
-          <path d="M18 2l-9 9 3 3 9-9-3-3z"/>
-        </svg>
-      </button>
-      <button :class="['tool-btn', { active: currentTool === 'eraser' }]" @click="selectTool('eraser', $event)" title="Eraser (E)">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M18 13l-6 6-8-8 6-6 8 8z"/>
-          <path d="M14 7l3 3"/>
-        </svg>
-     </button>
-    </div>
+      <div class="divider" :class="{ horizontal: orientation === 'vertical' }"></div>
 
-    <!-- Shapes Category -->
-    <div class="tool-category">
-      <button :class="['tool-btn', { active: currentTool === 'shapes' }]" @click="selectTool('shapes', $event)" title="Shapes (S)">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"></path>
-        </svg>
-      </button>
-    </div>
+      <!-- Shapes Group -->
+      <div class="tool-group" :class="{ vertical: orientation === 'vertical' }">
+        <div class="dropdown-trigger" ref="dropdownTriggerRef">
+          <button
+            type="button"
+            class="tool-btn"
+            ref="shapesTriggerRef"
+            :class="{ active: isShapeTool(currentTool) }"
+            @click.stop="toggleShapesMenu"
+            title="Shapes"
+          >
+            <component :is="currentShapeIcon" :size="20" />
+            <ChevronDown :size="12" class="dropdown-arrow" />
+          </button>
+          
+          <!-- Shapes Dropdown -->
+          <Teleport to="body">
+            <div
+              v-if="showShapesMenu"
+              class="toolbar-popover glass-panel shapes-popover"
+              :style="shapesMenuStyle"
+              ref="shapesMenuRef"
+            >
+              <div class="popover-section">
+                <div class="section-title">Shapes</div>
+                <div class="shapes-grid">
+                    <button
+                      v-for="shape in shapeOptions"
+                      :key="shape.tool"
+                      class="shape-btn"
+                      :class="{ active: isShapeActive(shape) }"
+                      @click="selectShape(shape)"
+                      :title="shape.label"
+                    >
+                    <component :is="shape.icon" :size="18" />
+                  </button>
+                </div>
+              </div>
 
-    <!-- Lines Category -->
-    <div class="tool-category">
-      <button :class="['tool-btn', { active: currentTool === 'lines' }]" @click="selectTool('lines', $event)" title="Lines (L)">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <line x1="5" y1="12" x2="19" y2="12"></line>
-          <polyline points="12 5 19 12 12 19"></polyline>
-        </svg>
-      </button>
-    </div>
+              <div class="popover-section">
+                <div class="section-title">Line style</div>
+                <div class="option-row">
+                  <button
+                    v-for="style in lineStyleOptions"
+                    :key="style.value"
+                    class="option-pill"
+                    :class="{ active: currentLineStyle === style.value }"
+                    @click="selectLineStyle(style.value)"
+                  >
+                    {{ style.label }}
+                  </button>
+                </div>
+              </div>
 
-    <!-- Other Tools Category -->
-    <div class="tool-category">
-       <button :class="['tool-btn', { active: currentTool === 'text' }]" @click="selectTool('text', $event)" title="Text (T)">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M17 8h2a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2h-2v4l-4-4H9a2 2 0 0 1-2-2v-6a2 2 0 0 1 2-2h2V4l4 4z"></path>
-        </svg>
-      </button>
-      <button :class="['tool-btn', { active: currentTool === 'image' }]" @click="selectTool('image', $event)" title="Image (I)">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
-          <circle cx="8.5" cy="8.5" r="1.5"></circle>
-          <polyline points="21 15 16 10 5 21"></polyline>
-        </svg>
-      </button>
-    </div>
+              <div class="popover-section">
+                <div class="section-title">Arrowheads</div>
+                <div class="option-row">
+                  <button
+                    v-for="style in arrowStyleOptions"
+                    :key="style.value"
+                    class="option-pill"
+                    :class="{ active: currentArrowStyle === style.value }"
+                    @click="selectArrowStyle(style.value)"
+                  >
+                    {{ style.label }}
+                  </button>
+                </div>
+              </div>
 
-    <!-- Advanced Tools Category -->
-    <div class="tool-category">
-      <!-- Główna ikona do aktywowania kategorii advanced -->
-      <button
-        :class="['tool-btn', { active: currentTool === 'advanced' }]"
-        @click="selectTool('advanced', $event)"
-        title="Advanced (A)"
-      >
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="none"
-          stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <circle cx="12" cy="12" r="3"></circle>
-          <path
-            d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z">
-          </path>
-        </svg>
-      </button>
+              <div class="popover-section">
+                <div class="section-title">Quick colors</div>
+                <div class="color-row">
+                  <button
+                    v-for="swatch in colorSwatches"
+                    :key="swatch"
+                    class="color-swatch"
+                    :style="{ backgroundColor: swatch }"
+                    :class="{ active: currentColor === swatch }"
+                    @click="selectColorSwatch(swatch)"
+                  ></button>
+                </div>
+              </div>
+            </div>
+          </Teleport>
+        </div>
+      </div>
 
-    </div>
+      <div class="divider" :class="{ horizontal: orientation === 'vertical' }"></div>
 
+      <!-- Actions Group -->
+      <div class="tool-group" :class="{ vertical: orientation === 'vertical' }">
+        <button class="tool-btn" @click="$emit('undo')" title="Undo (Ctrl+Z)">
+          <Undo2 :size="20" />
+        </button>
+        <button class="tool-btn" @click="$emit('redo')" title="Redo (Ctrl+Y)">
+          <Redo2 :size="20" />
+        </button>
+        <button class="tool-btn danger" @click="$emit('clear')" title="Clear Canvas">
+          <Trash2 :size="20" />
+        </button>
+      </div>
 
-    <!-- Floating Options Panel -->
-    <FloatingOptions
-      ref="floatingOptionsRef"
-      v-show="floatingOptionsPosition.visible"
-      :style="{ /* Use fixed positioning */
-        position: 'fixed',
-        top: `${floatingOptionsPosition.top}px`,
-        left: `${floatingOptionsPosition.left}px`,
-        zIndex: 1100
-      }"
-      :initialColor="currentColor"
-      :initialWidth="currentLineWidth"
-      :show-shape-selector="currentTool === 'shapes'"
-      :current-shape="currentShape"
-      :show-line-style-selector="currentTool === 'lines'"
-      :current-line-style="currentLineStyle"
-      :show-advanced-options="currentTool === 'advanced'"
-      @color-changed="setColor"
-      @line-width-changed="updateLineWidth"
-      @shape-changed="handleShapeChange"
-      @line-style-changed="handleLineStyleChange"
-      @toggle-calculator="handleToggleCalculator"
-      @select-math-plot="handleSelectMathPlot"
-      @select-physics-plot="handleSelectPhysicsPlot"
-      @select-coord-2d="handleSelectCoord2D"
-      @select-coord-3d="handleSelectCoord3D"
+      <div class="divider" :class="{ horizontal: orientation === 'vertical' }"></div>
+
+      <!-- Features Group -->
+      <div class="tool-group" :class="{ vertical: orientation === 'vertical' }">
+        <button 
+          class="tool-btn" 
+          :class="{ active: isMathPanelOpen }"
+          @click="$emit('toggle-math-panel')" 
+          title="Math Function Panel"
+        >
+          <LineChart :size="20" />
+        </button>
+        <button 
+          class="tool-btn" 
+          :class="{ active: isPhysicsPanelOpen }"
+          @click="$emit('toggle-physics-panel')" 
+          title="Physics Plot Panel"
+        >
+          <Activity :size="20" />
+        </button>
+        <button 
+          class="tool-btn" 
+          @click="$emit('toggle-calculator')" 
+          title="Scientific Calculator"
+        >
+          <Calculator :size="20" />
+        </button>
+        <div class="dropdown-trigger coordinate-trigger" ref="coordinateTriggerRef">
+          <button 
+            class="tool-btn" 
+            :class="{ active: showCoordinateMenu }"
+            @click.stop="toggleCoordinateMenu"
+            title="Add Coordinate System"
+          >
+            <Axis3d :size="20" />
+            <ChevronDown :size="12" class="dropdown-arrow" />
+          </button>
+          <Teleport to="body">
+            <div
+              v-if="showCoordinateMenu"
+              class="toolbar-popover glass-panel coordinate-menu"
+              :style="coordinateMenuStyle"
+              ref="coordinateMenuRef"
+            >
+              <button
+                v-for="option in coordinateOptions"
+                :key="option.type"
+                class="shape-btn coordinate-btn"
+                @click="selectCoordinateSystem(option.type)"
+              >
+                {{ option.label }}
+              </button>
+            </div>
+          </Teleport>
+        </div>
+      </div>
       
+      <div class="divider" :class="{ horizontal: orientation === 'vertical' }"></div>
+
+      <!-- Settings Group -->
+      <div class="tool-group" :class="{ vertical: orientation === 'vertical' }">
+          <button class="tool-btn" @click="$emit('toggle-debug')" title="Debug Info">
+            <Bug :size="20" />
+          </button>
+      </div>
+    </div>
+
+    <!-- Properties Bar (Contextual) -->
+    <div class="properties-bar glass-panel" v-if="showProperties" :class="orientation">
+      <!-- Color Picker -->
+      <div class="property-group">
+        <div 
+          class="color-preview" 
+          :style="{ backgroundColor: currentColor }"
+          @click="toggleColorPicker"
+        ></div>
+        <input 
+          type="color" 
+          ref="colorInput" 
+          v-model="currentColor" 
+          @input="updateColor"
+          class="hidden-color-input"
+        >
+      </div>
+
+      <!-- Line Width Slider -->
+      <div class="property-group slider-group">
+        <Circle :size="12" :fill="currentColor" :stroke-width="0" />
+        <input 
+          type="range" 
+          min="1" 
+          max="20" 
+          v-model.number="currentLineWidth" 
+          @input="updateLineWidth"
+          class="width-slider"
+        >
+        <Circle :size="20" :fill="currentColor" :stroke-width="0" />
+      </div>
       
-    ></FloatingOptions>
-
-    <!-- Action Tools Category -->
-    <div class="tool-category action-tools">
-       <!-- 7 & 8. Update button bindings -->
-      <button
-        class="tool-btn"
-        @click="$emit('undo-clicked')"
-        title="Undo (Ctrl+Z)"
-        :disabled="!localCanUndo">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M3 7v6h6"></path>
-          <path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"></path>
-        </svg>
-      </button>
-      <button
-        class="tool-btn"
-        @click="$emit('redo-clicked')"
-        title="Redo (Ctrl+Y)"
-        :disabled="!localCanRedo">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M21 7v6h-6"></path>
-          <path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3L21 13"></path>
-        </svg>
-      </button>
+      <!-- Eraser Size (if eraser selected) -->
+       <div class="property-group" v-if="currentTool === 'eraser'">
+          <span class="label">Size:</span>
+           <input 
+            type="range" 
+            min="10" 
+            max="100" 
+            v-model.number="currentEraserSize" 
+            @input="updateEraserSize"
+            class="width-slider"
+          >
+       </div>
     </div>
-
-    <!-- Export/Import/Share Category -->
-    <div class="tool-category export-import-group">
-      <button class="export-btn tool-btn" @click="exportWhiteboard" title="Export Whiteboard">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-          <polyline points="7 10 12 15 17 10"></polyline>
-          <line x1="12" y1="15" x2="12" y2="3"></line>
-        </svg>
-      </button>
-      <button class="import-btn tool-btn" @click="importWhiteboard" title="Import Whiteboard">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-          <polyline points="17 8 12 3 7 8"></polyline>
-          <line x1="12" y1="3" x2="12" y2="15"></line>
-        </svg>
-      </button>
-      <button class="share-btn tool-btn" @click="shareWhiteboard" title="Share Whiteboard">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <circle cx="18" cy="5" r="3"></circle>
-          <circle cx="6" cy="12" r="3"></circle>
-          <circle cx="18" cy="19" r="3"></circle>
-          <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line>
-          <line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line>
-        </svg>
-      </button>
-    </div>
-
-     <!-- Hidden file input for image upload -->
-    <input
-      type="file"
-      ref="imageInput"
-      style="display: none"
-      accept="image/*"
-      @change="onImageSelected">
   </div>
 </template>
 
-<script>
-import { ref, onMounted, onBeforeUnmount, watch, nextTick, reactive } from 'vue';
-import FloatingOptions from './FloatingOptions.vue';
-import { undoRedoState } from '../utils/undoRedoState'; // 1. Add import
+<script setup>
+import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue';
+import { 
+  Pencil, 
+  Eraser, 
+  Type, 
+  MousePointer2, 
+  Square, 
+  Circle as CircleIcon, 
+  Triangle, 
+  Minus, 
+  Undo2, 
+  Redo2, 
+  Trash2, 
+  ChevronDown,
+  Calculator,
+  Activity,
+  Axis3d,
+  LineChart,
+  ArrowRight,
+  ArrowLeftRight,
+  Diamond,
+  Octagon,
+  Bug,
+  Circle,
+  ImageIcon,
+  Box,
+  Cylinder,
+  Cone,
+  Pyramid
+} from 'lucide-vue-next';
 
+const props = defineProps({
+  activeTool: { type: String, default: 'pen' },
+  color: { type: String, default: '#000000' },
+  lineWidth: { type: Number, default: 2 },
+  lineStyle: { type: String, default: 'solid' },
+  arrowStyle: { type: String, default: 'none' },
+  isMathPanelOpen: Boolean,
+  isPhysicsPanelOpen: Boolean,
+  orientation: { type: String, default: 'vertical' } // 'vertical' or 'horizontal'
+});
 
-export default {
-  name: 'ToolBar',
-  components: {
-    FloatingOptions,
-    
-  },
-  // 2. Remove old props
-  // props: {
-  //   canUndo: {
-  //     type: Boolean,
-  //     default: false
-  //   },
-  //   canRedo: {
-  //     type: Boolean,
-  //     default: false
-  //   },
-  //   undo: {
-  //     type: Function,
-  //     required: true
-  //   },
-  //   redo: {
-  //     type: Function,
-  //     required: true
-  //   }
-  // },
-  emits: [ // 9. Add emits
-    'undo-clicked',
-    'redo-clicked',
-    'tool-changed',
-    'color-changed',
-    'line-width-changed',
-    'shape-changed',
-    'line-style-changed',
-    'advanced-option-changed',
-    'toggle-calculator', // Ensure emit is declared
-    'clear-canvas',
-    'export-whiteboard',
-    'import-whiteboard',
-    'image-selected',
-    'share-room'
-  ],
-  setup(props, { emit }) {
-    const currentTool = ref('select');
-    const currentColor = ref('#000000');
-    const currentLineWidth = ref(2);
-    const currentShape = ref('rectangle');
-    const currentLineStyle = ref('solid'); // Added line style state
-    const imageInput = ref(null);
-    const floatingOptionsPosition = reactive({ top: 0, left: 0, visible: false });
-    const toolbarRef = ref(null);
-    const floatingOptionsRef = ref(null);
-    const lastOpenedByButton = ref(null); // Track which button opened the panel
+const emit = defineEmits([
+  'update:activeTool', 
+  'update:color', 
+  'update:lineWidth', 
+  'update:lineStyle',
+  'update:arrowStyle',
+  'update:eraserSize',
+  'undo', 
+  'redo', 
+  'clear',
+  'toggle-math-panel',
+  'toggle-physics-panel',
+  'add-coordinate-system',
+  'toggle-calculator',
+  'toggle-debug'
+]);
 
-    // 3. Add setupUndoRedoButtons function
-    const setupUndoRedoButtons = () => {
-      // Stwórz lokalne zmienne reaktywne wyłącznie do celów debugowania
-      const localCanUndo = ref(undoRedoState.canUndo);
-      const localCanRedo = ref(undoRedoState.canRedo);
+// State
+const currentTool = ref(props.activeTool);
+const currentColor = ref(props.color);
+const currentLineWidth = ref(props.lineWidth);
+const currentEraserSize = ref(30);
+const showShapesMenu = ref(false);
+const showCoordinateMenu = ref(false);
+const colorInput = ref(null);
+const shapesTriggerRef = ref(null);
+const dropdownTriggerRef = ref(null);
+const coordinateTriggerRef = ref(null);
+const shapesMenuRef = ref(null);
+const coordinateMenuRef = ref(null);
+const shapesMenuStyle = ref({});
+const coordinateMenuStyle = ref({});
+const currentLineStyle = ref(props.lineStyle);
+const currentArrowStyle = ref(props.arrowStyle);
+const colorSwatches = ['#111827', '#2563eb', '#7c3aed', '#0f766e', '#c026d3', '#dc2626', '#f97316', '#1d4ed8'];
 
-      // Obserwuj zmiany w globalnym stanie
-      watch(() => undoRedoState.canUndo, (newVal) => {
-        localCanUndo.value = newVal;
-        console.log(`[ToolBar] Globalna zmiana canUndo: ${newVal}`);
-      });
+const positionShapesMenu = () => {
+  if (!showShapesMenu.value) return;
+  const btn = shapesTriggerRef.value;
+  if (!btn) return;
+  const rect = btn.getBoundingClientRect();
+  const style = {
+    position: 'fixed',
+    zIndex: 4000
+  };
 
-      watch(() => undoRedoState.canRedo, (newVal) => {
-        localCanRedo.value = newVal;
-        console.log(`[ToolBar] Globalna zmiana canRedo: ${newVal}`);
-      });
-
-      return { localCanUndo, localCanRedo };
-    };
-
-    // 4. Call setupUndoRedoButtons
-    const { localCanUndo, localCanRedo } = setupUndoRedoButtons();
-
-
-    // --- Click Outside Handler (Refined) ---
-    const handleClickOutside = (event) => {
-      if (!floatingOptionsPosition.visible) return;
-
-      const optionsEl = floatingOptionsRef.value?.$el;
-
-      // Check if the click target exists and is NOT inside the options panel
-      if (event.target && optionsEl && !optionsEl.contains(event.target)) {
-        // Check if the click target is the button that *just* opened the panel
-        if (lastOpenedByButton.value && lastOpenedByButton.value.contains(event.target)) {
-          // console.log('[Toolbar] Clicked the opener button again, allowing toggle.');
-          // The selectTool function will handle the toggle
-        } else {
-          console.log('[Toolbar] Click outside detected, hiding options.');
-          floatingOptionsPosition.visible = false;
-          lastOpenedByButton.value = null; // Reset tracker
-        }
-      }
-    };
-
-
-    onMounted(() => {
-      window.addEventListener('keydown', handleKeyDown);
-      document.addEventListener('click', handleClickOutside, true);
-      nextTick(() => {
-        emit('tool-changed', currentTool.value);
-        emit('color-changed', currentColor.value);
-        emit('line-width-changed', parseInt(currentLineWidth.value));
-        emit('shape-changed', currentShape.value);
-      });
-    });
-
-    onBeforeUnmount(() => {
-      window.removeEventListener('keydown', handleKeyDown);
-      document.removeEventListener('click', handleClickOutside, true);
-    });
-
-    const handleKeyDown = (event) => {
-      if (event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA') return;
-      // Handle Shift+K for Calculator
-      if (event.shiftKey && event.key.toUpperCase() === 'K') {
-        event.preventDefault();
-        console.log("Shift+K pressed - Toggling calculator via Toolbar");
-        emit('toggle-calculator'); // Emit toggle event for Shift+K
-        return; // Prevent other key handling
-      }
-
-      if (!event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) { // Ensure Shift isn't pressed for other shortcuts
-        const keyToolMap = {
-          'v': 'select',
-          'p': 'pen', 'h': 'highlighter', 'e': 'eraser',
-          's': 'shapes', 'l': 'lines', 't': 'text', 'i': 'image',
-          'a': 'advanced', // Added 'a' for advanced
-          'm': 'mathPlot' // Added 'm' for math plot
-          // Add keys for physics, coord2D, coord3D if desired
-        };
-        const toolForKey = keyToolMap[event.key.toLowerCase()];
-        if (toolForKey) {
-          event.preventDefault(); // Prevent default browser actions like opening find bar with 'a'
-          selectTool(toolForKey, null);
-        }
-      }
-    };
-
-    const toolsWithOptions = ['pen', 'highlighter', 'shapes', 'lines', 'advanced']; // Added 'advanced'
-    // Define tools that don't open the floating panel
-    const toolsWithoutOptions = ['select', 'text', 'image', 'mathPlot', 'physicsPlot', 'coordSystem2D', 'coordSystem3D', 'eraser'];
-
-
-    const selectTool = (tool, event = null) => {
-      console.log(`[Toolbar DEBUG] selectTool called with tool: ${tool}, event: ${event ? 'present' : 'null'}`);
-      const isOptionTool = toolsWithOptions.includes(tool);
-      const isNoOptionTool = toolsWithoutOptions.includes(tool);
-      const isSameOptionTool = tool === currentTool.value && isOptionTool;
-      const clickedButtonElement = event?.currentTarget || null;
-
-      // Set the new tool
-      currentTool.value = tool;
-      emit('tool-changed', tool);
-      console.log('[Toolbar DEBUG] Tool changed to:', tool);
-
-      // Special case for image tool
-      if (tool === 'image') {
-        uploadImage();
-        floatingOptionsPosition.visible = false;
-        lastOpenedByButton.value = null;
-        console.log('[Toolbar DEBUG] Image tool selected, hiding options.');
-        return;
-      }
-
-      // Handle visibility and positioning for tools with options
-      if (isOptionTool) {
-        if (isSameOptionTool) {
-          // Toggle visibility if clicking the same tool again
-          floatingOptionsPosition.visible = !floatingOptionsPosition.visible;
-          lastOpenedByButton.value = floatingOptionsPosition.visible ? clickedButtonElement : null; // Track if opened
-          console.log(`[Toolbar DEBUG] Toggling options visibility to: ${floatingOptionsPosition.visible}`);
-        } else {
-          // Switching to a new tool with options, always show
-          floatingOptionsPosition.visible = true;
-          lastOpenedByButton.value = clickedButtonElement; // Track which button opened it
-          console.log('[Toolbar DEBUG] Switching to new option tool, showing options.');
-        }
-
-        // Update position using getBoundingClientRect relative to viewport if showing
-        if (floatingOptionsPosition.visible && clickedButtonElement) {
-          const buttonRect = clickedButtonElement.getBoundingClientRect();
-          floatingOptionsPosition.top = buttonRect.top; // Use viewport top
-          floatingOptionsPosition.left = buttonRect.right + 10; // Position right of button
-          console.log(`[Toolbar DEBUG] Positioning options for ${tool} at top: ${floatingOptionsPosition.top}, left: ${floatingOptionsPosition.left}. Visible: ${floatingOptionsPosition.visible}`);
-        } else if (floatingOptionsPosition.visible) {
-           console.log('[Toolbar DEBUG] Options visible but no event target for positioning (likely shortcut). Keeping position.');
-        }
-      } else if (isNoOptionTool) {
-         // Hide options if selecting a tool without options (like text, image, or our new graph tools)
-        floatingOptionsPosition.visible = false;
-        lastOpenedByButton.value = null;
-        console.log(`[Toolbar DEBUG] Tool without options (${tool}) selected, hiding options.`);
-      }
-
-      // Emit default shape/style only when switching TO the respective tool
-      if (tool === 'shapes' && isOptionTool && !isSameOptionTool) {
-        emit('shape-changed', currentShape.value);
-      } else if (tool === 'lines' && isOptionTool && !isSameOptionTool) {
-        emit('line-style-changed', currentLineStyle.value);
-      } else if (tool === 'advanced' && isOptionTool && !isSameOptionTool) {
-        // Emit something default for advanced if needed, or handle in AdvancedOptions component
-        console.log('[Toolbar] Switched to Advanced tool.');
-      }
-    };
-
-
-    const setColor = (color) => {
-      currentColor.value = color;
-      emit('color-changed', color);
-    };
-
-    const updateLineWidth = (width) => {
-      currentLineWidth.value = width;
-      emit('line-width-changed', width);
-    };
-
-     const handleShapeChange = (shape) => {
-       currentShape.value = shape;
-       emit('shape-changed', shape);
-       console.log('Shape changed to:', shape);
-     };
-
-     // New handler for line style changes
-     const handleLineStyleChange = (style) => {
-       currentLineStyle.value = style;
-       emit('line-style-changed', style);
-       console.log('Line style changed to:', style);
-     };
-
-     // Placeholder for advanced option changes
-     const handleAdvancedOptionChange = (option) => {
-       // This will be implemented when AdvancedOptions component is built
-       console.log('Advanced option changed:', option);
-       emit('advanced-option-changed', option);
-     };
-
-     // Method to handle and re-emit the toggle event
-     const handleToggleCalculator = () => {
-       console.log('ToolBar: Received toggle-calculator, re-emitting...');
-       emit('toggle-calculator');
-     };
-
-     // Handlers for new events from FloatingOptions
-     const handleSelectMathPlot = () => {
-       selectTool('mathPlot');
-       floatingOptionsPosition.visible = false; // Close panel after selection
-       lastOpenedByButton.value = null;
-     };
-     const handleSelectPhysicsPlot = () => {
-       selectTool('physicsPlot');
-       floatingOptionsPosition.visible = false; // Close panel after selection
-       lastOpenedByButton.value = null;
-     };
-     const handleSelectCoord2D = () => {
-       selectTool('coordSystem2D');
-       floatingOptionsPosition.visible = false; // Close panel after selection
-       lastOpenedByButton.value = null;
-     };
-     const handleSelectCoord3D = () => {
-       selectTool('coordSystem3D');
-       floatingOptionsPosition.visible = false; // Close panel after selection
-       lastOpenedByButton.value = null;
-     };
-
-    const exportWhiteboard = () => { emit('export-whiteboard'); };
-    const importWhiteboard = () => { emit('import-whiteboard'); };
-    const shareWhiteboard = () => { emit('share-room'); };
-    const uploadImage = () => { imageInput.value?.click(); };
-
-    const onImageSelected = (event) => {
-      const file = event.target.files[0];
-      if (file) {
-        emit('image-selected', file);
-        event.target.value = '';
-      }
-    };
-
-    return {
-      toolbarRef,
-      floatingOptionsRef,
-      currentTool,
-      currentColor,
-      currentLineWidth,
-      currentShape,
-      currentLineStyle, // Added
-      imageInput,
-      floatingOptionsPosition,
-      selectTool,
-      setColor,
-      updateLineWidth,
-      handleShapeChange,
-      handleLineStyleChange,
-      handleAdvancedOptionChange,
-      handleToggleCalculator, // Expose the new method
-      exportWhiteboard,
-      importWhiteboard,
-      shareWhiteboard,
-      uploadImage,
-      onImageSelected,
-      // 7. Remove props from setup return
-      // undo: props.undo,
-      // redo: props.redo,
-      // canUndo: props.canUndo,
-      // canRedo: props.canRedo,
-      // 4. Add new variables to return
-      localCanUndo,
-      localCanRedo
-    };
+  if (props.orientation === 'vertical') {
+    style.top = Math.round(rect.top) + 'px';
+    style.left = Math.round(rect.right + 8) + 'px';
+    style.transform = 'none';
+  } else {
+    style.top = Math.round(rect.bottom + 8) + 'px';
+    style.left = Math.round(rect.left + rect.width / 2) + 'px';
+    style.transform = 'translateX(-50%)';
   }
-}
+
+  shapesMenuStyle.value = style;
+};
+
+const positionCoordinateMenu = () => {
+  if (!showCoordinateMenu.value) return;
+  const btn = coordinateTriggerRef.value?.querySelector('.tool-btn');
+  if (!btn) return;
+  const rect = btn.getBoundingClientRect();
+  coordinateMenuStyle.value = {
+    position: 'fixed',
+    top: Math.round(rect.bottom + 8) + 'px',
+    left: Math.round(rect.left + rect.width / 2) + 'px',
+    transform: 'translateX(-50%)',
+    zIndex: 4000
+  };
+};
+
+const handleGlobalPointer = (e) => {
+  const shapeContainer = dropdownTriggerRef.value;
+  const coordContainer = coordinateTriggerRef.value;
+  const shapeMenuEl = shapesMenuRef.value;
+  const coordMenuEl = coordinateMenuRef.value;
+
+  if (
+    showShapesMenu.value &&
+    shapeContainer &&
+    !(shapeContainer.contains(e.target) || shapeMenuEl?.contains(e.target))
+  ) {
+    showShapesMenu.value = false;
+  }
+  if (
+    showCoordinateMenu.value &&
+    coordContainer &&
+    !(coordContainer.contains(e.target) || coordMenuEl?.contains(e.target))
+  ) {
+    showCoordinateMenu.value = false;
+  }
+};
+
+onMounted(() => {
+  window.addEventListener('resize', positionShapesMenu);
+  window.addEventListener('scroll', positionShapesMenu, true);
+  window.addEventListener('resize', positionCoordinateMenu);
+  window.addEventListener('scroll', positionCoordinateMenu, true);
+  document.addEventListener('mousedown', handleGlobalPointer);
+});
+
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', positionShapesMenu);
+  window.removeEventListener('scroll', positionShapesMenu, true);
+  window.removeEventListener('resize', positionCoordinateMenu);
+  window.removeEventListener('scroll', positionCoordinateMenu, true);
+  document.removeEventListener('mousedown', handleGlobalPointer);
+});
+
+// Watch for prop changes
+watch(() => props.activeTool, (newVal) => currentTool.value = newVal);
+watch(() => props.color, (newVal) => currentColor.value = newVal);
+watch(() => props.lineWidth, (newVal) => currentLineWidth.value = newVal);
+watch(() => props.lineStyle, (newVal) => currentLineStyle.value = newVal);
+watch(() => props.arrowStyle, (newVal) => currentArrowStyle.value = newVal);
+watch(() => props.orientation, () => {
+  nextTick(() => {
+    positionShapesMenu();
+    positionCoordinateMenu();
+  });
+});
+
+// Tools Configuration
+const mainTools = [
+  { name: 'select', label: 'Select (V)', icon: MousePointer2 },
+  { name: 'pen', label: 'Pen (P)', icon: Pencil },
+  { name: 'eraser', label: 'Eraser (E)', icon: Eraser },
+  { name: 'text', label: 'Text (T)', icon: Type },
+];
+
+const shapeOptions = [
+  { id: 'line', tool: 'line', label: 'Line', icon: Minus, resetArrow: true },
+  { id: 'arrow', tool: 'line', label: 'Arrow', icon: ArrowRight, presetArrow: 'end' },
+  { id: 'double-arrow', tool: 'line', label: '↔', icon: ArrowLeftRight, presetArrow: 'both' },
+  { id: 'rectangle', tool: 'rectangle', label: 'Rectangle', icon: Square },
+  { id: 'circle', tool: 'circle', label: 'Ellipse', icon: CircleIcon },
+  { id: 'triangle', tool: 'triangle', label: 'Triangle', icon: Triangle },
+  { id: 'diamond', tool: 'deltoid', label: 'Diamond', icon: Diamond },
+  { id: 'parallelogram', tool: 'parallelogram', label: 'Parallelogram', icon: Octagon },
+  { id: 'cube', tool: 'cube', label: 'Cube', icon: Box },
+  { id: 'cylinder', tool: 'cylinder', label: 'Cylinder', icon: Cylinder },
+  { id: 'cone', tool: 'cone', label: 'Cone', icon: Cone },
+  { id: 'pyramid', tool: 'pyramid', label: 'Pyramid', icon: Pyramid },
+];
+
+const lineStyleOptions = [
+  { value: 'solid', label: 'Solid' },
+  { value: 'dashed', label: 'Dashed' },
+  { value: 'dotted', label: 'Dotted' }
+];
+
+const arrowStyleOptions = [
+  { value: 'none', label: 'None' },
+  { value: 'end', label: 'End' },
+  { value: 'both', label: 'Both' }
+];
+
+const isShapeActive = (shapeOption) => {
+  if (shapeOption.id === 'arrow') {
+    return currentTool.value === 'line' && currentArrowStyle.value === 'end';
+  }
+  if (shapeOption.id === 'double-arrow') {
+    return currentTool.value === 'line' && currentArrowStyle.value === 'both';
+  }
+  if (shapeOption.id === 'line') {
+    return currentTool.value === 'line' && currentArrowStyle.value === 'none';
+  }
+  return currentTool.value === shapeOption.tool;
+};
+
+const coordinateOptions = [
+  { type: '2d', label: 'Add 2D System' },
+  { type: '3d', label: 'Add 3D System' },
+];
+
+// Computed
+const showProperties = computed(() => {
+  return ['pen', 'line', 'rectangle', 'circle', 'triangle', 'eraser', 'cube', 'cylinder', 'cone', 'pyramid'].includes(currentTool.value);
+});
+
+const currentShapeIcon = computed(() => {
+  const activeShape = shapeOptions.find(option => isShapeActive(option));
+  return activeShape ? activeShape.icon : Square;
+});
+
+// Methods
+const selectTool = (toolName, options = { closeMenus: true }) => {
+  currentTool.value = toolName;
+  emit('update:activeTool', toolName);
+  if (options.closeMenus !== false) {
+    showShapesMenu.value = false;
+    showCoordinateMenu.value = false;
+  }
+};
+
+const selectShape = (shapeOption) => {
+  selectTool(shapeOption.tool, { closeMenus: false });
+  if (shapeOption.presetArrow) {
+    selectArrowStyle(shapeOption.presetArrow);
+  } else if (shapeOption.resetArrow || shapeOption.tool !== 'line') {
+    selectArrowStyle('none');
+  }
+};
+
+const toggleShapesMenu = () => {
+  showShapesMenu.value = !showShapesMenu.value;
+  if (showShapesMenu.value) {
+    nextTick(() => positionShapesMenu());
+  }
+};
+
+const selectLineStyle = (style) => {
+  currentLineStyle.value = style;
+  emit('update:lineStyle', style);
+};
+
+const selectArrowStyle = (style) => {
+  currentArrowStyle.value = style;
+  emit('update:arrowStyle', style);
+};
+
+const selectColorSwatch = (color) => {
+  currentColor.value = color;
+  emit('update:color', color);
+};
+
+const toggleCoordinateMenu = () => {
+  showCoordinateMenu.value = !showCoordinateMenu.value;
+  if (showCoordinateMenu.value) {
+    nextTick(() => positionCoordinateMenu());
+  }
+};
+
+const selectCoordinateSystem = (type) => {
+  emit('add-coordinate-system', type);
+  showCoordinateMenu.value = false;
+};
+
+const isShapeTool = (tool) => {
+  return shapeOptions.some(s => s.tool === tool);
+};
+
+const toggleColorPicker = () => {
+  colorInput.value.click();
+};
+
+const updateColor = () => {
+  emit('update:color', currentColor.value);
+};
+
+const updateLineWidth = () => {
+  emit('update:lineWidth', currentLineWidth.value);
+};
+
+const updateEraserSize = () => {
+    emit('update:eraserSize', currentEraserSize.value);
+};
+
 </script>
 
 <style scoped>
-.toolbar {
+.toolbar-container {
   display: flex;
-  flex-direction: column;
-  position: relative; /* Needed for absolute positioning of children */
+  align-items: flex-start; /* Align to top */
   gap: 12px;
-  padding: 8px 0;
-  width: 100%;
-  height: 100%;
-  overflow-y: auto; /* Allows scrolling within the toolbar */
-  /* overflow-x: hidden; REMOVED this line */
-  scrollbar-width: none; /* Firefox */
+  z-index: 100;
+  pointer-events: none;
 }
 
-.toolbar::-webkit-scrollbar {
-  width: 0;
-  background: transparent;
-  display: none;
+.toolbar-container.vertical {
+  flex-direction: row; /* Toolbar | Properties */
 }
 
-.tool-category {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  width: 100%;
+.toolbar-container.horizontal {
+  flex-direction: column-reverse; /* Properties ^ Toolbar */
   align-items: center;
-  padding-bottom: px; /* Add some space below each category */
-  margin-bottom: px; /* Add some space below each category */
-  border-bottom: 0px solid var(--border-color-light, #eee); /* Separator line */
 }
 
-.tool-category:last-child {
-  border-bottom: none; /* No border for the last category */
-  margin-bottom: 0;
-  padding-bottom: 0;
+.glass-panel {
+  background: rgba(255, 255, 255, 0.9);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+  border-radius: 16px;
+  padding: 8px;
+  pointer-events: auto;
+  transition: all 0.2s ease;
 }
 
-/* Ensure action/export buttons fill space if needed */
-.action-tools {
-  /* Styles if needed */
+.toolbar {
+  pointer-events: auto;
+  display: flex;
+  gap: 8px;
+  align-items: center; /* Ensure items are centered */
+  justify-content: center;
 }
 
-.export-import-group {
-  margin-top: auto; /* Pushes this group towards the bottom */
+.toolbar-container.vertical .toolbar {
+  flex-direction: column;
+  min-width: 56px; /* Prevent collapse */
+  padding: 12px 8px; /* More padding */
+}
+
+.toolbar-container.horizontal .toolbar {
+  flex-direction: row;
+  min-height: 56px;
+}
+
+.tool-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.tool-group.vertical {
+  flex-direction: column;
+}
+
+.divider {
+  background-color: rgba(0, 0, 0, 0.1);
+  margin: 0 4px;
+}
+
+.divider:not(.horizontal) { /* Vertical divider for horizontal toolbar */
+  width: 1px;
+  height: 24px;
+}
+
+.divider.horizontal { /* Horizontal divider for vertical toolbar */
+  width: 24px;
+  height: 1px;
+  margin: 4px 0;
 }
 
 .tool-btn {
-  width: 40px;
-  height: 40px;
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 8px;
+  width: 40px;
+  height: 40px;
+  border: none;
+  background: transparent;
+  border-radius: 10px;
+  color: #4b5563;
   cursor: pointer;
   transition: all 0.2s ease;
-  background-color: var(--btn-bg);
-  color: var(--btn-color);
-  border: none;
-  padding: 0;
-  margin: 0 auto;
+  position: relative;
 }
 
 .tool-btn:hover {
-  background-color: var(--btn-hover-bg);
-  transform: translateY(-8px);
+  background: rgba(0, 0, 0, 0.05);
+  color: #111827;
 }
 
 .tool-btn.active {
-  background-color: var(--btn-active-bg);
-  color: var(--btn-active-color);
-}
-
-.tool-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-  transform: none;
-}
-
-/* Styles for elements previously in ToolBar but now potentially in FloatingOptions */
-.line-width-selector {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  align-items: center;
-  width: 100%;
-}
-
-.line-width-preview {
-  width: 40px;
-  height: 20px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background-color: var(--btn-bg);
-  border-radius: 4px;
-}
-
-.line-preview {
-  width: 20px;
-  background-color: currentColor;
-  border-radius: 4px;
-}
-
-.line-width-select {
-  width: 90%;
-  padding: 4px;
-  border-radius: 4px;
-  background-color: var(--btn-bg);
-  color: var(--btn-color);
-  border: 1px solid var(--border-color);
-  font-size: 12px;
-}
-
-.tool-btn.danger {
-  color: #ff4d4f;
+  background: #eff6ff;
+  color: #2563eb;
 }
 
 .tool-btn.danger:hover {
-  background-color: rgba(255, 77, 79, 0.1);
+  background: #fef2f2;
+  color: #dc2626;
 }
 
-@media (max-width: 600px) {
-  .toolbar {
-    padding: 5px;
-  }
-  .tool-btn { /* Apply to all buttons now */
-    width: 36px;
-    height: 36px;
-  }
+.dropdown-trigger {
+  position: relative;
+}
+
+.dropdown-arrow {
+  position: absolute;
+  bottom: 4px;
+  right: 4px;
+  opacity: 0.6;
+}
+
+.toolbar-popover {
+  position: fixed;
+  padding: 12px;
+  min-width: 220px;
+  z-index: 4000;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.shapes-popover {
+  min-width: 260px;
+}
+
+.coordinate-menu {
+  min-width: 180px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.popover-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.section-title {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #6b7280;
+  font-weight: 600;
+}
+
+.option-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.option-pill {
+  border: 1px solid rgba(15, 23, 42, 0.15);
+  background: rgba(255, 255, 255, 0.8);
+  border-radius: 9999px;
+  padding: 4px 10px;
+  font-size: 12px;
+  color: #374151;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.option-pill:hover {
+  border-color: #2563eb;
+  color: #2563eb;
+}
+
+.option-pill.active {
+  background: #2563eb;
+  color: #fff;
+  border-color: #2563eb;
+}
+
+.color-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.color-swatch {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  cursor: pointer;
+  transition: transform 0.15s ease, border-color 0.15s ease;
+}
+
+.color-swatch:hover {
+  transform: scale(1.1);
+}
+
+.color-swatch.active {
+  border-color: #2563eb;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.2);
+}
+
+.shapes-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 4px;
+}
+
+.shape-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: none;
+  background: transparent;
+  border-radius: 8px;
+  color: #4b5563;
+  cursor: pointer;
+}
+
+.shape-btn:hover {
+  background: rgba(0, 0, 0, 0.05);
+}
+
+.shape-btn.active {
+  background: #eff6ff;
+  color: #2563eb;
+}
+
+.coordinate-btn {
+  justify-content: flex-start;
+  width: 100%;
+  padding: 6px 10px;
+  font-size: 13px;
+}
+
+/* Properties Bar */
+.properties-bar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 8px 16px;
+}
+
+.properties-bar.vertical {
+    /* If we want vertical properties bar? No, usually horizontal bar popping out */
+    /* Let's keep it horizontal but positioned to the right */
+}
+
+.property-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.color-preview {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 2px solid rgba(0, 0, 0, 0.1);
+  cursor: pointer;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.hidden-color-input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.slider-group {
+  color: #6b7280;
+}
+
+.width-slider {
+  width: 100px;
+  height: 4px;
+  background: #e5e7eb;
+  border-radius: 2px;
+  appearance: none;
+  outline: none;
+}
+
+.width-slider::-webkit-slider-thumb {
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  background: #2563eb;
+  border-radius: 50%;
+  cursor: pointer;
+  border: 2px solid white;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.label {
+    font-size: 12px;
+    color: #6b7280;
+    font-weight: 500;
+}
+
+/* Dark Mode Support */
+:global(.dark) .glass-panel {
+  background: rgba(30, 41, 59, 0.9);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+:global(.dark) .tool-btn {
+  color: #9ca3af;
+}
+
+:global(.dark) .tool-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #f3f4f6;
+}
+
+:global(.dark) .tool-btn.active {
+  background: rgba(37, 99, 235, 0.2);
+  color: #60a5fa;
 }
 </style>
+
+
+
+
+
+
+

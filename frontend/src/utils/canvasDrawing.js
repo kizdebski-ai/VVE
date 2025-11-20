@@ -8,7 +8,7 @@ import * as math from 'mathjs'; // Import mathjs
 // Throttle function to limit the rate of function calls
 export const throttle = (fn, delay) => {
   let lastCall = 0;
-  return function(...args) {
+  return function (...args) {
     const now = Date.now();
     if (now - lastCall >= delay) {
       lastCall = now;
@@ -18,291 +18,286 @@ export const throttle = (fn, delay) => {
 };
 
 /**
- * Draw a single element on the canvas
- * @param {Object} context - Canvas 2D context
- * @param {Object} element - Element to draw
- * @param {Boolean} isHighlighted - Whether to highlight the element
- * @param {Number} smoothingFactor - Smoothing factor for curves (0-1)
- * @param {Map<string, HTMLImageElement>} imageCache - Optional: Cache for images passed to drawImage
- * @param {function} requestRedraw - Optional: Redraw function passed to drawImage
+ * Draw a single element on the canvas.
+ * This is the main dispatcher that renders all element types.
+ *
+ * @param {CanvasRenderingContext2D} context - Canvas 2D context
+ * @param {Object} element - Element data (type, geometry, style, etc.)
+ * @param {boolean} [isHighlighted=false] - Whether element should be highlighted (e.g. eraser hover)
+ * @param {number} [smoothingFactor=0.65] - Reserved for future pen smoothing (currently unused here)
+ * @param {Map<string, HTMLImageElement>} [imageCache] - Cache used for image elements
+ * @param {Function} [requestRedraw] - Callback to request a redraw when async work (image load) finishes
  */
-export const drawElement = (context, element, isHighlighted = false, smoothingFactor = 0.2, imageCache = null, requestRedraw = null) => {
-  if (!element || typeof element !== 'object') {
-      // console.error("drawElement received invalid element:", element);
-      return;
-  }
-  // Ensure essential properties exist, especially for lines/shapes/plots
-  const needsPosition = ['text', 'image', 'coordinateSystem2D', 'mathFunctionPlot', 'physicsDataPlot', 'coordinateSystem3D'];
-  const needsStartEnd = ['line', 'rectangle', 'circle', 'square', 'triangle', 'trapezoid', 'parallelogram', 'deltoid', 'cube', 'cuboid', 'sphere', 'cylinder', 'cone', 'pyramid', 'tetrahedron'];
+export const drawElement = (
+  context,
+  element,
+  isHighlighted = false,
+  smoothingFactor = 0.65,
+  imageCache,
+  requestRedraw
+) => {
+  if (!context || !element || !element.type) return;
 
-  if (needsStartEnd.includes(element.type) && (!element.start || !element.end)) {
-      // console.error(`drawElement received element type ${element.type} without start/end points:`, element);
-      return;
-  }
-  if (needsPosition.includes(element.type) && !element.position) {
-      // console.error(`drawElement received element type ${element.type} without position:`, element);
-      return;
-  }
-  if (element.type === 'pen' && (!element.points || element.points.length === 0)) {
-      // console.error("drawElement received pen element without points:", element);
-      return;
-  }
+  const type = element.type;
 
+  // Base style
+  const baseColor = element.color || '#000000';
+  const color = isHighlighted ? '#ff5252' : baseColor;
+  const lw = element.lineWidth || 2;
 
   context.save();
+  context.strokeStyle = color;
+  context.fillStyle = color;
+  context.lineWidth = lw;
 
-  // Set styles
-  context.strokeStyle = element.color || '#000000'; // Default color
-  context.fillStyle = element.color || '#000000';
-  context.lineWidth = element.lineWidth || 2; // Default line width
-  context.lineCap = 'round';
-  context.lineJoin = 'round';
-
-  // Apply composite operation if specified (for eraser)
-  if (element.compositeOperation) {
-    context.globalCompositeOperation = element.compositeOperation;
-  }
-
-  // Apply highlight effect if needed
-  if (isHighlighted) {
-    context.shadowColor = 'rgba(255, 0, 0, 0.5)'; // Example highlight
-    context.shadowBlur = 10;
-  }
-
-  switch (element.type) {
+  switch (type) {
     case 'pen':
-      drawPath(context, element, smoothingFactor);
-      break;
-    case 'eraser':
-      // Eraser logic is handled elsewhere (element deletion)
-      break;
-    case 'line':
-      drawLine(context, element);
-      break;
-    case 'rectangle':
-      drawRectangle(context, element);
-      break;
-    case 'circle':
-      drawCircle(context, element);
-      break;
-    // Add cases for new 2D shapes
-    case 'square':
-      drawSquare(context, element);
-      break;
-    case 'triangle':
-      drawTriangle(context, element);
-      break;
-    case 'trapezoid':
-      drawTrapezoid(context, element);
-      break;
-    case 'parallelogram':
-      drawParallelogram(context, element);
-      break;
-    case 'deltoid':
-      drawDeltoid(context, element);
-      break;
-    // Add cases for new 3D shapes (2D representations)
-    case 'cube':
-      drawCube(context, element);
-      break;
-    case 'cuboid':
-      drawCuboid(context, element);
-      break;
-    case 'sphere':
-      drawSphere(context, element);
-      break;
-    case 'cylinder':
-      drawCylinder(context, element);
-      break;
-    case 'cone':
-      drawCone(context, element);
-      break;
-    case 'pyramid':
-      drawPyramid(context, element);
-      break;
-    case 'tetrahedron':
-      drawTetrahedron(context, element);
-      break;
-    case 'text':
-      drawText(context, element);
-      break;
-    case 'image':
-      drawImage(context, element, imageCache, requestRedraw);
-      break;
-    // Add cases for new graph/coordinate system types
-    case 'coordinateSystem2D':
-      drawCoordinateSystem2D(context, element);
-      break;
-    case 'mathFunctionPlot':
-      drawMathFunctionPlot(context, element);
-      break;
-    case 'physicsDataPlot':
-      drawPhysicsDataPlot(context, element);
-      break;
-    case 'coordinateSystem3D':
-      drawCoordinateSystem3D(context, element);
-      break;
-    default:
-        // console.warn(`[drawElement] Unknown element type: ${element.type}`);
-  }
+    case 'eraser': {
+      const points = element.points || [];
+      if (points.length < 2) break;
 
-  // Reset composite operation and shadow
-  context.globalCompositeOperation = 'source-over';
-  context.shadowColor = 'transparent';
-  context.shadowBlur = 0;
+      context.beginPath();
 
-  context.restore();
-};
-
-/**
- * Draw a free-hand path
- */
-const drawPath = (context, element, smoothingFactor) => {
-  // Draw free-hand path with smooth curves
-  if (element.points && element.points.length > 0) {
-    context.beginPath();
-
-    if (element.points.length === 1) {
-      // Just a dot
-      const point = element.points[0];
-      context.arc(point.x, point.y, context.lineWidth / 2, 0, Math.PI * 2);
-      context.fill();
-    } else if (element.points.length === 2) {
-      // Just a line
-      const p1 = element.points[0];
-      const p2 = element.points[1];
-      context.moveTo(p1.x, p1.y);
-      context.lineTo(p2.x, p2.y);
-      context.stroke();
-    } else {
-      // Advanced curve smoothing with adaptive control (Catmull-Rom to Bezier)
-      context.moveTo(element.points[0].x, element.points[0].y);
-
-      // Use pre-calculated control points if available (e.g., from Yjs)
-      if (element.smoothedPoints && element.smoothedPoints.length > 0) {
-        for (let i = 0; i < element.smoothedPoints.length; i++) {
-           const cp = element.smoothedPoints[i];
-           const p2 = element.points[i + 1]; // Target point for this curve segment
-           if (cp && p2) {
-               context.bezierCurveTo(cp.cp1x, cp.cp1y, cp.cp2x, cp.cp2y, p2.x, p2.y);
-           } else {
-               // Fallback if smoothed points are missing for a segment
-               if (p2) context.lineTo(p2.x, p2.y);
-           }
+      if (points.length < 3 || type === 'eraser') {
+        // Simple line for very short strokes or eraser
+        context.moveTo(points[0].x, points[0].y);
+        for (let i = 1; i < points.length; i++) {
+          context.lineTo(points[i].x, points[i].y);
         }
       } else {
-        // Calculate curves on the fly with adaptive smoothing
-        const adaptiveSmoothingFactor = Math.min(0.9, smoothingFactor * 2);
+        // Catmull-Rom spline for smooth pen strokes
+        context.moveTo(points[0].x, points[0].y);
 
-        for (let i = 0; i < element.points.length - 1; i++) {
-          const p0 = i > 0 ? element.points[i - 1] : element.points[i];
-          const p1 = element.points[i];
-          const p2 = element.points[i + 1];
-          const p3 = i < element.points.length - 2 ? element.points[i + 2] : p2;
+        for (let i = 0; i < points.length - 1; i++) {
+          const p0 = points[Math.max(0, i - 1)];
+          const p1 = points[i];
+          const p2 = points[i + 1];
+          const p3 = points[Math.min(points.length - 1, i + 2)];
 
-          // Improved Catmull-Rom to Bezier conversion
-          const d1 = Math.sqrt(Math.pow(p1.x - p0.x, 2) + Math.pow(p1.y - p0.y, 2));
-          const d2 = Math.sqrt(Math.pow(p2.x - p1.x, 2) + Math.pow(p2.y - p1.y, 2));
-          const d3 = Math.sqrt(Math.pow(p3.x - p2.x, 2) + Math.pow(p3.y - p2.y, 2));
+          // Interpolate between p1 and p2
+          // Using a fixed number of segments per point pair for simplicity/performance
+          // or just using the canvas bezierCurveTo if we convert control points.
+          // For simplicity and performance in canvas, quadratic curves often look good enough:
+          // Midpoint smoothing:
+          const midX = (p1.x + p2.x) / 2;
+          const midY = (p1.y + p2.y) / 2;
+          // context.quadraticCurveTo(p1.x, p1.y, midX, midY);
 
-          // Adjust tension based on point distances (simplified)
-          const tensionFactor = (d1 + d2 + d3 > 0) ? Math.min(d1, d2, d3) / Math.max(d1, d2, d3) : 0;
-          const tension = adaptiveSmoothingFactor * (0.9 + (isNaN(tensionFactor) ? 0 : tensionFactor) / 2);
+          // Better: Catmull-Rom to Bezier conversion for native canvas drawing
+          // cp1 = p1 + (p2 - p0) / 6 * tension
+          // cp2 = p2 - (p3 - p1) / 6 * tension
+          const tension = 1;
 
-
-          // Control points with adaptive tension
           const cp1x = p1.x + (p2.x - p0.x) / 6 * tension;
           const cp1y = p1.y + (p2.y - p0.y) / 6 * tension;
+
           const cp2x = p2.x - (p3.x - p1.x) / 6 * tension;
           const cp2y = p2.y - (p3.y - p1.y) / 6 * tension;
 
-          // Add Bezier curve segment
           context.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, p2.x, p2.y);
         }
       }
+
       context.stroke();
+      break;
     }
+
+    case 'line': {
+      if (!element.start || !element.end) break;
+
+      const rawLineStyle = element.lineStyle || 'solid';
+      const normalizedLineStyle = rawLineStyle === 'vector'
+        ? 'solid'
+        : rawLineStyle === 'dotted_vector'
+          ? 'dotted'
+          : rawLineStyle;
+      const arrowStyle = element.arrowStyle || ((rawLineStyle === 'vector' || rawLineStyle === 'dotted_vector') ? 'end' : 'none');
+      let dashPattern = [];
+      if (normalizedLineStyle === 'dotted') {
+        dashPattern = [lw, lw * 2];
+      } else if (normalizedLineStyle === 'dashed') {
+        dashPattern = [lw * 4, lw * 2];
+      }
+
+      if (dashPattern.length > 0) {
+        context.setLineDash(dashPattern);
+      }
+
+      context.beginPath();
+      context.moveTo(element.start.x, element.start.y);
+      context.lineTo(element.end.x, element.end.y);
+      context.stroke();
+
+      // Reset line dash *before* drawing arrowhead if needed
+      if (dashPattern.length > 0) {
+        context.setLineDash([]);
+      }
+
+      // Draw arrowheads for arrow styles
+      if (arrowStyle === 'end' || arrowStyle === 'both') {
+        context.fillStyle = color;
+        drawArrowhead(context, element.start, element.end, lw);
+      }
+      if (arrowStyle === 'start' || arrowStyle === 'both') {
+        context.fillStyle = color;
+        drawArrowhead(context, element.end, element.start, lw);
+      }
+
+      break;
+    }
+
+    case 'rectangle':
+      if (element.start && element.end) {
+        drawRectangle(context, element);
+      }
+      break;
+
+    case 'square':
+      if (element.start && element.end) {
+        drawSquare(context, element);
+      }
+      break;
+
+    case 'triangle':
+      if (element.start && element.end) {
+        drawTriangle(context, element);
+      }
+      break;
+
+    case 'trapezoid':
+      if (element.start && element.end) {
+        drawTrapezoid(context, element);
+      }
+      break;
+
+    case 'parallelogram':
+      if (element.start && element.end) {
+        drawParallelogram(context, element);
+      }
+      break;
+
+    case 'deltoid':
+      if (element.start && element.end) {
+        drawDeltoid(context, element);
+      }
+      break;
+
+    case 'cube':
+      if (element.start && element.end) {
+        drawCube(context, element);
+      }
+      break;
+
+    case 'cuboid':
+      if (element.start && element.end) {
+        drawCuboid(context, element);
+      }
+      break;
+
+    case 'sphere':
+      if (element.start && element.end) {
+        drawSphere(context, element);
+      }
+      break;
+
+    case 'cylinder':
+      if (element.start && element.end) {
+        drawCylinder(context, element);
+      }
+      break;
+
+    case 'cone':
+      if (element.start && element.end) {
+        drawCone(context, element);
+      }
+      break;
+
+    case 'pyramid':
+      if (element.start && element.end) {
+        drawPyramid(context, element);
+      }
+      break;
+
+    case 'tetrahedron':
+      if (element.start && element.end) {
+        drawTetrahedron(context, element);
+      }
+      break;
+
+    case 'circle':
+      if (element.start && element.end) {
+        drawCircle(context, element);
+      }
+      break;
+
+    case 'text':
+      if (element.position && element.text) {
+        drawText(context, element);
+      }
+      break;
+
+    case 'image':
+      if (imageCache) {
+        drawImage(context, element, imageCache, requestRedraw);
+      }
+      break;
+
+    case 'coordinateSystem2D':
+      if (element.position) {
+        drawCoordinateSystem2D(context, element);
+      }
+      break;
+
+    case 'mathFunctionPlot':
+      if (element.position && element.expression) {
+        drawMathFunctionPlot(context, element);
+      }
+      break;
+
+    case 'physicsDataPlot':
+      if (element.position) {
+        drawPhysicsDataPlot(context, element);
+      }
+      break;
+
+    case 'coordinateSystem3D':
+      if (element.position) {
+        drawCoordinateSystem3D(context, element);
+      }
+      break;
+
+    default:
+      // Unknown element type; nothing to draw
+      break;
   }
-};
 
-/**
- * Draw a line with different styles (solid, dotted, dashed, vector, dotted_vector)
- */
-const drawLine = (context, element) => {
-  // DEBUG: Log line element details more thoroughly
-  // console.log(`[drawLine] Element received:`, JSON.stringify(element));
-
-  context.save(); // Save context state before potentially changing dash/fill
-  context.beginPath();
-  context.moveTo(element.start.x, element.start.y);
-
-  // Handle line styles
-  const lineStyle = element.lineStyle || 'solid'; // Default to solid
-  const lw = Math.max(1, element.lineWidth || 1); // Ensure positive line width for dash calculation
-  let dashPattern = [];
-  // console.log(`[drawLine] Processing style: ${lineStyle}, lineWidth: ${lw}`); // DEBUG
-
-  if (lineStyle === 'dotted' || lineStyle === 'dotted_vector') {
-    // Use fixed small values for dotted lines, scaled slightly by line width
-    dashPattern = [lw * 0.5, lw * 1.5];
-  } else if (lineStyle === 'dashed') {
-    // Use larger dash and gap, scaled by line width
-    dashPattern = [lw * 3, lw * 2];
-  }
-
-  if (dashPattern.length > 0) {
-    // Ensure dash pattern values are not zero
-    dashPattern = dashPattern.map(val => Math.max(0.1, val));
-    // console.log(`[drawLine] Applying dash pattern: [${dashPattern.join(', ')}]`); // DEBUG
-    context.setLineDash(dashPattern);
-  } else {
-     // console.log(`[drawLine] No dash pattern applied (solid line).`); // DEBUG
-  }
-
-  context.lineTo(element.end.x, element.end.y);
-  context.strokeStyle = element.color; // Ensure strokeStyle is set
-  context.lineWidth = lw; // Ensure lineWidth is set
-  context.stroke(); // Stroke the line path
-
-  // Reset line dash *before* drawing arrowhead if needed
-  if (dashPattern.length > 0) {
-    context.setLineDash([]);
-  }
-
-  // Draw arrowhead for vector types
-  if (lineStyle === 'vector' || lineStyle === 'dotted_vector') {
-    // Arrowhead should use the element's color
-    context.fillStyle = element.color;
-    drawArrowhead(context, element.start, element.end, lw);
-  }
-
-  context.restore(); // Restore original context state (including dash setting)
+  context.restore(); // Restore original context state
 };
 
 /**
  * Helper function to draw an arrowhead
  */
 const drawArrowhead = (context, from, to, lineWidth) => {
-    // Prevent drawing arrowhead if start and end points are the same
-    if (!from || !to || (from.x === to.x && from.y === to.y)) return;
+  // Prevent drawing arrowhead if start and end points are the same
+  if (!from || !to || (from.x === to.x && from.y === to.y)) return;
 
-    const headLength = Math.max(8, lineWidth * 3.5); // Adjusted size calculation
-    const angle = Math.atan2(to.y - from.y, to.x - from.x);
+  const headLength = Math.max(8, lineWidth * 3.5); // Adjusted size calculation
+  const angle = Math.atan2(to.y - from.y, to.x - from.x);
 
-    // Save context state specifically for arrowhead drawing
-    context.save();
-    // fillStyle should be set before calling this function
-    context.beginPath(); // Start a new path for the arrowhead
-    context.translate(to.x, to.y);
-    context.rotate(angle);
-    // Draw the arrowhead shape relative to the translated/rotated origin (the endpoint)
-    context.moveTo(0, 0);
-    context.lineTo(-headLength, -headLength / 2.5); // Adjusted shape
-    // context.lineTo(-headLength * 0.9, 0); // Removed concave point for simpler arrow
-    context.lineTo(-headLength, headLength / 2.5); // Adjusted shape
-    context.closePath();
-    context.fill(); // Fill the arrowhead path
-    context.restore(); // Restore context state
+  // Save context state specifically for arrowhead drawing
+  context.save();
+  // fillStyle should be set before calling this function
+  context.beginPath(); // Start a new path for the arrowhead
+  context.translate(to.x, to.y);
+  context.rotate(angle);
+  // Draw the arrowhead shape relative to the translated/rotated origin (the endpoint)
+  context.moveTo(0, 0);
+  context.lineTo(-headLength, -headLength / 2.5); // Adjusted shape
+  // context.lineTo(-headLength * 0.9, 0); // Removed concave point for simpler arrow
+  context.lineTo(-headLength, headLength / 2.5); // Adjusted shape
+  context.closePath();
+  context.fill(); // Fill the arrowhead path
+  context.restore(); // Restore context state
 };
 
 
@@ -695,8 +690,8 @@ const drawText = (context, element) => {
  */
 const drawImage = (context, element, imageCache, requestRedraw) => {
   if (!element || !element.dataUrl || !imageCache || !element.position) {
-      // console.error("drawImage called with invalid element data:", element);
-      return;
+    // console.error("drawImage called with invalid element data:", element);
+    return;
   }
 
   // Access properties directly instead of destructuring immediately
@@ -1144,10 +1139,10 @@ export const isPointInElement = (point, element, hitDistance = 10) => {
       // Check distance to each edge, considering line width
       const halfWidth = element.lineWidth / 2 + hitDistance;
       return (
-        distanceToSegment(point, {x, y}, {x: x + width, y}) < halfWidth ||
-        distanceToSegment(point, {x: x + width, y}, {x: x + width, y: y + height}) < halfWidth ||
-        distanceToSegment(point, {x: x + width, y: y + height}, {x, y: y + height}) < halfWidth ||
-        distanceToSegment(point, {x, y: y + height}, {x, y}) < halfWidth
+        distanceToSegment(point, { x, y }, { x: x + width, y }) < halfWidth ||
+        distanceToSegment(point, { x: x + width, y }, { x: x + width, y: y + height }) < halfWidth ||
+        distanceToSegment(point, { x: x + width, y: y + height }, { x, y: y + height }) < halfWidth ||
+        distanceToSegment(point, { x, y: y + height }, { x, y }) < halfWidth
       );
 
     case 'circle':
@@ -1180,8 +1175,8 @@ export const isPointInElement = (point, element, hitDistance = 10) => {
       const p2 = { x: element.end.x, y: element.end.y };
       const p3 = { x: element.start.x, y: element.end.y };
       return distanceToSegment(point, p1, p2) < hitDistance ||
-             distanceToSegment(point, p2, p3) < hitDistance ||
-             distanceToSegment(point, p3, p1) < hitDistance;
+        distanceToSegment(point, p2, p3) < hitDistance ||
+        distanceToSegment(point, p3, p1) < hitDistance;
     }
     case 'trapezoid': {
       if (!element.start || !element.end) return false;
@@ -1192,22 +1187,22 @@ export const isPointInElement = (point, element, hitDistance = 10) => {
       const p3 = { x: element.end.x, y: element.end.y };
       const p4 = { x: element.start.x, y: element.end.y };
       return distanceToSegment(point, p1, p2) < hitDistance ||
-             distanceToSegment(point, p2, p3) < hitDistance ||
-             distanceToSegment(point, p3, p4) < hitDistance ||
-             distanceToSegment(point, p4, p1) < hitDistance;
+        distanceToSegment(point, p2, p3) < hitDistance ||
+        distanceToSegment(point, p3, p4) < hitDistance ||
+        distanceToSegment(point, p4, p1) < hitDistance;
     }
     case 'parallelogram': {
-       if (!element.start || !element.end) return false;
-       const width = element.end.x - element.start.x;
-       const slant = width * 0.2;
-       const p1 = { x: element.start.x + slant, y: element.start.y };
-       const p2 = { x: element.end.x + slant, y: element.start.y };
-       const p3 = { x: element.end.x - slant, y: element.end.y };
-       const p4 = { x: element.start.x - slant, y: element.end.y };
-       return distanceToSegment(point, p1, p2) < hitDistance ||
-              distanceToSegment(point, p2, p3) < hitDistance ||
-              distanceToSegment(point, p3, p4) < hitDistance ||
-              distanceToSegment(point, p4, p1) < hitDistance;
+      if (!element.start || !element.end) return false;
+      const width = element.end.x - element.start.x;
+      const slant = width * 0.2;
+      const p1 = { x: element.start.x + slant, y: element.start.y };
+      const p2 = { x: element.end.x + slant, y: element.start.y };
+      const p3 = { x: element.end.x - slant, y: element.end.y };
+      const p4 = { x: element.start.x - slant, y: element.end.y };
+      return distanceToSegment(point, p1, p2) < hitDistance ||
+        distanceToSegment(point, p2, p3) < hitDistance ||
+        distanceToSegment(point, p3, p4) < hitDistance ||
+        distanceToSegment(point, p4, p1) < hitDistance;
     }
     case 'deltoid': {
       if (!element.start || !element.end) return false;
@@ -1218,9 +1213,9 @@ export const isPointInElement = (point, element, hitDistance = 10) => {
       const p3 = { x: midX, y: element.end.y };
       const p4 = { x: element.start.x, y: midY };
       return distanceToSegment(point, p1, p2) < hitDistance ||
-             distanceToSegment(point, p2, p3) < hitDistance ||
-             distanceToSegment(point, p3, p4) < hitDistance ||
-             distanceToSegment(point, p4, p1) < hitDistance;
+        distanceToSegment(point, p2, p3) < hitDistance ||
+        distanceToSegment(point, p3, p4) < hitDistance ||
+        distanceToSegment(point, p4, p1) < hitDistance;
     }
     // 3D shapes - use simple bounding box check for now
     case 'cube':

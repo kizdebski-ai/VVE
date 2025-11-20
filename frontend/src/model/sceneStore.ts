@@ -20,3 +20,7 @@ export const sceneState: SceneState = reactive({
   },
   version: 0,
 });
+
+export function bumpSceneVersion() {
+  sceneState.version += 1;
+}

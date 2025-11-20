@@ -1,42 +1,58 @@
 // MathRecognizerModule.js
-// Module responsible for recognizing equations and rendering lightweight previews
-import * as math from 'mathjs'; // Import the main mathjs object
+// Recognizes handwritten equations and renders lightweight AI-based previews.
+
+import * as math from 'mathjs';
+import Tesseract from 'tesseract.js';
+import axios from 'axios';
+
+// Resolve backend base URL for AI calls:
+// - prefer VITE_BACKEND_URL if provided
+// - in Vite dev (port 5173), fall back to http://localhost:8000
+const DEFAULT_BACKEND_URL =
+  typeof window !== 'undefined' && window.location && window.location.port === '5173'
+    ? 'http://localhost:8000'
+    : '';
+
+const BACKEND_BASE_URL =
+  (typeof import.meta !== 'undefined' &&
+    import.meta.env &&
+    import.meta.env.VITE_BACKEND_URL) ||
+  DEFAULT_BACKEND_URL;
 
 export default class MathRecognizerModule {
   constructor(canvasContext, options = {}) {
-    // Zapisz kontekst canvas
     this.ctx = canvasContext;
 
-    // Opcje modułu z wartościami domyślnymi
     this.options = {
-      renderLatex: true, // Czy renderować LaTeX
-      ghostOpacity: options.ghostOpacity || 0.3, // Przezroczystość podpowiedzi
-      recognitionDelay: options.recognitionDelay || 1000, // Delay after equals sign
-      debug: options.debug || false,
-      ...options
+      renderLatex: true,
+      ghostOpacity: options.ghostOpacity ?? 0.5, // Increased default opacity
+      recognitionDelay: options.recognitionDelay ?? 1500, // Increased delay for auto-mode
+      autoRecognize: options.autoRecognize ?? true, // Default to true
+      debug: options.debug ?? false,
+      backendUrl: options.backendUrl || BACKEND_BASE_URL,
+      showHint: options.showHint ?? true,
+      ...options,
     };
 
-    // Stan modułu
-    this.strokes = []; // Wszystkie ścieżki (managed externally, passed via setStrokes)
-    this.equationStrokes = []; // Ścieżki tworzące równanie (subset of this.strokes)
-    this.ghostAnswer = null; // Podpowiedź { points: [], color: '', weight: number }
-    this.recognitionStatus = ''; // Status rozpoznawania
-    this.latexEquation = ''; // Równanie w formacie LaTeX
-    this.solution = ''; // Rozwiązanie równania
-    this.enabled = false; // Czy moduł jest aktywny
-
-    // Funkcja renderująca LaTeX (można przekazać z zewnątrz)
+    this.strokes = [];
+    this.equationStrokes = [];
+    this.ghostAnswer = null;
+    this.recognitionStatus = '';
+    this.latexEquation = '';
+    this.solution = '';
+    this.enabled = false;
     this.renderLatexFn = options.renderLatexFn || null;
     this.recognitionTimeout = null;
   }
 
   logDebug(...args) {
     if (this.options.debug) {
+      // eslint-disable-next-line no-console
       console.log(...args);
     }
   }
 
-  // Aktywacja/deaktywacja modułu
+  // Enable / disable
   enable() {
     this.enabled = true;
     return this;
@@ -44,7 +60,7 @@ export default class MathRecognizerModule {
 
   disable() {
     this.enabled = false;
-    this.clearRecognitionState(); // Clear state when disabled
+    this.clearRecognitionState();
     if (this.recognitionTimeout) {
       clearTimeout(this.recognitionTimeout);
       this.recognitionTimeout = null;
@@ -52,72 +68,61 @@ export default class MathRecognizerModule {
     return this;
   }
 
-  // Ustawienie opcji
   setOptions(options) {
     this.options = { ...this.options, ...options };
+    // If auto-recognize is turned off, clear any pending timeout
+    if (!this.options.autoRecognize && this.recognitionTimeout) {
+      clearTimeout(this.recognitionTimeout);
+      this.recognitionTimeout = null;
+    }
     return this;
   }
 
-  // Ustawienie funkcji renderującej LaTeX
   setLatexRenderer(renderFn) {
     this.renderLatexFn = renderFn;
     return this;
   }
 
-  // Dodanie ścieżki do modułu (called by WhiteboardCanvas)
+  // Stroke management
   addStroke(stroke) {
     if (!this.enabled) return this;
 
-    // Add to equation strokes if enabled
-    const equationStroke = {
-      ...stroke,
-      type: 'math' // Oznaczenie, że to część równania
-    };
+    const equationStroke = { ...stroke, type: 'math' };
     this.equationStrokes.push(equationStroke);
+    this.strokes.push(equationStroke);
 
-    // Reset ghost answer if user edits equation
+    // Reset ghost answer when equation changes
     this.ghostAnswer = null;
 
-    this.logDebug(`[Math] addStroke called with stroke ID: ${stroke.id}`); // DEBUG
-    // Reset ghost answer if user edits equation
-    this.ghostAnswer = null;
-
-    // Schedule recognition if equals sign detected
-    const equalsDetected = this.detectEqualsSign(stroke);
-    this.logDebug(`[Math] Stroke ID ${stroke.id} - Equals sign detected: ${equalsDetected}`); // DEBUG
-    if (equalsDetected) {
+    // Auto-recognition logic
+    if (this.options.autoRecognize) {
       if (this.recognitionTimeout) {
         clearTimeout(this.recognitionTimeout);
-        this.logDebug('[Math] Cleared previous recognition timeout.'); // DEBUG
       }
-      this.logDebug(`[Math] Scheduling equation recognition in ${this.options.recognitionDelay}ms.`); // DEBUG
-      this.recognitionTimeout = setTimeout(() => {
-        this.recognizeEquation();
-      }, this.options.recognitionDelay);
+      // Debounce recognition
+      this.recognitionTimeout = setTimeout(
+        () => this.recognizeEquationWithAi(),
+        this.options.recognitionDelay
+      );
     }
 
-
     return this;
   }
 
-  // Ustawienie wszystkich ścieżek (called when enabling feature or loading data)
   setStrokes(strokes) {
-    this.strokes = [...strokes]; // Keep a reference to all strokes on the canvas
-    // Filter only math-related strokes if needed, or assume all strokes are for math when enabled
-    this.equationStrokes = this.strokes.map(stroke => ({
+    this.strokes = [...strokes];
+    this.equationStrokes = this.strokes.map((stroke) => ({
       ...stroke,
-      type: 'math' // Ensure all strokes are marked as math when module is active
+      type: 'math',
     }));
-
-    // Resetuj stan rozpoznawania
     this.clearRecognitionState();
-
     return this;
   }
 
-  // Funkcja zwraca ograniczający prostokąt dla ścieżki
+  // Bounds helpers
   getStrokeBounds(stroke) {
-    if (!stroke.points || !stroke.points.length) {
+    const points = stroke.points || [];
+    if (!points.length) {
       return { minX: 0, minY: 0, maxX: 0, maxY: 0 };
     }
 
@@ -126,379 +131,301 @@ export default class MathRecognizerModule {
     let maxX = -Infinity;
     let maxY = -Infinity;
 
-    stroke.points.forEach(point => {
-      minX = Math.min(minX, point[0]);
-      minY = Math.min(minY, point[1]);
-      maxX = Math.max(maxX, point[0]);
-      maxY = Math.max(maxY, point[1]);
-    });
+    for (const pt of points) {
+      // Handle both [x, y] and {x, y} formats if necessary, though usually it's array or object
+      const x = Array.isArray(pt) ? pt[0] : pt.x;
+      const y = Array.isArray(pt) ? pt[1] : pt.y;
+
+      if (x < minX) minX = x;
+      if (y < minY) minY = y;
+      if (x > maxX) maxX = x;
+      if (y > maxY) maxY = y;
+    }
 
     return { minX, minY, maxX, maxY };
   }
 
-  // Improved function to detect an equals sign (looks for two parallel lines)
-  detectEqualsSign(newStroke) {
-      // Basic check for the new stroke itself
-      if (!newStroke.points || newStroke.points.length < 2) return false;
-      const boundsNew = this.getStrokeBounds(newStroke);
-      const widthNew = boundsNew.maxX - boundsNew.minX;
-      const heightNew = boundsNew.maxY - boundsNew.minY;
-      const aspectNew = widthNew / (heightNew || 1);
-      const isHorizontalNew = aspectNew > 2.0 && heightNew < 20 && widthNew > 10; // Basic check for horizontal line
+  getEquationBounds() {
+    if (!this.equationStrokes.length) return null;
 
-      if (!isHorizontalNew) return false; // The new stroke isn't even a candidate line
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
 
-      // Now check against other recent strokes in equationStrokes
-      const recentStrokes = this.equationStrokes.slice(-5); // Check last few strokes
-      for (const existingStroke of recentStrokes) {
-          if (existingStroke.id === newStroke.id) continue; // Don't compare with itself
+    this.equationStrokes.forEach((stroke) => {
+      const bounds = this.getStrokeBounds(stroke);
+      if (bounds.minX < minX) minX = bounds.minX;
+      if (bounds.minY < minY) minY = bounds.minY;
+      if (bounds.maxX > maxX) maxX = bounds.maxX;
+      if (bounds.maxY > maxY) maxY = bounds.maxY;
+    });
 
-          if (!existingStroke.points || existingStroke.points.length < 2) continue;
-          const boundsOld = this.getStrokeBounds(existingStroke);
-          const widthOld = boundsOld.maxX - boundsOld.minX;
-          const heightOld = boundsOld.maxY - boundsOld.minY;
-          const aspectOld = widthOld / (heightOld || 1);
-          const isHorizontalOld = aspectOld > 2.0 && heightOld < 20 && widthOld > 10;
+    if (!Number.isFinite(minX) || !Number.isFinite(minY) || !Number.isFinite(maxX) || !Number.isFinite(maxY)) {
+      return null;
+    }
 
-          if (!isHorizontalOld) continue; // The other stroke isn't horizontal either
-
-          // Check if they are vertically aligned and close
-          const verticalOverlap = Math.max(0, Math.min(boundsNew.maxY, boundsOld.maxY) - Math.max(boundsNew.minY, boundsOld.minY));
-          const verticalDistance = Math.abs(((boundsNew.minY + boundsNew.maxY) / 2) - ((boundsOld.minY + boundsOld.maxY) / 2));
-          const horizontalCenterDiff = Math.abs(((boundsNew.minX + boundsNew.maxX) / 2) - ((boundsOld.minX + boundsOld.maxX) / 2));
-
-          // Heuristics for equals sign: vertically close, small height, similar width, horizontally aligned centers
-          const maxHeight = 20; // Max height of each line
-          const maxVerticalDist = 30; // Max vertical distance between centers
-          const minWidth = 10; // Min width of each line
-          const maxHorizontalCenterDiff = 30; // Max horizontal distance between centers
-          const widthRatioThreshold = 0.5; // Allow widths to differ by up to 50%
-
-          if (
-              heightNew < maxHeight && heightOld < maxHeight &&
-              widthNew > minWidth && widthOld > minWidth &&
-              verticalDistance < maxVerticalDist && verticalDistance > (heightNew + heightOld) / 3 && // Ensure they are separate lines
-              horizontalCenterDiff < maxHorizontalCenterDiff &&
-              Math.min(widthNew, widthOld) / Math.max(widthNew, widthOld) > widthRatioThreshold
-          ) {
-              this.logDebug(`[Math] Equals sign detected between stroke ${newStroke.id} and ${existingStroke.id}`); // DEBUG
-              return true; // Found a pair likely forming an equals sign
-          }
-      }
-
-      return false; // No pair found
+    return { minX, minY, maxX, maxY };
   }
 
-  // Funkcja rozpoznająca równanie
+  // Render equation strokes into a small offscreen canvas for OCR
+  createEquationCanvas() {
+    if (!this.ctx || !this.equationStrokes.length || typeof document === 'undefined') {
+      return null;
+    }
+
+    const bounds = this.getEquationBounds();
+    if (!bounds) return null;
+
+    const padding = 20;
+    const width = Math.max(1, Math.ceil(bounds.maxX - bounds.minX + padding * 2));
+    const height = Math.max(1, Math.ceil(bounds.maxY - bounds.minY + padding * 2));
+
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, width, height);
+    ctx.strokeStyle = '#000000';
+    ctx.lineWidth = 3; // Thicker for better recognition
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+
+    this.equationStrokes.forEach((stroke) => {
+      const pts = stroke.points || [];
+      if (pts.length < 2) return;
+      ctx.beginPath();
+
+      const getX = (pt) => (Array.isArray(pt) ? pt[0] : pt.x) - bounds.minX + padding;
+      const getY = (pt) => (Array.isArray(pt) ? pt[1] : pt.y) - bounds.minY + padding;
+
+      ctx.moveTo(getX(pts[0]), getY(pts[0]));
+      for (let i = 1; i < pts.length; i += 1) {
+        ctx.lineTo(getX(pts[i]), getY(pts[i]));
+      }
+      ctx.stroke();
+    });
+
+    return canvas;
+  }
+
+  // Backwards-compatible entry point – use AI-powered recognizer
   async recognizeEquation() {
+    return this.recognizeEquationWithAi();
+  }
+
+  // Main OCR + LLM pipeline
+  async recognizeEquationWithAi() {
     if (!this.enabled || !this.equationStrokes.length) {
-      this.recognitionStatus = 'Brak równania do rozpoznania';
-      this.logDebug('[Math] recognizeEquation skipped: disabled or no strokes.'); // DEBUG
+      this.recognitionStatus = 'No equation to recognize.';
       return this;
     }
-    this.logDebug('[Math] recognizeEquation called.'); // DEBUG
 
-    this.recognitionStatus = 'Rozpoznawanie równania...';
+    this.recognitionStatus = 'Thinking...';
     this.latexEquation = '';
     this.solution = '';
-    this.ghostAnswer = null; // Clear previous ghost answer
+    this.ghostAnswer = null;
 
     try {
-      // Placeholder for actual OCR/Recognition API call
-      this.logDebug('[Math] Calling simulateEquationRecognition...'); // DEBUG
-      const recognizedEquation = await this.simulateEquationRecognition(this.equationStrokes);
-
-      if (!recognizedEquation) {
-          this.recognitionStatus = 'Nie udało się rozpoznać równania.';
-          this.logDebug('[Math] Simulation failed to recognize equation.'); // DEBUG
-          return this;
-      }
-      this.logDebug('[Math] Simulation successful:', recognizedEquation); // DEBUG
-
-      this.latexEquation = recognizedEquation.latex;
-
-      // Render LaTeX if function is provided
-      if (this.options.renderLatex && this.renderLatexFn) {
-        this.renderLatexFn(this.latexEquation);
+      const eqCanvas = this.createEquationCanvas();
+      if (!eqCanvas) {
+        this.recognitionStatus = 'Could not prepare equation image.';
+        return this;
       }
 
-      // Solve the equation if needed
-      if (recognizedEquation.needsSolution && recognizedEquation.text) {
-        this.logDebug(`[Math] Solving equation: ${recognizedEquation.text}`); // DEBUG
-        this.solution = await this.solveEquation(recognizedEquation.text);
-        this.logDebug(`[Math] Solution: ${this.solution}`); // DEBUG
+      // Convert canvas to base64 image
+      const imageBase64 = eqCanvas.toDataURL('image/png');
 
-        // Generate ghost answer if solution found
-        if (this.solution && typeof this.solution === 'string' && !this.solution.startsWith('Błąd') && !this.solution.startsWith('Nie można')) {
-          this.generateGhostAnswer(this.solution);
-        } else if (this.solution && typeof this.solution === 'number') {
-           this.generateGhostAnswer(this.solution.toString());
+      // Send to backend for OCR + Solving
+      if (this.options.backendUrl) {
+        try {
+          const resp = await axios.post(
+            `${this.options.backendUrl}/api/ai/solve-equation/`,
+            { image: imageBase64 }
+          );
+
+          if (resp.data) {
+            this.latexEquation = resp.data.equation || '';
+            this.solution = resp.data.solution || '';
+
+            // Render LaTeX if available
+            if (this.latexEquation && this.options.renderLatex && this.renderLatexFn) {
+              this.renderLatexFn(this.latexEquation);
+            }
+
+            this.logDebug('[Math] Backend result:', { latex: this.latexEquation, solution: this.solution });
+
+            if (
+              this.solution &&
+              typeof this.solution === 'string' &&
+              !this.solution.toLowerCase().startsWith('error') &&
+              !this.solution.toLowerCase().startsWith('cannot')
+            ) {
+              this.generateGhostAnswer(this.solution);
+            }
+
+            this.recognitionStatus = 'Solved!';
+            return {
+              latex: this.latexEquation,
+              solution: this.solution,
+            };
+          }
+        } catch (err) {
+          console.error('Backend recognition failed:', err);
+          if (err.response) {
+            console.error('Backend error details:', err.response.status, err.response.data);
+            this.recognitionStatus = `Error: ${err.response.data.error || 'AI Connection Failed'}`;
+          } else {
+            this.recognitionStatus = 'Error connecting to AI.';
+          }
+          throw err;
         }
-      } else {
-          this.solution = ''; // No solution needed or possible
       }
-
-      this.recognitionStatus = 'Równanie rozpoznane';
-
-      return {
-        latex: this.latexEquation,
-        solution: this.solution
-      };
     } catch (error) {
-      this.recognitionStatus = 'Błąd rozpoznawania: ' + error.message;
-      console.error('Recognition error:', error);
+      this.recognitionStatus = 'Error: ' + (error.message || 'Unknown error');
+      console.error('Recognition error (AI):', error);
       this.clearRecognitionState();
       return this;
     } finally {
-        if (this.recognitionTimeout) {
-            clearTimeout(this.recognitionTimeout);
-            this.recognitionTimeout = null;
-        }
+      if (this.recognitionTimeout) {
+        clearTimeout(this.recognitionTimeout);
+        this.recognitionTimeout = null;
+      }
     }
   }
 
-  // Symulacja rozpoznawania równania (replace with actual API call)
-  async simulateEquationRecognition(strokes) {
-    this.logDebug('[Math] simulateEquationRecognition running...'); // DEBUG
-    // Simulate network/processing delay
-    await new Promise(resolve => setTimeout(resolve, 300));
-
-    // Very basic simulation: if there are strokes, assume it's "2x+3=7"
-    // A real implementation would analyze stroke geometry, timing, position.
-    if (strokes.length > 3) { // Need at least a few strokes for an equation
-      // Check if an equals sign was likely drawn recently
-      const hasEquals = strokes.some(s => this.detectEqualsSign(s));
-      if (hasEquals) {
-          return {
-            latex: '2x + 3 = 7',
-            text: '2*x + 3 = 7',
-            needsSolution: true
-          };
-      }
-    }
-    // Add more simulation examples if needed
-    // const examples = [ ... ];
-    // return examples[Math.floor(Math.random() * examples.length)];
-
-    // If simulation fails
-    console.warn("Simulated recognition failed: Not enough strokes or no equals sign detected.");
-    return null; // Indicate failure to recognize
-  }
-
-
-  // Funkcja rozwiązująca równanie using mathjs
-  async solveEquation(equationText) {
-    this.logDebug(`[Math] solveEquation attempting to solve: ${equationText}`); // DEBUG
-    try {
-      // Basic check for equation format
-      if (!equationText || !equationText.includes('=')) {
-        this.logDebug('[Math] solveEquation failed: Invalid format (no = sign).'); // DEBUG
-        return 'Nieprawidłowe równanie';
-      }
-
-      // Attempt to solve using mathjs evaluate
-      try {
-          // For equations like '2*x + 3 = 7', mathjs doesn't have a direct solver.
-          // We can try to evaluate simple expressions or use more advanced parsing if needed.
-          // For demonstration, let's handle the specific example and evaluate simple arithmetic.
-
-          const sides = equationText.split('=');
-          if (sides.length === 2) {
-              const leftSide = sides[0].trim();
-              const rightSide = sides[1].trim();
-
-              // Handle specific known solvable equations (simple linear for demo)
-              if (leftSide === '2*x + 3' && rightSide === '7') {
-                  return '2'; // Solved x = 2
-              }
-              if (leftSide === 'x^2 - 4' && rightSide === '0') {
-                  return '±2'; // Solved x = +/- 2
-              }
-
-              // If no 'x', try to evaluate both sides and compare
-              if (!equationText.toLowerCase().includes('x')) {
-                  try {
-                      const leftVal = math.evaluate(leftSide);
-                      const rightVal = math.evaluate(rightSide);
-                      // Use math.compare for safer comparison
-                      return math.compare(leftVal, rightVal) === 0 ? 'Prawda' : 'Fałsz';
-                  } catch (evalError) {
-                      // Ignore evaluation errors if it wasn't simple arithmetic
-                      console.warn('Could not evaluate sides:', evalError.message);
-                  }
-              }
-          }
-
-          // Fallback for unsupported equations or formats
-          return 'Nie można rozwiązać (solver ograniczony)';
-
-      } catch (error) {
-          console.error('Error processing equation with mathjs:', error);
-          return `Błąd: ${error.message}`;
-      }
-
-    } catch (error) {
-      console.error('Error solving equation:', error);
-      return 'Błąd podczas rozwiązywania równania';
-    }
-  }
-
-
-  // Funkcja generująca podpowiedź (ghost answer)
+  // Generate ghost answer (positioned after equals sign or at the end)
   generateGhostAnswer(solutionText) {
-    // Find the position of the equals sign strokes
-    const equalsStrokes = this.equationStrokes.filter(s => this.detectEqualsSign(s));
-    if (!equalsStrokes.length) return this;
+    const bounds = this.getEquationBounds();
+    if (!bounds) return this;
 
-    // Find the rightmost point of the equals sign area
-    let maxX = -Infinity;
-    let avgY = 0;
-    let pointCount = 0;
+    // Position to the right of the equation
+    const startX = bounds.maxX + 20;
+    const startY = (bounds.minY + bounds.maxY) / 2;
 
-    equalsStrokes.forEach(stroke => {
-        stroke.points.forEach(p => {
-            maxX = Math.max(maxX, p[0]);
-            avgY += p[1];
-            pointCount++;
-        });
-    });
-
-    if (pointCount === 0) return this;
-    avgY /= pointCount; // Average Y position of the equals sign
-
-    const startX = maxX + 30; // Start 30 pixels after the equals sign
-    const startY = avgY;
-
-    // Generate path for the ghost answer text
-    // This needs a proper handwriting generation or font rendering approach
     this.ghostAnswer = {
       text: solutionText,
       x: startX,
-      y: startY, // Use baseline Y for text rendering
-      color: `rgba(0, 100, 0, ${this.options.ghostOpacity})`, // Greenish ghost
-      font: 'italic 24px "Comic Sans MS", cursive, sans-serif' // Placeholder font
+      y: startY,
+      color: `rgba(100, 100, 255, ${this.options.ghostOpacity})`, // Blue-ish hint
+      font: 'bold 24px "Inter", sans-serif',
     };
 
     return this;
   }
 
-
-  // Funkcja stosująca podpowiedź (converts ghost text to strokes)
+  // Convert ghost answer into a simple stroke
   applyGhostAnswer() {
     if (!this.enabled || !this.ghostAnswer || !this.ghostAnswer.text) return null;
-
-    // This is where we would ideally convert the text string into realistic strokes.
-    // Since that's complex, we'll simulate by creating a simple placeholder stroke
-    // representing the answer area. A real implementation needs a text-to-stroke engine.
 
     const text = this.ghostAnswer.text;
     const startX = this.ghostAnswer.x;
     const startY = this.ghostAnswer.y;
-    const approxWidth = text.length * 15; // Estimate width based on text length
-    const approxHeight = 20; // Estimate height
 
-    // Create a simple bounding box stroke for now
-    const placeholderPoints = [
-        [startX, startY - approxHeight / 2, 0.5],
-        [startX + approxWidth, startY - approxHeight / 2, 0.5],
-        [startX + approxWidth, startY + approxHeight / 2, 0.5],
-        [startX, startY + approxHeight / 2, 0.5],
-       // [startX, startY - approxHeight / 2, 0.5] // Close the box if needed
-    ];
+    // Create a text element representation
+    // Note: This structure needs to match what WhiteboardCanvas expects for text elements
+    // or we create a stroke-based representation if we want it to be "handwritten"
+    // For now, let's create a special "ai-answer" type that WhiteboardCanvas can handle
 
-
-    const newStroke = {
-      points: placeholderPoints, // Use the placeholder points
-      color: 'black', // Final answer color
-      weight: 2, // Final answer weight
-      timestamp: Date.now(),
-      type: 'math-answer', // Mark as a generated answer
-      isAnswer: true,
-      id: 'answer-' + Date.now(),
-      // Store the actual text solution if needed for later use
-      solutionText: text
+    const newElement = {
+      type: 'text',
+      x: startX,
+      y: startY,
+      text: text,
+      color: '#0000FF', // Blue color for the answer
+      fontSize: 24,
+      id: 'ai-answer-' + Date.now(),
+      timestamp: Date.now()
     };
 
-    // Add to equation strokes (and implicitly to main strokes via parent component)
-    this.equationStrokes.push(newStroke);
-
-    // Reset ghost answer and recognition state
     this.clearRecognitionState();
-
-
-    // Return the new stroke so the parent component can add it to the main strokes array and Yjs map
-    return newStroke;
+    return newElement;
   }
 
-  // Rysowanie ghost answer (drawing text directly)
+  // Draw ghost answer text on the canvas
   drawGhostAnswer(ctx = this.ctx) {
-    if (!this.enabled || !this.ghostAnswer || !this.ghostAnswer.text) return this;
+    if (!this.enabled || !this.ghostAnswer || !this.ghostAnswer.text || !ctx || !this.options.showHint) return this;
 
     ctx.save();
     ctx.fillStyle = this.ghostAnswer.color;
     ctx.font = this.ghostAnswer.font;
     ctx.textAlign = 'left';
-    ctx.textBaseline = 'middle'; // Align text vertically around the Y position
+    ctx.textBaseline = 'middle';
 
+    // Draw background pill for better visibility
+    const metrics = ctx.measureText(this.ghostAnswer.text);
+    const padding = 8;
+    const bgHeight = 32;
+    const bgWidth = metrics.width + padding * 2;
+
+    ctx.fillStyle = `rgba(240, 240, 255, 0.9)`;
+    ctx.beginPath();
+    ctx.roundRect(this.ghostAnswer.x - padding, this.ghostAnswer.y - bgHeight / 2, bgWidth, bgHeight, 8);
+    ctx.fill();
+    ctx.strokeStyle = `rgba(100, 100, 255, 0.5)`;
+    ctx.stroke();
+
+    // Draw text
+    ctx.fillStyle = '#2563EB'; // Solid blue
     ctx.fillText(this.ghostAnswer.text, this.ghostAnswer.x, this.ghostAnswer.y);
+
+    // Draw "Press Tab" hint
+    ctx.font = '10px sans-serif';
+    ctx.fillStyle = '#9CA3AF';
+    ctx.fillText('Press Tab to insert', this.ghostAnswer.x, this.ghostAnswer.y + 24);
 
     ctx.restore();
 
     return this;
   }
 
-  // Obsługa skrótu klawiszowego (called by WhiteboardCanvas)
+  // Keyboard shortcut handler – use Tab to accept ghost answer
   handleKeyDown(e) {
-    if (this.enabled && e.key === 'Enter' && e.shiftKey && this.ghostAnswer) {
-      e.preventDefault(); // Prevent default Enter behavior
-      return this.applyGhostAnswer(); // Return the new stroke to be added
+    if (this.enabled && e.key === 'Tab' && this.ghostAnswer) {
+      e.preventDefault();
+      return this.applyGhostAnswer();
     }
-    return null; // Indicate no action taken
+    return null;
   }
 
-  // Sprawdzenie, czy istnieje równanie do rozpoznania
   hasEquation() {
     return this.equationStrokes.length > 0;
   }
 
-  // Wyczyść wszystkie dane
   clear() {
-    // Clear strokes managed by this module
     this.equationStrokes = [];
+    this.strokes = [];
     this.clearRecognitionState();
     if (this.recognitionTimeout) {
-        clearTimeout(this.recognitionTimeout);
-        this.recognitionTimeout = null;
+      clearTimeout(this.recognitionTimeout);
+      this.recognitionTimeout = null;
     }
-    // Note: this.strokes (all canvas strokes) should be cleared by the parent component
     return this;
   }
 
-  // Helper to reset recognition-related state
   clearRecognitionState() {
-      this.ghostAnswer = null;
-      this.latexEquation = '';
-      this.solution = '';
-      this.recognitionStatus = '';
-      // Clear rendered LaTeX if applicable
-      if (this.options.renderLatex && this.renderLatexFn) {
-          this.renderLatexFn(''); // Clear preview
-      }
+    this.ghostAnswer = null;
+    this.latexEquation = '';
+    this.solution = '';
+    this.recognitionStatus = '';
+    if (this.options.renderLatex && this.renderLatexFn) {
+      this.renderLatexFn('');
+    }
   }
 
-
-  // Pobierz aktualny status rozpoznawania
   getRecognitionStatus() {
     return this.recognitionStatus;
   }
 
-  // Pobierz rozpoznane równanie LaTeX
   getLatexEquation() {
     return this.latexEquation;
   }
 
-  // Pobierz rozwiązanie
   getSolution() {
     return this.solution;
   }
 }
+

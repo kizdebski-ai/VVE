@@ -3,6 +3,9 @@ import { encryptData } from "../lib/crypto";
 interface PortalOpts {
   roomId: string;
   roomKey: string;
+interface PortalOptions {
+  roomId: string;
+  roomKey: string | CryptoKey;
   url: string;
 }
 
@@ -13,6 +16,11 @@ export class Portal {
   ws: WebSocket | null;
 
   constructor(opts: PortalOpts) {
+  roomKey: string | CryptoKey;
+  url: string;
+  ws: WebSocket | null;
+
+  constructor(opts: PortalOptions) {
     this.roomId = opts.roomId;
     this.roomKey = opts.roomKey;
     this.url = opts.url;
@@ -20,6 +28,7 @@ export class Portal {
   }
 
   connect(onMessage: (data: any) => void) {
+  connect(onMessage: (data: unknown) => void) {
     const ws = new WebSocket(`${this.url}?roomId=${this.roomId}`);
     this.ws = ws;
 
@@ -43,6 +52,7 @@ export class Portal {
         iv: Array.from(iv),
         version,
       }),
+      })
     );
   }
 }

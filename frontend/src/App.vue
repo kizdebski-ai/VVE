@@ -1,13 +1,19 @@
 <!-- In App.vue, update the template structure -->
 <template>
   <div id="app" :class="{ 'dark-mode': darkMode }">
+    <Lobby v-if="!roomId" @join="handleJoinRoom" />
+    <template v-else>
     <TopMenu
       @clear-canvas="handleClearCanvas"
       @toggle-feature="toggleFeature"
+      @open-room-manager="handleOpenRoomManager"
+      @export-whiteboard="handleExportRequest"
+      @import-whiteboard="showImportDialog = true"
       :active-feature="activeFeature"
      ></TopMenu>
     <!-- Canvas container takes full screen -->
     <div class="whiteboard-container">
+      <AIChatPanel v-if="whiteboard && whiteboard.containerRef" :whiteboard-ref="whiteboard.containerRef" />
       <WhiteboardCanvas
         ref="whiteboard"
         :debug-mode="debugMode"
@@ -15,6 +21,7 @@
         :username="username"
         :current-shape="currentShape"
         :current-line-style="currentLineStyle"
+        :current-arrow-style="currentArrowStyle"
         :active-feature="activeFeature"
         :grid-align-options="gridAlignOptions"
         :handwriting-styler-options="handwritingStylerOptions"
@@ -93,9 +100,41 @@
              <label>Ghost Opacity: {{ mathRecognizerOptions.ghostOpacity }}</label>
              <input type="range" min="0" max="1" step="0.05" v-model.number="mathRecognizerOptions.ghostOpacity">
            </div>
+           <div class="checkbox-container">
+             <input type="checkbox" id="show-hint" v-model="mathRecognizerOptions.showHint">
+             <label for="show-hint">Show AI Hint</label>
+           </div>
          </div>
        </div>
       
+      <!-- Floating Toolbar (Left) -->
+      <div class="floating-toolbar">
+        <ToolBar 
+          :active-tool="currentTool"
+          :color="currentColor"
+          :line-width="currentLineWidth"
+          :line-style="currentLineStyle"
+          :arrow-style="currentArrowStyle"
+          :is-math-panel-open="showMathGraphPanel"
+          :is-physics-panel-open="showPhysicsGraphPanel"
+          orientation="vertical"
+          @update:activeTool="handleToolChange"
+          @update:color="handleColorChange"
+          @update:lineWidth="handleLineWidthChange"
+          @update:lineStyle="handleLineStyleChange"
+          @update:arrowStyle="handleArrowStyleChange"
+          @update:eraserSize="handleEraserSizeChange"
+          @undo="callWhiteboardUndo"
+          @redo="callWhiteboardRedo"
+          @clear="handleClearCanvas"
+          @toggle-math-panel="toggleMathGraphPanel"
+          @toggle-physics-panel="togglePhysicsGraphPanel"
+          @add-coordinate-system="handleAddCoordinateSystem"
+          @toggle-calculator="toggleCalculator"
+          @toggle-debug="toggleDebugMode"
+        />
+      </div>
+
       <!-- User info in top-right corner -->
       <div class="floating-user-info">
         <div class="username-container">
@@ -128,29 +167,6 @@
           Debug {{ debugMode ? 'ON' : 'OFF' }}
         </button>
       </div>
-      
-      <!-- Floating toolbar -->
-      <div class="floating-toolbar"> <!-- Check styles for this container -->
-        <ToolBar
-          ref="toolbar"
-          @tool-changed="handleToolChange"
-          @color-changed="handleColorChange"
-          @line-width-changed="handleLineWidthChange"
-          @shape-changed="handleShapeChange"
-          @line-style-changed="handleLineStyleChange"
-          @toggle-calculator="toggleCalculator"
-          @export-whiteboard="handleExportRequest"
-          @import-whiteboard="showImportDialog = true"
-          @image-selected="handleImageSelected"
-          @undo-clicked="callWhiteboardUndo"  
-          @redo-clicked="callWhiteboardRedo"
-         ></ToolBar>
-      </div>
-
-      <!-- Room info display -->
-      <div class="room-info">
-        <span>Room: {{ roomId }}</span>
-      </div>
     </div>
     
     <!-- Dialogs -->
@@ -164,37 +180,37 @@
       :export-text="exportedState"
       @close="showExportDialog = false"
       @copy="copyToClipboard"
-      @download="downloadAsFile"
+    />
+    <CalculatorModal
+      :is-visible="isCalculatorVisible"
+      @close="toggleCalculator"
     />
 
-    <!-- Calculator Modal -->
-    <CalculatorModal :visible="isCalculatorVisible" @update:visible="isCalculatorVisible = $event" />
+    </template>
 
-    <!-- 1. Add debug tool -->
-    <div v-if="debugMode" class="debug-panel">
-      <div>UndoRedo Global: {{globalUndoRedoState.canUndo}}/{{globalUndoRedoState.canRedo}}</div>
-      <div>Local Canvas: {{whiteboard?.canUndo}}/{{whiteboard?.canRedo}}</div>
-      <button @click="forceUpdateUndoRedo">Wymuś update</button>
+    <!-- Global Error Display -->
+    <div v-if="globalError" class="global-error-overlay">
+      <div class="error-box">
+        <h3>Application Error</h3>
+        <p>An unexpected error occurred. Please refresh the page.</p>
+        <pre>{{ globalError }}</pre>
+        <button @click="globalError = null">Dismiss</button>
+      </div>
     </div>
-    
 
   </div>
-  <MathGraphPanel v-if="showMathGraphPanel" @close="showMathGraphPanel = false" />
-    <PhysicsGraphPanel v-if="showPhysicsGraphPanel" @close="showPhysicsGraphPanel = false" />
 </template>
 
 <script>
-import { ref, computed, onMounted, onBeforeUnmount, nextTick, reactive, watch } from 'vue'; // Import reactive
+import { ref, onMounted, onBeforeUnmount, provide, nextTick, watch, computed } from 'vue';
 import WhiteboardCanvas from './components/WhiteboardCanvas.vue';
 import ToolBar from './components/ToolBar.vue';
 import TopMenu from './components/TopMenu.vue';
+import Lobby from './components/Lobby.vue';
 import ImportDialog from './components/ImportDialog.vue';
 import ExportDialog from './components/ExportDialog.vue';
-import ThemeToggle from './components/ThemeToggle.vue';
 import CalculatorModal from './components/CalculatorModal.vue';
-// Placeholder imports for optional feature panels
-// import GridAlignPanel from './components/panels/GridAlignPanel.vue';
-import { copyToClipboard } from './utils/fileUtils.js';
+import AIChatPanel from './components/AIChatPanel.vue';
 import * as Y from 'yjs';
 import { Buffer } from 'buffer';
 import katex from 'katex';
@@ -202,7 +218,13 @@ import { buildRoomHash, createNewRoomUrl, parseRoomHash } from './lib/roomLink';
 import { generateEncryptionKey } from './lib/crypto';
 import 'katex/dist/katex.min.css';
 import { undoRedoState } from './utils/undoRedoState'; // 2. Add import
+import { WebsocketProvider } from 'y-websocket';
+import { IndexeddbPersistence } from 'y-indexeddb';
 
+// Debug logger
+const appDebugLog = (msg, ...args) => {
+  // console.log(`[App] ${msg}`, ...args);
+};
 
 export default {
   name: 'App',
@@ -210,26 +232,23 @@ export default {
     WhiteboardCanvas,
     ToolBar,
     TopMenu,
+    Lobby,
     ImportDialog,
     ExportDialog,
-    ThemeToggle,
-    CalculatorModal // Register CalculatorModal
+    CalculatorModal,
+    AIChatPanel
   },
   setup() {
-    // --- Template Refs ---
+    // --- State ---
     const whiteboard = ref(null);
-    const toolbar = ref(null);
-    const showMathGraphPanel = ref(false);
-    const showPhysicsGraphPanel = ref(false);
-    // --- Reactive State ---
-    const lastSaved = ref(null);
-    const showExportDialog = ref(false);
+    const toolbar = ref(null); // Ref for the toolbar component
+    const roomId = ref(null);
+    const username = ref(localStorage.getItem('username') || 'Guest');
     const showImportDialog = ref(false);
+    const showExportDialog = ref(false);
     const exportedState = ref('');
-    const username = ref(localStorage.getItem('whiteboard_username') || 'User ' + Math.floor(Math.random() * 1000));
-    const awarenessStates = ref(new Map());
+    const lastSaved = ref(null);
     const statusMessage = ref('');
-    const statusTimeout = ref(null);
     const darkMode = ref(localStorage.getItem('darkMode') === 'true');
     const debugMode = ref(false);
     const appDebugLog = (...args) => {
@@ -239,211 +258,164 @@ export default {
     };
     const roomId = ref('');
     const roomKey = ref('');
+    const isCalculatorVisible = ref(false);
+    const globalError = ref(null);
+
+    // Tool state
+    const currentTool = ref('pen');
+    const currentColor = ref('#000000');
+    const currentLineWidth = ref(2);
     const currentShape = ref('rectangle');
     const currentLineStyle = ref('solid');
-    const isCalculatorVisible = ref(false);
-    const globalUndoRedoState = undoRedoState;
+    const currentArrowStyle = ref('none');
 
-    // --- Feature State ---
-    const activeFeature = ref(null); // 'gridAlign', 'styleHandwriting', 'mathRecognizer', or null
-    const gridAlignOptions = reactive({
-      gridSize: 20, // Default, maybe sync with canvas grid later?
-      snapStrength: 50,
-      showBaselines: false
-    });
-    const handwritingStylerOptions = reactive({
+    // Feature flags/state
+    const activeFeature = ref(null); // 'gridAlign', 'styleHandwriting', 'mathRecognizer'
+    const gridAlignOptions = ref({ snapStrength: 10, showBaselines: false });
+    const handwritingStylerOptions = ref({
       angleNormalization: 50,
       heightNormalization: 50,
       widthNormalization: 50,
-      smoothingFactor: 50,
-      groupingTimeThreshold: 1000,
-      groupingDistanceThreshold: 100,
+      smoothingFactor: 50
     });
-    const mathRecognizerOptions = reactive({
-      renderLatex: true,
-      ghostOpacity: 0.3,
-      recognitionDelay: 1000,
-    });
-
-    // UI Feedback State for Panels (to be updated by whiteboard events or methods)
-    const recognitionStatus = ref('');
+    const mathRecognizerOptions = ref({ ghostOpacity: 0.5, showHint: true });
+    const recognitionStatus = ref('Idle');
     const latexEquation = ref('');
     const solution = ref('');
     const hasCharGroups = ref(false);
     const hasStylizedStrokes = ref(false);
+    
+    // Graph Panels
+    const showMathGraphPanel = ref(false);
+    const showPhysicsGraphPanel = ref(false);
 
-    // Render LaTeX preview in the math panel when latexEquation changes
-    watch(latexEquation, (newVal) => {
-      const el = document.getElementById('latex-render-output');
-      if (!el) return;
-      try {
-        katex.render(newVal || '', el, { throwOnError: false, displayMode: false });
-      } catch (e) {
-        console.error('KaTeX render error:', e);
-        el.textContent = `Error: ${e.message}`;
-      }
-    });
+    // Yjs Awareness
+    const awarenessStates = ref([]);
+    const activeUsersCount = computed(() => awarenessStates.value.length);
+    const localClientId = ref(null);
 
-    // --- Computed Properties ---
-    const activeUsersCount = computed(() => {
-      const awareness = whiteboard.value?.yjsConnection?.awareness;
-      return awareness ? awareness.getStates().size : 0;
-    });
-
-    const localClientId = computed(() => {
-      return whiteboard.value?.yjsConnection?.awareness?.clientID;
-    });
+    // Undo/Redo State (Global)
+    const globalUndoRedoState = ref({ canUndo: false, canRedo: false });
 
     const formattedLastSaved = computed(() => {
       if (!lastSaved.value) return '';
-      const now = new Date();
-      const saved = new Date(lastSaved.value);
-      const diffMs = now - saved;
-      const diffMins = Math.floor(diffMs / 60000);
-      if (diffMins < 1) return 'Just now';
-      if (diffMins < 60) return `${diffMins} minute${diffMins > 1 ? 's' : ''} ago`;
-        const hours = Math.floor(diffMins / 60);
-      if (hours < 24) return `${hours} hour${hours > 1 ? 's' : ''} ago`;
-      return saved.toLocaleString();
+      return new Date(lastSaved.value).toLocaleTimeString();
     });
 
     // --- Methods ---
-    const callWhiteboardUndo = () => {
-      if (whiteboard.value?.undo) {
-        whiteboard.value.undo();
-      } else {
-        console.warn('Whiteboard ref not available for undo');
-      }
-    };
-
-    const callWhiteboardRedo = () => {
-      if (whiteboard.value?.redo) {
-        whiteboard.value.redo();
-      } else {
-        console.warn('Whiteboard ref not available for redo');
-      }
-    };
-
-    // 3. Add forceUpdateUndoRedo method
-    const forceUpdateUndoRedo = () => {
-      // Accessing undoManager directly on the whiteboard component instance
-      // This assumes WhiteboardCanvas exposes undoManager via defineExpose
-      // If not, this needs adjustment based on how WhiteboardCanvas exposes its state/methods.
-      // For now, we assume direct access for the debug panel.
-      const um = whiteboard.value?.undoManager; // Access potentially exposed ref
-      if (um?.value) { // Check if the ref and its value exist
-        const canUndoVal = um.value.canUndo();
-        const canRedoVal = um.value.canRedo();
-        
-        appDebugLog(`[App] Wymuszam aktualizację: canUndo=${canUndoVal}, canRedo=${canRedoVal}`);
-        undoRedoState.update(canUndoVal, canRedoVal);
-      } else {
-        console.error("[App] Brak dostępu do UndoManager przez whiteboard ref (może nie być 'exposed')");
-        // Fallback: try accessing the local state if exposed (less ideal)
-        if (whiteboard.value?.canUndo !== undefined && whiteboard.value?.canRedo !== undefined) {
-           appDebugLog("[App] Fallback: Using local canUndo/canRedo from whiteboard ref");
-           undoRedoState.update(whiteboard.value.canUndo, whiteboard.value.canRedo);
-        } else {
-           console.error("[App] Fallback failed: Cannot access undo/redo state from whiteboard ref.");
-        }
-      }
-    };
-
-
-    const showStatus = (message, duration = 3000) => {
-      statusMessage.value = message;
-      if (statusTimeout.value) clearTimeout(statusTimeout.value);
-      statusTimeout.value = setTimeout(() => { statusMessage.value = ''; }, duration);
-    };
-
-    const showNotification = (message, type = 'info') => {
-      appDebugLog(`[Notification] ${type}: ${message}`);
-      if (whiteboard.value?.showToast) {
-        whiteboard.value.showToast(message, type);
-    } else {
-        const notification = document.createElement('div');
-        notification.className = `notification notification-${type}`;
-        notification.textContent = message;
-        document.body.appendChild(notification);
-        setTimeout(() => { notification.classList.add('show'); }, 10);
-        setTimeout(() => {
-          notification.classList.remove('show');
-          setTimeout(() => { document.body.removeChild(notification); }, 300);
-        }, 3000);
-      }
-    };
-
-    const handleAwarenessChange = () => {
-      const awareness = whiteboard.value?.yjsConnection?.awareness;
-      if (awareness) {
-        awarenessStates.value = new Map(awareness.getStates());
-      }
-    };
-
-    const handleBeforeUnload = () => { /* Autosave handled in Canvas */ };
-
+    
     const updateUsername = () => {
-      localStorage.setItem('whiteboard_username', username.value);
-      const awareness = whiteboard.value?.yjsConnection?.awareness;
-      if (awareness) {
-        const currentUserState = awareness.getLocalState()?.user || {};
-        awareness.setLocalStateField('user', { ...currentUserState, name: username.value });
-        appDebugLog(`Updated awareness username to: ${username.value}`);
+      localStorage.setItem('username', username.value);
+      if (whiteboard.value) {
+        whiteboard.value.updateAwareness(username.value);
       }
     };
 
     const handleToolChange = (tool) => {
-      if (whiteboard.value) whiteboard.value.setTool(tool);
+      currentTool.value = tool;
+      if (tool === 'eraser') {
+        // Eraser logic handled in canvas
+      }
     };
 
     const handleColorChange = (color) => {
-      if (whiteboard.value) whiteboard.value.setColor(color);
+      currentColor.value = color;
     };
 
     const handleLineWidthChange = (width) => {
-      if (whiteboard.value) whiteboard.value.setLineWidth(width);
+      currentLineWidth.value = width;
+    };
+    
+    const handleEraserSizeChange = (size) => {
+        if (whiteboard.value) {
+            whiteboard.value.setEraserSize(size);
+        }
     };
 
     const handleShapeChange = (shape) => {
       currentShape.value = shape;
-      appDebugLog('App.vue: Shape changed to', shape);
+      // If tool is not shape, switch to shape?
+      // The toolbar handles this logic usually, but we ensure consistency
+      if (currentTool.value !== 'shape') {
+        currentTool.value = 'shape';
+      }
     };
-
+    
     const handleLineStyleChange = (style) => {
-      currentLineStyle.value = style;
-      appDebugLog('App.vue: Line style changed to', style);
+        currentLineStyle.value = style;
+    };
+    
+    const handleArrowStyleChange = (style) => {
+        currentArrowStyle.value = style;
     };
 
     const toggleCalculator = () => {
       isCalculatorVisible.value = !isCalculatorVisible.value;
     };
-
-    const handleClearCanvas = () => {
-       if (whiteboard.value) whiteboard.value.clearCanvas();
+    
+    const toggleMathGraphPanel = () => {
+        showMathGraphPanel.value = !showMathGraphPanel.value;
+        if (showMathGraphPanel.value) showPhysicsGraphPanel.value = false;
+    };
+    
+    const togglePhysicsGraphPanel = () => {
+        showPhysicsGraphPanel.value = !showPhysicsGraphPanel.value;
+        if (showPhysicsGraphPanel.value) showMathGraphPanel.value = false;
     };
 
-    const handleExportRequest = () => {
-      if (whiteboard.value?.yjsConnection?.ydoc) {
-        try {
-          const stateUpdate = Y.encodeStateAsUpdate(whiteboard.value.yjsConnection.ydoc);
-          const base64State = Buffer.from(stateUpdate).toString('base64');
-          exportedState.value = base64State;
-          showExportDialog.value = true;
-          lastSaved.value = new Date().toISOString();
-        } catch (e) {
-          console.error('Error exporting Yjs state:', e);
-          showStatus('Failed to export whiteboard state.', 3000);
-        }
+    const handleClearCanvas = () => {
+      if (confirm('Are you sure you want to clear the canvas? This cannot be undone.')) {
+        if (whiteboard.value) whiteboard.value.clearCanvas();
       }
     };
 
-    const copyToClipboardLocal = () => {
-      copyToClipboard(exportedState.value)
-        .then(() => showStatus('Copied to clipboard!'))
-        .catch(err => {
-          console.error('Failed to copy to clipboard: ', err);
-          showStatus('Failed to copy to clipboard', 3000);
-        });
+    const callWhiteboardUndo = () => {
+      if (whiteboard.value) whiteboard.value.undo();
+    };
+
+    const callWhiteboardRedo = () => {
+      if (whiteboard.value) whiteboard.value.redo();
+    };
+    
+    const forceUpdateUndoRedo = () => {
+        // Triggered by ToolBar to refresh state
+        if (whiteboard.value) {
+            // This might be redundant if we use the event listener from WhiteboardCanvas
+            // but good for manual refresh
+        }
+    };
+
+    const showStatus = (msg, duration = 2000) => {
+      statusMessage.value = msg;
+      setTimeout(() => { statusMessage.value = ''; }, duration);
+    };
+    
+    const showNotification = (msg, type = 'info') => {
+        if (whiteboard.value && whiteboard.value.showToast) {
+            whiteboard.value.showToast(msg, type);
+        } else {
+            console.log(`[${type.toUpperCase()}] ${msg}`);
+        }
+    };
+
+    const handleBeforeUnload = (e) => {
+      // Optional: warn if unsaved changes? Yjs saves automatically though.
+    };
+
+    const handleExportRequest = () => {
+      if (whiteboard.value) {
+        const state = whiteboard.value.getSnapshot(); // Returns base64
+        exportedState.value = state;
+        showExportDialog.value = true;
+      }
+    };
+
+    const copyToClipboardLocal = (text) => {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        return navigator.clipboard.writeText(text);
+      } else {
+        return Promise.reject('Clipboard API not available');
+      }
     };
 
     const downloadAsFile = () => {
@@ -457,6 +429,12 @@ export default {
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
       showStatus('File downloaded!');
+    };
+
+    const handleOpenRoomManager = () => {
+      // Disconnect or clean up if needed
+      roomId.value = null;
+      window.history.pushState({}, '', '/'); // Clear URL
     };
 
     const handleImportState = (base64State) => {
@@ -661,6 +639,30 @@ export default {
       // Add other global shortcuts here if needed
     };
 
+    const handleJoinRoom = (id) => {
+      roomId.value = id;
+      localStorage.setItem('last_room_id', id);
+      
+      // Update URL
+      const newUrl = new URL(window.location);
+      newUrl.searchParams.set('room', id);
+      window.history.pushState({}, '', newUrl);
+
+      // Save to recent rooms
+      try {
+        const stored = localStorage.getItem('whitevue_recent_rooms');
+        let recent = stored ? JSON.parse(stored) : [];
+        // Remove if exists to move to top
+        recent = recent.filter(r => r.id !== id);
+        recent.unshift({ id, lastVisited: new Date().toISOString() });
+        // Keep last 5
+        recent = recent.slice(0, 5);
+        localStorage.setItem('whitevue_recent_rooms', JSON.stringify(recent));
+      } catch (e) {
+        console.error('Error saving recent rooms', e);
+      }
+    };
+
     // --- Lifecycle Hooks ---
     onMounted(() => {
       const bootstrapRoom = async () => {
@@ -691,6 +693,16 @@ export default {
       };
 
       bootstrapRoom();
+      const urlParams = new URLSearchParams(window.location.search);
+      let initialRoomId = urlParams.get('room');
+      
+      if (initialRoomId) {
+        roomId.value = initialRoomId;
+        localStorage.setItem('last_room_id', initialRoomId);
+        appDebugLog(`App mounted. Room ID: ${roomId.value}`);
+      } else {
+        roomId.value = null;
+      }
 
       document.body.classList.toggle('dark-mode', darkMode.value);
       window.addEventListener('beforeunload', handleBeforeUnload);
@@ -716,8 +728,12 @@ export default {
       darkMode,
       debugMode,
       roomId,
+      currentTool,
+      currentColor,
+      currentLineWidth,
       currentShape,
       currentLineStyle,
+      currentArrowStyle,
       isCalculatorVisible, // Return state for modal
       activeUsersCount,
       localClientId,
@@ -725,8 +741,10 @@ export default {
       handleToolChange,
       handleColorChange,
       handleLineWidthChange,
+      handleEraserSizeChange,
       handleShapeChange,
       handleLineStyleChange,
+      handleArrowStyleChange,
       toggleCalculator, // Return toggle method
       handleClearCanvas,
       handleExportRequest,
@@ -737,6 +755,7 @@ export default {
       handleJsonFileImport,
       updateUsername,
       shareRoom,
+      handleOpenRoomManager,
       toggleDebugMode,
       toggleDarkMode,
       showStatus,
@@ -746,6 +765,7 @@ export default {
       // 4. Add new variables to return
       globalUndoRedoState,
       forceUpdateUndoRedo,
+      globalError,
 
       // Feature state & methods
       activeFeature,
@@ -758,7 +778,30 @@ export default {
       hasCharGroups,
       hasStylizedStrokes,
       toggleFeature,
+      toggleMathGraphPanel,
+      togglePhysicsGraphPanel,
       triggerWhiteboardAction,
+      handleJoinRoom,
+      showMathGraphPanel,
+      showPhysicsGraphPanel,
+      handleAddElement: (data) => {
+        if (whiteboard.value && whiteboard.value.addElementFromPanel) {
+          whiteboard.value.addElementFromPanel(data);
+        }
+      },
+      handleAddCoordinateSystem: (type) => {
+        // Create default coordinate system element
+        const elementData = {
+          type: type === '2d' ? 'coordinateSystem2D' : 'coordinateSystem3D',
+          position: { x: 100, y: 100 },
+          width: 400,
+          height: 300,
+          // Add default properties if needed
+        };
+        if (whiteboard.value && whiteboard.value.addElementFromPanel) {
+          whiteboard.value.addElementFromPanel(elementData);
+        }
+      }
       // Need to add computed for renderedLatex if KaTeX is used here
     };
   }
@@ -777,6 +820,35 @@ export default {
 .logo svg { stroke: #4285f4; }
 .logo h1 { margin: 0; font-size: 18px; font-weight: 500; }
 .username-container { margin-left: 20px; }
+
+
+.global-error-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0,0,0,0.8);
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.error-box {
+  background: white;
+  padding: 20px;
+  border-radius: 8px;
+  max-width: 80%;
+  color: red;
+}
+.error-box pre {
+  white-space: pre-wrap;
+  background: #eee;
+  padding: 10px;
+  margin: 10px 0;
+  color: black;
+}
+
 .username-input {
   background-color: var(--btn-bg);
   border: 1px solid var(--border-color);
@@ -802,47 +874,65 @@ export default {
   color: var(--text-color); padding: 8px 12px; font-size: 14px;
   cursor: pointer; transition: all 0.2s;
 }
-.import-export-btn:hover { background-color: var(--btn-hover-bg); }
-.import-export-btn svg { stroke: currentColor; }
-.status-info, .version-info { color: var(--text-color); font-size: 13px; }
-.status-message { color: #4285f4; }
-.whiteboard-container { position: relative; width: 100vw; height: 100vh; overflow: hidden; }
+
 .floating-toolbar {
-  position: absolute !important; left: 15px; top: 50%;
-  transform: translateY(-50%); width: auto !important;
-  background-color: rgba(40, 40, 40, 0.8); border-radius: 10px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3); z-index: 1000;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  /* overflow: visible !important; */ /* Ensure overflow is not hidden */
+  position: absolute !important;
+  left: 15px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  pointer-events: none;
+  z-index: 3000;
+}
+
+/* Keep the toolbar wrapper fully transparent – the ToolBar
+   component itself provides the glass/floating background */
+.floating-toolbar {
+  background: transparent;
+}
+
+/* Make the floating toolbar look like a light, floating pill instead of a gray block */
+.floating-toolbar .toolbar-container {
+  background: transparent;
+  border: none;
+  padding: 0;
+  width: auto;
+  min-width: 0;
+  height: auto;
+  box-shadow: none;
+}
+
+.floating-toolbar .toolbar.glass-panel {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0.75));
+  border: 1px solid rgba(15, 23, 42, 0.06);
+  box-shadow: 0 14px 38px rgba(15, 23, 42, 0.16);
+  padding: 10px 8px;
+}
+
+.dark-mode .floating-toolbar .toolbar.glass-panel {
+  background: linear-gradient(180deg, rgba(26, 32, 44, 0.92), rgba(26, 32, 44, 0.82));
+  border-color: rgba(255, 255, 255, 0.08);
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.5);
 }
 .floating-user-info {
-  position: absolute; top: 15px; right: 15px; display: flex;
-  align-items: center; gap: 10px; background-color: rgba(40, 40, 40, 0.7);
-  border-radius: 8px; padding: 8px 12px; z-index: 1000;
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  z-index: 3000;
+  background: rgba(255, 255, 255, 0.9);
+  backdrop-filter: blur(8px);
+  padding: 8px 16px;
+  border-radius: 12px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+  border: 1px solid rgba(0,0,0,0.05);
 }
-:not(.dark-mode) .floating-toolbar { background-color: rgba(240, 240, 240, 0.8); }
-:not(.dark-mode) .floating-user-info { background-color: rgba(240, 240, 240, 0.8); }
+
+:not(.dark-mode) .floating-user-info { background-color: rgba(255, 255, 255, 0.9); }
 .share-btn {
-  display: flex; align-items: center; gap: 5px; padding: 6px 10px;
-  background-color: #4285f4; color: white; border: none;
-  border-radius: 4px; cursor: pointer; font-size: 14px;
-}
-.share-btn:hover { background-color: #3367d6; }
-.debug-btn {
-  padding: 6px 10px; background-color: #ff9800; color: white;
-  border: none; border-radius: 4px; cursor: pointer; font-size: 14px;
-}
-.debug-btn:hover { background-color: #f57c00; }
-.room-info {
-  position: absolute; bottom: 15px; right: 15px; display: flex;
-  align-items: center; gap: 10px; background-color: rgba(40, 40, 40, 0.7);
-  border-radius: 8px; padding: 8px 12px; color: white; font-size: 14px; z-index: 1000;
-}
-:not(.dark-mode) .room-info { background-color: rgba(240, 240, 240, 0.8); color: #333; }
-.notification {
-  position: fixed; bottom: 20px; left: 20px; padding: 12px 16px;
-  background-color: #333; color: white; border-radius: 6px;
-  box-shadow: 0 3px 10px rgba(0,0,0,0.3); z-index: 9999;
   transition: all 0.3s ease; transform: translateY(100px); opacity: 0;
 }
 .notification.show { transform: translateY(0); opacity: 1; }

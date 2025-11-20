@@ -41,10 +41,24 @@
       :zoom-level="zoomLevel"
       :pan-offset="panOffset"
       :is-selected="elementMap.get('id') === selectedObjectId"
-      :interaction-enabled="currentTool === 'select'"
+      :interaction-enabled="currentTool === 'select' || ['coordinateSystem2D', 'coordinateSystem3D', 'mathFunctionPlot', 'physicsDataPlot'].includes(elementMap.get('type'))"
       @update:object="handleObjectUpdate"
       @request-select="handleObjectSelectionRequest"
     ></movable-object>
+
+    <!-- Inline Text Editor -->
+    <textarea
+      v-if="inlineTextEditor.visible"
+      ref="inlineTextRef"
+      v-model="inlineTextEditor.value"
+      class="inline-text-editor"
+      :style="inlineTextStyle"
+      @blur="finalizeInlineText"
+      @keydown.enter.stop="handleInlineTextEnter"
+      @keydown.stop
+      @mousedown.stop
+      placeholder="Type here..."
+    ></textarea>
 
     <!-- Zoom and pan controls -->
     <ZoomPanControls 
@@ -95,10 +109,10 @@
 </template>
 
 <script>
-import { ref, onMounted, onBeforeUnmount, watch, nextTick, shallowRef, defineExpose } from 'vue'; // Add shallowRef, defineExpose
+import { ref, onMounted, onBeforeUnmount, watch, nextTick, shallowRef, reactive, computed } from 'vue';
 import * as Y from 'yjs';
-import katex from 'katex'; // Import katex
-import 'katex/dist/katex.min.css'; // Import katex CSS
+import katex from 'katex';
+import 'katex/dist/katex.min.css';
 import { undoRedoState } from '../utils/undoRedoState';
 import Collaborators from './Collaborators.vue';
 import ZoomPanControls from './ZoomPanControls.vue';
@@ -111,17 +125,15 @@ import MathRecognizerModule from '../modules/MathRecognizerModule.js';
 // Utils and Services
 import { connectToYjs } from '../services/connectToYjs';
 import { drawElement, throttle, isPointInElement, distanceToSegment } from '../utils/canvasDrawing.js';
-import { isPointInRotatedRectangle } from '../utils/geometry.js'; // Added
+import { isPointInRotatedRectangle } from '../utils/geometry.js';
 import {
   createNewElement,
-  createTextElement,
   createImageElement,
   getCursorStyle,
-  createCoordinateSystem2DElement, // Added
-
-  createCoordinateSystem3DElement    // Added
+  createCoordinateSystem2DElement,
+  createCoordinateSystem3DElement
 } from '../utils/canvasTools.js';
-import { drawGrid as drawUtilGrid } from '../utils/canvasGrid.js'; // Renamed import
+import { drawGrid as drawUtilGrid } from '../utils/canvasGrid.js';
 import MovableObject from './MovableObject.vue';
 
 
@@ -177,6 +189,7 @@ export default {
     debugMode: { type: Boolean, default: false },
     currentShape: { type: String, default: 'rectangle' },
     currentLineStyle: { type: String, default: 'solid' },
+    currentArrowStyle: { type: String, default: 'none' },
     // Feature configuration
     activeFeature: { type: String, default: null },
     gridAlignOptions: { type: Object, default: () => ({}) },
@@ -194,16 +207,61 @@ export default {
     'update:has-char-groups',
     'update:has-stylized-strokes'
   ],
-
-  setup(props, { emit }) {
+  setup(props, { emit, expose }) {
+    const devicePixelRatio = ref(clampDevicePixelRatio());
+    
+    // Canvas refs
     const containerRef = ref(null);
     const canvas = ref(null);
     const context = ref(null);
-    const canvasWidth = ref(1200);
-    const canvasHeight = ref(800);
-    const devicePixelRatio = ref(clampDevicePixelRatio());
+    const canvasWidth = ref(0);
+    const canvasHeight = ref(0);
+
+    // Module refs
+    const gridAlignModule = ref(null);
+    const handwritingStylerModule = ref(null);
+    const mathRecognizerModule = ref(null);
+
+    // UI State Refs
+    const activeConfigPanel = ref(null);
+    const configPanelCoords = ref(null);
+    // Inline Text Editor State
+    const inlineTextEditor = reactive({
+      visible: false,
+      value: '',
+      x: 0,
+      y: 0,
+      width: 200,
+      height: 50,
+      fontSize: 24
+    });
+    const inlineTextRef = ref(null);
+
+    // --- Computed ---
+    const inlineTextStyle = computed(() => {
+      const screenX = inlineTextEditor.x * zoomLevel.value + panOffset.value.x;
+      const screenY = inlineTextEditor.y * zoomLevel.value + panOffset.value.y;
+      return {
+        position: 'absolute',
+        left: `${screenX}px`,
+        top: `${screenY}px`,
+        fontSize: `${inlineTextEditor.fontSize * zoomLevel.value}px`,
+        color: currentColor.value,
+        minWidth: '50px',
+        minHeight: '1.2em',
+        zIndex: 1000,
+        background: 'transparent',
+        border: '1px dashed #ccc',
+        outline: 'none',
+        resize: 'none',
+        overflow: 'hidden',
+        fontFamily: 'sans-serif',
+        lineHeight: '1.2'
+      };
+    });
+
     const isDrawing = ref(false);
-    const currentTool = ref('select');
+    const currentTool = ref('pen'); // Default to pen (matches App.vue)
     const currentColor = ref('#000000');
     const currentLineWidth = ref(2);
     const zoomLevel = ref(1);
@@ -270,16 +328,6 @@ export default {
     let clipboardFocusHandler = null;
 
     // Helper module instances
-    const gridAlignModule = shallowRef(null);
-    const handwritingStylerModule = shallowRef(null);
-    const mathRecognizerModule = shallowRef(null);
-
-    // State for graph/coord system configuration panels
-    const activeConfigPanel = ref(null); // 'math', 'physics', 'coord2D', 'coord3D'
-    const configPanelCoords = ref({ x: 0, y: 0 }); // Canvas coords where user clicked
-
-
-    // --- Realtime collaboration state ---
     const yjsConnection = ref(null);
     const ydoc = ref(null);
     const yDrawings = ref(null);
@@ -456,10 +504,16 @@ export default {
             } else if (Array.isArray(value)) {
               // Store plain arrays directly for data points (simpler for now)
               yElementMap.set(key, value);
-        } else {
+            } else {
               yElementMap.set(key, value);
             }
           }
+
+          // Apply default arrow style for lines if missing
+          if (elementData.type === 'line' && !elementData.arrowStyle) {
+              yElementMap.set('arrowStyle', props.currentArrowStyle || 'none');
+          }
+
           yDrawings.value.push([yElementMap]);
           refreshMovableElements();
         });
@@ -479,9 +533,35 @@ export default {
       }
     };
 
+    const applyMathAnswer = (newStrokeData) => {
+        if (!newStrokeData || !ydoc.value || !yDrawings.value) return;
+
+        try {
+            ydoc.value.transact(() => {
+                const yElementMap = new Y.Map();
+                for (const [key, value] of Object.entries(newStrokeData)) {
+                    yElementMap.set(key, value);
+                }
+                yDrawings.value.push([yElementMap]);
+            }, 'ai-math'); // Origin
+
+            nextTick(() => {
+                updateGlobalState();
+                // Reset math state in App.vue via emits
+                emit('update:recognition-status', '');
+                emit('update:latex-equation', '');
+                emit('update:solution', '');
+                redrawCanvas();
+            });
+        } catch (error) {
+            console.error("Error applying math answer:", error);
+            showToast("Failed to apply math answer.", "error");
+        }
+    };
+
 
     const redrawCanvas = () => {
-      if (!context.value || !yDrawings.value) return;
+      if (!context.value) return;
 
       const ctx = context.value;
       const ratio = devicePixelRatio.value || 1;
@@ -501,9 +581,12 @@ export default {
       );
 
       // Determine strokes to draw (original or stylized)
-      let strokesToDraw = yDrawings.value.toArray().map(map => map.toJSON()); // Convert Y.Array of Y.Map to JS Array of Objects
-      if (props.activeFeature === 'styleHandwriting' && handwritingStylerModule.value?.hasStylizedStrokes()) {
-        strokesToDraw = handwritingStylerModule.value.getStrokes(); // Get potentially modified strokes
+      let strokesToDraw = [];
+      if (yDrawings.value) {
+        strokesToDraw = yDrawings.value.toArray().map(map => map.toJSON()); // Convert Y.Array of Y.Map to JS Array of Objects
+        if (props.activeFeature === 'styleHandwriting' && handwritingStylerModule.value?.hasStylizedStrokes()) {
+          strokesToDraw = handwritingStylerModule.value.getStrokes(); // Get potentially modified strokes
+        }
       }
 
       // Draw all elements; MovableObject overlays handle interactions but canvas still renders visuals
@@ -1186,6 +1269,70 @@ export default {
 
     // --- Drawing Logic (Yjs Integration) ---
 
+    // --- Inline Text Methods ---
+    const startInlineText = (coords) => {
+      inlineTextEditor.x = coords.x;
+      inlineTextEditor.y = coords.y;
+      inlineTextEditor.value = '';
+      inlineTextEditor.visible = true;
+      // Heuristic for font size based on line width or default
+      inlineTextEditor.fontSize = currentLineWidth.value * 10 > 20 ? currentLineWidth.value * 10 : 24; 
+      
+      nextTick(() => {
+        if (inlineTextRef.value) {
+          inlineTextRef.value.focus();
+        }
+      });
+    };
+
+    const finalizeInlineText = () => {
+      if (!inlineTextEditor.visible) return;
+      
+      const text = inlineTextEditor.value.trim();
+      if (text) {
+        addTextElement({ x: inlineTextEditor.x, y: inlineTextEditor.y }, text, inlineTextEditor.fontSize);
+      }
+      
+      inlineTextEditor.visible = false;
+      inlineTextEditor.value = '';
+    };
+
+    const handleInlineTextEnter = (e) => {
+      if (!e.shiftKey) {
+        e.preventDefault();
+        finalizeInlineText();
+      }
+    };
+
+    const addTextElement = (coords, text, fontSize = 24) => {
+       if (!ydoc.value || !yDrawings.value) return;
+
+       const textElement = {
+         id: `text-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+         type: 'text',
+         x: coords.x,
+         y: coords.y,
+         text: text,
+         color: currentColor.value,
+         fontSize: fontSize,
+         rotation: 0,
+         width: text.length * (fontSize * 0.6), // Approx width
+         height: fontSize * 1.2
+       };
+
+       ydoc.value.transact(() => {
+         const yMap = new Y.Map();
+         for (const [key, value] of Object.entries(textElement)) {
+           yMap.set(key, value);
+         }
+         yDrawings.value.push([yMap]);
+       }, 'local-add-text');
+       
+       refreshMovableElements();
+    };
+
+    // --- Drawing Logic (Yjs Integration) ---
+
     const startDrawing = (event) => {
       if (!ydoc.value) return;
       if (currentTool.value === 'select') return;
@@ -1195,9 +1342,18 @@ export default {
           return;
       }
 
-      isDrawing.value = true;
       const coords = getCoordinates(event);
       const transformedCoords = transformCoordinates(coords.offsetX, coords.offsetY);
+
+      // Handle text tool inline
+      if (currentTool.value === 'text') {
+        startInlineText(transformedCoords);
+        isDrawing.value = false;
+        currentElementPreview.value = null;
+        return;
+      }
+
+      isDrawing.value = true;
       pointsBuffer.value = [];
 
       let toolType = currentTool.value;
@@ -1222,6 +1378,7 @@ export default {
       // If it's a line - always set lineStyle, even if toolType wasn't "lines"
       if (toolType === 'line') {
           elementData.lineStyle = props.currentLineStyle;
+          elementData.arrowStyle = props.currentArrowStyle;
           if (props.debugMode) {
               debugLog(`[startDrawing] Line style set to: ${elementData.lineStyle}`);
           }
@@ -1246,41 +1403,6 @@ export default {
           // console.error(`[startDrawing] Failed to create preview element for tool type: ${toolType} with data:`, elementData); // Commented out
           isDrawing.value = false; // Stop drawing if preview failed
           return;
-      }
-
-      if (currentTool.value === 'text') {
-        const text = prompt('Enter text:', '');
-        if (text) {
-          const textElementData = createTextElement(
-            transformedCoords, 
-            text, 
-            currentColor.value,
-            currentLineWidth.value * 10
-          );
-          // 4. Zmodyfikuj finishDrawing, addTextElement, addImageFromDataUrl i eraseElement
-          ydoc.value.transact(() => {
-            const textMap = new Y.Map();
-            for (const [key, value] of Object.entries(textElementData)) {
-              if (key === 'position') {
-                const posMap = new Y.Map();
-                posMap.set('x', value.x);
-                posMap.set('y', value.y);
-                textMap.set(key, posMap);
-              } else {
-                textMap.set(key, value);
-              }
-            }
-            yDrawings.value.push([textMap]);
-          }, 'local-text'); // Add origin
-          // Po każdej transakcji dodaj (inside try block):
-          nextTick(() => {
-            if (undoManager.value) {
-              updateGlobalState(); // Use the shared function
-            }
-          });
-        }
-        isDrawing.value = false;
-        currentElementPreview.value = null;
       }
     };
 
@@ -1312,14 +1434,35 @@ export default {
       }
     };
 
+    // Tools that behave like shapes (use start/end points)
+    const SHAPE_TOOLS = new Set([
+      'rectangle',
+      'circle',
+      'square',
+      'triangle',
+      'trapezoid',
+      'parallelogram',
+      'deltoid',
+      'cube',
+      'cuboid',
+      'sphere',
+      'cylinder',
+      'cone',
+      'pyramid',
+      'tetrahedron',
+    ]);
+
+    const LINE_TOOLS = new Set(['line']);
+
     const draw = (coords, isShiftPressed) => { // Accept shift key state
       if (!isDrawing.value || !currentElementPreview.value) return;
       if (currentTool.value === 'eraser') return;
 
       const preview = currentElementPreview.value;
+      const tool = currentTool.value;
 
       // Update logic based on the actual tool and shift state
-      if (currentTool.value === 'pen') {
+      if (tool === 'pen') {
           if (shiftPressedAtStart.value && startCoordsForShiftLine.value) {
               // Update preview for Shift+Pen: Draw straight line from stored start to current coords
               // Modify the preview element directly to represent a line for drawing purposes
@@ -1334,7 +1477,7 @@ export default {
               const smoothedPoint = addSmoothedPenPoint(coords);
               preview.points.push(smoothedPoint);
           }
-      } else if (currentTool.value === 'shapes' || currentTool.value === 'lines') {
+      } else if (SHAPE_TOOLS.has(tool) || LINE_TOOLS.has(tool)) {
           // Update end coordinates for shapes and regular lines
           preview.end = coords;
 
@@ -1479,6 +1622,8 @@ export default {
                           if (elementToAdd.type === 'line') {
                             const lineStyle = elementToAdd.lineStyle || props.currentLineStyle || 'solid';
                             yElementMap.set('lineStyle', lineStyle);
+                            const arrowStyle = elementToAdd.arrowStyle || props.currentArrowStyle || 'none';
+                            yElementMap.set('arrowStyle', arrowStyle);
                           }
                       }
                       // text and image types are handled in their respective functions (addTextElement, addImageFromDataUrl)
@@ -1676,17 +1821,6 @@ export default {
         }
       }
 
-      // Handle recognizer shortcut (Shift+Enter)
-      if (props.activeFeature === 'mathRecognizer' && mathRecognizerModule.value) {
-          const newStroke = mathRecognizerModule.value.handleKeyDown(event);
-          if (newStroke) {
-              // Add the generated answer stroke to Yjs
-              applyMathAnswer(newStroke);
-              return; // Prevent other shortcuts if handled
-          }
-      }
-
-      // Handle Undo/Redo shortcuts
       if ((event.ctrlKey || event.metaKey) && !event.shiftKey && event.key.toLowerCase() === 'z') {
           event.preventDefault();
           undo();
@@ -1698,6 +1832,18 @@ export default {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'y') {
           event.preventDefault();
           redo();
+      }
+
+      // Handle Tab or Shift+Enter for accepting ghost answer
+      if (event.key === 'Tab' || (event.shiftKey && event.key === 'Enter')) {
+          if (props.activeFeature === 'mathRecognizer' && mathRecognizerModule.value) {
+              const newStroke = mathRecognizerModule.value.acceptGhostAnswer();
+              if (newStroke) {
+                  event.preventDefault(); // Prevent default Tab behavior
+                  applyMathAnswer(newStroke);
+                  return;
+              }
+          }
       }
     };
 
@@ -1802,59 +1948,6 @@ export default {
                 console.error("[addImageFromDataUrl] Error creating image:", error);
                 showToast("Failed to process image", "error");
             });
-    };
-    const addTextElement = (position, text) => {
-        if (!ydoc.value || !yDrawings.value || !text) return;
-        // Temporarily create a canvas element to measure text
-        const tempCanvas = document.createElement('canvas');
-        const tempCtx = tempCanvas.getContext('2d');
-        tempCtx.font = `${currentLineWidth.value * 10}px Arial, sans-serif`; // Use the same font style as drawText
-        const textMetrics = tempCtx.measureText(text);
-
-        const textElementData = {
-            type: 'text',
-            position: position,
-            text: text,
-            color: currentColor.value,
-            fontSize: currentLineWidth.value * 10, // Store font size
-            width: textMetrics.width, // Store calculated width
-            height: textMetrics.actualBoundingBoxAscent + textMetrics.actualBoundingBoxDescent, // Store calculated height
-            id: `${yjsConnection.value?.awareness?.clientID || 'local'}-${Date.now()}`, // Assign ID
-            timestamp: Date.now(),
-        };
-
-        try {
-            ydoc.value.transact(() => {
-              const textMap = new Y.Map();
-              // Store all properties from textElementData
-              for (const [key, value] of Object.entries(textElementData)) {
-                if (key === 'position') {
-                  const posMap = new Y.Map();
-                  posMap.set('x', value.x); // x from original position
-                  posMap.set('y', value.y); // y from original position
-                  textMap.set(key, posMap); // Keep 'position' map for now
-                  textMap.set('x', value.x); // Also store x at root
-                  textMap.set('y', value.y); // Also store y at root
-                } else {
-                  textMap.set(key, value);
-                }
-              }
-              textMap.set('rotation', 0); // Default rotation
-              yDrawings.value.push([textMap]);
-              refreshMovableElements();
-            }, 'local-text'); // Add origin
-            // No need to remove tempCanvas, it will be garbage collected
-
-            // Po każdej transakcji dodaj (inside try block):
-            nextTick(() => {
-               if (undoManager.value) {
-                  updateGlobalState(); // Use the shared function
-               }
-            });
-        } catch (error) {
-            // console.error("Error adding text element:", error); // Commented out
-            showToast("Failed to add text to whiteboard.", "error");
-        }
     };
 
     // --- Undo/Redo Methods --- (Replaced by Fragment 1)
@@ -2114,32 +2207,7 @@ export default {
         }
     };
 
-    const applyMathAnswer = (newStrokeData) => {
-        if (!newStrokeData || !ydoc.value || !yDrawings.value) return;
 
-        try {
-            ydoc.value.transact(() => {
-                const yElementMap = new Y.Map();
-                for (const [key, value] of Object.entries(newStrokeData)) {
-                    // Convert nested objects like position if necessary (though this example uses simple props)
-                    yElementMap.set(key, value);
-                }
-                yDrawings.value.push([yElementMap]);
-            }, 'ai-math'); // Origin
-
-            nextTick(() => {
-                updateGlobalState();
-                // Reset math state in App.vue via emits
-                emit('update:recognition-status', '');
-                emit('update:latex-equation', '');
-                emit('update:solution', '');
-                redrawCanvas();
-            });
-        } catch (error) {
-            console.error("Error applying math answer:", error);
-            showToast("Failed to apply math answer.", "error");
-        }
-    };
 
     // --- Watchers ---
     watch(() => props.currentShape, (newShape) => {
@@ -2247,7 +2315,8 @@ export default {
           handwritingStylerModule.value = new HandwritingStylerModule(context.value, props.handwritingStylerOptions);
           mathRecognizerModule.value = new MathRecognizerModule(context.value, {
               ...props.mathRecognizerOptions,
-              renderLatexFn: renderLatex // Pass the render function
+              renderLatexFn: renderLatex, // Pass the render function
+              backendUrl: import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000'
           });
           debugLog("Helper modules initialised");
       } else {
@@ -2285,30 +2354,53 @@ export default {
       teardownYjsConnection();
     });
 
-    // Expose methods for App.vue to call
-    defineExpose({
-        setTool,
-        setColor,
-        setLineWidth,
-        setEraserMode,
-        undo,
-        redo,
-        // Expose UndoManager ref for external debug/force updates
-        undoManager,
-        clearCanvas,
-        addImageFromDataUrl,
-        toggleDebug,
-        redrawCanvas, // Expose redraw if needed externally
-        alignToGrid,
-        groupStrokes,
-        applyStyleTransformation,
-        confirmStyleChanges,
-        cancelStyleChanges,
-        recognizeEquation,
-        applyGhostAnswer: (payload) => { // Wrap applyMathAnswer if needed
-            const stroke = mathRecognizerModule.value?.applyGhostAnswer();
-            if (stroke) applyMathAnswer(stroke);
-        }
+    // Expose methods and state for App.vue to call via template ref
+    expose({
+      // Core state used by App.vue
+      yjsConnection,
+      undoManager,
+      canUndo,
+      canRedo,
+
+      // Tool / style setters
+      setTool,
+      setColor,
+      setLineWidth,
+      setEraserMode,
+
+      // Undo / redo & canvas control
+      undo,
+      redo,
+      clearCanvas,
+      redrawCanvas,
+
+      // Serialization / import-export
+      getSerializableState,
+      loadState,
+      exportAsText,
+      importFromText,
+
+      // Media helpers
+      addImageFromDataUrl,
+
+      // Misc helpers
+      getViewportCenter,
+      toggleDebug,
+
+      // Feature actions
+      alignToGrid,
+      groupStrokes,
+      applyStyleTransformation,
+      confirmStyleChanges,
+      cancelStyleChanges,
+      recognizeEquation,
+      applyGhostAnswer: (payload) => { 
+        const stroke = mathRecognizerModule.value?.applyGhostAnswer();
+        if (stroke) applyMathAnswer(stroke);
+      },
+
+      // Graph / panel integration
+      addElementFromPanel,
     });
 
     return {
@@ -2329,10 +2421,10 @@ export default {
       eraserMode,
       notifications,
       statusMessage,
-      yjsConnection, // Keep exposing for Collaborators
-      canUndo, // Keep exposing for debug panel
-      canRedo, // Keep exposing for debug panel
-      selectedObjectId, // Added for selection state
+      yjsConnection,
+      canUndo,
+      canRedo,
+      selectedObjectId,
       movableElements,
 
       // Methods
@@ -2346,9 +2438,9 @@ export default {
       handleTouchStart,
       handleTouchMove,
       handleTouchEnd,
-      handleObjectSelectionRequest, // Added
+      handleObjectSelectionRequest,
 
-      // Public API (already exposed via defineExpose)
+      // Public API
       setTool,
       setColor,
       setLineWidth,
@@ -2380,22 +2472,28 @@ export default {
       handleObjectUpdate,
       selectObject, 
 
-      // Helper action methods (now exposed via defineExpose)
+      // Inline Text Editor
+      inlineTextEditor,
+      inlineTextRef,
+      inlineTextStyle,
+      finalizeInlineText,
+      handleInlineTextEnter,
+
+      // Helper action methods (also exposed)
       alignToGrid,
       groupStrokes,
       applyStyleTransformation,
       confirmStyleChanges,
       cancelStyleChanges,
       recognizeEquation,
-      applyGhostAnswer: (payload) => { // Need wrapper here too for template access if needed, though App.vue calls exposed method
+      applyGhostAnswer: (payload) => { 
             const stroke = mathRecognizerModule.value?.applyGhostAnswer();
             if (stroke) applyMathAnswer(stroke);
       }
     };
   }
-}
+};
 </script>
-
 
 
 
@@ -2498,5 +2596,8 @@ export default {
 .toast-info { background-color: #2196F3; }
 .toast-success { background-color: #4CAF50; }
 .toast-warning { background-color: #FF9800; }
+.toast-warning { background-color: #FF9800; }
 .toast-error { background-color: #F44336; }
+
+
 </style>

@@ -80,19 +80,23 @@ function drawArrowHead(ctx: CanvasRenderingContext2D, startX: number, startY: nu
   ctx.fill();
 }
 
+function applySceneTransform(ctx: CanvasRenderingContext2D, appState = sceneState.appState) {
+  const scale = window.devicePixelRatio * appState.zoom;
+  ctx.setTransform(scale, 0, 0, scale, -appState.scrollX * scale, -appState.scrollY * scale);
+}
+
 function renderStaticScene(ctx: CanvasRenderingContext2D, elements: WhiteVueElement[], appState = sceneState.appState) {
   ctx.save();
+  ctx.setTransform(window.devicePixelRatio, 0, 0, window.devicePixelRatio, 0, 0);
   ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
-  ctx.translate(-appState.scrollX, -appState.scrollY);
-  ctx.scale(appState.zoom, appState.zoom);
+  applySceneTransform(ctx, appState);
   for (const el of elements) renderElement(ctx, el);
   ctx.restore();
 }
 
 function renderInteractiveScene(ctx: CanvasRenderingContext2D, elements: WhiteVueElement[], appState = sceneState.appState) {
   ctx.save();
-  ctx.translate(-appState.scrollX, -appState.scrollY);
-  ctx.scale(appState.zoom, appState.zoom);
+  applySceneTransform(ctx, appState);
   ctx.strokeStyle = "#4c8bf5";
   ctx.setLineDash([6, 4]);
   for (const el of elements) {

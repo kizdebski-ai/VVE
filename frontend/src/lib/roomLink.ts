@@ -21,7 +21,6 @@ function randomId(len = 20) {
 
 export async function createNewRoomUrl() {
   const roomId = randomId(22);
-  const key = (await generateEncryptionKey("string")) as string;
   const key = await generateEncryptionKey("string");
   return `${location.origin}${location.pathname}#room=${roomId},${key}`;
 }

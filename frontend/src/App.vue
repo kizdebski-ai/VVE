@@ -251,17 +251,8 @@ export default {
     const statusMessage = ref('');
     const darkMode = ref(localStorage.getItem('darkMode') === 'true');
     const debugMode = ref(false);
-    const appDebugLog = (...args) => {
-      if (debugMode.value) {
-        console.log(...args);
-      }
-    };
-    const roomId = ref('');
-    const roomKey = ref('');
     const isCalculatorVisible = ref(false);
     const globalError = ref(null);
-
-    // Tool state
     const currentTool = ref('pen');
     const currentColor = ref('#000000');
     const currentLineWidth = ref(2);

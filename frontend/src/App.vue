@@ -212,6 +212,12 @@ import ExportDialog from './components/ExportDialog.vue';
 import CalculatorModal from './components/CalculatorModal.vue';
 import AIChatPanel from './components/AIChatPanel.vue';
 import * as Y from 'yjs';
+import { Buffer } from 'buffer';
+import katex from 'katex';
+import { buildRoomHash, createNewRoomUrl, parseRoomHash } from './lib/roomLink';
+import { generateEncryptionKey } from './lib/crypto';
+import 'katex/dist/katex.min.css';
+import { undoRedoState } from './utils/undoRedoState'; // 2. Add import
 import { WebsocketProvider } from 'y-websocket';
 import { IndexeddbPersistence } from 'y-indexeddb';
 
@@ -245,6 +251,13 @@ export default {
     const statusMessage = ref('');
     const darkMode = ref(localStorage.getItem('darkMode') === 'true');
     const debugMode = ref(false);
+    const appDebugLog = (...args) => {
+      if (debugMode.value) {
+        console.log(...args);
+      }
+    };
+    const roomId = ref('');
+    const roomKey = ref('');
     const isCalculatorVisible = ref(false);
     const globalError = ref(null);
 
@@ -525,8 +538,26 @@ export default {
       showNotification(`Debug mode: ${debugMode.value ? 'ENABLED' : 'DISABLED'}`, 'info');
     };
 
-    const shareRoom = () => {
-      const shareableUrl = `${window.location.origin}${window.location.pathname}?room=${roomId.value}`;
+    const ensureRoomKey = async () => {
+      if (!roomKey.value) {
+        roomKey.value = await generateEncryptionKey('string');
+      }
+      return roomKey.value;
+    };
+
+    const updateRoomUrlHash = () => {
+      if (!roomId.value || !roomKey.value) return null;
+      const hash = buildRoomHash({ roomId: roomId.value, roomKey: roomKey.value });
+      const shareableUrl = `${window.location.origin}${window.location.pathname}${hash}`;
+      window.history.replaceState({}, '', shareableUrl);
+      return { hash, shareableUrl };
+    };
+
+    const shareRoom = async () => {
+      await ensureRoomKey();
+      const { shareableUrl } = updateRoomUrlHash() || {
+        shareableUrl: `${window.location.origin}${window.location.pathname}`
+      };
 
       const fallbackCopy = () => {
         try {
@@ -634,6 +665,34 @@ export default {
 
     // --- Lifecycle Hooks ---
     onMounted(() => {
+      const bootstrapRoom = async () => {
+        const parsedHash = parseRoomHash(window.location.hash);
+        if (parsedHash) {
+          roomId.value = parsedHash.roomId;
+          roomKey.value = parsedHash.roomKey;
+          updateRoomUrlHash();
+        } else {
+          const urlParams = new URLSearchParams(window.location.search);
+          const queryRoom = urlParams.get('room');
+          if (queryRoom) {
+            roomId.value = queryRoom;
+            await ensureRoomKey();
+            updateRoomUrlHash();
+          } else {
+            const newUrl = await createNewRoomUrl();
+            const newParsed = parseRoomHash(new URL(newUrl).hash);
+            if (newParsed) {
+              roomId.value = newParsed.roomId;
+              roomKey.value = newParsed.roomKey;
+            }
+            window.history.replaceState({}, '', newUrl);
+          }
+        }
+        localStorage.setItem('last_room_id', roomId.value);
+        appDebugLog(`App mounted. Room ID: ${roomId.value}`);
+      };
+
+      bootstrapRoom();
       const urlParams = new URLSearchParams(window.location.search);
       let initialRoomId = urlParams.get('room');
       

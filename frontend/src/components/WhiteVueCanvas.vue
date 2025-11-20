@@ -83,7 +83,7 @@ function drawArrowHead(ctx: CanvasRenderingContext2D, startX: number, startY: nu
 function renderStaticScene(ctx: CanvasRenderingContext2D, elements: WhiteVueElement[], appState = sceneState.appState) {
   ctx.save();
   ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
-  ctx.translate(-appState.scrollX * appState.zoom, -appState.scrollY * appState.zoom);
+  ctx.translate(-appState.scrollX, -appState.scrollY);
   ctx.scale(appState.zoom, appState.zoom);
   for (const el of elements) renderElement(ctx, el);
   ctx.restore();
@@ -91,7 +91,7 @@ function renderStaticScene(ctx: CanvasRenderingContext2D, elements: WhiteVueElem
 
 function renderInteractiveScene(ctx: CanvasRenderingContext2D, elements: WhiteVueElement[], appState = sceneState.appState) {
   ctx.save();
-  ctx.translate(-appState.scrollX * appState.zoom, -appState.scrollY * appState.zoom);
+  ctx.translate(-appState.scrollX, -appState.scrollY);
   ctx.scale(appState.zoom, appState.zoom);
   ctx.strokeStyle = "#4c8bf5";
   ctx.setLineDash([6, 4]);

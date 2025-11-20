@@ -1,0 +1,12 @@
+{
+  "roomId": "test_room",
+  "displayName": "test_room",
+  "ownerName": "",
+  "ownerSecret": "1997ef11f0b92d924740a293bc8e1de4",
+  "isArchived": false,
+  "isListed": true,
+  "createdAt": 1763513756132,
+  "updatedAt": 1763513756132,
+  "lastActiveAt": 1763515602557,
+  "metadata": {}
+}

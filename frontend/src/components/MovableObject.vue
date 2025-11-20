@@ -53,6 +53,13 @@
              @mousedown.stop="startDragIfSelectedOrRequestSelect">
           {{ objectData.text }}
         </div>
+        <PlotRenderer
+          v-else-if="['mathFunctionPlot', 'physicsDataPlot', 'coordinateSystem2D', 'coordinateSystem3D'].includes(objectData.type)"
+          :type="objectData.type"
+          :width="objectData.width"
+          :height="objectData.height"
+          :data="objectData"
+        />
         <div v-else>
           Unknown Type: {{ objectData.type }}
         </div>
@@ -64,6 +71,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, reactive, watch } from 'vue';
 import * as Y from 'yjs'; 
+import PlotRenderer from './PlotRenderer.vue'; 
 
 interface MovableObjectData {
   id: string | number;
@@ -84,9 +92,19 @@ interface MovableObjectData {
   lineStyle?: string; 
   text?: string;
   fontSize?: number;
+  expression?: string; // For math plot
+  xRange?: number[]; // For math plot
+  points?: {x: number, y: number}[]; // For physics plot
 }
 
-const CONTENT_RENDER_TYPES = new Set(['text', 'image']);
+const CONTENT_RENDER_TYPES = new Set([
+  'text', 
+  'image', 
+  'mathFunctionPlot', 
+  'physicsDataPlot', 
+  'coordinateSystem2D', 
+  'coordinateSystem3D'
+]);
 
 const ensureNumber = (value: any, fallback = 0) => (Number.isFinite(value) ? Number(value) : fallback);
 
@@ -134,7 +152,7 @@ const shiftPointsArray = (pointsValue: any, dx: number, dy: number) => {
 };
 
 const computeRatio = (value: number | undefined, axisStart: number, axisLength: number, fallback = 0) => {
-  if (!Number.isFinite(value) || axisLength === 0) {
+  if (value === undefined || !Number.isFinite(value) || axisLength === 0) {
     return fallback;
   }
   return (value - axisStart) / axisLength;
@@ -184,10 +202,10 @@ const initialGeometrySnapshot = reactive({
   startY: 0,
   endX: 0,
   endY: 0,
-  startRatioX: 0,
-  startRatioY: 0,
-  endRatioX: 1,
-  endRatioY: 1,
+  startRatioX: 0 as number | null,
+  startRatioY: 0 as number | null,
+  endRatioX: 1 as number | null,
+  endRatioY: 1 as number | null,
   points: null as { x: number; y: number }[] | null,
 });
 
@@ -219,6 +237,9 @@ const bootstrapObjectData = () => {
         lineStyle: props.object.get('lineStyle'),
         text: props.object.get('text'),
         fontSize: props.object.get('fontSize'),
+        expression: props.object.get('expression'),
+        xRange: props.object.get('xRange'),
+        points: props.object.get('points'),
     } as MovableObjectData;
 };
 
@@ -247,6 +268,9 @@ const syncDataFromYMap = () => {
     objectData.lineStyle = props.object.get('lineStyle');
     objectData.text = props.object.get('text');
     objectData.fontSize = props.object.get('fontSize');
+    objectData.expression = props.object.get('expression');
+    objectData.xRange = props.object.get('xRange');
+    objectData.points = props.object.get('points');
 };
 
 const objectStyle = computed(() => {
@@ -265,7 +289,7 @@ const objectStyle = computed(() => {
     cursor: props.interactionEnabled
       ? (isDragging.value ? 'grabbing' : (internalIsSelected.value ? 'grab' : 'pointer'))
       : 'default',
-    pointerEvents: props.interactionEnabled ? 'auto' : 'none',
+    pointerEvents: (props.interactionEnabled ? 'auto' : 'none') as 'auto' | 'none',
     border: internalIsSelected.value ? '2px solid dodgerblue' : '1px solid transparent',
     transformOrigin: 'top left', 
     userSelect: 'none' as const,
@@ -470,16 +494,16 @@ const startResize = (event: MouseEvent, handle: string) => {
   initialGeometrySnapshot.endX = Number.isFinite(objectData.endX) ? objectData.endX! : objectData.x + objectData.width;
   initialGeometrySnapshot.endY = Number.isFinite(objectData.endY) ? objectData.endY! : objectData.y + objectData.height;
   initialGeometrySnapshot.startRatioX = Number.isFinite(objectData.startX)
-    ? computeRatio(objectData.startX, initialObjectState.x, initialObjectState.width, 0)
+    ? computeRatio(objectData.startX!, initialObjectState.x, initialObjectState.width, 0)
     : null;
   initialGeometrySnapshot.startRatioY = Number.isFinite(objectData.startY)
-    ? computeRatio(objectData.startY, initialObjectState.y, initialObjectState.height, 0)
+    ? computeRatio(objectData.startY!, initialObjectState.y, initialObjectState.height, 0)
     : null;
   initialGeometrySnapshot.endRatioX = Number.isFinite(objectData.endX)
-    ? computeRatio(objectData.endX, initialObjectState.x, initialObjectState.width, 1)
+    ? computeRatio(objectData.endX!, initialObjectState.x, initialObjectState.width, 1)
     : null;
   initialGeometrySnapshot.endRatioY = Number.isFinite(objectData.endY)
-    ? computeRatio(objectData.endY, initialObjectState.y, initialObjectState.height, 1)
+    ? computeRatio(objectData.endY!, initialObjectState.y, initialObjectState.height, 1)
     : null;
   initialGeometrySnapshot.points = clonePointsArray(props.object.get('points'));
 

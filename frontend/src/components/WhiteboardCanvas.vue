@@ -41,10 +41,24 @@
       :zoom-level="zoomLevel"
       :pan-offset="panOffset"
       :is-selected="elementMap.get('id') === selectedObjectId"
-      :interaction-enabled="currentTool === 'select'"
+      :interaction-enabled="currentTool === 'select' || ['coordinateSystem2D', 'coordinateSystem3D', 'mathFunctionPlot', 'physicsDataPlot'].includes(elementMap.get('type'))"
       @update:object="handleObjectUpdate"
       @request-select="handleObjectSelectionRequest"
     ></movable-object>
+
+    <!-- Inline Text Editor -->
+    <textarea
+      v-if="inlineTextEditor.visible"
+      ref="inlineTextRef"
+      v-model="inlineTextEditor.value"
+      class="inline-text-editor"
+      :style="inlineTextStyle"
+      @blur="finalizeInlineText"
+      @keydown.enter.stop="handleInlineTextEnter"
+      @keydown.stop
+      @mousedown.stop
+      placeholder="Type here..."
+    ></textarea>
 
     <!-- Zoom and pan controls -->
     <ZoomPanControls 
@@ -91,32 +105,14 @@
       @click="testUndoManager">
       Test UndoManager
     </button>
-
-    <!-- Text Input Modal -->
-    <div v-if="showTextInput" class="text-input-modal-overlay">
-      <div class="text-input-modal">
-        <h3>Enter Text</h3>
-        <input 
-          ref="textInputRef"
-          v-model="textInputValue" 
-          @keyup.enter="confirmTextInput" 
-          @keyup.esc="cancelTextInput"
-          placeholder="Type something..."
-        />
-        <div class="modal-actions">
-          <button @click="cancelTextInput" class="btn-cancel">Cancel</button>
-          <button @click="confirmTextInput" class="btn-confirm">Add</button>
-        </div>
-      </div>
-    </div>
   </div>
 </template>
 
 <script>
-import { ref, onMounted, onBeforeUnmount, watch, nextTick, shallowRef } from 'vue'; // Add shallowRef
+import { ref, onMounted, onBeforeUnmount, watch, nextTick, shallowRef, reactive, computed } from 'vue';
 import * as Y from 'yjs';
-import katex from 'katex'; // Import katex
-import 'katex/dist/katex.min.css'; // Import katex CSS
+import katex from 'katex';
+import 'katex/dist/katex.min.css';
 import { undoRedoState } from '../utils/undoRedoState';
 import Collaborators from './Collaborators.vue';
 import ZoomPanControls from './ZoomPanControls.vue';
@@ -129,17 +125,15 @@ import MathRecognizerModule from '../modules/MathRecognizerModule.js';
 // Utils and Services
 import { connectToYjs } from '../services/connectToYjs';
 import { drawElement, throttle, isPointInElement, distanceToSegment } from '../utils/canvasDrawing.js';
-import { isPointInRotatedRectangle } from '../utils/geometry.js'; // Added
+import { isPointInRotatedRectangle } from '../utils/geometry.js';
 import {
   createNewElement,
-  createTextElement,
   createImageElement,
   getCursorStyle,
-  createCoordinateSystem2DElement, // Added
-
-  createCoordinateSystem3DElement    // Added
+  createCoordinateSystem2DElement,
+  createCoordinateSystem3DElement
 } from '../utils/canvasTools.js';
-import { drawGrid as drawUtilGrid } from '../utils/canvasGrid.js'; // Renamed import
+import { drawGrid as drawUtilGrid } from '../utils/canvasGrid.js';
 import MovableObject from './MovableObject.vue';
 
 
@@ -195,6 +189,7 @@ export default {
     debugMode: { type: Boolean, default: false },
     currentShape: { type: String, default: 'rectangle' },
     currentLineStyle: { type: String, default: 'solid' },
+    currentArrowStyle: { type: String, default: 'none' },
     // Feature configuration
     activeFeature: { type: String, default: null },
     gridAlignOptions: { type: Object, default: () => ({}) },
@@ -230,10 +225,40 @@ export default {
     // UI State Refs
     const activeConfigPanel = ref(null);
     const configPanelCoords = ref(null);
-    const showTextInput = ref(false);
-    const textInputValue = ref('');
-    const textInputCoords = ref(null);
-    const textInputRef = ref(null);
+    // Inline Text Editor State
+    const inlineTextEditor = reactive({
+      visible: false,
+      value: '',
+      x: 0,
+      y: 0,
+      width: 200,
+      height: 50,
+      fontSize: 24
+    });
+    const inlineTextRef = ref(null);
+
+    // --- Computed ---
+    const inlineTextStyle = computed(() => {
+      const screenX = inlineTextEditor.x * zoomLevel.value + panOffset.value.x;
+      const screenY = inlineTextEditor.y * zoomLevel.value + panOffset.value.y;
+      return {
+        position: 'absolute',
+        left: `${screenX}px`,
+        top: `${screenY}px`,
+        fontSize: `${inlineTextEditor.fontSize * zoomLevel.value}px`,
+        color: currentColor.value,
+        minWidth: '50px',
+        minHeight: '1.2em',
+        zIndex: 1000,
+        background: 'transparent',
+        border: '1px dashed #ccc',
+        outline: 'none',
+        resize: 'none',
+        overflow: 'hidden',
+        fontFamily: 'sans-serif',
+        lineHeight: '1.2'
+      };
+    });
 
     const isDrawing = ref(false);
     const currentTool = ref('pen'); // Default to pen (matches App.vue)
@@ -483,6 +508,12 @@ export default {
               yElementMap.set(key, value);
             }
           }
+
+          // Apply default arrow style for lines if missing
+          if (elementData.type === 'line' && !elementData.arrowStyle) {
+              yElementMap.set('arrowStyle', props.currentArrowStyle || 'none');
+          }
+
           yDrawings.value.push([yElementMap]);
           refreshMovableElements();
         });
@@ -1238,6 +1269,70 @@ export default {
 
     // --- Drawing Logic (Yjs Integration) ---
 
+    // --- Inline Text Methods ---
+    const startInlineText = (coords) => {
+      inlineTextEditor.x = coords.x;
+      inlineTextEditor.y = coords.y;
+      inlineTextEditor.value = '';
+      inlineTextEditor.visible = true;
+      // Heuristic for font size based on line width or default
+      inlineTextEditor.fontSize = currentLineWidth.value * 10 > 20 ? currentLineWidth.value * 10 : 24; 
+      
+      nextTick(() => {
+        if (inlineTextRef.value) {
+          inlineTextRef.value.focus();
+        }
+      });
+    };
+
+    const finalizeInlineText = () => {
+      if (!inlineTextEditor.visible) return;
+      
+      const text = inlineTextEditor.value.trim();
+      if (text) {
+        addTextElement({ x: inlineTextEditor.x, y: inlineTextEditor.y }, text, inlineTextEditor.fontSize);
+      }
+      
+      inlineTextEditor.visible = false;
+      inlineTextEditor.value = '';
+    };
+
+    const handleInlineTextEnter = (e) => {
+      if (!e.shiftKey) {
+        e.preventDefault();
+        finalizeInlineText();
+      }
+    };
+
+    const addTextElement = (coords, text, fontSize = 24) => {
+       if (!ydoc.value || !yDrawings.value) return;
+
+       const textElement = {
+         id: `text-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+         type: 'text',
+         x: coords.x,
+         y: coords.y,
+         text: text,
+         color: currentColor.value,
+         fontSize: fontSize,
+         rotation: 0,
+         width: text.length * (fontSize * 0.6), // Approx width
+         height: fontSize * 1.2
+       };
+
+       ydoc.value.transact(() => {
+         const yMap = new Y.Map();
+         for (const [key, value] of Object.entries(textElement)) {
+           yMap.set(key, value);
+         }
+         yDrawings.value.push([yMap]);
+       }, 'local-add-text');
+       
+       refreshMovableElements();
+    };
+
+    // --- Drawing Logic (Yjs Integration) ---
+
     const startDrawing = (event) => {
       if (!ydoc.value) return;
       if (currentTool.value === 'select') return;
@@ -1250,13 +1345,9 @@ export default {
       const coords = getCoordinates(event);
       const transformedCoords = transformCoordinates(coords.offsetX, coords.offsetY);
 
-      // Handle text tool separately – it does not use previews
+      // Handle text tool inline
       if (currentTool.value === 'text') {
-        showTextInput.value = true;
-        textInputCoords.value = transformedCoords;
-        nextTick(() => {
-          if (textInputRef.value) textInputRef.value.focus();
-        });
+        startInlineText(transformedCoords);
         isDrawing.value = false;
         currentElementPreview.value = null;
         return;
@@ -1287,6 +1378,7 @@ export default {
       // If it's a line - always set lineStyle, even if toolType wasn't "lines"
       if (toolType === 'line') {
           elementData.lineStyle = props.currentLineStyle;
+          elementData.arrowStyle = props.currentArrowStyle;
           if (props.debugMode) {
               debugLog(`[startDrawing] Line style set to: ${elementData.lineStyle}`);
           }
@@ -1312,50 +1404,6 @@ export default {
           isDrawing.value = false; // Stop drawing if preview failed
           return;
       }
-    };
-
-    const confirmTextInput = () => {
-      const text = textInputValue.value.trim();
-      if (text && textInputCoords.value) {
-          const textElementData = createTextElement(
-            textInputCoords.value, 
-            text, 
-            currentColor.value,
-            currentLineWidth.value * 10
-          );
-          
-          ydoc.value.transact(() => {
-            const textMap = new Y.Map();
-            for (const [key, value] of Object.entries(textElementData)) {
-              if (key === 'position') {
-                const posMap = new Y.Map();
-                posMap.set('x', value.x);
-                posMap.set('y', value.y);
-                textMap.set(key, posMap);
-              } else {
-                textMap.set(key, value);
-              }
-            }
-            yDrawings.value.push([textMap]);
-          }, 'local-text'); 
-
-          nextTick(() => {
-            if (undoManager.value) {
-              updateGlobalState(); 
-            }
-          });
-      }
-      closeTextInput();
-    };
-
-    const cancelTextInput = () => {
-      closeTextInput();
-    };
-
-    const closeTextInput = () => {
-      showTextInput.value = false;
-      textInputValue.value = '';
-      textInputCoords.value = null;
     };
 
     const eraseElement = (indexOrId) => { // Can now accept index or ID
@@ -1574,6 +1622,8 @@ export default {
                           if (elementToAdd.type === 'line') {
                             const lineStyle = elementToAdd.lineStyle || props.currentLineStyle || 'solid';
                             yElementMap.set('lineStyle', lineStyle);
+                            const arrowStyle = elementToAdd.arrowStyle || props.currentArrowStyle || 'none';
+                            yElementMap.set('arrowStyle', arrowStyle);
                           }
                       }
                       // text and image types are handled in their respective functions (addTextElement, addImageFromDataUrl)
@@ -1898,59 +1948,6 @@ export default {
                 console.error("[addImageFromDataUrl] Error creating image:", error);
                 showToast("Failed to process image", "error");
             });
-    };
-    const addTextElement = (position, text) => {
-        if (!ydoc.value || !yDrawings.value || !text) return;
-        // Temporarily create a canvas element to measure text
-        const tempCanvas = document.createElement('canvas');
-        const tempCtx = tempCanvas.getContext('2d');
-        tempCtx.font = `${currentLineWidth.value * 10}px Arial, sans-serif`; // Use the same font style as drawText
-        const textMetrics = tempCtx.measureText(text);
-
-        const textElementData = {
-            type: 'text',
-            position: position,
-            text: text,
-            color: currentColor.value,
-            fontSize: currentLineWidth.value * 10, // Store font size
-            width: textMetrics.width, // Store calculated width
-            height: textMetrics.actualBoundingBoxAscent + textMetrics.actualBoundingBoxDescent, // Store calculated height
-            id: `${yjsConnection.value?.awareness?.clientID || 'local'}-${Date.now()}`, // Assign ID
-            timestamp: Date.now(),
-        };
-
-        try {
-            ydoc.value.transact(() => {
-              const textMap = new Y.Map();
-              // Store all properties from textElementData
-              for (const [key, value] of Object.entries(textElementData)) {
-                if (key === 'position') {
-                  const posMap = new Y.Map();
-                  posMap.set('x', value.x); // x from original position
-                  posMap.set('y', value.y); // y from original position
-                  textMap.set(key, posMap); // Keep 'position' map for now
-                  textMap.set('x', value.x); // Also store x at root
-                  textMap.set('y', value.y); // Also store y at root
-                } else {
-                  textMap.set(key, value);
-                }
-              }
-              textMap.set('rotation', 0); // Default rotation
-              yDrawings.value.push([textMap]);
-              refreshMovableElements();
-            }, 'local-text'); // Add origin
-            // No need to remove tempCanvas, it will be garbage collected
-
-            // Po każdej transakcji dodaj (inside try block):
-            nextTick(() => {
-               if (undoManager.value) {
-                  updateGlobalState(); // Use the shared function
-               }
-            });
-        } catch (error) {
-            // console.error("Error adding text element:", error); // Commented out
-            showToast("Failed to add text to whiteboard.", "error");
-        }
     };
 
     // --- Undo/Redo Methods --- (Replaced by Fragment 1)
@@ -2475,12 +2472,12 @@ export default {
       handleObjectUpdate,
       selectObject, 
 
-      // Text Input State
-      showTextInput,
-      textInputValue,
-      textInputRef,
-      confirmTextInput,
-      cancelTextInput,
+      // Inline Text Editor
+      inlineTextEditor,
+      inlineTextRef,
+      inlineTextStyle,
+      finalizeInlineText,
+      handleInlineTextEnter,
 
       // Helper action methods (also exposed)
       alignToGrid,
@@ -2602,65 +2599,5 @@ export default {
 .toast-warning { background-color: #FF9800; }
 .toast-error { background-color: #F44336; }
 
-/* Text Input Modal Styles */
-.text-input-modal-overlay {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  background: rgba(0, 0, 0, 0.5);
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  z-index: 2000;
-}
 
-.text-input-modal {
-  background: white;
-  padding: 20px;
-  border-radius: 8px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  min-width: 300px;
-}
-
-.text-input-modal h3 {
-  margin: 0;
-  font-size: 18px;
-  color: #333;
-}
-
-.text-input-modal input {
-  padding: 8px;
-  border: 1px solid #ccc;
-  border-radius: 4px;
-  font-size: 16px;
-}
-
-.modal-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 10px;
-}
-
-.btn-cancel, .btn-confirm {
-  padding: 8px 16px;
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-  font-weight: 600;
-}
-
-.btn-cancel {
-  background: #f0f0f0;
-  color: #333;
-}
-
-.btn-confirm {
-  background: #2196F3;
-  color: white;
-}
 </style>

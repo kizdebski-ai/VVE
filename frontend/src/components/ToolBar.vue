@@ -1,7 +1,7 @@
 <template>
   <div class="toolbar-container" :class="orientation">
     <!-- Main Toolbar -->
-    <div class="toolbar">
+    <div class="toolbar glass-panel">
       <!-- Tools Group -->
       <div class="tool-group" :class="{ vertical: orientation === 'vertical' }">
         <button
@@ -34,25 +34,74 @@
           </button>
           
           <!-- Shapes Dropdown -->
-          <div
-            v-if="showShapesMenu"
-            class="dropdown-menu glass-panel"
-            :class="orientation"
-            :style="shapesMenuStyle"
-          >
-            <div class="shapes-grid">
-              <button
-                v-for="shape in shapes"
-                :key="shape.name"
-                class="shape-btn"
-                :class="{ active: currentTool === shape.name }"
-                @click="selectShape(shape.name)"
-                :title="shape.label"
-              >
-                <component :is="shape.icon" :size="18" />
-              </button>
+          <Teleport to="body">
+            <div
+              v-if="showShapesMenu"
+              class="toolbar-popover glass-panel shapes-popover"
+              :style="shapesMenuStyle"
+              ref="shapesMenuRef"
+            >
+              <div class="popover-section">
+                <div class="section-title">Shapes</div>
+                <div class="shapes-grid">
+                    <button
+                      v-for="shape in shapeOptions"
+                      :key="shape.tool"
+                      class="shape-btn"
+                      :class="{ active: isShapeActive(shape) }"
+                      @click="selectShape(shape)"
+                      :title="shape.label"
+                    >
+                    <component :is="shape.icon" :size="18" />
+                  </button>
+                </div>
+              </div>
+
+              <div class="popover-section">
+                <div class="section-title">Line style</div>
+                <div class="option-row">
+                  <button
+                    v-for="style in lineStyleOptions"
+                    :key="style.value"
+                    class="option-pill"
+                    :class="{ active: currentLineStyle === style.value }"
+                    @click="selectLineStyle(style.value)"
+                  >
+                    {{ style.label }}
+                  </button>
+                </div>
+              </div>
+
+              <div class="popover-section">
+                <div class="section-title">Arrowheads</div>
+                <div class="option-row">
+                  <button
+                    v-for="style in arrowStyleOptions"
+                    :key="style.value"
+                    class="option-pill"
+                    :class="{ active: currentArrowStyle === style.value }"
+                    @click="selectArrowStyle(style.value)"
+                  >
+                    {{ style.label }}
+                  </button>
+                </div>
+              </div>
+
+              <div class="popover-section">
+                <div class="section-title">Quick colors</div>
+                <div class="color-row">
+                  <button
+                    v-for="swatch in colorSwatches"
+                    :key="swatch"
+                    class="color-swatch"
+                    :style="{ backgroundColor: swatch }"
+                    :class="{ active: currentColor === swatch }"
+                    @click="selectColorSwatch(swatch)"
+                  ></button>
+                </div>
+              </div>
             </div>
-          </div>
+          </Teleport>
         </div>
       </div>
 
@@ -79,32 +128,53 @@
           class="tool-btn" 
           :class="{ active: isMathPanelOpen }"
           @click="$emit('toggle-math-panel')" 
-          title="Math Graph"
+          title="Math Function Panel"
         >
-          <Calculator :size="20" />
+          <LineChart :size="20" />
         </button>
         <button 
           class="tool-btn" 
           :class="{ active: isPhysicsPanelOpen }"
           @click="$emit('toggle-physics-panel')" 
-          title="Physics Plot"
+          title="Physics Plot Panel"
         >
           <Activity :size="20" />
         </button>
         <button 
           class="tool-btn" 
           @click="$emit('toggle-calculator')" 
-          title="Simple Calculator"
+          title="Scientific Calculator"
         >
           <Calculator :size="20" />
         </button>
-         <button 
-          class="tool-btn" 
-          @click="$emit('add-coordinate-system')" 
-          title="Add Coordinate System"
-        >
-          <Axis3d :size="20" />
-        </button>
+        <div class="dropdown-trigger coordinate-trigger" ref="coordinateTriggerRef">
+          <button 
+            class="tool-btn" 
+            :class="{ active: showCoordinateMenu }"
+            @click.stop="toggleCoordinateMenu"
+            title="Add Coordinate System"
+          >
+            <Axis3d :size="20" />
+            <ChevronDown :size="12" class="dropdown-arrow" />
+          </button>
+          <Teleport to="body">
+            <div
+              v-if="showCoordinateMenu"
+              class="toolbar-popover glass-panel coordinate-menu"
+              :style="coordinateMenuStyle"
+              ref="coordinateMenuRef"
+            >
+              <button
+                v-for="option in coordinateOptions"
+                :key="option.type"
+                class="shape-btn coordinate-btn"
+                @click="selectCoordinateSystem(option.type)"
+              >
+                {{ option.label }}
+              </button>
+            </div>
+          </Teleport>
+        </div>
       </div>
       
       <div class="divider" :class="{ horizontal: orientation === 'vertical' }"></div>
@@ -183,6 +253,11 @@ import {
   Calculator,
   Activity,
   Axis3d,
+  LineChart,
+  ArrowRight,
+  ArrowLeftRight,
+  Diamond,
+  Octagon,
   Bug,
   Circle,
   ImageIcon,
@@ -196,6 +271,8 @@ const props = defineProps({
   activeTool: { type: String, default: 'pen' },
   color: { type: String, default: '#000000' },
   lineWidth: { type: Number, default: 2 },
+  lineStyle: { type: String, default: 'solid' },
+  arrowStyle: { type: String, default: 'none' },
   isMathPanelOpen: Boolean,
   isPhysicsPanelOpen: Boolean,
   orientation: { type: String, default: 'vertical' } // 'vertical' or 'horizontal'
@@ -205,6 +282,8 @@ const emit = defineEmits([
   'update:activeTool', 
   'update:color', 
   'update:lineWidth', 
+  'update:lineStyle',
+  'update:arrowStyle',
   'update:eraserSize',
   'undo', 
   'redo', 
@@ -222,10 +301,18 @@ const currentColor = ref(props.color);
 const currentLineWidth = ref(props.lineWidth);
 const currentEraserSize = ref(30);
 const showShapesMenu = ref(false);
+const showCoordinateMenu = ref(false);
 const colorInput = ref(null);
 const shapesTriggerRef = ref(null);
 const dropdownTriggerRef = ref(null);
+const coordinateTriggerRef = ref(null);
+const shapesMenuRef = ref(null);
+const coordinateMenuRef = ref(null);
 const shapesMenuStyle = ref({});
+const coordinateMenuStyle = ref({});
+const currentLineStyle = ref(props.lineStyle);
+const currentArrowStyle = ref(props.arrowStyle);
+const colorSwatches = ['#111827', '#2563eb', '#7c3aed', '#0f766e', '#c026d3', '#dc2626', '#f97316', '#1d4ed8'];
 
 const positionShapesMenu = () => {
   if (!showShapesMenu.value) return;
@@ -250,34 +337,69 @@ const positionShapesMenu = () => {
   shapesMenuStyle.value = style;
 };
 
-const handleOutsideClick = (e) => {
-  const container = dropdownTriggerRef.value;
-  if (!container) return;
-  if (showShapesMenu.value && !container.contains(e.target)) {
+const positionCoordinateMenu = () => {
+  if (!showCoordinateMenu.value) return;
+  const btn = coordinateTriggerRef.value?.querySelector('.tool-btn');
+  if (!btn) return;
+  const rect = btn.getBoundingClientRect();
+  coordinateMenuStyle.value = {
+    position: 'fixed',
+    top: Math.round(rect.bottom + 8) + 'px',
+    left: Math.round(rect.left + rect.width / 2) + 'px',
+    transform: 'translateX(-50%)',
+    zIndex: 4000
+  };
+};
+
+const handleGlobalPointer = (e) => {
+  const shapeContainer = dropdownTriggerRef.value;
+  const coordContainer = coordinateTriggerRef.value;
+  const shapeMenuEl = shapesMenuRef.value;
+  const coordMenuEl = coordinateMenuRef.value;
+
+  if (
+    showShapesMenu.value &&
+    shapeContainer &&
+    !(shapeContainer.contains(e.target) || shapeMenuEl?.contains(e.target))
+  ) {
     showShapesMenu.value = false;
+  }
+  if (
+    showCoordinateMenu.value &&
+    coordContainer &&
+    !(coordContainer.contains(e.target) || coordMenuEl?.contains(e.target))
+  ) {
+    showCoordinateMenu.value = false;
   }
 };
 
 onMounted(() => {
   window.addEventListener('resize', positionShapesMenu);
   window.addEventListener('scroll', positionShapesMenu, true);
-  document.addEventListener('mousedown', handleOutsideClick);
+  window.addEventListener('resize', positionCoordinateMenu);
+  window.addEventListener('scroll', positionCoordinateMenu, true);
+  document.addEventListener('mousedown', handleGlobalPointer);
 });
 
 onBeforeUnmount(() => {
   window.removeEventListener('resize', positionShapesMenu);
   window.removeEventListener('scroll', positionShapesMenu, true);
-  document.removeEventListener('mousedown', handleOutsideClick);
+  window.removeEventListener('resize', positionCoordinateMenu);
+  window.removeEventListener('scroll', positionCoordinateMenu, true);
+  document.removeEventListener('mousedown', handleGlobalPointer);
 });
 
 // Watch for prop changes
 watch(() => props.activeTool, (newVal) => currentTool.value = newVal);
 watch(() => props.color, (newVal) => currentColor.value = newVal);
 watch(() => props.lineWidth, (newVal) => currentLineWidth.value = newVal);
+watch(() => props.lineStyle, (newVal) => currentLineStyle.value = newVal);
+watch(() => props.arrowStyle, (newVal) => currentArrowStyle.value = newVal);
 watch(() => props.orientation, () => {
-  if (showShapesMenu.value) {
-    nextTick(() => positionShapesMenu());
-  }
+  nextTick(() => {
+    positionShapesMenu();
+    positionCoordinateMenu();
+  });
 });
 
 // Tools Configuration
@@ -288,15 +410,49 @@ const mainTools = [
   { name: 'text', label: 'Text (T)', icon: Type },
 ];
 
-const shapes = [
-  { name: 'rectangle', label: 'Rectangle', icon: Square },
-  { name: 'circle', label: 'Circle', icon: CircleIcon },
-  { name: 'triangle', label: 'Triangle', icon: Triangle },
-  { name: 'line', label: 'Line', icon: Minus },
-  { name: 'cube', label: 'Cube', icon: Box },
-  { name: 'cylinder', label: 'Cylinder', icon: Cylinder },
-  { name: 'cone', label: 'Cone', icon: Cone },
-  { name: 'pyramid', label: 'Pyramid', icon: Pyramid },
+const shapeOptions = [
+  { id: 'line', tool: 'line', label: 'Line', icon: Minus, resetArrow: true },
+  { id: 'arrow', tool: 'line', label: 'Arrow', icon: ArrowRight, presetArrow: 'end' },
+  { id: 'double-arrow', tool: 'line', label: '↔', icon: ArrowLeftRight, presetArrow: 'both' },
+  { id: 'rectangle', tool: 'rectangle', label: 'Rectangle', icon: Square },
+  { id: 'circle', tool: 'circle', label: 'Ellipse', icon: CircleIcon },
+  { id: 'triangle', tool: 'triangle', label: 'Triangle', icon: Triangle },
+  { id: 'diamond', tool: 'deltoid', label: 'Diamond', icon: Diamond },
+  { id: 'parallelogram', tool: 'parallelogram', label: 'Parallelogram', icon: Octagon },
+  { id: 'cube', tool: 'cube', label: 'Cube', icon: Box },
+  { id: 'cylinder', tool: 'cylinder', label: 'Cylinder', icon: Cylinder },
+  { id: 'cone', tool: 'cone', label: 'Cone', icon: Cone },
+  { id: 'pyramid', tool: 'pyramid', label: 'Pyramid', icon: Pyramid },
+];
+
+const lineStyleOptions = [
+  { value: 'solid', label: 'Solid' },
+  { value: 'dashed', label: 'Dashed' },
+  { value: 'dotted', label: 'Dotted' }
+];
+
+const arrowStyleOptions = [
+  { value: 'none', label: 'None' },
+  { value: 'end', label: 'End' },
+  { value: 'both', label: 'Both' }
+];
+
+const isShapeActive = (shapeOption) => {
+  if (shapeOption.id === 'arrow') {
+    return currentTool.value === 'line' && currentArrowStyle.value === 'end';
+  }
+  if (shapeOption.id === 'double-arrow') {
+    return currentTool.value === 'line' && currentArrowStyle.value === 'both';
+  }
+  if (shapeOption.id === 'line') {
+    return currentTool.value === 'line' && currentArrowStyle.value === 'none';
+  }
+  return currentTool.value === shapeOption.tool;
+};
+
+const coordinateOptions = [
+  { type: '2d', label: 'Add 2D System' },
+  { type: '3d', label: 'Add 3D System' },
 ];
 
 // Computed
@@ -305,19 +461,27 @@ const showProperties = computed(() => {
 });
 
 const currentShapeIcon = computed(() => {
-  const shape = shapes.find(s => s.name === currentTool.value);
-  return shape ? shape.icon : Square;
+  const activeShape = shapeOptions.find(option => isShapeActive(option));
+  return activeShape ? activeShape.icon : Square;
 });
 
 // Methods
-const selectTool = (toolName) => {
+const selectTool = (toolName, options = { closeMenus: true }) => {
   currentTool.value = toolName;
   emit('update:activeTool', toolName);
-  showShapesMenu.value = false;
+  if (options.closeMenus !== false) {
+    showShapesMenu.value = false;
+    showCoordinateMenu.value = false;
+  }
 };
 
-const selectShape = (shapeName) => {
-  selectTool(shapeName);
+const selectShape = (shapeOption) => {
+  selectTool(shapeOption.tool, { closeMenus: false });
+  if (shapeOption.presetArrow) {
+    selectArrowStyle(shapeOption.presetArrow);
+  } else if (shapeOption.resetArrow || shapeOption.tool !== 'line') {
+    selectArrowStyle('none');
+  }
 };
 
 const toggleShapesMenu = () => {
@@ -327,8 +491,35 @@ const toggleShapesMenu = () => {
   }
 };
 
+const selectLineStyle = (style) => {
+  currentLineStyle.value = style;
+  emit('update:lineStyle', style);
+};
+
+const selectArrowStyle = (style) => {
+  currentArrowStyle.value = style;
+  emit('update:arrowStyle', style);
+};
+
+const selectColorSwatch = (color) => {
+  currentColor.value = color;
+  emit('update:color', color);
+};
+
+const toggleCoordinateMenu = () => {
+  showCoordinateMenu.value = !showCoordinateMenu.value;
+  if (showCoordinateMenu.value) {
+    nextTick(() => positionCoordinateMenu());
+  }
+};
+
+const selectCoordinateSystem = (type) => {
+  emit('add-coordinate-system', type);
+  showCoordinateMenu.value = false;
+};
+
 const isShapeTool = (tool) => {
-  return shapes.some(s => s.name === tool);
+  return shapeOptions.some(s => s.tool === tool);
 };
 
 const toggleColorPicker = () => {
@@ -380,8 +571,6 @@ const updateEraserSize = () => {
 
 .toolbar {
   pointer-events: auto;
-  pointer-events: auto;
-  pointer-events: auto;
   display: flex;
   gap: 8px;
   align-items: center; /* Ensure items are centered */
@@ -389,18 +578,12 @@ const updateEraserSize = () => {
 }
 
 .toolbar-container.vertical .toolbar {
-  pointer-events: auto;
-  pointer-events: auto;
-  pointer-events: auto;
   flex-direction: column;
   min-width: 56px; /* Prevent collapse */
   padding: 12px 8px; /* More padding */
 }
 
 .toolbar-container.horizontal .toolbar {
-  pointer-events: auto;
-  pointer-events: auto;
-  pointer-events: auto;
   flex-direction: row;
   min-height: 56px;
 }
@@ -472,24 +655,91 @@ const updateEraserSize = () => {
   opacity: 0.6;
 }
 
-.dropdown-menu {
-  position: absolute;
-  padding: 8px;
-  min-width: 160px;
-  z-index: 4000; /* Ensure above everything */
+.toolbar-popover {
+  position: fixed;
+  padding: 12px;
+  min-width: 220px;
+  z-index: 4000;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
-.dropdown-menu.vertical {
-  top: 0;
-  left: 100%; /* Right of the button */
-  margin-left: 8px;
+.shapes-popover {
+  min-width: 260px;
 }
 
-.dropdown-menu:not(.vertical) {
-  bottom: 100%;
-  left: 50%;
-  transform: translateX(-50%);
-  margin-bottom: 8px;
+.coordinate-menu {
+  min-width: 180px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.popover-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.section-title {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #6b7280;
+  font-weight: 600;
+}
+
+.option-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.option-pill {
+  border: 1px solid rgba(15, 23, 42, 0.15);
+  background: rgba(255, 255, 255, 0.8);
+  border-radius: 9999px;
+  padding: 4px 10px;
+  font-size: 12px;
+  color: #374151;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.option-pill:hover {
+  border-color: #2563eb;
+  color: #2563eb;
+}
+
+.option-pill.active {
+  background: #2563eb;
+  color: #fff;
+  border-color: #2563eb;
+}
+
+.color-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.color-swatch {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  cursor: pointer;
+  transition: transform 0.15s ease, border-color 0.15s ease;
+}
+
+.color-swatch:hover {
+  transform: scale(1.1);
+}
+
+.color-swatch.active {
+  border-color: #2563eb;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.2);
 }
 
 .shapes-grid {
@@ -518,6 +768,13 @@ const updateEraserSize = () => {
 .shape-btn.active {
   background: #eff6ff;
   color: #2563eb;
+}
+
+.coordinate-btn {
+  justify-content: flex-start;
+  width: 100%;
+  padding: 6px 10px;
+  font-size: 13px;
 }
 
 /* Properties Bar */

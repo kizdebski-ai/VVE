@@ -1,7 +1,9 @@
 <template>
-  <div class="calculator" :class="{ 'scientific-mode-active': isScientificMode }" @keydown="handleKeydown" tabindex="0" ref="calculatorRef">
+  <div class="calculator glass-panel" :class="{ 'scientific-mode-active': isScientificMode }" @keydown="handleKeydown" tabindex="0" ref="calculatorRef">
      <!-- Integrated Close Button -->
-     <button class="internal-close-btn" @click="$emit('close')">&times;</button>
+     <button class="internal-close-btn" @click="$emit('close')">
+       <X :size="20" />
+     </button>
 
     <div class="display">
       <div class="expression">{{ currentExpression || '&nbsp;' }}</div>
@@ -23,14 +25,18 @@
 
         <button @click="inputParenthesis('(')" class="btn-sci paren-l">(</button>
         <button @click="inputParenthesis(')')" class="btn-sci paren-r">)</button>
-        <button @click="copyResult" title="Copy Result" class="btn-sci copy">Copy</button>
+        <button @click="copyResult" title="Copy Result" class="btn-sci copy">
+          <Copy :size="16" />
+        </button>
         <button @click="toggleScientificMode" class="btn-sci toggle-basic">Basic</button>
 
         <!-- Basic Buttons (Always Rendered, position adjusted by CSS) -->
         <button @click="clearAll" class="btn-op ac">AC</button>
         <button @click="inputOperator('/')" class="btn-op divide">÷</button>
         <button @click="inputOperator('*')" class="btn-op multiply">×</button>
-        <button @click="backspace" class="btn-op backspace">⌫</button>
+        <button @click="backspace" class="btn-op backspace">
+          <Delete :size="20" />
+        </button>
 
         <button @click="inputDigit('7')" class="btn-digit seven">7</button>
         <button @click="inputDigit('8')" class="btn-digit eight">8</button>
@@ -58,6 +64,7 @@
 import { ref, onMounted, nextTick } from 'vue';
 import { create, all } from 'mathjs';
 import { copyToClipboard } from '../utils/fileUtils';
+import { X, Copy, Delete } from 'lucide-vue-next';
 
 // Configure mathjs
 const math = create(all, {
@@ -295,46 +302,48 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.calculator {
+.glass-panel {
   width: 320px; /* Fixed width */
   border-radius: 24px;
   overflow: hidden;
-  background-color: rgba(30, 30, 35, 0.75); /* More transparent */
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-  box-shadow: 0 12px 35px rgba(0, 0, 0, 0.3);
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  background: rgba(255, 255, 255, 0.8);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: 0 12px 35px rgba(0, 0, 0, 0.15);
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  font-family: 'Inter', sans-serif;
   display: flex;
   flex-direction: column;
-  color: #FFFFFF;
+  color: #1f2937;
   position: relative;
-  /* No width transition */
 }
-/* Remove scientific-mode-active class */
 
 /* Internal Close Button Styling */
 .internal-close-btn {
   position: absolute;
-  top: 8px;
-  right: 8px;
+  top: 12px;
+  right: 12px;
   background: none;
   border: none;
-  font-size: 24px;
-  color: #AAA;
+  color: #6b7280;
   cursor: pointer;
-  padding: 5px;
-  line-height: 1;
+  padding: 4px;
   z-index: 10;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
 }
 .internal-close-btn:hover {
-  color: #FFF;
+  background: rgba(0,0,0,0.05);
+  color: #374151;
 }
 
 .display {
-  padding: 35px 25px 15px 25px;
+  padding: 40px 24px 20px 24px;
   text-align: right;
-  min-height: 120px;
+  min-height: 140px;
   display: flex;
   flex-direction: column;
   justify-content: flex-end;
@@ -343,19 +352,19 @@ onMounted(() => {
 }
 
 .expression {
-  font-size: 22px;
-  color: #B0B0B0;
-  min-height: 30px;
+  font-size: 18px;
+  color: #6b7280;
+  min-height: 24px;
   word-break: break-all;
   overflow-wrap: break-word;
   margin-bottom: 8px;
 }
 
 .result {
-  font-size: 60px;
+  font-size: 48px;
   font-weight: 300;
-  color: #FFFFFF;
-  min-height: 70px;
+  color: #111827;
+  min-height: 60px;
   overflow-wrap: break-word;
   line-height: 1.1;
 }
@@ -363,11 +372,11 @@ onMounted(() => {
 /* Combined Buttons Container */
 .buttons {
   display: grid;
-  gap: 12px; /* Adjusted gap */
-  padding: 18px; /* Adjusted padding */
+  gap: 10px;
+  padding: 20px;
   flex-grow: 1;
   grid-template-columns: repeat(4, 1fr);
-  /* Rows defined by mode */
+  background: rgba(255, 255, 255, 0.3);
 }
 /* Basic mode rows */
 .buttons:not(.scientific-mode) {
@@ -379,24 +388,27 @@ onMounted(() => {
 }
 
 .buttons button {
-  font-size: 26px; /* Adjusted base font */
-  font-weight: 400;
+  font-size: 20px;
+  font-weight: 500;
   border: none;
-  border-radius: 18px;
-  color: #FFFFFF;
+  border-radius: 16px;
+  color: #1f2937;
   cursor: pointer;
-  transition: background-color 0.15s ease, transform 0.1s ease;
+  transition: all 0.15s ease;
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 50px; /* Adjusted height */
+  min-height: 50px;
+  background: rgba(255, 255, 255, 0.6);
+  box-shadow: 0 2px 5px rgba(0,0,0,0.05);
 }
 .buttons button:hover {
-  filter: brightness(1.15);
+  background: rgba(255, 255, 255, 0.9);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 8px rgba(0,0,0,0.08);
 }
 .buttons button:active {
-  transform: scale(0.96);
-  filter: brightness(0.9);
+  transform: scale(0.98);
 }
 
 /* Hide scientific buttons by default */
@@ -406,8 +418,10 @@ onMounted(() => {
 /* Show scientific buttons and assign grid positions in scientific mode */
 .buttons.scientific-mode .btn-sci {
   display: flex;
-  background-color: #404045; /* Dark grey */
-  font-size: 16px;
+  background-color: rgba(243, 244, 246, 0.8);
+  font-size: 14px;
+  font-weight: 600;
+  color: #4b5563;
 }
 
 /* Scientific Grid Positions (Rows 1-3) */
@@ -425,12 +439,28 @@ onMounted(() => {
 .buttons.scientific-mode .toggle-basic { grid-column: 4 / 5; grid-row: 3 / 4; }
 
 
-/* Basic Button Colors */
-.buttons .btn-digit { background-color: #5A5A5A; }
-.buttons .btn-op { background-color: #E07A5F; }
-.buttons .btn-equal { background-color: #E07A5F; }
-.buttons .ac { background-color: #757575; }
-.buttons .sci-toggle { background-color: #757575; font-size: 20px; }
+/* Button Colors */
+.buttons .btn-digit { background-color: rgba(255, 255, 255, 0.8); }
+.buttons .btn-op { 
+    background-color: #fef3c7; 
+    color: #d97706;
+}
+.buttons .btn-equal { 
+    background-color: #3b82f6; 
+    color: white;
+}
+.buttons .btn-equal:hover {
+    background-color: #2563eb;
+}
+.buttons .ac { 
+    background-color: #fee2e2; 
+    color: #dc2626;
+}
+.buttons .sci-toggle { 
+    background-color: #f3f4f6; 
+    color: #4b5563;
+    font-size: 16px; 
+}
 
 /* Basic Button Grid Positions (When NOT in scientific mode) */
 .buttons:not(.scientific-mode) .ac { grid-column: 1 / 2; grid-row: 1 / 2; }

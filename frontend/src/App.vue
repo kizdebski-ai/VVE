@@ -198,6 +198,7 @@ import { copyToClipboard } from './utils/fileUtils.js';
 import * as Y from 'yjs';
 import { Buffer } from 'buffer';
 import katex from 'katex';
+import { buildRoomHash, createNewRoomUrl, parseRoomHash } from './lib/roomLink';
 import 'katex/dist/katex.min.css';
 import { undoRedoState } from './utils/undoRedoState'; // 2. Add import
 
@@ -235,7 +236,8 @@ export default {
         console.log(...args);
       }
     };
-    const roomId = ref('default_room');
+    const roomId = ref('');
+    const roomKey = ref('');
     const currentShape = ref('rectangle');
     const currentLineStyle = ref('solid');
     const isCalculatorVisible = ref(false);
@@ -558,7 +560,8 @@ export default {
     };
 
     const shareRoom = () => {
-      const shareableUrl = `${window.location.origin}${window.location.pathname}?room=${roomId.value}`;
+      const hash = buildRoomHash({ roomId: roomId.value, roomKey: roomKey.value });
+      const shareableUrl = `${window.location.origin}${window.location.pathname}${hash}`;
 
       const fallbackCopy = () => {
         try {
@@ -642,18 +645,25 @@ export default {
 
     // --- Lifecycle Hooks ---
     onMounted(() => {
-      const urlParams = new URLSearchParams(window.location.search);
-      let initialRoomId = urlParams.get('room');
-      if (!initialRoomId) {
-        initialRoomId = localStorage.getItem('last_room_id') || `board_${Math.random().toString(36).substr(2, 9)}`;
-        const newUrl = new URL(window.location);
-        newUrl.searchParams.set('room', initialRoomId);
-        window.history.replaceState({}, '', newUrl);
-      } else {
-        localStorage.setItem('last_room_id', initialRoomId);
-      }
-      roomId.value = initialRoomId;
-      appDebugLog(`App mounted. Room ID: ${roomId.value}`);
+      const bootstrapRoom = async () => {
+        const parsed = parseRoomHash(window.location.hash);
+        if (parsed) {
+          roomId.value = parsed.roomId;
+          roomKey.value = parsed.roomKey;
+        } else {
+          const newUrl = await createNewRoomUrl();
+          const newParsed = parseRoomHash(new URL(newUrl).hash);
+          if (newParsed) {
+            roomId.value = newParsed.roomId;
+            roomKey.value = newParsed.roomKey;
+          }
+          window.history.replaceState({}, '', newUrl);
+        }
+        localStorage.setItem('last_room_id', roomId.value);
+        appDebugLog(`App mounted. Room ID: ${roomId.value}`);
+      };
+
+      bootstrapRoom();
 
       document.body.classList.toggle('dark-mode', darkMode.value);
       window.addEventListener('beforeunload', handleBeforeUnload);

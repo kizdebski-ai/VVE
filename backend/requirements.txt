@@ -9,3 +9,6 @@ daphne
 # Yjs backend
 y-py>=0.6
 anyio
+
+# AI integrations
+openai

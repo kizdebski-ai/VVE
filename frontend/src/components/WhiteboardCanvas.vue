@@ -208,6 +208,14 @@ export default {
     const currentLineWidth = ref(2);
     const zoomLevel = ref(1);
     const panOffset = ref({ x: 0, y: 0 });
+    const captureBoardScreenshot = async () => {
+      const canvasElement = canvas.value;
+      if (!canvasElement) {
+        throw new Error('Canvas is not ready');
+      }
+
+      return canvasElement.toDataURL('image/png');
+    };
     const isPanning = ref(false);
     const lastPanPoint = ref(null);
     const statusMessage = ref('');
@@ -2308,7 +2316,8 @@ export default {
         applyGhostAnswer: (payload) => { // Wrap applyMathAnswer if needed
             const stroke = mathRecognizerModule.value?.applyGhostAnswer();
             if (stroke) applyMathAnswer(stroke);
-        }
+        },
+        captureBoardScreenshot,
     });
 
     return {
@@ -2347,6 +2356,7 @@ export default {
       handleTouchMove,
       handleTouchEnd,
       handleObjectSelectionRequest, // Added
+      captureBoardScreenshot,
 
       // Public API (already exposed via defineExpose)
       setTool,

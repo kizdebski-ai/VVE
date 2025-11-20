@@ -93,8 +93,20 @@
              <label>Ghost Opacity: {{ mathRecognizerOptions.ghostOpacity }}</label>
              <input type="range" min="0" max="1" step="0.05" v-model.number="mathRecognizerOptions.ghostOpacity">
            </div>
-         </div>
-       </div>
+          <div class="math-input-block">
+            <label for="math-input-area">Pole matematyczne (LaTeX)</label>
+            <textarea
+              id="math-input-area"
+              class="math-input"
+              v-model="mathInputValue"
+              placeholder="Wpisz lub uzupełnij wyrażenie LaTeX"
+              @focus="onMathInputFocus"
+              @blur="onMathInputBlur"
+            ></textarea>
+            <div class="math-input-hint">Wciśnij Tab w okienku asystenta AI, aby wkleić podpowiedź w to pole.</div>
+          </div>
+        </div>
+      </div>
       
       <!-- User info in top-right corner -->
       <div class="floating-user-info">
@@ -176,11 +188,12 @@
       <div>Local Canvas: {{whiteboard?.canUndo}}/{{whiteboard?.canRedo}}</div>
       <button @click="forceUpdateUndoRedo">Wymuś update</button>
     </div>
-    
+
 
   </div>
+  <AiMathAssistant :capture-board-screenshot="captureBoardScreenshot" />
   <MathGraphPanel v-if="showMathGraphPanel" @close="showMathGraphPanel = false" />
-    <PhysicsGraphPanel v-if="showPhysicsGraphPanel" @close="showPhysicsGraphPanel = false" />
+  <PhysicsGraphPanel v-if="showPhysicsGraphPanel" @close="showPhysicsGraphPanel = false" />
 </template>
 
 <script>
@@ -192,6 +205,7 @@ import ImportDialog from './components/ImportDialog.vue';
 import ExportDialog from './components/ExportDialog.vue';
 import ThemeToggle from './components/ThemeToggle.vue';
 import CalculatorModal from './components/CalculatorModal.vue';
+import AiMathAssistant from './components/ai-tools/AiMathAssistant.vue';
 // Placeholder imports for optional feature panels
 // import GridAlignPanel from './components/panels/GridAlignPanel.vue';
 import { copyToClipboard } from './utils/fileUtils.js';
@@ -200,6 +214,7 @@ import { Buffer } from 'buffer';
 import katex from 'katex';
 import 'katex/dist/katex.min.css';
 import { undoRedoState } from './utils/undoRedoState'; // 2. Add import
+import { useMathInputRegistry } from './composables/useMathInputRegistry';
 
 
 export default {
@@ -211,7 +226,8 @@ export default {
     ImportDialog,
     ExportDialog,
     ThemeToggle,
-    CalculatorModal // Register CalculatorModal
+    CalculatorModal, // Register CalculatorModal
+    AiMathAssistant,
   },
   setup() {
     // --- Template Refs ---
@@ -240,6 +256,8 @@ export default {
     const currentLineStyle = ref('solid');
     const isCalculatorVisible = ref(false);
     const globalUndoRedoState = undoRedoState;
+    const mathInputValue = ref('');
+    const { registerActiveMathInput } = useMathInputRegistry();
 
     // --- Feature State ---
     const activeFeature = ref(null); // 'gridAlign', 'styleHandwriting', 'mathRecognizer', or null
@@ -605,6 +623,22 @@ export default {
       }
     };
 
+    const onMathInputFocus = (event) => {
+      registerActiveMathInput(event.target);
+    };
+
+    const onMathInputBlur = () => {
+      registerActiveMathInput(null);
+    };
+
+    const captureBoardScreenshot = async () => {
+      if (!whiteboard.value || typeof whiteboard.value.captureBoardScreenshot !== 'function') {
+        throw new Error('Whiteboard nie jest gotowy do wykonania zrzutu ekranu');
+      }
+
+      return whiteboard.value.captureBoardScreenshot();
+    };
+
     // --- Feature Methods ---
     const toggleFeature = (featureName) => {
       if (activeFeature.value === featureName) {
@@ -682,6 +716,7 @@ export default {
       currentShape,
       currentLineStyle,
       isCalculatorVisible, // Return state for modal
+      mathInputValue,
       activeUsersCount,
       localClientId,
       formattedLastSaved,
@@ -706,6 +741,7 @@ export default {
       showNotification,
       callWhiteboardUndo,
       callWhiteboardRedo,
+      captureBoardScreenshot,
       // 4. Add new variables to return
       globalUndoRedoState,
       forceUpdateUndoRedo,
@@ -720,6 +756,8 @@ export default {
       solution,
       hasCharGroups,
       hasStylizedStrokes,
+      onMathInputFocus,
+      onMathInputBlur,
       toggleFeature,
       triggerWhiteboardAction,
       // Need to add computed for renderedLatex if KaTeX is used here
@@ -923,6 +961,44 @@ export default {
 .slider-container input[type="range"] {
   width: 100%;
   cursor: pointer;
+}
+
+.math-input-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.math-input {
+  width: 100%;
+  min-height: 90px;
+  border: 1px solid var(--border-color, #d1d5db);
+  border-radius: 6px;
+  padding: 10px;
+  font-size: 14px;
+  background-color: var(--dialog-bg, #ffffff);
+  color: var(--text-color, #111827);
+  resize: vertical;
+}
+
+.math-input:focus {
+  outline: 2px solid #4f46e5;
+  outline-offset: 2px;
+}
+
+.dark-mode .math-input {
+  background-color: #1f2937;
+  color: #f3f4f6;
+  border-color: #374151;
+}
+
+.math-input-hint {
+  font-size: 12px;
+  color: var(--text-color-secondary, #555);
+}
+
+.dark-mode .math-input-hint {
+  color: var(--text-color-secondary-dark, #bbb);
 }
 
 .action-button {

@@ -8,6 +8,7 @@ import * as Y from 'yjs';
 import { config } from './config';
 import { logger } from './logger';
 import { roomManager, RoomContext } from './rooms';
+import { analyzeBoardImage } from './ai';
 
 const messageSync = 0;
 const messageAwareness = 1;
@@ -175,6 +176,39 @@ app.get('/rooms', (_, res) => {
   res.json({
     rooms: roomManager.snapshot()
   });
+});
+
+app.post('/api/ai/board-math-assistant', async (req, res) => {
+  const imageBase64: unknown = req.body?.imageBase64;
+
+  if (typeof imageBase64 !== 'string' || imageBase64.trim().length === 0) {
+    res.status(400).json({ error: 'imageBase64 is required' });
+    return;
+  }
+
+  try {
+    // Basic validation that the payload is decodable
+    const encodedPart = imageBase64.includes(',')
+      ? imageBase64.split(',', 2)[1] ?? ''
+      : imageBase64;
+
+    if (!encodedPart) {
+      throw new Error('Empty base64 payload');
+    }
+
+    Buffer.from(encodedPart, 'base64');
+  } catch {
+    res.status(400).json({ error: 'Invalid base64 image data' });
+    return;
+  }
+
+  try {
+    const response = await analyzeBoardImage(imageBase64);
+    res.json(response);
+  } catch (error) {
+    logger.error('AI assistant failed', { error: (error as Error).message });
+    res.status(500).json({ error: 'AI assistant unavailable' });
+  }
 });
 
 const server = http.createServer(app);

@@ -419,6 +419,14 @@ export default {
       }
     };
 
+    const captureBoardScreenshot = async () => {
+      if (!canvas.value) {
+        throw new Error('Canvas element is not ready.');
+      }
+
+      return canvas.value.toDataURL('image/png');
+    };
+
 
     // Method to open a configuration panel
     const openConfigPanel = (panelType, coords) => {
@@ -2305,6 +2313,7 @@ export default {
         confirmStyleChanges,
         cancelStyleChanges,
         recognizeEquation,
+        captureBoardScreenshot,
         applyGhostAnswer: (payload) => { // Wrap applyMathAnswer if needed
             const stroke = mathRecognizerModule.value?.applyGhostAnswer();
             if (stroke) applyMathAnswer(stroke);
@@ -2387,6 +2396,7 @@ export default {
       confirmStyleChanges,
       cancelStyleChanges,
       recognizeEquation,
+      captureBoardScreenshot,
       applyGhostAnswer: (payload) => { // Need wrapper here too for template access if needed, though App.vue calls exposed method
             const stroke = mathRecognizerModule.value?.applyGhostAnswer();
             if (stroke) applyMathAnswer(stroke);

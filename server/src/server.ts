@@ -18,6 +18,10 @@ type AwarenessChange = {
   updated: number[];
   removed: number[];
 };
+type AiAssistantResponse = {
+  answerText: string;
+  latexHint: string;
+};
 
 const send = (ws: WebSocket, data: Uint8Array) => {
   if (ws.readyState === WebSocket.OPEN) {
@@ -160,9 +164,73 @@ const parseRoomId = (requestUrl?: string | null): string | null => {
   return null;
 };
 
+const AI_SYSTEM_PROMPT = `Jesteś nauczycielem matematyki. Otrzymasz obraz tablicy z zadaniem i (czasem) częściowym rozwiązaniem.
+
+Rozpoznaj treść zadania i obecne obliczenia.
+
+Spróbuj udzielić pełnego, poprawnego rozwiązania lub wyjaśnienia.
+
+Wyznacz JEDNĄ sensowną podpowiedź będącą kolejnym krokiem obliczeń (w formie LaTeX).
+
+Odpowiedź zwróć TYLKO w JSON:
+{
+  "answerText": "pełne wyjaśnienie po polsku",
+  "latexHint": "TU_LATEX"
+}`;
+
+const sanitizeAiResponse = (data: Partial<AiAssistantResponse>): AiAssistantResponse => ({
+  answerText: typeof data.answerText === 'string' ? data.answerText : '',
+  latexHint: typeof data.latexHint === 'string' ? data.latexHint : ''
+});
+
+const requestAiAssistance = async (imageBase64: string): Promise<AiAssistantResponse> => {
+  if (!process.env.OPENAI_API_KEY) {
+    logger.warn('OPENAI_API_KEY is not set. Returning fallback AI response.');
+    return {
+      answerText: 'AI konfiguracja nie jest aktywna. Ustaw OPENAI_API_KEY, aby włączyć pełne odpowiedzi.',
+      latexHint: ''
+    };
+  }
+
+  const response = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${process.env.OPENAI_API_KEY}`
+    },
+    body: JSON.stringify({
+      model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
+      response_format: { type: 'json_object' },
+      messages: [
+        { role: 'system', content: AI_SYSTEM_PROMPT },
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'Przeanalizuj zrzut tablicy i zwróć JSON.' },
+            { type: 'image_url', image_url: { url: imageBase64 } }
+          ]
+        }
+      ]
+    })
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`OpenAI responded with ${response.status}: ${errorText}`);
+  }
+
+  const completion = (await response.json()) as any;
+  const messageContent = completion?.choices?.[0]?.message?.content;
+  if (typeof messageContent !== 'string') {
+    throw new Error('Unexpected OpenAI response format.');
+  }
+
+  return sanitizeAiResponse(JSON.parse(messageContent));
+};
+
 const app = express();
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
 
 app.get('/health', (_, res) => {
   res.json({
@@ -175,6 +243,22 @@ app.get('/rooms', (_, res) => {
   res.json({
     rooms: roomManager.snapshot()
   });
+});
+
+app.post('/api/ai/board-math-assistant', async (req, res) => {
+  const { imageBase64 } = req.body ?? {};
+
+  if (typeof imageBase64 !== 'string' || !imageBase64.startsWith('data:image/')) {
+    return res.status(400).json({ answerText: '', latexHint: '', error: 'Invalid imageBase64 payload.' });
+  }
+
+  try {
+    const aiResponse = await requestAiAssistance(imageBase64);
+    res.json(aiResponse);
+  } catch (error) {
+    logger.error('Failed to process AI board request', { error: (error as Error).message });
+    res.status(500).json({ answerText: '', latexHint: '' });
+  }
 });
 
 const server = http.createServer(app);

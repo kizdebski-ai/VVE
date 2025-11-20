@@ -82,16 +82,28 @@
            <button class="close-button" @click="toggleFeature(null)">×</button>
          </div>
          <div class="panel-content">
-           <button class="action-button" @click="triggerWhiteboardAction('recognizeEquation')">Recognize Equation</button>
-           <div class="status-display">Status: {{ recognitionStatus }}</div>
-           <div v-if="latexEquation" class="latex-preview-container">
-             LaTeX: <span id="latex-render-output"></span> <!-- Target for KaTeX -->
-           </div>
-           <div v-if="solution" class="status-display">Solution: {{ solution }}</div>
-           <button class="action-button" @click="triggerWhiteboardAction('applyGhostAnswer')" :disabled="!solution || solution.startsWith('Błąd') || solution.startsWith('Nie można')">Apply Answer (Shift+Enter)</button>
-           <div class="slider-container">
-             <label>Ghost Opacity: {{ mathRecognizerOptions.ghostOpacity }}</label>
-             <input type="range" min="0" max="1" step="0.05" v-model.number="mathRecognizerOptions.ghostOpacity">
+          <button class="action-button" @click="triggerWhiteboardAction('recognizeEquation')">Recognize Equation</button>
+          <div class="status-display">Status: {{ recognitionStatus }}</div>
+          <div v-if="latexEquation" class="latex-preview-container">
+            LaTeX: <span id="latex-render-output"></span> <!-- Target for KaTeX -->
+          </div>
+          <div class="math-input-block">
+            <label for="math-input">Pole matematyczne</label>
+            <textarea
+              id="math-input"
+              ref="mathInputRef"
+              v-model="mathInputValue"
+              @focus="registerActiveMathInput($event.target)"
+              @blur="registerActiveMathInput(null)"
+              placeholder="Wpisz lub edytuj wyrażenie LaTeX"
+            ></textarea>
+            <div class="math-input-hint">Użyj Tab w asystencie AI, by wstawić podpowiedź do tego pola.</div>
+          </div>
+          <div v-if="solution" class="status-display">Solution: {{ solution }}</div>
+          <button class="action-button" @click="triggerWhiteboardAction('applyGhostAnswer')" :disabled="!solution || solution.startsWith('Błąd') || solution.startsWith('Nie można')">Apply Answer (Shift+Enter)</button>
+          <div class="slider-container">
+            <label>Ghost Opacity: {{ mathRecognizerOptions.ghostOpacity }}</label>
+            <input type="range" min="0" max="1" step="0.05" v-model.number="mathRecognizerOptions.ghostOpacity">
            </div>
          </div>
        </div>
@@ -151,6 +163,11 @@
       <div class="room-info">
         <span>Room: {{ roomId }}</span>
       </div>
+
+      <AiMathAssistant
+        :capture-screenshot="captureBoardScreenshot"
+        :active-math-input-ref="activeMathInputRef"
+      />
     </div>
     
     <!-- Dialogs -->
@@ -192,6 +209,7 @@ import ImportDialog from './components/ImportDialog.vue';
 import ExportDialog from './components/ExportDialog.vue';
 import ThemeToggle from './components/ThemeToggle.vue';
 import CalculatorModal from './components/CalculatorModal.vue';
+import AiMathAssistant from './components/AiMathAssistant.vue';
 // Placeholder imports for optional feature panels
 // import GridAlignPanel from './components/panels/GridAlignPanel.vue';
 import { copyToClipboard } from './utils/fileUtils.js';
@@ -211,7 +229,8 @@ export default {
     ImportDialog,
     ExportDialog,
     ThemeToggle,
-    CalculatorModal // Register CalculatorModal
+    CalculatorModal, // Register CalculatorModal
+    AiMathAssistant
   },
   setup() {
     // --- Template Refs ---
@@ -219,6 +238,9 @@ export default {
     const toolbar = ref(null);
     const showMathGraphPanel = ref(false);
     const showPhysicsGraphPanel = ref(false);
+    const activeMathInputRef = ref(null);
+    const mathInputRef = ref(null);
+    const mathInputValue = ref('');
     // --- Reactive State ---
     const lastSaved = ref(null);
     const showExportDialog = ref(false);
@@ -368,6 +390,18 @@ export default {
           setTimeout(() => { document.body.removeChild(notification); }, 300);
         }, 3000);
       }
+    };
+
+    const registerActiveMathInput = (el) => {
+      activeMathInputRef.value = el;
+    };
+
+    const captureBoardScreenshot = async () => {
+      if (!whiteboard.value?.captureBoardScreenshot) {
+        throw new Error('Whiteboard is not ready to capture a screenshot.');
+      }
+
+      return whiteboard.value.captureBoardScreenshot();
     };
 
     const handleAwarenessChange = () => {
@@ -722,6 +756,11 @@ export default {
       hasStylizedStrokes,
       toggleFeature,
       triggerWhiteboardAction,
+      activeMathInputRef,
+      mathInputRef,
+      mathInputValue,
+      registerActiveMathInput,
+      captureBoardScreenshot,
       // Need to add computed for renderedLatex if KaTeX is used here
     };
   }
@@ -984,6 +1023,39 @@ export default {
 }
 .dark-mode .latex-preview-container .katex {
    color: var(--text-color-dark, #e0e0e0) !important;
+}
+
+.math-input-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.math-input-block textarea {
+  width: 100%;
+  min-height: 90px;
+  padding: 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border-color, #ccc);
+  background-color: var(--input-bg, #f9f9f9);
+  color: var(--text-color, #333);
+  resize: vertical;
+  font-family: 'Fira Code', Menlo, Consolas, monospace;
+}
+
+.dark-mode .math-input-block textarea {
+  border-color: var(--border-color-dark, #555);
+  background-color: var(--input-bg-dark, #1f2937);
+  color: var(--text-color-dark, #e0e0e0);
+}
+
+.math-input-hint {
+  font-size: 12px;
+  color: var(--text-color-secondary, #555);
+}
+
+.dark-mode .math-input-hint {
+  color: var(--text-color-secondary-dark, #bbb);
 }
 
 </style>

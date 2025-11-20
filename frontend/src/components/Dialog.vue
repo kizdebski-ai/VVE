@@ -1,9 +1,11 @@
 <template>
   <div class="dialog-overlay" v-if="show" @click.self="closeOnBackdrop ? $emit('close') : null">
-    <div class="dialog">
+    <div class="dialog glass-panel">
       <div class="dialog-header">
         <h4>{{ title }}</h4>
-        <button class="close-btn" @click="$emit('close')" v-if="showCloseButton">×</button>
+        <button class="close-btn" @click="$emit('close')" v-if="showCloseButton">
+          <X :size="20" />
+        </button>
       </div>
 
       <div class="dialog-content">
@@ -29,8 +31,13 @@
 </template>
 
 <script>
+import { X } from 'lucide-vue-next';
+
 export default {
   name: 'Dialog',
+  components: {
+    X
+  },
   props: {
     show: {
       type: Boolean,
@@ -89,95 +96,118 @@ export default {
   left: 0;
   right: 0;
   bottom: 0;
-  background-color: rgba(0, 0, 0, 0.7);
+  background-color: rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(4px);
   display: flex;
   justify-content: center;
   align-items: center;
-  z-index: 1000;
+  z-index: 2000;
   animation: fadeIn 0.2s ease-out;
 }
 
 .dialog {
-  background-color: #242424;
-  border-radius: 8px;
+  border-radius: 16px;
   padding: 0;
   width: 90%;
   max-width: 500px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
   animation: slideUp 0.3s ease-out;
   max-height: 90vh;
   display: flex;
   flex-direction: column;
 }
 
+.glass-panel {
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.15);
+}
+
 .dialog-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 15px 20px;
-  border-bottom: 1px solid #333;
+  padding: 16px 24px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
 }
 
 .dialog-header h4 {
   font-size: 18px;
+  font-weight: 600;
   margin: 0;
-  color: #fff;
+  color: #1f2937;
 }
 
 .close-btn {
   background: none;
   border: none;
-  color: #999;
-  font-size: 24px;
+  color: #9ca3af;
   cursor: pointer;
-  padding: 0;
-  width: 24px;
-  height: 24px;
+  padding: 4px;
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 4px;
+  border-radius: 8px;
+  transition: all 0.2s;
 }
 
 .close-btn:hover {
-  color: #fff;
-  background-color: rgba(255, 255, 255, 0.1);
+  color: #4b5563;
+  background-color: rgba(0, 0, 0, 0.05);
 }
 
 .dialog-content {
-  padding: 20px;
+  padding: 24px;
   overflow-y: auto;
   flex: 1;
+  color: #4b5563;
+  font-size: 15px;
+  line-height: 1.5;
 }
 
 .dialog-actions {
   display: flex;
   justify-content: flex-end;
-  gap: 10px;
-  padding: 15px 20px;
-  border-top: 1px solid #333;
+  gap: 12px;
+  padding: 16px 24px;
+  border-top: 1px solid rgba(0, 0, 0, 0.06);
+  background: rgba(250, 250, 250, 0.5);
+  border-bottom-left-radius: 16px;
+  border-bottom-right-radius: 16px;
 }
 
 .action-button {
-  padding: 8px 14px;
-  background-color: #4285f4;
+  padding: 10px 18px;
+  background-color: #2563eb;
   color: white;
   border: none;
-  border-radius: 4px;
+  border-radius: 8px;
   cursor: pointer;
   font-size: 14px;
+  font-weight: 500;
+  transition: all 0.2s;
 }
 
 .action-button:hover {
-  background-color: #3367d6;
+  background-color: #1d4ed8;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 6px rgba(37, 99, 235, 0.2);
+}
+
+.action-button:active {
+  transform: translateY(0);
 }
 
 .action-button.cancel {
-  background-color: #555;
+  background-color: white;
+  color: #4b5563;
+  border: 1px solid #e5e7eb;
 }
 
 .action-button.cancel:hover {
-  background-color: #666;
+  background-color: #f9fafb;
+  border-color: #d1d5db;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
 }
 
 @keyframes fadeIn {
@@ -186,7 +216,7 @@ export default {
 }
 
 @keyframes slideUp {
-  from { transform: translateY(30px); opacity: 0; }
+  from { transform: translateY(20px); opacity: 0; }
   to { transform: translateY(0); opacity: 1; }
 }
 

@@ -1,63 +1,80 @@
 # WhiteVue Collaboration Suite
-A full-stack collaborative whiteboard composed of a Django + Channels backend and a Vue 3 + Vite frontend powered by Yjs realtime synchronization.
+
+Modern collaborative whiteboard built on top of a TypeScript realtime backend and a Vue 3 client powered by Yjs.
+
 ## Architecture
-- **Backend** (backend/) *(legacy – kept for reference only)*
-  - Django 5 with Django REST Framework for health/status endpoints.
-  - Channels + Daphne manage WebSocket traffic.
-  - Redis support is enabled when `REDIS_URL` is set; otherwise the in-memory channel layer is used for development.
-- **Realtime Server** (server/)
-  - Node.js + TypeScript runtime (`express` + `ws`) inspired by Excalidraw’s architecture.
-  - Maintains Yjs docs & awareness in memory and exposes `/ws/whiteboard/:roomId`.
-  - `npm run dev` (inside `server/`) starts the collaboration backend on port `8000`.
-- **Frontend** (frontend/)
-- Redis 6+ (optional in development; set `REDIS_URL` to enable the Redis channel layer)
+
+- **Realtime backend** (`server/`)
+  - Node.js + TypeScript (`express` + `ws`)
+  - Hosts REST endpoints for room management and `/api/ai/solve-equation/`
+  - Maintains in-memory Yjs documents and awareness over `/ws/whiteboard/:roomId`
+- **Frontend** (`frontend/`)
+  - Vue 3 + Vite SPA
+  - Connects to the Node backend for room CRUD, WebSocket sync, and AI math assistance
+
+> The former Django backend has been removed. The repository is now entirely TypeScript-driven on the server side.
+
+## Prerequisites
+
+- Node.js 18+
+- npm 9+
+- Optional: `OPENROUTER_API_KEY` for AI equation solving (via [openrouter.ai](https://openrouter.ai))
+
+## Getting Started
+
+### Backend
 ```bash
-# Realtime backend
 cd server
 npm install
+# Development server with auto-reload
 npm run dev
+# Production build & start
+npm run build
+npm start
 ```
+
+Environment variables:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `HOST` | `0.0.0.0` | Bind host for HTTP/WebSocket server |
+| `PORT` | `8000` | Listen port |
+| `OPENROUTER_API_KEY` | _(required for AI route)_ | API key used to talk to OpenRouter |
+| `OPENROUTER_MODEL` | `openai/gpt-4o-mini` | Optional override for the model name |
+
+The backend exposes:
+- `/health` – service status
+- `/api/rooms` – CRUD endpoints for whiteboard rooms
+- `/api/ai/solve-equation/` – OCR + LLM powered math completion (requires `OPENROUTER_API_KEY`)
+- `/ws/whiteboard/:roomId` – Yjs document sync
+
+### Frontend
 ```bash
-# Frontend
 cd frontend
 npm install
-npm run dev
+npm run dev     # http://localhost:5173
+npm run build   # production bundle
 ```
-- npm run build  (frontend/) produce a production bundle.
-- python manage.py check  validate Django configuration.
-- python manage.py test  run backend tests (currently placeholders).
-- Update backend/backend/settings.py with deployment-ready SECRET_KEY, database, and allowed hosts.
-- frontend/src/services/connectToYjs.ts contains the WebSocket URL template; adjust when serving the backend under a different host/port.
-- Pass a room query parameter (e.g., ?room=team-session) to join or create a collaborative session.
-This project is provided as-is for demonstration purposes. Adapt and extend to match your production requirements.
-cd frontend
-npm install
-npm run dev
-`
 
-The dev server defaults to http://localhost:5173 and talks to the backend running on http://localhost:8000.
+The client automatically points to `http://localhost:8000` when running in dev mode. Override via `VITE_BACKEND_URL` if you host the server elsewhere.
 
-## Scripts
+## Testing
 
-- 
-pm run dev – start the Vite dev server.
-- 
-pm run build – produce a production bundle.
-- python manage.py check – validate Django configuration.
-- python manage.py test – run backend tests (currently placeholders).
+Automated tests live in `server/tests/` (Vitest + Supertest).
+```bash
+cd server
+npm run test
+```
 
-## Configuration
-
-- Update ackend/backend/settings.py with deployment-ready SECRET_KEY, database, and allowed hosts.
-- rontend/src/services/connectToYjs.ts contains the WebSocket URL template; adjust when serving backend under a different host/port.
-- Pass a oom query parameter (e.g., ?room=team-session) to join or create a collaborative session.
+The suite exercises the `RoomManager` utility and the Express routes (including the AI endpoint with a stub solver). No outbound network requests occur during tests.
 
 ## Development Notes
 
-- The backend stores Yjs document snapshots per room in WhiteboardRoom. Periodic cleanup can be implemented if rooms are ephemeral.
-- Movable objects (shapes, images, plots) are rendered via Vue components, whereas freehand strokes remain on the canvas for better performance.
-- Enable debugMode in App.vue while building new features to surface internal state logs.
+- Yjs docs are kept in memory. Set up persistence or periodic backups for production use.
+- The math recognizer on the frontend renders the equation canvas locally, runs OCR via `tesseract.js`, and sends the extracted text to `/api/ai/solve-equation/`.
+- Customize the AI prompt/temperature in `server/src/services/aiSolver.ts` if you need different behavior.
+- The cleanup routine removes inactive rooms (default TTL 30 minutes). Adjust `roomTtlMs` within `server/src/config.ts` for your workload.
 
 ## License
 
-This project is provided as-is for demonstration purposes. Adapt and extend to match your production requirements.
+Provided as-is for experimentation. Adapt and harden before deploying to production.

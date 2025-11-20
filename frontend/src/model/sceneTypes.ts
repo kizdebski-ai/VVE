@@ -1,6 +1,18 @@
 type ElementType = "rect" | "ellipse" | "arrow" | "text" | "image";
 
 interface BoundElement { id: string; type: "arrow"; }
+export type ElementType = "rect" | "ellipse" | "arrow" | "text" | "image";
+
+export interface BoundElement {
+  id: string;
+  type: "arrow";
+}
+
+export interface BindingInfo {
+  elementId: string;
+  focus: number;
+  gap: number;
+}
 
 export interface WhiteVueElement {
   id: string;
@@ -13,6 +25,12 @@ export interface WhiteVueElement {
   boundElements: BoundElement[] | null;
   updated: number;
   [key: string]: any;
+  startBinding?: BindingInfo;
+  endBinding?: BindingInfo;
+  startX?: number;
+  startY?: number;
+  endX?: number;
+  endY?: number;
 }
 
 export interface AppState {

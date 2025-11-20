@@ -14,6 +14,7 @@ export async function decryptElementsFromRoom(roomKey: string | CryptoKey, paylo
 }
 
 export async function saveSceneEncrypted(roomId: string, roomKey: string, elements: unknown, version: number) {
+export async function saveSceneEncrypted(roomId: string, roomKey: string | CryptoKey, elements: unknown, version: number) {
   const { ciphertext, iv } = await encryptElementsForRoom(roomKey, elements);
   await fetch(`/api/rooms/${roomId}/scene`, {
     method: "POST",
@@ -27,6 +28,7 @@ export async function saveSceneEncrypted(roomId: string, roomKey: string, elemen
 }
 
 export async function loadSceneEncrypted(roomId: string, roomKey: string) {
+export async function loadSceneEncrypted(roomId: string, roomKey: string | CryptoKey) {
   const res = await fetch(`/api/rooms/${roomId}/scene`);
   if (!res.ok) return null;
   const json = await res.json();
@@ -34,4 +36,5 @@ export async function loadSceneEncrypted(roomId: string, roomKey: string) {
   const iv = new Uint8Array(json.iv);
   const elements = await decryptElementsFromRoom(roomKey, { ciphertext, iv });
   return { elements, version: json.version };
+  return { elements, version: json.version as number };
 }

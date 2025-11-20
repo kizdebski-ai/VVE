@@ -1,13 +1,27 @@
 import http from 'http';
-import express from 'express';
-import cors from 'cors';
 import WebSocket, { WebSocketServer } from 'ws';
 import * as awarenessProtocol from 'y-protocols/awareness';
 import * as Y from 'yjs';
 
-import { config } from './config';
+import { config, paths } from './config';
 import { logger } from './logger';
-import { roomManager, RoomContext } from './rooms';
+import { RoomManager, RoomContext } from './rooms';
+import { FilePersistence } from './persistence';
+import { createHttpApp } from './httpApp';
+import { OpenRouterEquationSolver } from './services/aiSolver';
+
+// Debug: Check API Key
+const apiKey = process.env.OPENROUTER_API_KEY;
+console.log('----------------------------------------');
+console.log('Server Startup Config Check:');
+console.log(`OPENROUTER_API_KEY present: ${!!apiKey}`);
+if (apiKey) {
+  console.log(`OPENROUTER_API_KEY length: ${apiKey.length}`);
+  console.log(`OPENROUTER_API_KEY prefix: ${apiKey.substring(0, 10)}...`);
+} else {
+  console.error('CRITICAL: OPENROUTER_API_KEY is MISSING in process.env!');
+}
+console.log('----------------------------------------');
 
 const messageSync = 0;
 const messageAwareness = 1;
@@ -64,10 +78,17 @@ const initializeRoom = (room: RoomContext) => {
   if (room.initialized) return;
 
   room.doc.on('update', (update: Uint8Array, origin) => {
+    const timestamp = Date.now();
+    room.meta.updatedAt = timestamp;
+    room.meta.lastActiveAt = timestamp;
+    room.lastActive = timestamp;
     broadcast(room, messageSync, update, origin as WebSocket | null);
   });
 
   room.awareness.on('update', (changes: AwarenessChange, origin: WebSocket | null) => {
+    const timestamp = Date.now();
+    room.meta.lastActiveAt = timestamp;
+    room.lastActive = timestamp;
     const { added, updated, removed } = changes;
     const targets = added.concat(updated, removed);
     if (targets.length === 0) {
@@ -160,22 +181,10 @@ const parseRoomId = (requestUrl?: string | null): string | null => {
   return null;
 };
 
-const app = express();
-app.use(cors());
-app.use(express.json());
-
-app.get('/health', (_, res) => {
-  res.json({
-    status: 'ok',
-    rooms: roomManager.size()
-  });
-});
-
-app.get('/rooms', (_, res) => {
-  res.json({
-    rooms: roomManager.snapshot()
-  });
-});
+const persistence = new FilePersistence(config.dataDir);
+const roomManager = new RoomManager(persistence);
+const aiSolver = new OpenRouterEquationSolver();
+export const app = createHttpApp({ roomManager, aiSolver });
 
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
@@ -222,7 +231,7 @@ const pingInterval = setInterval(() => {
 }, config.pingIntervalMs);
 
 server.listen(config.port, config.host, () => {
-  logger.info('Realtime backend ready', { host: config.host, port: config.port, path: '/ws/whiteboard' });
+  logger.info('Realtime backend ready', { host: config.host, port: config.port, path: paths.whiteboard });
 });
 
 const shutdown = () => {

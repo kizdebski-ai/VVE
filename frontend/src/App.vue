@@ -13,6 +13,7 @@
      ></TopMenu>
     <!-- Canvas container takes full screen -->
     <div class="whiteboard-container">
+      <AIChatPanel v-if="whiteboard && whiteboard.containerRef" :whiteboard-ref="whiteboard.containerRef" />
       <WhiteboardCanvas
         ref="whiteboard"
         :debug-mode="debugMode"
@@ -20,6 +21,7 @@
         :username="username"
         :current-shape="currentShape"
         :current-line-style="currentLineStyle"
+        :current-arrow-style="currentArrowStyle"
         :active-feature="activeFeature"
         :grid-align-options="gridAlignOptions"
         :handwriting-styler-options="handwritingStylerOptions"
@@ -111,19 +113,23 @@
           :active-tool="currentTool"
           :color="currentColor"
           :line-width="currentLineWidth"
+          :line-style="currentLineStyle"
+          :arrow-style="currentArrowStyle"
           :is-math-panel-open="showMathGraphPanel"
           :is-physics-panel-open="showPhysicsGraphPanel"
           orientation="vertical"
           @update:activeTool="handleToolChange"
           @update:color="handleColorChange"
           @update:lineWidth="handleLineWidthChange"
+          @update:lineStyle="handleLineStyleChange"
+          @update:arrowStyle="handleArrowStyleChange"
           @update:eraserSize="handleEraserSizeChange"
           @undo="callWhiteboardUndo"
           @redo="callWhiteboardRedo"
           @clear="handleClearCanvas"
           @toggle-math-panel="toggleMathGraphPanel"
           @toggle-physics-panel="togglePhysicsGraphPanel"
-          @add-coordinate-system="handleAddCoordinateSystem('3d')"
+          @add-coordinate-system="handleAddCoordinateSystem"
           @toggle-calculator="toggleCalculator"
           @toggle-debug="toggleDebugMode"
         />
@@ -174,59 +180,45 @@
       :export-text="exportedState"
       @close="showExportDialog = false"
       @copy="copyToClipboard"
-      @download="downloadAsFile"
+    />
+    <CalculatorModal
+      :is-visible="isCalculatorVisible"
+      @close="toggleCalculator"
     />
 
-    <!-- Calculator Modal -->
-    <CalculatorModal :visible="isCalculatorVisible" @update:visible="isCalculatorVisible = $event" />
-
-    <!-- 1. Add debug tool -->
-    <div v-if="debugMode" class="debug-panel">
-      <div>UndoRedo Global: {{globalUndoRedoState.canUndo}}/{{globalUndoRedoState.canRedo}}</div>
-      <div>Local Canvas: {{whiteboard?.canUndo}}/{{whiteboard?.canRedo}}</div>
-      <button @click="forceUpdateUndoRedo">Wymuś update</button>
-    </div>
-
-    <EncryptionStatus />
-
-
-    <MathGraphPanel v-if="showMathGraphPanel" @close="showMathGraphPanel = false" @plot-function="handleAddElement" />
-    <PhysicsGraphPanel v-if="showPhysicsGraphPanel" @close="showPhysicsGraphPanel = false" @plot-data="handleAddElement" />
     </template>
 
     <!-- Global Error Display -->
     <div v-if="globalError" class="global-error-overlay">
       <div class="error-box">
-        <h3>Something went wrong</h3>
+        <h3>Application Error</h3>
+        <p>An unexpected error occurred. Please refresh the page.</p>
         <pre>{{ globalError }}</pre>
-        <button @click="globalError = null; window.location.reload()">Reload</button>
+        <button @click="globalError = null">Dismiss</button>
       </div>
     </div>
+
   </div>
 </template>
 
 <script>
-import { ref, computed, onMounted, onBeforeUnmount, nextTick, reactive, watch, onErrorCaptured } from 'vue'; // Import reactive, onErrorCaptured
+import { ref, onMounted, onBeforeUnmount, provide, nextTick, watch, computed } from 'vue';
 import WhiteboardCanvas from './components/WhiteboardCanvas.vue';
 import ToolBar from './components/ToolBar.vue';
 import TopMenu from './components/TopMenu.vue';
+import Lobby from './components/Lobby.vue';
 import ImportDialog from './components/ImportDialog.vue';
 import ExportDialog from './components/ExportDialog.vue';
-import ThemeToggle from './components/ThemeToggle.vue';
 import CalculatorModal from './components/CalculatorModal.vue';
-import EncryptionStatus from './components/EncryptionStatus.vue';
-// Placeholder imports for optional feature panels
-// import GridAlignPanel from './components/panels/GridAlignPanel.vue';
-import { copyToClipboard } from './utils/fileUtils.js';
+import AIChatPanel from './components/AIChatPanel.vue';
 import * as Y from 'yjs';
-import { Buffer } from 'buffer';
-import katex from 'katex';
-import 'katex/dist/katex.min.css';
-import { undoRedoState } from './utils/undoRedoState'; // 2. Add import
-import Lobby from './components/Lobby.vue';
-import MathGraphPanel from './components/MathGraphPanel.vue';
-import PhysicsGraphPanel from './components/PhysicsGraphPanel.vue';
+import { WebsocketProvider } from 'y-websocket';
+import { IndexeddbPersistence } from 'y-indexeddb';
 
+// Debug logger
+const appDebugLog = (msg, ...args) => {
+  // console.log(`[App] ${msg}`, ...args);
+};
 
 export default {
   name: 'App',
@@ -234,276 +226,183 @@ export default {
     WhiteboardCanvas,
     ToolBar,
     TopMenu,
+    Lobby,
     ImportDialog,
     ExportDialog,
-    ThemeToggle,
-    CalculatorModal, // Register CalculatorModal
-    Lobby,
-    MathGraphPanel,
-    PhysicsGraphPanel,
-    EncryptionStatus
+    CalculatorModal,
+    AIChatPanel
   },
   setup() {
-    // --- Template Refs ---
+    // --- State ---
     const whiteboard = ref(null);
-    const toolbar = ref(null);
-    const showMathGraphPanel = ref(false);
-    const showPhysicsGraphPanel = ref(false);
-    // --- Reactive State ---
-    const lastSaved = ref(null);
-    const showExportDialog = ref(false);
+    const toolbar = ref(null); // Ref for the toolbar component
+    const roomId = ref(null);
+    const username = ref(localStorage.getItem('username') || 'Guest');
     const showImportDialog = ref(false);
+    const showExportDialog = ref(false);
     const exportedState = ref('');
-    const username = ref(localStorage.getItem('whiteboard_username') || 'User ' + Math.floor(Math.random() * 1000));
-    const awarenessStates = ref(new Map());
+    const lastSaved = ref(null);
     const statusMessage = ref('');
-    const statusTimeout = ref(null);
     const darkMode = ref(localStorage.getItem('darkMode') === 'true');
     const debugMode = ref(false);
-    const appDebugLog = (...args) => {
-      if (debugMode.value) {
-        console.log(...args);
-      }
-    };
-    const roomId = ref(null);
+    const isCalculatorVisible = ref(false);
+    const globalError = ref(null);
+
+    // Tool state
     const currentTool = ref('pen');
     const currentColor = ref('#000000');
     const currentLineWidth = ref(2);
     const currentShape = ref('rectangle');
     const currentLineStyle = ref('solid');
-    const isCalculatorVisible = ref(false);
-    const globalUndoRedoState = undoRedoState;
-    const globalError = ref(null);
+    const currentArrowStyle = ref('none');
 
-    onErrorCaptured((err, instance, info) => {
-      console.error("Global Error Captured:", err, info);
-      globalError.value = err.toString() + "\n" + info;
-      return false; // Prevent propagation
-    });
-
-    // --- Feature State ---
-    const activeFeature = ref(null); // 'gridAlign', 'styleHandwriting', 'mathRecognizer', or null
-    const gridAlignOptions = reactive({
-      gridSize: 20, // Default, maybe sync with canvas grid later?
-      snapStrength: 50,
-      showBaselines: false
-    });
-    const handwritingStylerOptions = reactive({
+    // Feature flags/state
+    const activeFeature = ref(null); // 'gridAlign', 'styleHandwriting', 'mathRecognizer'
+    const gridAlignOptions = ref({ snapStrength: 10, showBaselines: false });
+    const handwritingStylerOptions = ref({
       angleNormalization: 50,
       heightNormalization: 50,
       widthNormalization: 50,
-      smoothingFactor: 50,
-      groupingTimeThreshold: 1000,
-      groupingDistanceThreshold: 100,
+      smoothingFactor: 50
     });
-    const mathRecognizerOptions = reactive({
-      renderLatex: true,
-      ghostOpacity: 0.3,
-      recognitionDelay: 1000,
-      showHint: true,
-    });
-
-    // UI Feedback State for Panels (to be updated by whiteboard events or methods)
-    const recognitionStatus = ref('');
+    const mathRecognizerOptions = ref({ ghostOpacity: 0.5, showHint: true });
+    const recognitionStatus = ref('Idle');
     const latexEquation = ref('');
     const solution = ref('');
     const hasCharGroups = ref(false);
     const hasStylizedStrokes = ref(false);
+    
+    // Graph Panels
+    const showMathGraphPanel = ref(false);
+    const showPhysicsGraphPanel = ref(false);
 
-    // Render LaTeX preview in the math panel when latexEquation changes
-    watch(latexEquation, (newVal) => {
-      const el = document.getElementById('latex-render-output');
-      if (!el) return;
-      try {
-        katex.render(newVal || '', el, { throwOnError: false, displayMode: false });
-      } catch (e) {
-        console.error('KaTeX render error:', e);
-        el.textContent = `Error: ${e.message}`;
-      }
-    });
+    // Yjs Awareness
+    const awarenessStates = ref([]);
+    const activeUsersCount = computed(() => awarenessStates.value.length);
+    const localClientId = ref(null);
 
-    // --- Computed Properties ---
-    const activeUsersCount = computed(() => {
-      const awareness = whiteboard.value?.yjsConnection?.awareness;
-      return awareness ? awareness.getStates().size : 0;
-    });
-
-    const localClientId = computed(() => {
-      return whiteboard.value?.yjsConnection?.awareness?.clientID;
-    });
+    // Undo/Redo State (Global)
+    const globalUndoRedoState = ref({ canUndo: false, canRedo: false });
 
     const formattedLastSaved = computed(() => {
       if (!lastSaved.value) return '';
-      const now = new Date();
-      const saved = new Date(lastSaved.value);
-      const diffMs = now - saved;
-      const diffMins = Math.floor(diffMs / 60000);
-      if (diffMins < 1) return 'Just now';
-      if (diffMins < 60) return `${diffMins} minute${diffMins > 1 ? 's' : ''} ago`;
-        const hours = Math.floor(diffMins / 60);
-      if (hours < 24) return `${hours} hour${hours > 1 ? 's' : ''} ago`;
-      return saved.toLocaleString();
+      return new Date(lastSaved.value).toLocaleTimeString();
     });
 
     // --- Methods ---
-    const callWhiteboardUndo = () => {
-      if (whiteboard.value?.undo) {
-        whiteboard.value.undo();
-      } else {
-        console.warn('Whiteboard ref not available for undo');
-      }
-    };
-
-    const callWhiteboardRedo = () => {
-      if (whiteboard.value?.redo) {
-        whiteboard.value.redo();
-      } else {
-        console.warn('Whiteboard ref not available for redo');
-      }
-    };
-
-    // 3. Add forceUpdateUndoRedo method
-    const forceUpdateUndoRedo = () => {
-      // Accessing undoManager directly on the whiteboard component instance
-      // This assumes WhiteboardCanvas exposes undoManager via defineExpose
-      // If not, this needs adjustment based on how WhiteboardCanvas exposes its state/methods.
-      // For now, we assume direct access for the debug panel.
-      const um = whiteboard.value?.undoManager; // Access potentially exposed ref
-      if (um?.value) { // Check if the ref and its value exist
-        const canUndoVal = um.value.canUndo();
-        const canRedoVal = um.value.canRedo();
-        
-        appDebugLog(`[App] Wymuszam aktualizację: canUndo=${canUndoVal}, canRedo=${canRedoVal}`);
-        undoRedoState.update(canUndoVal, canRedoVal);
-      } else {
-        console.error("[App] Brak dostępu do UndoManager przez whiteboard ref (może nie być 'exposed')");
-        // Fallback: try accessing the local state if exposed (less ideal)
-        if (whiteboard.value?.canUndo !== undefined && whiteboard.value?.canRedo !== undefined) {
-           appDebugLog("[App] Fallback: Using local canUndo/canRedo from whiteboard ref");
-           undoRedoState.update(whiteboard.value.canUndo, whiteboard.value.canRedo);
-        } else {
-           console.error("[App] Fallback failed: Cannot access undo/redo state from whiteboard ref.");
-        }
-      }
-    };
-
-
-    const showStatus = (message, duration = 3000) => {
-      statusMessage.value = message;
-      if (statusTimeout.value) clearTimeout(statusTimeout.value);
-      statusTimeout.value = setTimeout(() => { statusMessage.value = ''; }, duration);
-    };
-
-    const showNotification = (message, type = 'info') => {
-      appDebugLog(`[Notification] ${type}: ${message}`);
-      if (whiteboard.value?.showToast) {
-        whiteboard.value.showToast(message, type);
-    } else {
-        const notification = document.createElement('div');
-        notification.className = `notification notification-${type}`;
-        notification.textContent = message;
-        document.body.appendChild(notification);
-        setTimeout(() => { notification.classList.add('show'); }, 10);
-        setTimeout(() => {
-          notification.classList.remove('show');
-          setTimeout(() => { document.body.removeChild(notification); }, 300);
-        }, 3000);
-      }
-    };
-
-    const handleAwarenessChange = () => {
-      const awareness = whiteboard.value?.yjsConnection?.awareness;
-      if (awareness) {
-        awarenessStates.value = new Map(awareness.getStates());
-      }
-    };
-
-    const handleBeforeUnload = () => { /* Autosave handled in Canvas */ };
-
+    
     const updateUsername = () => {
-      localStorage.setItem('whiteboard_username', username.value);
-      const awareness = whiteboard.value?.yjsConnection?.awareness;
-      if (awareness) {
-        const currentUserState = awareness.getLocalState()?.user || {};
-        awareness.setLocalStateField('user', { ...currentUserState, name: username.value });
-        appDebugLog(`Updated awareness username to: ${username.value}`);
+      localStorage.setItem('username', username.value);
+      if (whiteboard.value) {
+        whiteboard.value.updateAwareness(username.value);
       }
     };
 
     const handleToolChange = (tool) => {
       currentTool.value = tool;
-      if (whiteboard.value) whiteboard.value.setTool(tool);
-      
-      // Handle shape selection implicitly
-      if (['rectangle', 'circle', 'triangle', 'line', 'cube', 'cylinder', 'cone', 'pyramid'].includes(tool)) {
-          currentShape.value = tool;
+      if (tool === 'eraser') {
+        // Eraser logic handled in canvas
       }
     };
 
     const handleColorChange = (color) => {
       currentColor.value = color;
-      if (whiteboard.value) whiteboard.value.setColor(color);
     };
 
     const handleLineWidthChange = (width) => {
       currentLineWidth.value = width;
-      if (whiteboard.value) whiteboard.value.setLineWidth(width);
     };
-
+    
     const handleEraserSizeChange = (size) => {
-        if (whiteboard.value && whiteboard.value.setEraserSize) {
+        if (whiteboard.value) {
             whiteboard.value.setEraserSize(size);
         }
     };
 
     const handleShapeChange = (shape) => {
       currentShape.value = shape;
-      appDebugLog('App.vue: Shape changed to', shape);
+      // If tool is not shape, switch to shape?
+      // The toolbar handles this logic usually, but we ensure consistency
+      if (currentTool.value !== 'shape') {
+        currentTool.value = 'shape';
+      }
     };
-
+    
     const handleLineStyleChange = (style) => {
-      currentLineStyle.value = style;
-      appDebugLog('App.vue: Line style changed to', style);
+        currentLineStyle.value = style;
     };
-
-    const toggleMathGraphPanel = () => {
-      showMathGraphPanel.value = !showMathGraphPanel.value;
-    };
-
-    const togglePhysicsGraphPanel = () => {
-      showPhysicsGraphPanel.value = !showPhysicsGraphPanel.value;
+    
+    const handleArrowStyleChange = (style) => {
+        currentArrowStyle.value = style;
     };
 
     const toggleCalculator = () => {
       isCalculatorVisible.value = !isCalculatorVisible.value;
     };
-
-    const handleClearCanvas = () => {
-       if (whiteboard.value) whiteboard.value.clearCanvas();
+    
+    const toggleMathGraphPanel = () => {
+        showMathGraphPanel.value = !showMathGraphPanel.value;
+        if (showMathGraphPanel.value) showPhysicsGraphPanel.value = false;
+    };
+    
+    const togglePhysicsGraphPanel = () => {
+        showPhysicsGraphPanel.value = !showPhysicsGraphPanel.value;
+        if (showPhysicsGraphPanel.value) showMathGraphPanel.value = false;
     };
 
-    const handleExportRequest = () => {
-      if (whiteboard.value?.yjsConnection?.ydoc) {
-        try {
-          const stateUpdate = Y.encodeStateAsUpdate(whiteboard.value.yjsConnection.ydoc);
-          const base64State = Buffer.from(stateUpdate).toString('base64');
-          exportedState.value = base64State;
-          showExportDialog.value = true;
-          lastSaved.value = new Date().toISOString();
-        } catch (e) {
-          console.error('Error exporting Yjs state:', e);
-          showStatus('Failed to export whiteboard state.', 3000);
-        }
+    const handleClearCanvas = () => {
+      if (confirm('Are you sure you want to clear the canvas? This cannot be undone.')) {
+        if (whiteboard.value) whiteboard.value.clearCanvas();
       }
     };
 
-    const copyToClipboardLocal = () => {
-      copyToClipboard(exportedState.value)
-        .then(() => showStatus('Copied to clipboard!'))
-        .catch(err => {
-          console.error('Failed to copy to clipboard: ', err);
-          showStatus('Failed to copy to clipboard', 3000);
-        });
+    const callWhiteboardUndo = () => {
+      if (whiteboard.value) whiteboard.value.undo();
+    };
+
+    const callWhiteboardRedo = () => {
+      if (whiteboard.value) whiteboard.value.redo();
+    };
+    
+    const forceUpdateUndoRedo = () => {
+        // Triggered by ToolBar to refresh state
+        if (whiteboard.value) {
+            // This might be redundant if we use the event listener from WhiteboardCanvas
+            // but good for manual refresh
+        }
+    };
+
+    const showStatus = (msg, duration = 2000) => {
+      statusMessage.value = msg;
+      setTimeout(() => { statusMessage.value = ''; }, duration);
+    };
+    
+    const showNotification = (msg, type = 'info') => {
+        if (whiteboard.value && whiteboard.value.showToast) {
+            whiteboard.value.showToast(msg, type);
+        } else {
+            console.log(`[${type.toUpperCase()}] ${msg}`);
+        }
+    };
+
+    const handleBeforeUnload = (e) => {
+      // Optional: warn if unsaved changes? Yjs saves automatically though.
+    };
+
+    const handleExportRequest = () => {
+      if (whiteboard.value) {
+        const state = whiteboard.value.getSnapshot(); // Returns base64
+        exportedState.value = state;
+        showExportDialog.value = true;
+      }
+    };
+
+    const copyToClipboardLocal = (text) => {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        return navigator.clipboard.writeText(text);
+      } else {
+        return Promise.reject('Clipboard API not available');
+      }
     };
 
     const downloadAsFile = () => {
@@ -775,6 +674,7 @@ export default {
       currentLineWidth,
       currentShape,
       currentLineStyle,
+      currentArrowStyle,
       isCalculatorVisible, // Return state for modal
       activeUsersCount,
       localClientId,
@@ -785,6 +685,7 @@ export default {
       handleEraserSizeChange,
       handleShapeChange,
       handleLineStyleChange,
+      handleArrowStyleChange,
       toggleCalculator, // Return toggle method
       handleClearCanvas,
       handleExportRequest,
@@ -930,6 +831,30 @@ export default {
    component itself provides the glass/floating background */
 .floating-toolbar {
   background: transparent;
+}
+
+/* Make the floating toolbar look like a light, floating pill instead of a gray block */
+.floating-toolbar .toolbar-container {
+  background: transparent;
+  border: none;
+  padding: 0;
+  width: auto;
+  min-width: 0;
+  height: auto;
+  box-shadow: none;
+}
+
+.floating-toolbar .toolbar.glass-panel {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0.75));
+  border: 1px solid rgba(15, 23, 42, 0.06);
+  box-shadow: 0 14px 38px rgba(15, 23, 42, 0.16);
+  padding: 10px 8px;
+}
+
+.dark-mode .floating-toolbar .toolbar.glass-panel {
+  background: linear-gradient(180deg, rgba(26, 32, 44, 0.92), rgba(26, 32, 44, 0.82));
+  border-color: rgba(255, 255, 255, 0.08);
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.5);
 }
 .floating-user-info {
   position: fixed;

@@ -176,7 +176,9 @@
       <div>Local Canvas: {{whiteboard?.canUndo}}/{{whiteboard?.canRedo}}</div>
       <button @click="forceUpdateUndoRedo">Wymuś update</button>
     </div>
-    
+
+    <EncryptionStatus />
+
 
   </div>
   <MathGraphPanel v-if="showMathGraphPanel" @close="showMathGraphPanel = false" />
@@ -192,6 +194,7 @@ import ImportDialog from './components/ImportDialog.vue';
 import ExportDialog from './components/ExportDialog.vue';
 import ThemeToggle from './components/ThemeToggle.vue';
 import CalculatorModal from './components/CalculatorModal.vue';
+import EncryptionStatus from './components/EncryptionStatus.vue';
 // Placeholder imports for optional feature panels
 // import GridAlignPanel from './components/panels/GridAlignPanel.vue';
 import { copyToClipboard } from './utils/fileUtils.js';
@@ -211,7 +214,8 @@ export default {
     ImportDialog,
     ExportDialog,
     ThemeToggle,
-    CalculatorModal // Register CalculatorModal
+    CalculatorModal, // Register CalculatorModal
+    EncryptionStatus
   },
   setup() {
     // --- Template Refs ---

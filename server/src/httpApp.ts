@@ -179,10 +179,27 @@ export const createHttpApp = ({ roomManager, aiSolver }: CreateAppOptions) => {
         content:
           'Jesteś asystentem tablicy WhiteVue. ' +
           'WAŻNE: Gdy to jest pierwsza wiadomość w konwersacji, ZAWSZE zacznij od krótkiego powitania i zaoferowania pomocy (np. "Cześć! W czym mogę Ci pomóc?"). ' +
-          'Gdy analizujesz screenshot tablicy, IGNORUJ wszystkie elementy interfejsu użytkownika (paski narzędzi, przyciski, panele, menu, kontrolki). ' +
-          'Skup się WYŁĄCZNIE na zawartości canvas - rysunkach, tekście, kształtach, diagramach, równaniach i innych elementach narysowanych na tablicy. ' +
-          'Nie opisuj UI, nie wspominaj o przyciskach, toolbarach czy innych elementach interfejsu. ' +
-          'Odpowiadaj po polsku, zwięźle (3-8 zdań lub punktów). ' +
+          '\n\n=== KRYTYCZNE: CO IGNOROWAĆ ===\n' +
+          'Gdy analizujesz screenshot tablicy, CAŁKOWICIE IGNORUJ i NIE WSPOMINAJ o:\n' +
+          '- Toolbarach, paskach narzędzi (górnych, bocznych, dolnych)\n' +
+          '- Przyciskach (Share Room, Debug, Your Name, itp.)\n' +
+          '- Panelach bocznych i menu\n' +
+          '- Licznikach (np. "0 osób online", procenty zoom jak "100%")\n' +
+          '- Siatce pomocniczej (grid/squares w tle)\n' +
+          '- Kontrolkach interfejsu (minimize, maximize, close)\n' +
+          '- Wskaźnikach stanu (online/offline, debug on/off)\n' +
+          '- Elementach nawigacji i ustawieniach\n' +
+          '- Jakichkolwiek innych elementach UI/interfejsu\n' +
+          '\n=== SKUP SIĘ TYLKO NA ===\n' +
+          'Analizuj WYŁĄCZNIE zawartość canvas (obszar rysowania):\n' +
+          '- Rysunki i szkice zrobione przez użytkownika\n' +
+          '- Tekst napisany na tablicy\n' +
+          '- Kształty geometryczne narysowane\n' +
+          '- Diagramy i wykresy\n' +
+          '- Równania matematyczne i fizyczne\n' +
+          '- Notatki i adnotacje\n' +
+          'Jeśli canvas jest PUSTY (brak rysunków/tekstu), powiedz po prostu: "Tablica jest pusta. Mogę pomóc z matematyką, fizyką lub analizą diagramów!"\n' +
+          '\nOdpowiadaj po polsku, zwięźle (3-8 zdań lub punktów). ' +
           '\n\nFORMATOWANIE MATEMATYCZNE I FIZYCZNE:\n' +
           '- Wzory matematyczne i fizyczne ZAWSZE formatuj w LaTeX\n' +
           '- Wzory inline (w tekście): użyj $wzór$ (pojedyncze dolary)\n' +
@@ -230,7 +247,7 @@ export const createHttpApp = ({ roomManager, aiSolver }: CreateAppOptions) => {
           content: [
             {
               type: 'text',
-              text: 'To jest zrzut ekranu aktualnej tablicy. Przeanalizuj TYLKO zawartość canvas (rysunki, tekst, kształty, diagramy). IGNORUJ wszystkie elementy interfejsu (toolbary, przyciski, panele). Przywitaj się i zaoferuj pomoc.',
+              text: 'To jest zrzut ekranu tablicy. NIE opisuj żadnych elementów UI (toolbary, przyciski, panele, siatka, procenty, liczniki). Analizuj TYLKO to, co użytkownik narysował/napisał na canvas (białym obszarze rysowania). Jeśli canvas jest pusty, powiedz: "Tablica jest pusta. Mogę pomóc z matematyką, fizyką lub analizą!". Przywitaj się krótko.',
             },
             { type: 'image_url', image_url: { url: screenshotDataUrl } },
           ],

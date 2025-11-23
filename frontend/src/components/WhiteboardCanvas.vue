@@ -240,6 +240,7 @@ export default {
     // UI State Refs
     const activeConfigPanel = ref(null);
     const configPanelCoords = ref(null);
+    const lastMouseCoords = ref(null); // Track mouse position for auto-text
     // Inline Text Editor State
     const inlineTextEditor = reactive({
       visible: false,
@@ -1077,6 +1078,7 @@ export default {
     const handleMouseMove = (e) => {
       const coords = getCoordinates(e);
       const transformedCoords = transformCoordinates(coords.offsetX, coords.offsetY);
+      lastMouseCoords.value = transformedCoords; // Store for keydown events
       updateLocalAwarenessCursor(transformedCoords);
 
       // Don't handle drawing/panning if a config panel is active
@@ -1894,6 +1896,17 @@ export default {
           event.preventDefault();
           resetZoom();
           return;
+        }
+
+        // Auto-start text editing on typing
+        if (event.key.length === 1 && !inlineTextEditor.visible && !activeConfigPanel.value) {
+            if (lastMouseCoords.value) {
+                setTool('text');
+                startInlineText(lastMouseCoords.value);
+                inlineTextEditor.value = event.key; 
+                event.preventDefault();
+                return;
+            }
         }
       }
 

@@ -50,15 +50,15 @@
             <component :is="CameraIcon" class="icon" />
           </button>
 
-      <div class="input-wrapper">
-        <textarea
-          v-model="userInput"
-          @keydown="onKeyDown"
-          placeholder="Napisz wiadomość..."
-          rows="2"
-          ref="inputRef"
-        ></textarea>
-        <div class="ghost" aria-hidden="true">
+          <div class="input-wrapper">
+            <textarea
+              v-model="userInput"
+              @keydown="onKeyDown"
+              placeholder="Napisz wiadomość..."
+              rows="2"
+              ref="inputRef"
+            ></textarea>
+            <div class="ghost" aria-hidden="true">
               <span>{{ userInput }}</span><span class="ghost-tail">{{ suggestionTail }}</span>
             </div>
           </div>
@@ -85,6 +85,7 @@ import DOMPurify from 'dompurify';
 import katex from 'katex';
 
 const API_BASE = ((import.meta && import.meta.env && import.meta.env.VITE_BACKEND_URL) || '').replace(/\/$/, '');
+const REQUEST_TIMEOUT_MS = 20000;
 
 // Icons
 const SparklesIcon = Sparkles;
@@ -171,6 +172,17 @@ const updateSuggestion = (answer) => {
   }
 };
 
+const fetchWithTimeout = async (url, options = {}, timeout = REQUEST_TIMEOUT_MS) => {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeout);
+  try {
+    const response = await fetch(url, { ...options, signal: controller.signal });
+    return response;
+  } finally {
+    clearTimeout(timer);
+  }
+};
+
 const sendMessage = async (mode = 'normal_chat') => {
   const text = userInput.value.trim();
   const attachingScreenshot = includeScreenshot.value || mode === 'screenshot_intro';
@@ -186,8 +198,8 @@ const sendMessage = async (mode = 'normal_chat') => {
     attachingScreenshot && pendingSnapshot.value
       ? pendingSnapshot.value
       : attachingScreenshot
-      ? await captureSnapshot()
-      : null;
+        ? await captureSnapshot()
+        : null;
 
   userInput.value = '';
   pendingSnapshot.value = null;
@@ -203,7 +215,7 @@ const sendMessage = async (mode = 'normal_chat') => {
       mode,
     };
 
-    const response = await fetch(`${API_BASE}/api/ai/chat`, {
+    const response = await fetchWithTimeout(`${API_BASE}/api/ai/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
@@ -230,7 +242,10 @@ const sendMessage = async (mode = 'normal_chat') => {
     sentIntro.value = true;
   } catch (error) {
     console.error('AI Chat Error:', error);
-    messages.value.push({ role: 'assistant', content: 'Wystąpił błąd po stronie AI.' });
+    const fallbackMessage = (error && error.name === 'AbortError')
+      ? 'AI nie odpowiedzia?o na czas. Spr?buj ponownie.'
+      : 'Wyst?pi? b??d po stronie AI.';
+    messages.value.push({ role: 'assistant', content: fallbackMessage });
     assistantSuggestion.value = '';
     suggestionTail.value = '';
   } finally {
@@ -273,7 +288,7 @@ onMounted(() => {
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
   display: flex;
   flex-direction: column;
-  z-index: 1000;
+  z-index: 1050;
   transition: height 0.3s ease, width 0.3s ease;
   border: 1px solid rgba(0, 0, 0, 0.1);
   overflow: hidden;

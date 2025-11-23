@@ -176,6 +176,8 @@ export const createCoordinateSystem3DElement = (position, size = 150, color = '#
     type: 'coordinateSystem3D',
     position, // Center position for 3D projection
     size,
+    width: size * 1.2,
+    height: size * 1.2,
     color,
     lineWidth,
     xLabel: 'x',

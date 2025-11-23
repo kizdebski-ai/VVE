@@ -223,16 +223,17 @@ watch(() => props.isSelected, (newValue) => {
 const bootstrapObjectData = () => {
     const startPoint = extractPoint(props.object.get('start'));
     const endPoint = extractPoint(props.object.get('end'));
+    const positionPoint = extractPoint(props.object.get('position'));
     const fallbackBounds = deriveBoundsFromPoints(startPoint, endPoint);
 
     return {
         id: props.object.get('id'),
         type: props.object.get('type'),
-        x: ensureNumber(props.object.get('x'), fallbackBounds.x),
-        y: ensureNumber(props.object.get('y'), fallbackBounds.y),
+        x: ensureNumber(props.object.get('x'), ensureNumber(positionPoint.x, fallbackBounds.x)),
+        y: ensureNumber(props.object.get('y'), ensureNumber(positionPoint.y, fallbackBounds.y)),
         rotation: ensureNumber(props.object.get('rotation'), 0),
-        width: ensureNumber(props.object.get('width'), fallbackBounds.width),
-        height: ensureNumber(props.object.get('height'), fallbackBounds.height),
+        width: ensureNumber(props.object.get('width'), fallbackBounds.width > 0 ? fallbackBounds.width : 100),
+        height: ensureNumber(props.object.get('height'), fallbackBounds.height > 0 ? fallbackBounds.height : 80),
         src: props.object.get('src') || props.object.get('dataUrl'),
         dataUrl: props.object.get('dataUrl'),
         color: props.object.get('color'),
@@ -255,15 +256,16 @@ const objectData = reactive<MovableObjectData>(bootstrapObjectData());
 const syncDataFromYMap = () => {
     const startPoint = extractPoint(props.object.get('start'));
     const endPoint = extractPoint(props.object.get('end'));
+    const positionPoint = extractPoint(props.object.get('position'));
     const fallbackBounds = deriveBoundsFromPoints(startPoint, endPoint);
 
     objectData.id = props.object.get('id');
     objectData.type = props.object.get('type');
-    objectData.x = ensureNumber(props.object.get('x'), fallbackBounds.x);
-    objectData.y = ensureNumber(props.object.get('y'), fallbackBounds.y);
+    objectData.x = ensureNumber(props.object.get('x'), ensureNumber(positionPoint.x, fallbackBounds.x));
+    objectData.y = ensureNumber(props.object.get('y'), ensureNumber(positionPoint.y, fallbackBounds.y));
     objectData.rotation = ensureNumber(props.object.get('rotation'), 0);
-    objectData.width = ensureNumber(props.object.get('width'), fallbackBounds.width);
-    objectData.height = ensureNumber(props.object.get('height'), fallbackBounds.height);
+    objectData.width = ensureNumber(props.object.get('width'), fallbackBounds.width > 0 ? fallbackBounds.width : 100);
+    objectData.height = ensureNumber(props.object.get('height'), fallbackBounds.height > 0 ? fallbackBounds.height : 80);
     objectData.src = props.object.get('src') || props.object.get('dataUrl');
     objectData.dataUrl = props.object.get('dataUrl');
     objectData.color = props.object.get('color');

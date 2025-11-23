@@ -41,7 +41,7 @@
       :zoom-level="zoomLevel"
       :pan-offset="panOffset"
       :is-selected="elementMap.get('id') === selectedObjectId"
-      :interaction-enabled="currentTool === 'select' || ['coordinateSystem2D', 'coordinateSystem3D', 'mathFunctionPlot', 'physicsDataPlot'].includes(elementMap.get('type'))"
+      :interaction-enabled="currentTool === 'select'"
       @update:object="handleObjectUpdate"
       @request-select="handleObjectSelectionRequest"
       @clone-object="handleCloneObject"
@@ -256,22 +256,25 @@ export default {
     const inlineTextStyle = computed(() => {
       const screenX = inlineTextEditor.x * zoomLevel.value + panOffset.value.x;
       const screenY = inlineTextEditor.y * zoomLevel.value + panOffset.value.y;
+      const safeColor = currentColor.value || '#000000';
       return {
         position: 'absolute',
         left: `${screenX}px`,
         top: `${screenY}px`,
         fontSize: `${inlineTextEditor.fontSize * zoomLevel.value}px`,
-        color: currentColor.value,
+        color: safeColor,
         minWidth: '50px',
         minHeight: '1.2em',
         zIndex: 1000,
-        background: 'transparent',
-        border: '1px dashed #ccc',
+        background: '#ffffff',
+        border: '1px dashed #94a3b8',
         outline: 'none',
         resize: 'none',
         overflow: 'hidden',
         fontFamily: 'sans-serif',
-        lineHeight: '1.2'
+        lineHeight: '1.2',
+        padding: '6px 8px',
+        boxShadow: '0 4px 10px rgba(0,0,0,0.08)'
       };
     });
 
@@ -314,6 +317,7 @@ export default {
         'pen',
         'line',
         'rectangle',
+        'diamond',
         'circle',
         'square',
         'triangle',
@@ -395,9 +399,10 @@ export default {
       // Konfiguracja UndoManager ze śledzeniem origin
       undoManager.value = new Y.UndoManager(yDrawings.value, {
         trackedOrigins: new Set([
-          null, undefined, // Default local changes
-          'local-drawing', 'local-erase', 'local-clear', 'local-text', 'local-image', 'local-plot', 'local-coordsys', // Existing origins
-          'ai-align', 'ai-style', 'ai-math' // Reserved origins for helper modules
+          null, undefined,
+          'local-drawing', 'local-erase', 'local-clear', 'local-text', 'local-add-text', 'local-image', 'local-plot', 'local-coordsys',
+          'local-movable-drag', 'local-movable-rotate', 'local-movable-resize',
+          'ai-align', 'ai-style', 'ai-math'
         ])
       });
 
@@ -426,6 +431,7 @@ export default {
           // Wymuś redraw
           nextTick(() => {
             redrawCanvas();
+            updateGlobalState();
           });
         } else {
           // debugLog("[Canvas] Undo niemożliwe"); // Commented out
@@ -525,6 +531,24 @@ export default {
             }
           }
 
+          // Normalize geometry for MovableObject overlays
+          const hasPosition = elementData.position && typeof elementData.position.x === 'number' && typeof elementData.position.y === 'number';
+          if (hasPosition) {
+            yElementMap.set('x', elementData.position.x);
+            yElementMap.set('y', elementData.position.y);
+          }
+          if (typeof elementData.width === 'number') {
+            yElementMap.set('width', elementData.width);
+          }
+          if (typeof elementData.height === 'number') {
+            yElementMap.set('height', elementData.height);
+          }
+          if (elementData.type === 'coordinateSystem3D' && typeof elementData.size === 'number') {
+            const planeSize = elementData.size * 1.2;
+            yElementMap.set('width', planeSize);
+            yElementMap.set('height', planeSize);
+          }
+
           // Apply default arrow style for lines if missing
           if (elementData.type === 'line' && !elementData.arrowStyle) {
               yElementMap.set('arrowStyle', props.currentArrowStyle || 'none');
@@ -607,6 +631,9 @@ export default {
 
       // Draw all elements; MovableObject overlays handle interactions but canvas still renders visuals
       strokesToDraw.forEach((element, index) => {
+        if (DOM_RENDERED_TYPES.has(element.type)) {
+          return; // Avoid double-rendering plots/coordinate systems already handled by MovableObject/PlotRenderer
+        }
         const isHighlighted = index === hoveredElementIndex.value && currentTool.value === 'eraser';
         drawElement(ctx, element, isHighlighted, smoothingFactor.value, imageCache.value, redrawCanvas);
       });
@@ -1158,23 +1185,10 @@ export default {
           const elementData = createCoordinateSystem3DElement(transformedCoords);
           addElementFromPanel(elementData);
         } else {
-          startDrawing(event); 
-          const index = elementsArray.findIndex(elMap => elMap.get('id') === objectId);
-          if (index !== -1) {
-            debugLog(`[WhiteboardCanvas] Eraser tool active, erasing element ID ${objectId} at index ${index} due to selection request.`);
-            eraseElement(index); 
-            if (selectedObjectId.value === objectId) { 
-              selectedObjectId.value = null;
-            }
-          } else {
-             debugWarn(`[WhiteboardCanvas] Eraser tool: Element with ID ${objectId} not found for erasure via selection request.`);
-          }
+          startDrawing(event);
         }
         return; 
       }
-      selectedObjectId.value = objectId;
-      debugLog('[WhiteboardCanvas] Object selected via request:', selectedObjectId.value);
-      redrawCanvas();
     };
 
 
@@ -1336,24 +1350,32 @@ export default {
          type: 'text',
          x: coords.x,
          y: coords.y,
+         position: { x: coords.x, y: coords.y },
          text: text,
          color: currentColor.value,
          fontSize: fontSize,
          rotation: 0,
-         width: text.length * (fontSize * 0.6), // Approx width
-         height: fontSize * 1.2
-       };
+       width: text.length * (fontSize * 0.6), // Approx width
+       height: fontSize * 1.2
+     };
 
-       ydoc.value.transact(() => {
-         const yMap = new Y.Map();
-         for (const [key, value] of Object.entries(textElement)) {
-           yMap.set(key, value);
-         }
-         yDrawings.value.push([yMap]);
-       }, 'local-add-text');
-       
-       refreshMovableElements();
-    };
+     ydoc.value.transact(() => {
+       const yMap = new Y.Map();
+       for (const [key, value] of Object.entries(textElement)) {
+          if (key === 'position') {
+            const posMap = new Y.Map();
+            posMap.set('x', value.x);
+            posMap.set('y', value.y);
+            yMap.set('position', posMap);
+          } else {
+            yMap.set(key, value);
+          }
+       }
+       yDrawings.value.push([yMap]);
+     }, 'local-text');
+     
+     refreshMovableElements();
+  };
 
     // --- Drawing Logic (Yjs Integration) ---
 
@@ -1481,15 +1503,28 @@ export default {
 
     const LINE_TOOLS = new Set(['line']);
 
+    // Elements that render via DOM overlays (MovableObject/PlotRenderer) and should not be drawn twice on the canvas
+    const DOM_RENDERED_TYPES = new Set([
+      'mathFunctionPlot',
+      'physicsDataPlot',
+      'coordinateSystem2D',
+      'coordinateSystem3D'
+    ]);
+
     const draw = (coords, isShiftPressed) => { // Accept shift key state
       if (!isDrawing.value || !currentElementPreview.value) return;
       if (currentTool.value === 'eraser') return;
 
       const preview = currentElementPreview.value;
-      const tool = currentTool.value;
+      const resolvedTool = currentTool.value === 'shapes'
+        ? props.currentShape
+        : currentTool.value === 'lines'
+          ? 'line'
+          : currentTool.value;
+      const previewType = preview.type || resolvedTool;
 
       // Update logic based on the actual tool and shift state
-      if (tool === 'pen') {
+      if (resolvedTool === 'pen') {
           if (shiftPressedAtStart.value && startCoordsForShiftLine.value) {
               // Update preview for Shift+Pen: Draw straight line from stored start to current coords
               // Modify the preview element directly to represent a line for drawing purposes
@@ -1504,7 +1539,7 @@ export default {
               const smoothedPoint = addSmoothedPenPoint(coords);
               preview.points.push(smoothedPoint);
           }
-      } else if (SHAPE_TOOLS.has(tool) || LINE_TOOLS.has(tool)) {
+      } else if (SHAPE_TOOLS.has(previewType) || LINE_TOOLS.has(previewType)) {
           // Update end coordinates for shapes and regular lines
           preview.end = coords;
 
@@ -1600,6 +1635,16 @@ export default {
                       yElementMap.set('timestamp', Date.now());
                       yElementMap.set('rotation', 0); // Default rotation
 
+                      const shapeOrLine = SHAPE_TOOLS.has(elementToAdd.type) || elementToAdd.type === 'line';
+                      const resolvedLineStyle = elementToAdd.lineStyle ?? (shapeOrLine ? props.currentLineStyle || 'solid' : undefined);
+                      const resolvedRoughness = elementToAdd.roughness ?? (shapeOrLine ? props.currentRoughness ?? 1 : undefined);
+                      if (resolvedLineStyle !== undefined && resolvedLineStyle !== null) {
+                        yElementMap.set('lineStyle', resolvedLineStyle);
+                      }
+                      if (resolvedRoughness !== undefined && resolvedRoughness !== null) {
+                        yElementMap.set('roughness', resolvedRoughness);
+                      }
+
                       // Handle type-specific properties and x, y, width, height
                       if (elementToAdd.type === 'pen') {
                           // Store points as an array (not a Y.Array)
@@ -1647,8 +1692,6 @@ export default {
                           yElementMap.set('end', endMap);
 
                           if (elementToAdd.type === 'line') {
-                            const lineStyle = elementToAdd.lineStyle || props.currentLineStyle || 'solid';
-                            yElementMap.set('lineStyle', lineStyle);
                             const arrowStyle = elementToAdd.arrowStyle || props.currentArrowStyle || 'none';
                             yElementMap.set('arrowStyle', arrowStyle);
                           }
@@ -2670,6 +2713,16 @@ export default {
 .toast-warning { background-color: #FF9800; }
 .toast-warning { background-color: #FF9800; }
 .toast-error { background-color: #F44336; }
+
+.inline-text-editor {
+  color: #0f172a;
+  background: #ffffff;
+  border: 1px dashed #94a3b8;
+}
+
+.inline-text-editor::placeholder {
+  color: #94a3b8;
+}
 
 
 </style>

@@ -78,8 +78,8 @@ onBeforeUnmount(() => {
 <style scoped>
 .encryption-status {
   position: fixed;
-  bottom: 10px;
-  right: 10px;
+  bottom: 16px;
+  left: 16px;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -88,7 +88,7 @@ onBeforeUnmount(() => {
   background: rgba(0, 0, 0, 0.75);
   color: #f5f5f5;
   font-size: 12px;
-  z-index: 1100;
+  z-index: 850;
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
 }
 

@@ -25,12 +25,42 @@
 
     <!-- Coordinate System 3D (Pseudo) -->
     <g v-else-if="type === 'coordinateSystem3D'">
-      <!-- Z Axis (Vertical) -->
-      <line :x1="width/2" :y1="height/2" :x2="width/2" :y2="0" stroke="blue" stroke-width="2" />
-      <!-- X Axis (Right-Down) -->
-      <line :x1="width/2" :y1="height/2" :x2="width" :y2="height" stroke="red" stroke-width="2" />
-      <!-- Y Axis (Left-Down) -->
-      <line :x1="width/2" :y1="height/2" :x2="0" :y2="height" stroke="green" stroke-width="2" />
+      <defs>
+        <marker id="arrowhead-3d" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+          <polygon points="0 0, 10 3.5, 0 7" fill="#111" />
+        </marker>
+      </defs>
+      <!-- Ground grid plane (XY) in soft color so it stands out from board grid -->
+      <g :transform="`translate(${width/4}, ${height/2}) skewX(-35)`" opacity="0.3">
+        <rect :width="width*0.9" :height="height*0.6" fill="none" stroke="none" />
+        <g stroke="#7e8696" stroke-width="1">
+          <line
+            v-for="i in 8"
+            :key="`gx-${i}`"
+            :x1="(i-1)*width*0.1"
+            :y1="0"
+            :x2="(i-1)*width*0.1"
+            :y2="height*0.6"
+          />
+          <line
+            v-for="i in 8"
+            :key="`gy-${i}`"
+            :x1="0"
+            :y1="(i-1)*height*0.075"
+            :x2="width*0.9"
+            :y2="(i-1)*height*0.075"
+          />
+        </g>
+      </g>
+      <!-- Axes -->
+      <line :x1="width*0.2" :y1="height*0.8" :x2="width*0.8" :y2="height*0.8" stroke="#111" stroke-width="3" marker-end="url(#arrowhead-3d)" />
+      <line :x1="width*0.2" :y1="height*0.8" :x2="width*0.2" :y2="height*0.15" stroke="#111" stroke-width="3" marker-end="url(#arrowhead-3d)" />
+      <line :x1="width*0.2" :y1="height*0.8" :x2="width*0.05" :y2="height*0.95" stroke="#111" stroke-width="3" marker-end="url(#arrowhead-3d)" />
+
+      <!-- Axis labels -->
+      <text :x="width*0.82" :y="height*0.8 - 10" font-family="sans-serif" font-size="14" fill="#111">X</text>
+      <text :x="width*0.2 + 10" :y="height*0.16" font-family="sans-serif" font-size="14" fill="#111">Y</text>
+      <text :x="width*0.02" :y="height*0.97" font-family="sans-serif" font-size="14" fill="#111">Z</text>
     </g>
 
     <!-- Math Function Plot -->

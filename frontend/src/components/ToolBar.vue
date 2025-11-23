@@ -1,7 +1,14 @@
 <template>
-  <div class="toolbar-container" :class="orientation">
+  <div
+    class="toolbar-container"
+    :class="orientation"
+  >
     <!-- Main Toolbar -->
-    <div class="toolbar glass-panel">
+    <div
+      class="toolbar glass-panel"
+      @pointerenter="handleHoverEnter"
+      @pointerleave="handleHoverLeave"
+    >
       <!-- Tools Group -->
       <div class="tool-group" :class="{ vertical: orientation === 'vertical' }">
         <button
@@ -211,7 +218,13 @@
     </div>
 
     <!-- Properties Bar (Contextual) -->
-    <div class="properties-bar glass-panel" v-if="showProperties" :class="orientation">
+    <div
+      class="properties-bar glass-panel"
+      v-if="showProperties && isToolbarHovered"
+      :class="orientation"
+      @pointerenter="handleHoverEnter"
+      @pointerleave="handleHoverLeave"
+    >
       <!-- Color Picker -->
       <div class="property-group">
         <div 
@@ -388,6 +401,7 @@ const currentLineStyle = ref(props.lineStyle);
 const currentArrowStyle = ref(props.arrowStyle);
 const currentRoughness = ref(props.roughness);
 const currentEraserSize = ref(30);
+const isToolbarHovered = ref(false);
 
 const showShapesMenu = ref(false);
 const showCoordinateMenu = ref(false);
@@ -533,6 +547,18 @@ const updateLineWidth = () => {
 
 const updateEraserSize = () => {
   emit('update:eraserSize', currentEraserSize.value);
+};
+
+const handleHoverEnter = () => {
+  isToolbarHovered.value = true;
+};
+
+const handleHoverLeave = (event) => {
+  const related = event?.relatedTarget;
+  const movedIntoShapesMenu = related && shapesMenuRef.value?.contains(related);
+  const movedIntoCoordinateMenu = related && coordinateMenuRef.value?.contains(related);
+  if (movedIntoShapesMenu || movedIntoCoordinateMenu) return;
+  isToolbarHovered.value = false;
 };
 
 const handleClickOutside = (event) => {

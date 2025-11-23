@@ -1,23 +1,27 @@
 <template>
   <div class="diagram-panel">
     <div class="panel-header">
-      <h3>AI Diagram</h3>
+      <div class="title">
+        <h3>AI Diagram</h3>
+        <p class="subtitle">Opisz proces, a my narysujemy go za Ciebie.</p>
+      </div>
       <div class="actions">
         <select v-model="mode">
           <option value="FLOWCHART">Flowchart</option>
-          <option value="CONCEPT_MAP">Concept Map</option>
+          <option value="CONCEPT_MAP">Mapa pojęć</option>
         </select>
-        <button class="icon-btn" @click="$emit('close')" title="Close">×</button>
+        <button class="icon-btn" @click="$emit('close')" title="Zamknij panel">×</button>
       </div>
     </div>
 
-<div class="panel-body">
-  <label class="field-label">Opis procesu / systemu</label>
+    <div class="panel-body">
+      <label class="field-label">Opis procesu / systemu</label>
       <textarea
         v-model="text"
         rows="5"
         placeholder="Opisz co ma zostać narysowane (np. logika aplikacji, kroki procesu, zależności)."
       ></textarea>
+      <p class="hint">Podaj listę kroków, decyzji albo zależności – AI wypluje gotowy układ.</p>
 
       <div class="actions-row">
         <button class="primary" :disabled="isLoading || !text.trim()" @click="generate">Generuj diagram</button>
@@ -25,24 +29,33 @@
       </div>
 
       <div v-if="error" class="error">{{ error }}</div>
-
       <div v-if="isLoading" class="loading">AI tworzy diagram...</div>
 
       <div v-if="result" class="result">
-        <div class="subheader">Węzły</div>
-        <ul>
-          <li v-for="node in result.nodes" :key="node.id">
-            <strong>{{ node.label || node.id }}</strong>
-            <span class="muted">({{ node.type || 'node' }})</span>
-          </li>
-        </ul>
+        <div class="subheader">Podgląd</div>
+        <div class="stats">
+          <span class="pill">{{ result.nodes.length }} węzłów</span>
+          <span class="pill">{{ result.edges.length }} krawędzi</span>
+        </div>
 
-        <div class="subheader">Krawędzie</div>
-        <ul>
-          <li v-for="edge in result.edges" :key="edge.id || edge.from + edge.to">
-            {{ edge.from }} → {{ edge.to }} <span class="muted" v-if="edge.label">({{ edge.label }})</span>
-          </li>
-        </ul>
+        <div class="subsection">
+          <div class="subheader">Węzły</div>
+          <ul class="list">
+            <li v-for="node in result.nodes" :key="node.id" class="list-item">
+              <span class="badge" :data-type="node.type || 'node'">{{ node.type || 'node' }}</span>
+              <span class="label">{{ node.label || node.id }}</span>
+            </li>
+          </ul>
+        </div>
+
+        <div class="subsection">
+          <div class="subheader">Krawędzie</div>
+          <ul class="list">
+            <li v-for="edge in result.edges" :key="edge.id || edge.from + edge.to" class="list-item">
+              {{ edge.from }} → {{ edge.to }} <span class="muted" v-if="edge.label">({{ edge.label }})</span>
+            </li>
+          </ul>
+        </div>
 
         <div class="subheader">Surowa odpowiedź</div>
         <pre class="raw">{{ result.raw }}</pre>
@@ -114,10 +127,10 @@ const applyToBoard = () => {
   right: 20px;
   width: 380px;
   max-height: 80vh;
-  background: rgba(255, 255, 255, 0.96);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(248, 250, 252, 0.98));
   backdrop-filter: blur(12px);
-  border-radius: 12px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
+  border-radius: 14px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.18);
   z-index: 1100;
   display: flex;
   flex-direction: column;
@@ -129,13 +142,18 @@ const applyToBoard = () => {
   align-items: center;
   padding: 12px 14px;
   border-bottom: 1px solid #e5e7eb;
-  background: linear-gradient(135deg, #eef2ff, #f8fafc);
+  background: linear-gradient(135deg, #eef2ff, #f4f6ff);
 }
-.panel-header h3 {
+.panel-header .title h3 {
   margin: 0;
   font-size: 16px;
   font-weight: 700;
   color: #111827;
+}
+.panel-header .title .subtitle {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: #6b7280;
 }
 .panel-header .actions {
   display: flex;
@@ -166,11 +184,18 @@ const applyToBoard = () => {
 }
 textarea {
   width: 100%;
-  border-radius: 8px;
+  border-radius: 12px;
   border: 1px solid #d1d5db;
   padding: 10px;
   font-size: 14px;
   resize: vertical;
+  background: #fff;
+  box-shadow: inset 0 1px 2px rgba(0,0,0,0.04);
+}
+.hint {
+  font-size: 12px;
+  color: #6b7280;
+  margin-top: -2px;
 }
 .actions-row {
   display: flex;
@@ -180,12 +205,13 @@ textarea {
   justify-content: flex-end;
 }
 button.primary {
-  background: #2563eb;
+  background: linear-gradient(135deg, #2563eb, #4f46e5);
   color: white;
   border: none;
   padding: 8px 12px;
-  border-radius: 8px;
+  border-radius: 10px;
   cursor: pointer;
+  box-shadow: 0 6px 16px rgba(79, 70, 229, 0.25);
 }
 button.primary:disabled {
   opacity: 0.6;
@@ -208,9 +234,10 @@ button.ghost {
 }
 .result {
   border: 1px solid #e5e7eb;
-  border-radius: 8px;
+  border-radius: 12px;
   padding: 10px;
   background: #f8fafc;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.8);
 }
 .subheader {
   font-weight: 700;
@@ -228,5 +255,55 @@ button.ghost {
   max-height: 160px;
   overflow: auto;
   font-size: 12px;
+}
+.stats {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.pill {
+  background: #eef2ff;
+  color: #4338ca;
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.subsection {
+  margin-top: 8px;
+}
+.list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.list-item {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: white;
+  border: 1px solid #e5e7eb;
+}
+.badge {
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.5px;
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: #e5e7eb;
+  color: #111827;
+}
+.badge[data-type='start'] { background: #e7f7ef; color: #0f766e; }
+.badge[data-type='end'] { background: #fdeaea; color: #b91c1c; }
+.badge[data-type='decision'] { background: #fff4e5; color: #b45309; }
+.badge[data-type='process'] { background: #e8edff; color: #4338ca; }
+.label {
+  font-weight: 600;
+  color: #111827;
 }
 </style>

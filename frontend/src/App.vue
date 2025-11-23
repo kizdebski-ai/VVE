@@ -369,19 +369,45 @@ export default {
 
     const handleDiagramApply = (diagramData) => {
       if (!diagramData?.nodes?.length) return;
-      const elements = [];
 
-      // --- Layout: try to derive levels from edges, fallback to grid ---
-      const nodeIds = diagramData.nodes.map((n, i) => n.id || `node-${i}`);
+      const palette = {
+        start: { stroke: '#0f766e', fill: '#e7f7ef' },
+        process: { stroke: '#4338ca', fill: '#e8edff' },
+        decision: { stroke: '#b45309', fill: '#fff4e5' },
+        end: { stroke: '#b91c1c', fill: '#fdeaea' },
+        fallback: { stroke: '#0f172a', fill: '#eef2ff' }
+      };
+
+      const normalizeType = (type) => (type || 'process').toLowerCase();
+      const nodes = diagramData.nodes.map((node, idx) => ({
+        ...node,
+        id: node.id || `node-${idx}`,
+        type: normalizeType(node.type)
+      }));
+      const edges = Array.isArray(diagramData.edges) ? diagramData.edges : [];
+
+      const labelFor = (node) => (node.label || node.id || '').trim() || 'Krok';
+
+      const nodeDims = new Map();
+      nodes.forEach((node) => {
+        const label = labelFor(node);
+        const width = Math.min(340, Math.max(190, label.length * 9 + 80));
+        const height = node.type === 'decision' ? 110 : 90;
+        nodeDims.set(node.id, { width, height, label, type: node.type });
+      });
+
+      // --- Layout: derive levels from edges (topological), fallback to small grid ---
+      const nodeIds = nodes.map((n) => n.id);
       const indeg = new Map(nodeIds.map((id) => [id, 0]));
-      diagramData.edges?.forEach((e) => {
+      edges.forEach((e) => {
         if (indeg.has(e.to)) indeg.set(e.to, (indeg.get(e.to) || 0) + 1);
       });
       const levels = new Map();
-      const queue = nodeIds.filter((id) => (indeg.get(id) || 0) === 0);
+      let queue = nodeIds.filter((id) => (indeg.get(id) || 0) === 0);
+      if (!queue.length && nodeIds.length) queue = [nodeIds[0]]; // Cycle or full indegree
       queue.forEach((id) => levels.set(id, 0));
       const adj = new Map(nodeIds.map((id) => [id, []]));
-      diagramData.edges?.forEach((e) => {
+      edges.forEach((e) => {
         if (adj.has(e.from)) adj.get(e.from).push(e.to);
       });
       while (queue.length) {
@@ -396,6 +422,10 @@ export default {
         });
       }
 
+      if (!edges.length) {
+        nodeIds.forEach((id, idx) => levels.set(id, Math.floor(idx / 3)));
+      }
+
       const groupByLevel = new Map();
       nodeIds.forEach((id, idx) => {
         const lvl = levels.has(id) ? levels.get(id) : 0;
@@ -403,41 +433,51 @@ export default {
         groupByLevel.get(lvl).push({ id, idx });
       });
 
-      const spacingX = 340;
-      const spacingY = 190;
+      const spacingX = 320;
+      const spacingY = 180;
       const startX = 140;
       const startY = 140;
-      const width = 220;
-      const height = 110;
 
       const nodePos = new Map();
       Array.from(groupByLevel.entries())
         .sort((a, b) => a[0] - b[0])
         .forEach(([lvl, list], lvlIdx) => {
           list.forEach((item, rowIdx) => {
+            const dim = nodeDims.get(item.id);
             const x1 = startX + lvlIdx * spacingX;
             const y1 = startY + rowIdx * spacingY;
             nodePos.set(item.id, {
               start: { x: x1, y: y1 },
-              end: { x: x1 + width, y: y1 + height },
-              center: { x: x1 + width / 2, y: y1 + height / 2 }
+              end: { x: x1 + dim.width, y: y1 + dim.height },
+              center: { x: x1 + dim.width / 2, y: y1 + dim.height / 2 },
+              size: { width: dim.width, height: dim.height }
             });
           });
         });
 
-      // Node styles
-      const baseStroke = '#111827';
-      const baseFill = '#ffffff';
-      const textColor = '#111827';
+      const elements = [];
 
-      diagramData.nodes.forEach((node, idx) => {
-        const id = node.id || `node-${idx}`;
-        const pos = nodePos.get(id);
-        const shapeType = (node.type || '').toLowerCase();
+      const offsetPoint = (fromCenter, toCenter, size) => {
+        const dx = toCenter.x - fromCenter.x;
+        const dy = toCenter.y - fromCenter.y;
+        const len = Math.hypot(dx, dy) || 1;
+        const padding = Math.min(size.width, size.height) / 2 - 8;
+        return {
+          x: fromCenter.x + (dx / len) * padding,
+          y: fromCenter.y + (dy / len) * padding
+        };
+      };
+
+      nodes.forEach((node) => {
+        const meta = nodeDims.get(node.id);
+        const pos = nodePos.get(node.id);
+        if (!pos) return;
+
+        const paletteEntry = palette[meta.type] || palette.fallback;
         const shape =
-          shapeType === 'decision'
+          meta.type === 'decision'
             ? 'diamond'
-            : shapeType === 'start' || shapeType === 'end'
+            : meta.type === 'start' || meta.type === 'end'
               ? 'circle'
               : 'rectangle';
 
@@ -445,48 +485,60 @@ export default {
           type: shape,
           start: pos.start,
           end: pos.end,
-          strokeColor: baseStroke,
-          fillColor: baseFill,
-          lineWidth: 2,
-          id
+          strokeColor: paletteEntry.stroke,
+          fillColor: paletteEntry.fill,
+          fillOpacity: 0.95,
+          lineWidth: 2.4,
+          roughness: 0,
+          id: node.id
         });
 
-        // Label (centered)
-        const label = node.label || id;
         elements.push({
           type: 'text',
-          position: { x: pos.center.x - label.length * 3.2, y: pos.center.y - 10 },
-          text: label,
+          position: { x: pos.center.x, y: pos.center.y },
+          text: meta.label,
           fontSize: 18,
-          color: textColor,
-          id: `${id}-label`
+          fontWeight: '600',
+          color: '#0f172a',
+          align: 'center',
+          baseline: 'middle',
+          maxWidth: meta.width - 24,
+          id: `${node.id}-label`
         });
       });
 
-      // Edges with arrow + labels
-      diagramData.edges?.forEach((edge, idx) => {
+      edges.forEach((edge, idx) => {
         const from = nodePos.get(edge.from);
         const to = nodePos.get(edge.to);
         if (!from || !to) return;
+        const start = offsetPoint(from.center, to.center, from.size);
+        const end = offsetPoint(to.center, from.center, to.size);
+        const edgeId = edge.id || `edge-${idx}`;
+
         elements.push({
           type: 'line',
-          start: from.center,
-          end: to.center,
+          start,
+          end,
           arrowStyle: 'end',
           strokeColor: '#0f172a',
           lineWidth: 2.2,
-          id: edge.id || `edge-${idx}`
+          roughness: 0,
+          id: edgeId
         });
+
         if (edge.label) {
-          const midX = (from.center.x + to.center.x) / 2;
-          const midY = (from.center.y + to.center.y) / 2;
+          const midX = (start.x + end.x) / 2;
+          const midY = (start.y + end.y) / 2;
           elements.push({
             type: 'text',
-            position: { x: midX + 6, y: midY - 12 },
+            position: { x: midX, y: midY - 10 },
             text: edge.label,
             fontSize: 14,
+            fontWeight: '600',
             color: '#334155',
-            id: `${edge.id || `edge-${idx}`}-label`
+            align: 'center',
+            baseline: 'middle',
+            id: `${edgeId}-label`
           });
         }
       });

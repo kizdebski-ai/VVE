@@ -44,11 +44,14 @@ export const drawElement = (
   const rc = rough.canvas(context.canvas);
 
   // Base style
-  const baseColor = element.color || '#000000';
+  const baseColor = element.strokeColor || element.color || '#000000';
   const color = isHighlighted ? '#ff5252' : baseColor;
   const lw = element.lineWidth || 2;
   const lineStyle = element.lineStyle || 'solid'; // solid, dashed, dotted
   const roughness = element.roughness !== undefined ? element.roughness : 1; // 0 = clean, 1 = default, 2 = sloppy
+  const fillColor = element.fillColor || null;
+  const fillOpacity = typeof element.fillOpacity === 'number' ? element.fillOpacity : 1;
+  const fillStyle = element.fillStyle || 'solid';
 
   // Determine dash pattern
   let strokeLineDash = [];
@@ -64,12 +67,16 @@ export const drawElement = (
     seed: element.seed || 1,
     strokeLineDash: strokeLineDash,
     disableMultiStroke: roughness === 0, // Single stroke for clean look
-    disableMultiStrokeFiller: roughness === 0
+    disableMultiStrokeFiller: roughness === 0,
+    fill: fillColor || undefined,
+    fillStyle: fillColor ? fillStyle : undefined,
+    fillWeight: element.fillWeight || 2,
+    hachureGap: element.hachureGap || undefined
   };
 
   context.save();
   context.strokeStyle = color;
-  context.fillStyle = color;
+  context.fillStyle = fillColor || color;
   context.lineWidth = lw;
   context.lineCap = 'round';
   context.lineJoin = 'round';
@@ -150,6 +157,11 @@ export const drawElement = (
         const h = Math.abs(element.end.y - element.start.y);
 
         if (isClean) {
+          if (fillColor) {
+            context.globalAlpha = fillOpacity;
+            context.fillRect(x, y, w, h);
+            context.globalAlpha = 1;
+          }
           context.strokeRect(x, y, w, h);
         } else {
           rc.rectangle(x, y, w, h, options);
@@ -167,6 +179,11 @@ export const drawElement = (
         if (isClean) {
           context.beginPath();
           context.ellipse(centerX, centerY, width / 2, height / 2, 0, 0, 2 * Math.PI);
+          if (fillColor) {
+            context.globalAlpha = fillOpacity;
+            context.fill();
+            context.globalAlpha = 1;
+          }
           context.stroke();
         } else {
           rc.ellipse(centerX, centerY, width, height, options);
@@ -189,9 +206,229 @@ export const drawElement = (
           context.lineTo(points[1][0], points[1][1]);
           context.lineTo(points[2][0], points[2][1]);
           context.closePath();
+          if (fillColor) {
+            context.globalAlpha = fillOpacity;
+            context.fill();
+            context.globalAlpha = 1;
+          }
           context.stroke();
         } else {
           rc.polygon(points, options);
+        }
+      }
+      break;
+
+    case 'trapezoid':
+      if (element.start && element.end) {
+        const x = Math.min(element.start.x, element.end.x);
+        const y = Math.min(element.start.y, element.end.y);
+        const w = Math.abs(element.end.x - element.start.x);
+        const h = Math.abs(element.end.y - element.start.y);
+        const topWidth = Math.max(10, w * 0.6);
+        const offset = (w - topWidth) / 2;
+        const points = [
+          [x + offset, y],
+          [x + offset + topWidth, y],
+          [x + w, y + h],
+          [x, y + h]
+        ];
+
+        if (isClean) {
+          context.beginPath();
+          context.moveTo(points[0][0], points[0][1]);
+          for (let i = 1; i < points.length; i++) context.lineTo(points[i][0], points[i][1]);
+          context.closePath();
+          if (fillColor) {
+            context.globalAlpha = fillOpacity;
+            context.fill();
+            context.globalAlpha = 1;
+          }
+          context.stroke();
+        } else {
+          rc.polygon(points, options);
+        }
+      }
+      break;
+
+    case 'parallelogram':
+      if (element.start && element.end) {
+        const x = Math.min(element.start.x, element.end.x);
+        const y = Math.min(element.start.y, element.end.y);
+        const w = Math.abs(element.end.x - element.start.x);
+        const h = Math.abs(element.end.y - element.start.y);
+        const slant = Math.min(w * 0.35, h * 0.8);
+        const points = [
+          [x + slant, y],
+          [x + w, y],
+          [x + w - slant, y + h],
+          [x, y + h]
+        ];
+
+        if (isClean) {
+          context.beginPath();
+          context.moveTo(points[0][0], points[0][1]);
+          for (let i = 1; i < points.length; i++) context.lineTo(points[i][0], points[i][1]);
+          context.closePath();
+          if (fillColor) {
+            context.globalAlpha = fillOpacity;
+            context.fill();
+            context.globalAlpha = 1;
+          }
+          context.stroke();
+        } else {
+          rc.polygon(points, options);
+        }
+      }
+      break;
+
+    case 'deltoid':
+      if (element.start && element.end) {
+        const x = Math.min(element.start.x, element.end.x);
+        const y = Math.min(element.start.y, element.end.y);
+        const w = Math.abs(element.end.x - element.start.x);
+        const h = Math.abs(element.end.y - element.start.y);
+        const cx = x + w / 2;
+        const points = [
+          [cx, y],
+          [x + w, y + h / 2],
+          [cx, y + h],
+          [x, y + h / 2]
+        ];
+
+        if (isClean) {
+          context.beginPath();
+          context.moveTo(points[0][0], points[0][1]);
+          for (let i = 1; i < points.length; i++) context.lineTo(points[i][0], points[i][1]);
+          context.closePath();
+          if (fillColor) {
+            context.globalAlpha = fillOpacity;
+            context.fill();
+            context.globalAlpha = 1;
+          }
+          context.stroke();
+        } else {
+          rc.polygon(points, options);
+        }
+      }
+      break;
+
+    case 'diamond':
+      if (element.start && element.end) {
+        const centerX = (element.start.x + element.end.x) / 2;
+        const centerY = (element.start.y + element.end.y) / 2;
+        const width = Math.abs(element.end.x - element.start.x);
+        const height = Math.abs(element.end.y - element.start.y);
+        const points = [
+          [centerX, centerY - height / 2],
+          [centerX + width / 2, centerY],
+          [centerX, centerY + height / 2],
+          [centerX - width / 2, centerY]
+        ];
+
+        if (isClean) {
+          context.beginPath();
+          context.moveTo(points[0][0], points[0][1]);
+          for (let i = 1; i < points.length; i++) {
+            context.lineTo(points[i][0], points[i][1]);
+          }
+          context.closePath();
+          if (fillColor) {
+            context.globalAlpha = fillOpacity;
+            context.fill();
+            context.globalAlpha = 1;
+          }
+          context.stroke();
+        } else {
+          rc.polygon(points, options);
+        }
+      }
+      break;
+
+    case 'cuboid':
+      if (element.start && element.end) {
+        const x = Math.min(element.start.x, element.end.x);
+        const y = Math.min(element.start.y, element.end.y);
+        const w = Math.abs(element.end.x - element.start.x);
+        const h = Math.abs(element.end.y - element.start.y);
+        const depth = Math.min(w, h) * 0.25;
+
+        const front = [
+          [x, y + depth],
+          [x + w - depth, y + depth],
+          [x + w - depth, y + h],
+          [x, y + h]
+        ];
+        const back = [
+          [x + depth, y],
+          [x + w, y],
+          [x + w, y + h - depth],
+          [x + depth, y + h - depth]
+        ];
+
+        if (isClean) {
+          const drawPoly = (pts) => {
+            context.beginPath();
+            context.moveTo(pts[0][0], pts[0][1]);
+            for (let i = 1; i < pts.length; i++) context.lineTo(pts[i][0], pts[i][1]);
+            context.closePath();
+            context.stroke();
+          };
+          drawPoly(front);
+          drawPoly(back);
+          context.beginPath();
+          context.moveTo(front[0][0], front[0][1]); context.lineTo(back[0][0], back[0][1]);
+          context.moveTo(front[1][0], front[1][1]); context.lineTo(back[1][0], back[1][1]);
+          context.moveTo(front[2][0], front[2][1]); context.lineTo(back[2][0], back[2][1]);
+          context.moveTo(front[3][0], front[3][1]); context.lineTo(back[3][0], back[3][1]);
+          context.stroke();
+        } else {
+          rc.polygon(front, options);
+          rc.polygon(back, options);
+          rc.line(front[0][0], front[0][1], back[0][0], back[0][1], options);
+          rc.line(front[1][0], front[1][1], back[1][0], back[1][1], options);
+          rc.line(front[2][0], front[2][1], back[2][0], back[2][1], options);
+          rc.line(front[3][0], front[3][1], back[3][0], back[3][1], options);
+        }
+      }
+      break;
+
+    case 'tetrahedron':
+      if (element.start && element.end) {
+        const x = Math.min(element.start.x, element.end.x);
+        const y = Math.min(element.start.y, element.end.y);
+        const w = Math.abs(element.end.x - element.start.x);
+        const h = Math.abs(element.end.y - element.start.y);
+        const apex = [x + w / 2, y];
+        const left = [x, y + h];
+        const right = [x + w, y + h];
+        const back = [x + w / 2, y + h * 0.65];
+
+        const faces = [
+          [left, right, back],
+          [apex, left, back],
+          [apex, right, back],
+          [apex, left, right]
+        ];
+
+        if (isClean) {
+          faces.forEach((pts, idx) => {
+            context.beginPath();
+            context.moveTo(pts[0][0], pts[0][1]);
+            context.lineTo(pts[1][0], pts[1][1]);
+            context.lineTo(pts[2][0], pts[2][1]);
+            context.closePath();
+            if (idx === 0) {
+              context.setLineDash([5, 5]);
+              context.stroke();
+              context.setLineDash([]);
+            } else {
+              context.stroke();
+            }
+          });
+        } else {
+          faces.forEach((pts, idx) => {
+            rc.polygon(pts, idx === 0 ? { ...options, strokeLineDash: [6, 4] } : options);
+          });
         }
       }
       break;
@@ -274,9 +511,18 @@ const drawArrowhead = (context, rc, from, to, options, isClean) => {
 };
 
 const drawText = (context, element) => {
-  context.font = `${element.fontSize}px "Virgil", "Segoe UI Emoji", sans-serif`; // Use handwritten font if available
-  context.textBaseline = 'top';
-  context.fillText(element.text, element.position.x, element.position.y);
+  const fontSize = element.fontSize || 16;
+  const fontWeight = element.fontWeight || '600';
+  const fontFamily = element.fontFamily || '"Inter", "Segoe UI", "Helvetica Neue", sans-serif';
+  context.font = `${fontWeight} ${fontSize}px ${fontFamily}`;
+  context.textAlign = element.align || 'left';
+  context.textBaseline = element.baseline || 'top';
+  context.fillStyle = element.color || '#000000';
+  if (element.maxWidth) {
+    context.fillText(element.text, element.position.x, element.position.y, element.maxWidth);
+  } else {
+    context.fillText(element.text, element.position.x, element.position.y);
+  }
 };
 
 const drawImage = (context, element, imageCache, requestRedraw) => {

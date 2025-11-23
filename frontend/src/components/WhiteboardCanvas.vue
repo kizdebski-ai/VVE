@@ -109,7 +109,7 @@
 </template>
 
 <script>
-import { ref, onMounted, onBeforeUnmount, watch, nextTick, shallowRef, reactive, computed } from 'vue';
+import { ref, onMounted, onBeforeUnmount, watch, nextTick, shallowRef, reactive, computed, toRaw } from 'vue';
 import * as Y from 'yjs';
 import katex from 'katex';
 import 'katex/dist/katex.min.css';
@@ -197,6 +197,7 @@ export default {
     mathRecognizerOptions: { type: Object, default: () => ({}) },
     // Props from App.vue (already existed)
     roomId: { type: String, required: true },
+    roomKey: { type: [String, Object], default: null },
     username: { type: String, default: 'Anonymous' }
   },
   emits: [
@@ -272,6 +273,7 @@ export default {
     const statusTimeout = ref(null);
     const darkMode = ref(false);
     const eraserMode = ref('erase');
+    const eraserSize = ref(30);
     const lastReleasedElementIndex = ref(-1);
     const currentElementPreview = ref(null);
     const pointsBuffer = ref([]);
@@ -328,7 +330,7 @@ export default {
     let clipboardFocusHandler = null;
 
     // Helper module instances
-    const yjsConnection = ref(null);
+    const yjsConnection = shallowRef(null);
     const ydoc = ref(null);
     const yDrawings = ref(null);
     const activeRoomId = ref(null);
@@ -615,38 +617,19 @@ export default {
         mathRecognizerModule.value.drawGhostAnswer(ctx);
       }
 
-
-      ctx.restore();
-    };
-
-    const handleYjsUpdate = (events, transaction) => {
-      // Only log detailed info if debugging is enabled
-      if (props.debugMode) {
-        debugLog(`[handleYjsUpdate] Yjs update detected. Origin: ${transaction.origin || 'unspecified'}`);
-      }
-
-      // Sync helper modules if the change didn't originate from them
-      const aiOrigins = ['ai-align', 'ai-style', 'ai-math'];
-        if (!aiOrigins.includes(transaction.origin)) {
-          syncModulesWithYjs();
-      }
-      refreshMovableElements();
-
-      // Directly call redrawCanvas without throttling
-      redrawCanvas();
-      // State update is handled by undoManager listeners now
     };
 
     // Helper to sync module state from Yjs
     const syncModulesWithYjs = () => {
         if (!yDrawings.value) return;
-        const currentStrokes = yDrawings.value.toArray().map(m => ({ id: m.get('id'), ...m.toJSON() })); // Ensure IDs are included if stored in Yjs map keys or properties
+        const currentStrokes = yDrawings.value.toArray().map(m => ({ id: m.get('id'), ...m.toJSON() }));
         if (gridAlignModule.value?.enabled) gridAlignModule.value.setStrokes(currentStrokes);
         if (handwritingStylerModule.value?.enabled) handwritingStylerModule.value.setStrokes(currentStrokes);
         if (mathRecognizerModule.value?.enabled) mathRecognizerModule.value.setStrokes(currentStrokes);
     };
 
     const refreshMovableElements = () => {
+        const beforeCount = movableElements.value.length;
         if (!yDrawings.value) {
             movableElements.value = [];
             return;
@@ -666,6 +649,7 @@ export default {
                 return map;
             });
         movableElements.value = filtered;
+        console.log(`[refreshMovableElements] Updated: before=${beforeCount}, after=${filtered.length}, yDrawings=${yDrawings.value.length}`);
     };
 
     const findMovableElementIdAtPoint = (coords) => {
@@ -702,6 +686,25 @@ export default {
         });
     };
 
+    // Setup awareness listener to track other users
+    const setupAwarenessListener = () => {
+        console.log('[WhiteboardCanvas] setupAwarenessListener called');
+        if (!yjsConnection.value?.awareness) {
+            console.warn('[WhiteboardCanvas] No awareness available!');
+            return;
+        }
+        
+        const awareness = yjsConnection.value.awareness;
+        console.log('[WhiteboardCanvas] Setting up awareness listener, clientID:', awareness.clientID);
+        
+        // Listen for awareness changes (cursors, online users)
+        awareness.on('change', (changes) => {
+            console.log('[WhiteboardCanvas] Awareness changed:', changes);
+            // Trigger redraw to show updated cursors
+            redrawCanvas();
+        });
+    };
+
     const teardownYjsConnection = () => {
         if (yDrawings.value) {
             yDrawings.value.unobserve(handleYjsUpdate);
@@ -723,7 +726,20 @@ export default {
         movableElements.value = [];
     };
 
-    const connectToRoom = (targetRoomId) => {
+    const handleYjsUpdate = (event) => {
+        // debugLog('[WhiteboardCanvas] Yjs update received');
+        refreshMovableElements();
+        syncModulesWithYjs();
+        redrawCanvas();
+        
+        nextTick(() => {
+             if (undoManager.value) {
+                 updateGlobalState();
+             }
+        });
+    };
+
+    const connectToRoom = async (targetRoomId) => {
         const normalizedRoomId = targetRoomId?.trim();
         if (!normalizedRoomId) {
             showToast("Room ID missing. Collaboration disabled.", "error");
@@ -737,7 +753,8 @@ export default {
         selectedObjectId.value = null;
 
         try {
-            const connection = connectToYjs(normalizedRoomId);
+            // Pass roomKey to connectToYjs for E2E encryption
+            const connection = await connectToYjs(normalizedRoomId);
             yjsConnection.value = connection;
             ydoc.value = connection.ydoc;
             yDrawings.value = connection.yDrawings;
@@ -747,6 +764,7 @@ export default {
             }
 
             yDrawings.value.observe(handleYjsUpdate);
+            setupAwarenessListener(); // Enable cursor tracking and online count
             activeRoomId.value = normalizedRoomId;
             refreshMovableElements();
 
@@ -1039,7 +1057,8 @@ export default {
                     for (const [key, value] of elementMap.entries()) {
                         element[key] = (value instanceof Y.Map || value instanceof Y.Array) ? value.toJSON() : value;
                     }
-                    if (isPointInElement(transformedCoords, element, (element.lineWidth || 2) / 2 + 5)) {
+                    const hitPadding = Math.max((element.lineWidth || 2) / 2 + 5, eraserSize.value / 2);
+                    if (isPointInElement(transformedCoords, element, hitPadding)) {
                         foundIndex = i;
                         break;
                     }
@@ -1662,7 +1681,7 @@ export default {
                      }
                   });
               } catch (error) {
-                  // console.error('[finishDrawing] Error during Yjs transaction:', error); // Commented out
+                  console.error('[finishDrawing] Error during Yjs transaction:', error);
                   showToast("Error saving drawing element.", "error");
               }
           }
@@ -1701,6 +1720,7 @@ export default {
     const setColor = (color) => { currentColor.value = color; updateCursor(); };
     const setLineWidth = (width) => { currentLineWidth.value = Number(width) || 2; updateCursor(); };
     const setEraserMode = (mode) => { eraserMode.value = mode; updateCursor(); };
+    const setEraserSize = (size) => { eraserSize.value = Number(size) || 30; };
 
     const updateCursor = () => {
       if (!canvas.value) return;
@@ -2357,6 +2377,7 @@ export default {
     // Expose methods and state for App.vue to call via template ref
     expose({
       // Core state used by App.vue
+      containerRef,
       yjsConnection,
       undoManager,
       canUndo,
@@ -2367,6 +2388,7 @@ export default {
       setColor,
       setLineWidth,
       setEraserMode,
+      setEraserSize,
 
       // Undo / redo & canvas control
       undo,
@@ -2386,6 +2408,7 @@ export default {
       // Misc helpers
       getViewportCenter,
       toggleDebug,
+      updateAwarenessUser,
 
       // Feature actions
       alignToGrid,

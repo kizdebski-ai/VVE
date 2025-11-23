@@ -1,4 +1,3 @@
-import type { WhiteVueElement } from "../model/sceneTypes";
 import type { BindingInfo, WhiteVueElement } from "../model/sceneTypes";
 
 export function isBindableElement(el: WhiteVueElement) {
@@ -6,10 +5,11 @@ export function isBindableElement(el: WhiteVueElement) {
 }
 
 export function getElementAtPosition(elements: WhiteVueElement[], x: number, y: number) {
-  for (let i = elements.length - 1; i >= 0; i--) {
   for (let i = elements.length - 1; i >= 0; i -= 1) {
     const el = elements[i];
-    if (x >= el.x && x <= el.x + el.width && y >= el.y && y <= el.y + el.height) return el;
+    if (x >= el.x && x <= el.x + el.width && y >= el.y && y <= el.y + el.height) {
+      return el;
+    }
   }
   return null;
 }
@@ -20,30 +20,6 @@ export function getHoveredElementForBinding(elements: WhiteVueElement[], x: numb
   return el;
 }
 
-export function bindArrowToElement(
-  arrow: WhiteVueElement & { startBinding?: any; endBinding?: any },
-  target: WhiteVueElement,
-  edge: "start" | "end",
-) {
-  const { focus, gap } = { focus: 0.5, gap: 1 };
-  if (edge === "start") arrow.startBinding = { elementId: target.id, focus, gap };
-  else arrow.endBinding = { elementId: target.id, focus, gap };
-  const list = target.boundElements ?? [];
-  if (!list.find((b) => b.id === arrow.id)) target.boundElements = [...list, { id: arrow.id, type: "arrow" }];
-}
-
-export function maybeBindArrowOnPointerUp(
-  arrow: WhiteVueElement & { startBinding?: any; endBinding?: any },
-  appState: any,
-  all: WhiteVueElement[],
-  pointerScene: { x: number; y: number },
-) {
-  if (!appState.isBindingEnabled) return;
-  const hovered = getHoveredElementForBinding(
-    all.filter((el) => el.id !== arrow.id),
-    pointerScene.x,
-    pointerScene.y,
-  );
 function clampVectorToRect(target: WhiteVueElement, reference: { x: number; y: number }) {
   const cx = target.x + target.width / 2;
   const cy = target.y + target.height / 2;
@@ -104,7 +80,7 @@ function applyBindingToArrowEndpoint(
   arrow: WhiteVueElement,
   target: WhiteVueElement,
   binding: BindingInfo,
-  edge: "start" | "end"
+  edge: "start" | "end",
 ) {
   const opposite = edge === "start"
     ? { x: arrow.endX ?? arrow.x + arrow.width, y: arrow.endY ?? arrow.y + arrow.height }
@@ -126,7 +102,9 @@ export function bindArrowToElement(arrow: WhiteVueElement, target: WhiteVueEleme
   if (edge === "start") arrow.startBinding = binding;
   else arrow.endBinding = binding;
   const list = target.boundElements ?? [];
-  if (!list.find((b) => b.id === arrow.id)) target.boundElements = [...list, { id: arrow.id, type: "arrow" }];
+  if (!list.find((b) => b.id === arrow.id)) {
+    target.boundElements = [...list, { id: arrow.id, type: "arrow" }];
+  }
   applyBindingToArrowEndpoint(arrow, target, binding, edge);
 }
 
@@ -134,7 +112,7 @@ export function maybeBindArrowOnPointerUp(
   arrow: WhiteVueElement,
   appState: { isBindingEnabled: boolean },
   all: WhiteVueElement[],
-  pointerScene: { x: number; y: number }
+  pointerScene: { x: number; y: number },
 ) {
   if (!appState.isBindingEnabled) return;
   const hovered = getHoveredElementForBinding(all.filter((el) => el.id !== arrow.id), pointerScene.x, pointerScene.y);
@@ -146,13 +124,6 @@ export function updateBoundElementsAfterChange(changed: WhiteVueElement, allElem
   if (!bound.length) return;
   const arrows = allElements.filter((el) => el.type === "arrow" && bound.some((b) => b.id === el.id));
   for (const arrow of arrows) {
-    if ((arrow as any).startBinding?.elementId === changed.id) {
-      // update start anchor point based on new geometry
-      (arrow as any).startBinding.focus = 0.5;
-    }
-    if ((arrow as any).endBinding?.elementId === changed.id) {
-      // update end anchor point based on new geometry
-      (arrow as any).endBinding.focus = 0.5;
     if (arrow.startBinding?.elementId === changed.id) {
       applyBindingToArrowEndpoint(arrow, changed, arrow.startBinding, "start");
     }

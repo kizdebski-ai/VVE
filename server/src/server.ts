@@ -53,11 +53,16 @@ const broadcast = (
   exclude?: WebSocket | null
 ) => {
   const msg = createMessage(type, payload);
+  let sentCount = 0;
   room.connections.forEach((_, client) => {
     if (client !== exclude) {
       send(client, msg);
+      sentCount++;
     }
   });
+  if (type === messageSync) {
+    console.log(`[Server] Broadcast sync update to ${sentCount} clients (total: ${room.connections.size})`);
+  }
 };
 
 const toUint8Array = (raw: WebSocket.RawData): Uint8Array => {
@@ -82,6 +87,7 @@ const initializeRoom = (room: RoomContext) => {
     room.meta.updatedAt = timestamp;
     room.meta.lastActiveAt = timestamp;
     room.lastActive = timestamp;
+    logger.info('Generated update', { size: update.length, originIsWs: origin instanceof WebSocket });
     broadcast(room, messageSync, update, origin as WebSocket | null);
   });
 
@@ -132,6 +138,7 @@ const handleMessage = (room: RoomContext, ws: WebSocket, data: Uint8Array) => {
   switch (messageType) {
     case messageSync: {
       try {
+        logger.info('Processing sync message', { size: payload.length });
         Y.applyUpdate(room.doc, payload, ws);
       } catch (error) {
         logger.warn('Failed to apply doc update', {

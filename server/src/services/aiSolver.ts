@@ -1,4 +1,6 @@
 import nodeFetch, { Response, RequestInit } from 'node-fetch';
+import { HttpError } from './httpError';
+import { create, all } from 'mathjs';
 
 export interface EquationSolver {
   solveEquation(equation: string): Promise<string>;
@@ -12,6 +14,146 @@ const resolveFetch = (): FetchImpl => {
     return globalThis.fetch.bind(globalThis) as unknown as FetchImpl;
   }
   return nodeFetch as unknown as FetchImpl;
+};
+
+const math = create(all, { number: 'number', precision: 12 });
+const RESERVED_FUNCTION_NAMES = new Set([
+  'sin', 'cos', 'tan', 'log', 'ln', 'sqrt', 'pow', 'abs', 'exp', 'max', 'min', 'mod', 'round', 'floor', 'ceil'
+]);
+
+const normalizeEquationText = (text: string): string => {
+  if (!text) return '';
+  let cleaned = text
+    .replace(/\\cdot|·|⋅|∙|×/g, '*')
+    .replace(/÷/g, '/')
+    .replace(/—|–/g, '-')
+    .replace(/\\left|\\right/g, '')
+    .replace(/\\\\/g, '\\')
+    .replace(/\s+/g, '');
+
+  cleaned = cleaned
+    .replace(/\\frac\{([^}]+)\}\{([^}]+)\}/g, '($1)/($2)')
+    .replace(/\\frac\(([^)]+)\)\(([^)]+)\)/g, '($1)/($2)')
+    .replace(/\^\{([^}]+)\}/g, '^($1)')
+    .replace(/[{}]/g, match => (match === '{' ? '(' : ')'))
+    .replace(/\$/g, '');
+
+  return cleaned.trim();
+};
+
+const detectVariableName = (expression: string): string | null => {
+  const matches = expression.match(/[a-zA-Z]+/g);
+  if (!matches) return null;
+  return matches.find((name) => !RESERVED_FUNCTION_NAMES.has(name.toLowerCase())) || null;
+};
+
+const tryEvaluateExpression = (expression: string, scope: Record<string, number> = {}) => {
+  try {
+    return math.evaluate(expression, scope);
+  } catch {
+    return null;
+  }
+};
+
+const evaluateCompiled = (compiled: any, variable: string, value: number) => {
+  try {
+    return compiled.evaluate({ [variable]: value });
+  } catch {
+    return NaN;
+  }
+};
+
+const bisectRoot = (compiled: any, variable: string, a: number, b: number, iterations = 40): number | null => {
+  let fa = evaluateCompiled(compiled, variable, a);
+  let fb = evaluateCompiled(compiled, variable, b);
+  if (!Number.isFinite(fa) || !Number.isFinite(fb)) return null;
+
+  for (let i = 0; i < iterations; i += 1) {
+    const mid = (a + b) / 2;
+    const fm = evaluateCompiled(compiled, variable, mid);
+    if (!Number.isFinite(fm)) break;
+    if (Math.abs(fm) < 1e-7) return mid;
+    if (Math.sign(fm) === Math.sign(fa)) {
+      a = mid;
+      fa = fm;
+    } else {
+      b = mid;
+      fb = fm;
+    }
+  }
+  return (a + b) / 2;
+};
+
+const findRoot = (compiled: any, variable: string): number | null => {
+  const ranges: Array<[number, number]> = [
+    [-100, 100],
+    [-50, 50],
+    [-10, 10],
+    [-5, 5],
+    [0, 50],
+    [-50, 0]
+  ];
+
+  for (const [start, end] of ranges) {
+    const steps = 60;
+    let prevX = start;
+    let prevY = evaluateCompiled(compiled, variable, start);
+
+    for (let i = 1; i <= steps; i += 1) {
+      const x = start + ((end - start) * i) / steps;
+      const y = evaluateCompiled(compiled, variable, x);
+      if (!Number.isFinite(y)) {
+        prevX = x;
+        prevY = y;
+        continue;
+      }
+      if (Math.abs(y) < 1e-6) return x;
+      if (Number.isFinite(prevY) && Math.sign(y) !== Math.sign(prevY)) {
+        return bisectRoot(compiled, variable, prevX, x);
+      }
+      prevX = x;
+      prevY = y;
+    }
+  }
+  return null;
+};
+
+const solveEquationLocally = (equationText: string): string | null => {
+  const normalized = normalizeEquationText(equationText);
+  if (!normalized) return null;
+
+  if (!normalized.includes('=')) {
+    const value = tryEvaluateExpression(normalized);
+    if (value === null || value === undefined) return null;
+    return math.format(value, { precision: 6 }) as string;
+  }
+
+  const [lhs, rhs] = normalized.split('=');
+  if (!lhs || !rhs) return null;
+
+  const variable = detectVariableName(lhs + rhs);
+  if (!variable) {
+    const leftVal = tryEvaluateExpression(lhs);
+    const rightVal = tryEvaluateExpression(rhs);
+    if (leftVal === null || rightVal === null) return null;
+    if (Math.abs(Number(leftVal) - Number(rightVal)) < 1e-9) {
+      return math.format(leftVal, { precision: 6 }) as string;
+    }
+    return `${math.format(leftVal, { precision: 6 })} = ${math.format(rightVal, { precision: 6 })}`;
+  }
+
+  try {
+    const diffNode = math.parse(`${lhs}-(${rhs})`);
+    const compiled = diffNode.compile();
+    const root = findRoot(compiled, variable);
+    if (root !== null && Number.isFinite(root)) {
+      return `${variable} ≈ ${math.format(root, { precision: 6 })}`;
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
 };
 
 export interface OpenRouterSolverOptions {
@@ -38,7 +180,17 @@ export class OpenRouterEquationSolver implements EquationSolver {
   }
 
   async solveEquation(equation: string): Promise<string> {
-    return this.callSolver(equation);
+    const normalized = equation?.trim();
+    const localSolution = normalized ? solveEquationLocally(normalized) : null;
+    if (localSolution) return localSolution;
+
+    try {
+      return await this.callSolver(normalized);
+    } catch (error) {
+      const fallback = normalized ? solveEquationLocally(normalized) : null;
+      if (fallback) return fallback;
+      throw error;
+    }
   }
 
   async solveEquationFromImage(imageBase64: string): Promise<{ equation: string; solution: string }> {
@@ -49,13 +201,26 @@ export class OpenRouterEquationSolver implements EquationSolver {
     }
 
     // Step 2: Solve
-    const solution = await this.callSolver(extractedEquation);
-    return { equation: extractedEquation, solution };
+    const localSolution = solveEquationLocally(extractedEquation);
+    if (localSolution) {
+      return { equation: extractedEquation, solution: localSolution };
+    }
+
+    try {
+      const solution = await this.callSolver(extractedEquation);
+      return { equation: extractedEquation, solution };
+    } catch (error) {
+      const fallback = solveEquationLocally(extractedEquation);
+      if (fallback) {
+        return { equation: extractedEquation, solution: fallback };
+      }
+      throw error;
+    }
   }
 
   private async callOCR(imageBase64: string): Promise<string> {
     const apiKey = process.env.OPENROUTER_API_KEY;
-    if (!apiKey) throw new Error('OPENROUTER_API_KEY is not configured.');
+    if (!apiKey) throw new HttpError(500, 'OPENROUTER_API_KEY is not configured.');
 
     const response = await this.fetchImpl('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
@@ -80,7 +245,9 @@ export class OpenRouterEquationSolver implements EquationSolver {
     if (!response.ok) {
       const text = await response.text();
       console.error(`[AI Solver] OCR request failed. Status: ${response.status}, Body: ${text}`);
-      throw new Error(`OCR request failed (${response.status}): ${text}`);
+      const status = response.status === 429 ? 503 : response.status;
+      const reason = response.status === 429 ? 'OCR provider is rate limited' : `OCR request failed (${response.status})`;
+      throw new HttpError(status, reason, text);
     }
 
     const payload = (await response.json()) as any;
@@ -91,7 +258,7 @@ export class OpenRouterEquationSolver implements EquationSolver {
 
   private async callSolver(equation: string): Promise<string> {
     const apiKey = process.env.OPENROUTER_API_KEY;
-    if (!apiKey) throw new Error('OPENROUTER_API_KEY is not configured.');
+    if (!apiKey) throw new HttpError(500, 'OPENROUTER_API_KEY is not configured.');
 
     const systemPrompt =
       'You are a precise math engine. ' +
@@ -119,7 +286,9 @@ export class OpenRouterEquationSolver implements EquationSolver {
     if (!response.ok) {
       const text = await response.text();
       console.error(`[AI Solver] Solver request failed. Status: ${response.status}, Body: ${text}`);
-      throw new Error(`Solver request failed (${response.status}): ${text}`);
+      const status = response.status === 429 ? 503 : response.status;
+      const reason = response.status === 429 ? 'Solver provider is rate limited' : `Solver request failed (${response.status})`;
+      throw new HttpError(status, reason, text);
     }
 
     const payload = (await response.json()) as any;

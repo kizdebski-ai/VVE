@@ -1,235 +1,150 @@
 import * as Y from 'yjs';
-import { Awareness } from 'y-protocols/awareness';
-import { applyAwarenessUpdate, encodeAwarenessUpdate, removeAwarenessStates } from 'y-protocols/awareness';
+import { Awareness, applyAwarenessUpdate, encodeAwarenessUpdate, removeAwarenessStates } from 'y-protocols/awareness';
 
-// Define message types
+// Message types must match the backend
 const messageSync = 0;
 const messageAwareness = 1;
-// Add other types if needed (e.g., messageAuth = 2)
 
-// Define the structure of the returned object
-interface YjsConnection {
+export interface YjsConnection {
   ydoc: Y.Doc;
-  awareness: Awareness; // Add awareness instance
+  awareness: Awareness;
   socket: WebSocket;
-  yDrawings: Y.Array<any>; // Shared array for drawing data
-  disconnect: () => void; // Function to manually disconnect
+  yDrawings: Y.Array<any>;
+  disconnect: () => void;
 }
 
-// Reconnect parameters
-const RECONNECT_TIMEOUT_BASE = 1000; // Initial timeout in ms
-const RECONNECT_TIMEOUT_MAX = 10000; // Max timeout in ms
-type ReconnectTimer = ReturnType<typeof window.setTimeout> | null;
-
-/**
- * Establishes a WebSocket connection to synchronize a Yjs document and a specific Y.Array for drawings.
- *
- * @param roomId The unique identifier for the collaboration room.
- * @param wsUrlTemplate Optional template for the WebSocket URL. Defaults to 'ws://localhost:8000/ws/whiteboard/{roomId}/'.
- * @returns An object containing the Yjs document, the WebSocket instance, the shared drawings array, and a disconnect function.
- */
-export function connectToYjs(
-  roomId: string,
-  wsUrlTemplate: string = 'ws://localhost:8000/ws/whiteboard/{roomId}/'
-): YjsConnection {
-  // console.log(`[Yjs Provider] Connecting to room: ${roomId}`); // Commented out
-
+export function connectToYjs(roomId: string): YjsConnection {
   const ydoc = new Y.Doc();
-  const awareness = new Awareness(ydoc); // Create awareness instance
+  const awareness = new Awareness(ydoc);
+  const yDrawings: Y.Array<any> = ydoc.getArray('drawings');
 
-  let reconnectTimeout = RECONNECT_TIMEOUT_BASE;
-  let reconnectTimer: ReconnectTimer = null;
-  let explicitlyDisconnected = false; // Flag to prevent reconnect after manual disconnect
+  // Determine WebSocket URL
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const host = window.location.hostname === 'localhost' ? 'localhost:8000' : window.location.host;
+  const wsUrl = `${protocol}//${host}/ws/whiteboard/${roomId}`;
+
+  let socket: WebSocket | null = null;
+  let reconnectTimeout = 1000;
+  const reconnectTimeoutMax = 10000;
+  let reconnectTimer: ReturnType<typeof window.setTimeout> | null = null;
+  let explicitlyDisconnected = false;
   let listenersAttached = false;
 
-  // --- Set Initial Local Awareness State ---
-  // Replace with authenticated user info when available
-  const defaultUser = {
-    name: `User_${ydoc.clientID.toString().slice(-4)}`, // Simple default name
-    color: `#${Math.floor(Math.random()*16777215).toString(16).padStart(6, '0')}` // Random color
-  };
-  awareness.setLocalStateField('user', defaultUser);
-  // console.log('[Yjs Provider] Set initial local awareness state:', awareness.getLocalState()); // Commented out
-  // ---
-
-  // Get the shared Y.Array named 'drawings'. It will be created if it doesn't exist.
-  const yDrawings: Y.Array<any> = ydoc.getArray('drawings');
-  const wsUrl = wsUrlTemplate.replace('{roomId}', roomId);
-  let socket: WebSocket | null = null;
-
-  const clearAwarenessStates = (origin: string, includeLocal = false) => {
+  const clearAwarenessStates = (origin: string) => {
     const knownClientIds = Array.from(awareness.getStates().keys()).filter(
-      (clientId) => includeLocal || clientId !== awareness.clientID
+      (clientId) => clientId !== awareness.clientID
     );
-    if (includeLocal && !knownClientIds.includes(awareness.clientID)) {
-      knownClientIds.push(awareness.clientID);
-    }
     if (knownClientIds.length) {
       removeAwarenessStates(awareness, knownClientIds, origin);
     }
   };
 
-  const setupWebSocket = () => {
-    if (explicitlyDisconnected) {
-      // console.log('[Yjs Provider] Explicitly disconnected, not reconnecting.'); // Commented out
-      return; // Don't reconnect if manually disconnected
+  const ydocUpdateHandler = (update: Uint8Array, origin: any) => {
+    console.log('[connectToYjs] ydocUpdateHandler called. Origin:', origin, 'Update size:', update.length);
+    if (origin !== 'websocketProvider' && socket?.readyState === WebSocket.OPEN) {
+      const message = new Uint8Array(1 + update.length);
+      message[0] = messageSync;
+      message.set(update, 1);
+      socket.send(message);
+      console.log('[connectToYjs] Sent update to server, size:', update.length, 'origin:', origin);
+    } else {
+      if (origin !== 'websocketProvider') {
+        console.warn('[connectToYjs] Skipped sending update. Socket readyState:', socket?.readyState);
+      }
     }
+  };
 
-    // console.log(`[Yjs Provider] Attempting to connect to ${wsUrl}...`); // Commented out
+  const awarenessUpdateHandler = ({ added, updated, removed }: { added: number[]; updated: number[]; removed: number[] }, origin: any) => {
+    const changedClients = added.concat(updated, removed);
+    if (origin !== 'websocketProvider' && socket?.readyState === WebSocket.OPEN && changedClients.length) {
+      const update = encodeAwarenessUpdate(awareness, changedClients);
+      const message = new Uint8Array(1 + update.length);
+      message[0] = messageAwareness;
+      message.set(update, 1);
+      socket.send(message);
+    }
+  };
+
+  const setupWebSocket = () => {
+    if (explicitlyDisconnected) return;
     socket = new WebSocket(wsUrl);
-    socket.binaryType = 'arraybuffer'; // Important for receiving binary data (Uint8Array)
-
-    // --- WebSocket Event Handlers ---
+    socket.binaryType = 'arraybuffer';
 
     socket.onopen = () => {
-      // console.log('[Yjs Provider] WebSocket connection established.'); // Commented out
-      // Reset reconnect timeout on successful connection
-      reconnectTimeout = RECONNECT_TIMEOUT_BASE;
+      console.log('[connectToYjs] WebSocket OPENED for room:', roomId);
+      reconnectTimeout = 1000;
       if (reconnectTimer) {
         window.clearTimeout(reconnectTimer);
         reconnectTimer = null;
       }
 
-      // --- Send initial awareness state ---
-      // The backend now sends the initial document state upon connection.
+      // Send initial awareness state
       if (socket?.readyState === WebSocket.OPEN) {
-        // REMOVED: Sending initial document state (backend handles this)
-        // const docState = Y.encodeStateAsUpdate(ydoc);
-        // const syncMessage = new Uint8Array([messageSync, ...docState]);
-        // socket.send(syncMessage);
-        // // console.log('[Yjs Provider] Sent initial document state.'); // Commented out
+        const awarenessState = encodeAwarenessUpdate(awareness, [awareness.clientID]);
+        const message = new Uint8Array(1 + awarenessState.length);
+        message[0] = messageAwareness;
+        message.set(awarenessState, 1);
+        socket.send(message);
+        console.log('[connectToYjs] Sent initial awareness, clientID:', awareness.clientID);
+      }
 
-        // Send awareness state (prefixed)
-        const awarenessState = encodeAwarenessUpdate(awareness, [awareness.clientID]); // Use awareness.clientID
-        const awarenessMessage = new Uint8Array([messageAwareness, ...awarenessState]);
-        socket.send(awarenessMessage);
-        // console.log('[Yjs Provider] Sent initial awareness state.'); // Commented out
-
-        // --- Attach Yjs listeners only AFTER socket is open ---
-        // Note: ydoc.on and awareness.on are typically idempotent, but attaching here ensures
-        // we don't try to send before the socket is ready after initial connect or reconnect.
-        // console.log('[Yjs Provider] Attaching ydoc & awareness update listeners.'); // Commented out
-        if (!listenersAttached) {
-          ydoc.on('update', ydocUpdateHandler);
-          awareness.on('update', awarenessUpdateHandler);
-          listenersAttached = true;
-        }
-        // ---
-
-      } else {
-        // console.error('[Yjs Provider] WebSocket not open when trying to send initial states.'); // Commented out
+      if (!listenersAttached) {
+        ydoc.on('update', ydocUpdateHandler);
+        awareness.on('update', awarenessUpdateHandler);
+        listenersAttached = true;
       }
     };
 
     socket.onmessage = (event: MessageEvent) => {
-      // console.log('[Yjs Provider] Received message from server.'); // Commented out
-      if (event.data instanceof ArrayBuffer) {
-        const data = new Uint8Array(event.data);
-        const messageType = data[0]; // First byte is the type
-        const update = data.slice(1); // The rest is the payload
-
-        switch (messageType) {
-          case messageSync:
-            // console.log('[Yjs Provider] Attempting to apply sync update (Type 0)'); // Commented out
-            Y.applyUpdate(ydoc, update, 'websocketProvider');
-            break;
-          case messageAwareness:
-            // console.log('[Yjs Provider] Attempting to apply awareness update (Type 1)'); // Commented out
-            applyAwarenessUpdate(awareness, update, 'websocketProvider');
-            break;
-          default:
-            // console.warn(`[Yjs Provider] Received unknown message type: ${messageType}`, data); // Commented out
-        }
-      } else {
-        // console.warn('[Yjs Provider] Received non-binary message:', event.data); // Commented out
+      if (!(event.data instanceof ArrayBuffer)) return;
+      const data = new Uint8Array(event.data);
+      if (!data.length) return;
+      const messageType = data[0];
+      const payload = data.slice(1);
+      switch (messageType) {
+        case messageSync:
+          Y.applyUpdate(ydoc, payload, 'websocketProvider');
+          break;
+        case messageAwareness:
+          applyAwarenessUpdate(awareness, payload, 'websocketProvider');
+          break;
+        default:
+          break;
       }
     };
 
-    socket.onerror = (event: Event) => {
-      // console.error('[Yjs Provider] WebSocket error:', event); // Commented out
-      // Consider triggering reconnect here as well, depending on the error
-    };
-
-    socket.onclose = (event: CloseEvent) => {
-      // console.log(`[Yjs Provider] WebSocket connection closed (Code: ${event.code}, Reason: ${event.reason}).`); // Commented out
-      // --- Clean up awareness state on close ---
+    socket.onclose = (event) => {
+      socket = null;
       clearAwarenessStates('websocketProvider');
-      socket = null; // Clear the socket reference
 
-      // Attempt to reconnect if not explicitly disconnected
       if (!explicitlyDisconnected) {
-        // console.log(`[Yjs Provider] Attempting to reconnect in ${reconnectTimeout / 1000} seconds...`); // Commented out
-        if (reconnectTimer) window.clearTimeout(reconnectTimer); // Clear existing timer if any
         reconnectTimer = window.setTimeout(setupWebSocket, reconnectTimeout);
-        // Exponential backoff for reconnect attempts
-        reconnectTimeout = Math.min(reconnectTimeout * 2, RECONNECT_TIMEOUT_MAX);
+        reconnectTimeout = Math.min(reconnectTimeout * 2, reconnectTimeoutMax);
       }
     };
   };
 
-  // --- Yjs Document & Awareness Event Handlers ---
-  // Define handlers outside setupWebSocket so they can be referenced in onopen and disconnect
-
-  const ydocUpdateHandler = (update: Uint8Array, origin: any) => {
-    // Only send updates that didn't originate from the WebSocket provider itself
-    if (origin !== 'websocketProvider' && socket?.readyState === WebSocket.OPEN) {
-      // console.log('[Yjs Provider] Local Yjs update detected, sending to server:', update); // Commented out
-      const message = new Uint8Array([messageSync, ...update]); // Prefix with type
-      socket.send(message);
-    } else if (origin !== 'websocketProvider') {
-      // This warning might still appear if updates happen during reconnection attempts
-      // console.warn('[Yjs Provider] WebSocket not open, unable to send document update.'); // Commented out
-    }
-  };
-
-  const awarenessUpdateHandler = ({ added, updated, removed }: { added: number[], updated: number[], removed: number[] }, origin: any) => {
-    // Only send updates that didn't originate from the WebSocket provider itself
-    const changedClients = added.concat(updated, removed);
-    if (origin !== 'websocketProvider' && socket?.readyState === WebSocket.OPEN) {
-      // console.log('[Yjs Provider] Local awareness update detected, sending to server:', changedClients); // Commented out
-      const update = encodeAwarenessUpdate(awareness, changedClients);
-      const message = new Uint8Array([messageAwareness, ...update]); // Prefix with type
-      socket.send(message);
-    } else if (origin !== 'websocketProvider') {
-       // This warning might still appear if updates happen during reconnection attempts
-       // console.warn('[Yjs Provider] WebSocket not open, unable to send awareness update.'); // Commented out
-    }
-  };
-
-  // --- Disconnect Function ---
   const disconnect = () => {
-    // console.log('[Yjs Provider] Disconnecting...'); // Commented out
-    explicitlyDisconnected = true; // Set flag to prevent automatic reconnect
-    if (reconnectTimer) {
-      window.clearTimeout(reconnectTimer); // Cancel any pending reconnect timer
-      reconnectTimer = null;
-    }
-    // --- Clean up awareness state on explicit disconnect ---
-    clearAwarenessStates('disconnect', true);
+    explicitlyDisconnected = true;
+    if (reconnectTimer) window.clearTimeout(reconnectTimer);
     if (listenersAttached) {
-      ydoc.off('update', ydocUpdateHandler); // Stop listening to Yjs updates
-      awareness.off('update', awarenessUpdateHandler); // Stop listening to awareness updates
+      ydoc.off('update', ydocUpdateHandler);
+      awareness.off('update', awarenessUpdateHandler);
       listenersAttached = false;
     }
-    if (socket) {
-      socket.close(); // Close the WebSocket connection
-      socket = null;
-    }
-    // console.log('[Yjs Provider] Disconnected.'); // Commented out
+    clearAwarenessStates('disconnect');
+    socket?.close();
   };
 
-  // Initial connection attempt
   setupWebSocket();
 
-  // Return the document, the socket instance, the drawings array, and the disconnect function
   return {
     ydoc,
-    // We return a getter for the socket to ensure consumers always get the current instance
+    awareness,
     get socket() {
-      return socket!; // Use non-null assertion, assuming it will be initialized
+      return socket as WebSocket;
     },
-    yDrawings, // Return the Y.Array instance
-    awareness, // Return the awareness instance
+    yDrawings,
     disconnect,
   };
 }

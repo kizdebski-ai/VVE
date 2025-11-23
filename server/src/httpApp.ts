@@ -6,6 +6,8 @@ import * as path from 'path';
 import { logger } from './logger';
 import type { RoomManager } from './rooms';
 import type { EquationSolver } from './services/aiSolver';
+import { HttpError } from './services/httpError';
+import { callGrok, ChatMessage } from './services/grok';
 
 const API_ROOMS = '/api/rooms';
 const AI_SOLVER_ROUTE = '/api/ai/solve-equation/';
@@ -146,8 +148,9 @@ export const createHttpApp = ({ roomManager, aiSolver }: CreateAppOptions) => {
         res.status(400).json({ error: 'Field "equation" or "image" is required.' });
       }
     } catch (error) {
-      const err = error as Error;
-      logger.error('AI solver failed', { error: err.message });
+      const err = error as any;
+      const status = err instanceof HttpError && err.status ? err.status : 502;
+      logger.error('AI solver failed', { error: err.message, status, details: err.body });
 
       // Write to debug log file
       try {
@@ -158,7 +161,127 @@ export const createHttpApp = ({ roomManager, aiSolver }: CreateAppOptions) => {
         console.error('Failed to write to debug log', e);
       }
 
-      res.status(502).json({ error: err.message || 'Failed to solve equation.' });
+      res.status(status).json({ error: err.message || 'Failed to solve equation.', details: err.body });
+    }
+  });
+
+  app.post('/api/ai/chat', async (req, res) => {
+    try {
+      const history = Array.isArray(req.body?.history) ? (req.body.history as ChatMessage[]) : [];
+      const message = typeof req.body?.message === 'string' ? req.body.message.trim() : '';
+      const includeScreenshot = Boolean(req.body?.includeScreenshot);
+      const screenshotDataUrl = typeof req.body?.screenshotDataUrl === 'string' ? req.body.screenshotDataUrl : null;
+      const mode = typeof req.body?.mode === 'string' ? req.body.mode : 'normal_chat';
+
+      const system: ChatMessage = {
+        role: 'system',
+        content:
+          'Jesteś asystentem dla tablicy WhiteVue. Potrafisz analizować obraz tablicy, rozwiązywać zadania i wyjaśniać krok po kroku. Odpowiadaj po polsku, zwięźle.',
+      };
+
+      const messages: ChatMessage[] = [system];
+      for (const item of history) {
+        if (item && (item.role === 'user' || item.role === 'assistant') && item.content) {
+          messages.push({ role: item.role, content: item.content });
+        }
+      }
+
+      if ((includeScreenshot || mode === 'screenshot_intro') && screenshotDataUrl) {
+        messages.push({
+          role: 'user',
+          content: [
+            {
+              type: 'text',
+              text: 'To jest zrzut ekranu aktualnej tablicy. Zidentyfikuj, co jest na obrazku i zaproponuj pomoc.',
+            },
+            { type: 'image_url', image_url: { url: screenshotDataUrl } },
+          ],
+        });
+      }
+
+      if (message) {
+        messages.push({ role: 'user', content: message });
+      }
+
+      const answer = await callGrok({ messages });
+      res.json({ answer });
+    } catch (error) {
+      const err = error as any;
+      const status = err instanceof HttpError ? err.status : 502;
+      res.status(status).json({ error: err.message, details: err.body });
+    }
+  });
+
+  app.post('/api/ai/analyze-pdf', async (req, res) => {
+    try {
+      const fileId = typeof req.body?.fileId === 'string' ? req.body.fileId : '';
+      const mode = typeof req.body?.mode === 'string' ? req.body.mode : 'SUMMARY';
+      if (!fileId) throw new HttpError(400, 'fileId is required.');
+
+      const uploadsDir = process.env.UPLOAD_DIR || path.join(process.cwd(), 'data', 'uploads');
+      const pathWithExt = fileId.endsWith('.pdf') ? fileId : `${fileId}.pdf`;
+      const filePath = path.join(uploadsDir, pathWithExt);
+      if (!fs.existsSync(filePath)) {
+        throw new HttpError(404, 'PDF file not found.');
+      }
+
+      const pdfText = await extractPdfText(filePath);
+      if (!pdfText.trim()) throw new HttpError(400, 'PDF has no extractable text.');
+
+      const system = 'Jesteś asystentem do analizy dokumentów PDF. Otrzymasz tekst dokumentu.';
+      const userPrompt = buildPdfPrompt(mode, pdfText);
+      const answer = await callGrok({ messages: [{ role: 'system', content: system }, { role: 'user', content: userPrompt }] });
+      res.json({ result: answer });
+    } catch (error) {
+      const err = error as any;
+      const status = err instanceof HttpError ? err.status : 502;
+      res.status(status).json({ error: err.message, details: err.body });
+    }
+  });
+
+  app.post('/api/ai/generate-diagram', async (req, res) => {
+    try {
+      const text = typeof req.body?.text === 'string' ? req.body.text : '';
+      const mode = req.body?.mode === 'FLOWCHART' ? 'FLOWCHART' : 'CONCEPT_MAP';
+      if (!text.trim()) throw new HttpError(400, 'text is required.');
+
+      const system = 'Jesteś asystentem do projektowania diagramów. Otrzymasz opis procesu lub systemu.';
+      const userPrompt = `Na podstawie tego tekstu wygeneruj węzły i połączenia diagramu ${mode}. Zwróć JSON o strukturze: {"nodes":[{"id","label","type"}],"edges":[{"id","from","to","label":null}]}. Typ węzła: 'start', 'process', 'decision', 'end' (dla flowchart). Nie pisz nic poza JSON.\n\nOpis:\n${text}`;
+      const answer = await callGrok({
+        messages: [
+          { role: 'system', content: system },
+          { role: 'user', content: userPrompt },
+        ],
+      });
+      const parsed = parseDiagramAnswer(answer);
+      res.json({ nodes: parsed.nodes, edges: parsed.edges, raw: answer });
+    } catch (error) {
+      const err = error as any;
+      const status = err instanceof HttpError ? err.status : 502;
+      res.status(status).json({ error: err.message, details: err.body });
+    }
+  });
+
+  app.post('/api/ai/auto-layout-diagram', async (req, res) => {
+    try {
+      const nodes = Array.isArray(req.body?.nodes) ? req.body.nodes : [];
+      const edges = Array.isArray(req.body?.edges) ? req.body.edges : [];
+      if (!nodes.length) throw new HttpError(400, 'nodes are required.');
+
+      const system = 'Jesteś asystentem do układania diagramów. Masz listę węzłów i krawędzi.';
+      const userPrompt = `Na podstawie poniższego JSONa wyznacz level (0,1,2,...) i index (0..N) dla każdego węzła, aby powstała hierarchia top-down. Zwróć tylko JSON: {"nodes":[{"id":"...","level":0,"index":0}]}.\n\nWejście:\n${JSON.stringify({ nodes, edges })}`;
+      const answer = await callGrok({
+        messages: [
+          { role: 'system', content: system },
+          { role: 'user', content: userPrompt },
+        ],
+      });
+      const layout = parseLayoutAnswer(answer);
+      res.json({ nodes: layout, raw: answer });
+    } catch (error) {
+      const err = error as any;
+      const status = err instanceof HttpError ? err.status : 502;
+      res.status(status).json({ error: err.message, details: err.body });
     }
   });
 
@@ -187,3 +310,52 @@ export const createHttpApp = ({ roomManager, aiSolver }: CreateAppOptions) => {
 
   return app;
 };
+
+async function extractPdfText(filePath: string): Promise<string> {
+  try {
+    const pdfParse = await import('pdf-parse');
+    const buffer = await fs.promises.readFile(filePath);
+    const parsed = await pdfParse.default(buffer);
+    return (parsed.text || '').slice(0, 15000);
+  } catch (error) {
+    throw new HttpError(500, 'PDF parsing failed.', (error as Error).message);
+  }
+}
+
+function buildPdfPrompt(mode: string, text: string) {
+  if (mode === 'TODO') {
+    return `Wyodrębnij listę zadań/do-done z dokumentu. Użyj wypunktowania.\n\n${text}`;
+  }
+  if (mode === 'RISKS') {
+    return `Wypisz najważniejsze ryzyka, pułapki, obowiązki z dokumentu.\n\n${text}`;
+  }
+  return `Streść ten dokument w maksymalnie 10 punktach.\n\n${text}`;
+}
+
+function parseDiagramAnswer(answer: string) {
+  try {
+    const jsonStart = answer.indexOf('{');
+    const jsonText = jsonStart >= 0 ? answer.slice(jsonStart) : answer;
+    const parsed = JSON.parse(jsonText);
+    if (!Array.isArray(parsed.nodes) || !Array.isArray(parsed.edges)) {
+      throw new Error('Invalid diagram JSON shape.');
+    }
+    return parsed;
+  } catch (error) {
+    throw new HttpError(502, 'Failed to parse diagram JSON.', (error as Error).message);
+  }
+}
+
+function parseLayoutAnswer(answer: string) {
+  try {
+    const jsonStart = answer.indexOf('{');
+    const jsonText = jsonStart >= 0 ? answer.slice(jsonStart) : answer;
+    const parsed = JSON.parse(jsonText);
+    if (!Array.isArray(parsed.nodes)) {
+      throw new Error('Invalid layout JSON shape.');
+    }
+    return parsed.nodes;
+  } catch (error) {
+    throw new HttpError(502, 'Failed to parse layout JSON.', (error as Error).message);
+  }
+}

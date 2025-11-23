@@ -19,18 +19,18 @@ import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue';
 import Calculator from './Calculator.vue';
 
 const props = defineProps({
-  visible: { type: Boolean, default: false }
+  isVisible: { type: Boolean, default: false }
 });
 
-const emit = defineEmits(['update:visible']);
+const emit = defineEmits(['update:isVisible', 'close']);
 
-const isVisible = ref(props.visible);
+const isVisible = ref(props.isVisible);
 const position = ref({ x: 100, y: 100 }); // Initial position
 const isDragging = ref(false);
 const dragStartOffset = ref({ x: 0, y: 0 });
 const modalRef = ref(null);
 
-watch(() => props.visible, (newVal) => {
+watch(() => props.isVisible, (newVal) => {
   isVisible.value = newVal;
   if (newVal) {
     // Reset position or load saved position if needed
@@ -44,7 +44,8 @@ const modalStyle = computed(() => ({
 
 const closeModal = () => {
   isVisible.value = false;
-  emit('update:visible', false);
+  emit('update:isVisible', false);
+  emit('close');
 };
 
 const startDrag = (event) => {

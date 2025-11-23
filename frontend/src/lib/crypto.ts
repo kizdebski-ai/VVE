@@ -26,7 +26,7 @@ export async function generateEncryptionKey(returnAs: "string" | "cryptoKey" = "
   return (jwk as JsonWebKey).k as string;
 }
 
-async function getCachedAesKey(rawKey: string) {
+export async function getCachedAesKey(rawKey: string) {
   const cached = keyCache.get(rawKey);
   if (cached) return cached;
   const jwk: JsonWebKey = { kty: "oct", k: rawKey, alg: "A128GCM", ext: true, key_ops: ["encrypt", "decrypt"] };

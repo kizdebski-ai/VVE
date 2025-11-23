@@ -1,8 +1,7 @@
-<!-- In App.vue, update the template structure -->
 <template>
   <div id="app" :class="{ 'dark-mode': darkMode }">
     <Lobby v-if="!roomId" @join="handleJoinRoom" />
-    <template v-else>
+    <template v-else-if="roomKey">
     <TopMenu
       @clear-canvas="handleClearCanvas"
       @toggle-feature="toggleFeature"
@@ -13,12 +12,12 @@
      ></TopMenu>
     <!-- Canvas container takes full screen -->
     <div class="whiteboard-container">
-      <AIChatPanel v-if="whiteboard && whiteboard.containerRef" :whiteboard-ref="whiteboard.containerRef" />
       <WhiteboardCanvas
         ref="whiteboard"
-        :debug-mode="debugMode"
         :room-id="roomId"
+        :room-key="roomKey"
         :username="username"
+        :debug-mode="debugMode"
         :current-shape="currentShape"
         :current-line-style="currentLineStyle"
         :current-arrow-style="currentArrowStyle"
@@ -31,14 +30,17 @@
         @update:solution="solution = $event"
         @update:has-char-groups="hasCharGroups = $event"
         @update:has-stylized-strokes="hasStylizedStrokes = $event"
-       ></WhiteboardCanvas>
-
-       <!-- Feature Panels -->
+      />
+      <AIChatPanel
+        v-if="whiteboard && whiteboard.containerRef?.value"
+        :whiteboard-ref="whiteboard.containerRef?.value || null"
+      />
        <div v-if="activeFeature === 'gridAlign'" class="feature-panel grid-align-panel">
          <div class="panel-header">
            <span>Grid Align Options</span>
-           <button class="close-button" @click="toggleFeature(null)">×</button>
+           <button class="close-button" @click="toggleFeature(null)">X</button>
          </div>
+
          <div class="panel-content">
            <div class="slider-container">
              <label>Snap Strength: {{ gridAlignOptions.snapStrength }}</label>
@@ -55,7 +57,7 @@
        <div v-if="activeFeature === 'styleHandwriting'" class="feature-panel handwriting-styler-panel">
          <div class="panel-header">
            <span>Handwriting Styler</span>
-           <button class="close-button" @click="toggleFeature(null)">×</button>
+           <button class="close-button" @click="toggleFeature(null)">X</button>
          </div>
          <div class="panel-content">
            <div class="slider-container">
@@ -86,7 +88,7 @@
        <div v-if="activeFeature === 'mathRecognizer'" class="feature-panel math-recognizer-panel">
          <div class="panel-header">
            <span>Math Recognizer</span>
-           <button class="close-button" @click="toggleFeature(null)">×</button>
+           <button class="close-button" @click="toggleFeature(null)">X</button>
          </div>
          <div class="panel-content">
            <button class="action-button" @click="triggerWhiteboardAction('recognizeEquation')">Recognize Equation</button>
@@ -95,7 +97,7 @@
              LaTeX: <span id="latex-render-output"></span> <!-- Target for KaTeX -->
            </div>
            <div v-if="solution" class="status-display">Solution: {{ solution }}</div>
-           <button class="action-button" @click="triggerWhiteboardAction('applyGhostAnswer')" :disabled="!solution || solution.startsWith('Błąd') || solution.startsWith('Nie można')">Apply Answer (Shift+Enter)</button>
+           <button class="action-button" @click="triggerWhiteboardAction('applyGhostAnswer')" :disabled="!solution || solution.startsWith('Blad') || solution.startsWith('Nie mozna')">Apply Answer (Shift+Enter)</button>
            <div class="slider-container">
              <label>Ghost Opacity: {{ mathRecognizerOptions.ghostOpacity }}</label>
              <input type="range" min="0" max="1" step="0.05" v-model.number="mathRecognizerOptions.ghostOpacity">
@@ -104,9 +106,20 @@
              <input type="checkbox" id="show-hint" v-model="mathRecognizerOptions.showHint">
              <label for="show-hint">Show AI Hint</label>
            </div>
-         </div>
        </div>
-      
+      </div>
+
+      <MathGraphPanel
+        v-if="showMathGraphPanel"
+        @close="toggleMathGraphPanel"
+        @plot-function="handleAddElement"
+      />
+      <PhysicsGraphPanel
+        v-if="showPhysicsGraphPanel"
+        @close="togglePhysicsGraphPanel"
+        @plot-data="handleAddElement"
+      />
+
       <!-- Floating Toolbar (Left) -->
       <div class="floating-toolbar">
         <ToolBar 
@@ -183,8 +196,11 @@
     />
     <CalculatorModal
       :is-visible="isCalculatorVisible"
-      @close="toggleCalculator"
+      @close="isCalculatorVisible = false"
+      @update:isVisible="val => isCalculatorVisible = val"
     />
+
+    <EncryptionStatus />
 
     </template>
 
@@ -202,7 +218,7 @@
 </template>
 
 <script>
-import { ref, onMounted, onBeforeUnmount, provide, nextTick, watch, computed } from 'vue';
+import { ref, onMounted, onBeforeUnmount, nextTick, computed, watch } from 'vue';
 import WhiteboardCanvas from './components/WhiteboardCanvas.vue';
 import ToolBar from './components/ToolBar.vue';
 import TopMenu from './components/TopMenu.vue';
@@ -210,16 +226,16 @@ import Lobby from './components/Lobby.vue';
 import ImportDialog from './components/ImportDialog.vue';
 import ExportDialog from './components/ExportDialog.vue';
 import CalculatorModal from './components/CalculatorModal.vue';
+import MathGraphPanel from './components/MathGraphPanel.vue';
+import PhysicsGraphPanel from './components/PhysicsGraphPanel.vue';
 import AIChatPanel from './components/AIChatPanel.vue';
+import EncryptionStatus from './components/EncryptionStatus.vue';
 import * as Y from 'yjs';
 import { Buffer } from 'buffer';
 import katex from 'katex';
 import { buildRoomHash, createNewRoomUrl, parseRoomHash } from './lib/roomLink';
 import { generateEncryptionKey } from './lib/crypto';
 import 'katex/dist/katex.min.css';
-import { undoRedoState } from './utils/undoRedoState'; // 2. Add import
-import { WebsocketProvider } from 'y-websocket';
-import { IndexeddbPersistence } from 'y-indexeddb';
 
 // Debug logger
 const appDebugLog = (msg, ...args) => {
@@ -236,13 +252,17 @@ export default {
     ImportDialog,
     ExportDialog,
     CalculatorModal,
-    AIChatPanel
+    MathGraphPanel,
+    PhysicsGraphPanel,
+    AIChatPanel,
+    EncryptionStatus
   },
   setup() {
     // --- State ---
     const whiteboard = ref(null);
     const toolbar = ref(null); // Ref for the toolbar component
     const roomId = ref(null);
+    const roomKey = ref(null);
     const username = ref(localStorage.getItem('username') || 'Guest');
     const showImportDialog = ref(false);
     const showExportDialog = ref(false);
@@ -298,12 +318,13 @@ export default {
     const updateUsername = () => {
       localStorage.setItem('username', username.value);
       if (whiteboard.value) {
-        whiteboard.value.updateAwareness(username.value);
+        whiteboard.value.updateAwarenessUser?.(username.value);
       }
     };
 
     const handleToolChange = (tool) => {
       currentTool.value = tool;
+      whiteboard.value?.setTool?.(tool);
       if (tool === 'eraser') {
         // Eraser logic handled in canvas
       }
@@ -311,15 +332,17 @@ export default {
 
     const handleColorChange = (color) => {
       currentColor.value = color;
+      whiteboard.value?.setColor?.(color);
     };
 
     const handleLineWidthChange = (width) => {
       currentLineWidth.value = width;
+      whiteboard.value?.setLineWidth?.(width);
     };
     
     const handleEraserSizeChange = (size) => {
         if (whiteboard.value) {
-            whiteboard.value.setEraserSize(size);
+            whiteboard.value.setEraserSize?.(size);
         }
     };
 
@@ -352,6 +375,14 @@ export default {
     const togglePhysicsGraphPanel = () => {
         showPhysicsGraphPanel.value = !showPhysicsGraphPanel.value;
         if (showPhysicsGraphPanel.value) showMathGraphPanel.value = false;
+    };
+
+    const handleAddElement = (elementData) => {
+      if (whiteboard.value?.addElementFromPanel) {
+        whiteboard.value.addElementFromPanel(elementData);
+      } else {
+        console.warn('Whiteboard not ready to add element.', elementData);
+      }
     };
 
     const handleClearCanvas = () => {
@@ -409,6 +440,13 @@ export default {
       }
     };
 
+    const syncWhiteboardState = () => {
+      if (!whiteboard.value) return;
+      whiteboard.value.setTool?.(currentTool.value);
+      whiteboard.value.setColor?.(currentColor.value);
+      whiteboard.value.setLineWidth?.(currentLineWidth.value);
+    };
+
     const downloadAsFile = () => {
       const blob = new Blob([exportedState.value], { type: 'text/plain' });
       const url = URL.createObjectURL(blob);
@@ -425,6 +463,7 @@ export default {
     const handleOpenRoomManager = () => {
       // Disconnect or clean up if needed
       roomId.value = null;
+      roomKey.value = null;
       window.history.pushState({}, '', '/'); // Clear URL
     };
 
@@ -630,14 +669,24 @@ export default {
       // Add other global shortcuts here if needed
     };
 
-    const handleJoinRoom = (id) => {
-      roomId.value = id;
-      localStorage.setItem('last_room_id', id);
+    const handleJoinRoom = async (id) => {
+      // 1. Resolve key first to avoid mounting WhiteboardCanvas with null key
+      let key = null;
+      const existing = parseRoomHash(window.location.hash);
+      if (existing?.roomId === id) {
+        key = existing.roomKey;
+      }
       
-      // Update URL
-      const newUrl = new URL(window.location);
-      newUrl.searchParams.set('room', id);
-      window.history.pushState({}, '', newUrl);
+      if (!key) {
+        key = await generateEncryptionKey('string');
+      }
+
+      // 2. Set state atomically-ish
+      roomKey.value = key;
+      roomId.value = id;
+      
+      updateRoomUrlHash();
+      localStorage.setItem('last_room_id', id);
 
       // Save to recent rooms
       try {
@@ -653,6 +702,12 @@ export default {
         console.error('Error saving recent rooms', e);
       }
     };
+
+    watch(whiteboard, (instance) => {
+      if (instance) {
+        syncWhiteboardState();
+      }
+    });
 
     // --- Lifecycle Hooks ---
     onMounted(() => {
@@ -684,16 +739,7 @@ export default {
       };
 
       bootstrapRoom();
-      const urlParams = new URLSearchParams(window.location.search);
-      let initialRoomId = urlParams.get('room');
-      
-      if (initialRoomId) {
-        roomId.value = initialRoomId;
-        localStorage.setItem('last_room_id', initialRoomId);
-        appDebugLog(`App mounted. Room ID: ${roomId.value}`);
-      } else {
-        roomId.value = null;
-      }
+      nextTick(syncWhiteboardState);
 
       document.body.classList.toggle('dark-mode', darkMode.value);
       window.addEventListener('beforeunload', handleBeforeUnload);
@@ -719,6 +765,7 @@ export default {
       darkMode,
       debugMode,
       roomId,
+      roomKey,
       currentTool,
       currentColor,
       currentLineWidth,
@@ -775,11 +822,7 @@ export default {
       handleJoinRoom,
       showMathGraphPanel,
       showPhysicsGraphPanel,
-      handleAddElement: (data) => {
-        if (whiteboard.value && whiteboard.value.addElementFromPanel) {
-          whiteboard.value.addElementFromPanel(data);
-        }
-      },
+      handleAddElement,
       handleAddCoordinateSystem: (type) => {
         // Create default coordinate system element
         const elementData = {
@@ -789,9 +832,7 @@ export default {
           height: 300,
           // Add default properties if needed
         };
-        if (whiteboard.value && whiteboard.value.addElementFromPanel) {
-          whiteboard.value.addElementFromPanel(elementData);
-        }
+        handleAddElement(elementData);
       }
       // Need to add computed for renderedLatex if KaTeX is used here
     };
@@ -877,7 +918,7 @@ export default {
   z-index: 3000;
 }
 
-/* Keep the toolbar wrapper fully transparent – the ToolBar
+/* Keep the toolbar wrapper fully transparent - the ToolBar
    component itself provides the glass/floating background */
 .floating-toolbar {
   background: transparent;

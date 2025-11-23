@@ -19,6 +19,156 @@ const BACKEND_BASE_URL =
     import.meta.env.VITE_BACKEND_URL) ||
   DEFAULT_BACKEND_URL;
 
+const RESERVED_FUNCTION_NAMES = new Set([
+  'sin', 'cos', 'tan', 'log', 'ln', 'sqrt', 'pow', 'abs', 'exp', 'max', 'min', 'mod', 'round', 'floor', 'ceil'
+]);
+
+const normalizeEquationText = (text = '') => {
+  if (!text) return '';
+  let cleaned = text
+    .replace(/\\cdot|·|⋅|∙|×/g, '*')
+    .replace(/÷/g, '/')
+    .replace(/—|–/g, '-')
+    .replace(/[\u201c\u201d]/g, '"')
+    .replace(/\\left|\\right/g, '')
+    .replace(/\\\\/g, '\\')
+    .replace(/\s+/g, '');
+
+  cleaned = cleaned
+    .replace(/\\frac\{([^}]+)\}\{([^}]+)\}/g, '($1)/($2)')
+    .replace(/\\frac\(([^)]+)\)\(([^)]+)\)/g, '($1)/($2)')
+    .replace(/\^\{([^}]+)\}/g, '^($1)')
+    .replace(/[{}]/g, match => (match === '{' ? '(' : ')'))
+    .replace(/\$/g, '');
+
+  return cleaned.trim();
+};
+
+const detectVariableName = (expression = '') => {
+  const matches = expression.match(/[a-zA-Z]+/g);
+  if (!matches) return null;
+  return matches.find(name => !RESERVED_FUNCTION_NAMES.has(name.toLowerCase()));
+};
+
+const tryEvaluateExpression = (expression, scope = {}) => {
+  try {
+    return math.evaluate(expression, scope);
+  } catch {
+    return null;
+  }
+};
+
+const evaluateCompiled = (compiled, variable, value) => {
+  try {
+    return compiled.evaluate({ [variable]: value });
+  } catch {
+    return NaN;
+  }
+};
+
+const bisectRoot = (compiled, variable, a, b, iterations = 40) => {
+  let fa = evaluateCompiled(compiled, variable, a);
+  let fb = evaluateCompiled(compiled, variable, b);
+  if (!Number.isFinite(fa) || !Number.isFinite(fb)) return null;
+
+  for (let i = 0; i < iterations; i += 1) {
+    const mid = (a + b) / 2;
+    const fm = evaluateCompiled(compiled, variable, mid);
+    if (!Number.isFinite(fm)) break;
+    if (Math.abs(fm) < 1e-7) return mid;
+    if (Math.sign(fm) === Math.sign(fa)) {
+      a = mid;
+      fa = fm;
+    } else {
+      b = mid;
+      fb = fm;
+    }
+  }
+  return (a + b) / 2;
+};
+
+const findRoot = (compiled, variable) => {
+  const ranges = [
+    [-100, 100],
+    [-50, 50],
+    [-10, 10],
+    [-5, 5],
+    [0, 50],
+    [-50, 0]
+  ];
+
+  for (const [start, end] of ranges) {
+    const steps = 60;
+    let prevX = start;
+    let prevY = evaluateCompiled(compiled, variable, start);
+
+    for (let i = 1; i <= steps; i += 1) {
+      const x = start + ((end - start) * i) / steps;
+      const y = evaluateCompiled(compiled, variable, x);
+      if (!Number.isFinite(y)) {
+        prevX = x;
+        prevY = y;
+        continue;
+      }
+      if (Math.abs(y) < 1e-6) return x;
+      if (Number.isFinite(prevY) && Math.sign(y) !== Math.sign(prevY)) {
+        return bisectRoot(compiled, variable, prevX, x);
+      }
+      prevX = x;
+      prevY = y;
+    }
+  }
+  return null;
+};
+
+const buildLatexFromExpression = (expression) => {
+  try {
+    const node = math.parse(expression);
+    return node.toTex({ parenthesis: 'keep' });
+  } catch {
+    return '';
+  }
+};
+
+const solveEquationLocally = (equationText = '') => {
+  const normalized = normalizeEquationText(equationText);
+  if (!normalized) return null;
+
+  // Simple expression without equality
+  if (!normalized.includes('=')) {
+    const value = tryEvaluateExpression(normalized);
+    if (value === null || value === undefined) return null;
+    return math.format(value, { precision: 6 });
+  }
+
+  const [lhs, rhs] = normalized.split('=');
+  if (!lhs || !rhs) return null;
+
+  const variable = detectVariableName(lhs + rhs);
+  if (!variable) {
+    const leftVal = tryEvaluateExpression(lhs);
+    const rightVal = tryEvaluateExpression(rhs);
+    if (leftVal === null || rightVal === null) return null;
+    if (Math.abs(Number(leftVal) - Number(rightVal)) < 1e-9) {
+      return math.format(leftVal, { precision: 6 });
+    }
+    return `${math.format(leftVal, { precision: 6 })} = ${math.format(rightVal, { precision: 6 })}`;
+  }
+
+  try {
+    const diffNode = math.parse(`${lhs}-(${rhs})`);
+    const compiled = diffNode.compile();
+    const root = findRoot(compiled, variable);
+    if (root !== null && Number.isFinite(root)) {
+      return `${variable} ≈ ${math.format(root, { precision: 6 })}`;
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
+};
+
 export default class MathRecognizerModule {
   constructor(canvasContext, options = {}) {
     this.ctx = canvasContext;
@@ -81,6 +231,46 @@ export default class MathRecognizerModule {
   setLatexRenderer(renderFn) {
     this.renderLatexFn = renderFn;
     return this;
+  }
+
+  renderLatexSafe(latexString) {
+    if (this.renderLatexFn && this.options.renderLatex) {
+      try {
+        this.renderLatexFn(latexString || '');
+      } catch (error) {
+        this.logDebug('[Math] Latex render failed', error);
+      }
+    }
+  }
+
+  async runLocalOcrAndSolve(imageBase64) {
+    try {
+      const { data } = await Tesseract.recognize(imageBase64, 'eng');
+      const rawEquation = data?.text || '';
+      const normalized = normalizeEquationText(rawEquation);
+      if (!normalized) {
+        this.logDebug('[Math] Local OCR returned empty string');
+        return null;
+      }
+
+      const latex = buildLatexFromExpression(normalized) || normalized;
+      this.latexEquation = latex;
+      this.renderLatexSafe(latex);
+
+      const solution = solveEquationLocally(normalized);
+      if (solution) {
+        this.solution = solution;
+        this.generateGhostAnswer(solution);
+        this.recognitionStatus = 'Solved locally';
+        return { latex, solution };
+      }
+
+      this.recognitionStatus = 'Equation read, solving...';
+      return { latex, solution: '' };
+    } catch (error) {
+      this.logDebug('[Math] Local OCR failed', error);
+      return null;
+    }
   }
 
   // Stroke management
@@ -236,24 +426,36 @@ export default class MathRecognizerModule {
         return this;
       }
 
-      // Convert canvas to base64 image
       const imageBase64 = eqCanvas.toDataURL('image/png');
 
-      // Send to backend for OCR + Solving
+      // Try local OCR + mathjs solve first to avoid API rate limits
+      let localResult = null;
+      try {
+        localResult = await this.runLocalOcrAndSolve(imageBase64);
+        if (localResult?.solution) {
+          return localResult;
+        }
+      } catch (localErr) {
+        this.logDebug('[Math] Local solve failed', localErr);
+      }
+
+      // Backend fallback
       if (this.options.backendUrl) {
         try {
+          const payload = localResult?.latex
+            ? { equation: normalizeEquationText(localResult.latex) || localResult.latex }
+            : { image: imageBase64 };
+          const backendBase = this.options.backendUrl.replace(/\/$/, '');
           const resp = await axios.post(
-            `${this.options.backendUrl}/api/ai/solve-equation/`,
-            { image: imageBase64 }
+            `${backendBase}/api/ai/solve-equation/`,
+            payload
           );
 
           if (resp.data) {
-            this.latexEquation = resp.data.equation || '';
+            this.latexEquation = resp.data.equation || localResult?.latex || '';
             this.solution = resp.data.solution || '';
-
-            // Render LaTeX if available
-            if (this.latexEquation && this.options.renderLatex && this.renderLatexFn) {
-              this.renderLatexFn(this.latexEquation);
+            if (this.latexEquation) {
+              this.renderLatexSafe(this.latexEquation);
             }
 
             this.logDebug('[Math] Backend result:', { latex: this.latexEquation, solution: this.solution });
@@ -267,7 +469,7 @@ export default class MathRecognizerModule {
               this.generateGhostAnswer(this.solution);
             }
 
-            this.recognitionStatus = 'Solved!';
+            this.recognitionStatus = this.solution ? 'Solved!' : 'Parsed';
             return {
               latex: this.latexEquation,
               solution: this.solution,
@@ -281,9 +483,27 @@ export default class MathRecognizerModule {
           } else {
             this.recognitionStatus = 'Error connecting to AI.';
           }
-          throw err;
+
+          // If backend failed but we have a local OCR result, return it
+          if (localResult) {
+            return {
+              latex: localResult.latex || '',
+              solution: this.solution || ''
+            };
+          }
         }
       }
+
+      // As a last attempt, try local solve again if backend did not respond
+      if (!this.solution && !this.latexEquation) {
+        const fallbackLocal = await this.runLocalOcrAndSolve(imageBase64);
+        if (fallbackLocal) {
+          return fallbackLocal;
+        }
+      }
+
+      this.recognitionStatus = 'Unable to solve equation.';
+      return this;
     } catch (error) {
       this.recognitionStatus = 'Error: ' + (error.message || 'Unknown error');
       console.error('Recognition error (AI):', error);

@@ -3,13 +3,18 @@
     <div class="indicator" :class="{ error: state.error, active: state.active }"></div>
     <div class="text">
       <div class="label">E2E Encryption</div>
-      <div class="value">{{ state.error ? 'Issue detected' : state.active ? 'Active' : 'Idle' }}</div>
+      <div class="value">
+        <span v-if="state.error">Issue detected</span>
+        <span v-else-if="state.active">Active</span>
+        <span v-else-if="state.mode">{{ state.mode }}</span>
+        <span v-else>Idle</span>
+      </div>
       <div class="meta">
         <template v-if="state.lastOperation">
-          Last {{ state.lastOperation }} • {{ state.lastDuration.toFixed(1) }}ms • IV {{ state.ivPreview }}
+          Last {{ state.lastOperation }} - {{ state.lastDuration.toFixed(1) }}ms - IV {{ state.ivPreview }}
         </template>
         <template v-else>
-          Waiting for secure traffic…
+          Waiting for secure traffic...
         </template>
       </div>
       <div v-if="state.lastUpdated" class="meta">Updated at {{ state.lastUpdated }}</div>
@@ -21,26 +26,28 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, reactive } from "vue";
 
-interface EncryptionStatusDetail {
-  type: "encrypt" | "decrypt";
+type EncryptionStatusDetail = {
+  type: "encrypt" | "decrypt" | "info";
   durationMs: number;
   bytes: number;
   iv?: Uint8Array;
   error?: string;
-}
+  mode?: string;
+};
 
 const state = reactive({
   active: false,
   lastOperation: "" as "encrypt" | "decrypt" | "",
   lastDuration: 0,
-  ivPreview: "—",
+  ivPreview: "--",
   lastTimestamp: 0,
   lastUpdated: "",
   error: null as string | null,
+  mode: "Idle",
 });
 
 function toHexPreview(iv?: Uint8Array) {
-  if (!iv || !iv.length) return "—";
+  if (!iv || !iv.length) return "--";
   return Array.from(iv.slice(0, 4))
     .map((val) => val.toString(16).padStart(2, "0"))
     .join(" ");
@@ -48,13 +55,15 @@ function toHexPreview(iv?: Uint8Array) {
 
 function handleEvent(evt: Event) {
   const detail = (evt as CustomEvent<EncryptionStatusDetail>).detail;
-  state.active = !detail.error;
-  state.lastOperation = detail.type;
+  const isInfo = detail.type === "info";
+  state.active = !detail.error && !isInfo;
+  state.lastOperation = isInfo ? "" : (detail.type as "encrypt" | "decrypt");
   state.lastDuration = detail.durationMs;
   state.ivPreview = toHexPreview(detail.iv);
   state.lastTimestamp = Date.now();
   state.lastUpdated = new Date(state.lastTimestamp).toLocaleTimeString();
   state.error = detail.error ?? null;
+  state.mode = detail.mode || (isInfo ? "Info" : state.mode);
 }
 
 onMounted(() => {

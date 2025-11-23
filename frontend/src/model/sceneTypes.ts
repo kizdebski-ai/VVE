@@ -1,6 +1,3 @@
-type ElementType = "rect" | "ellipse" | "arrow" | "text" | "image";
-
-interface BoundElement { id: string; type: "arrow"; }
 export type ElementType = "rect" | "ellipse" | "arrow" | "text" | "image";
 
 export interface BoundElement {
@@ -24,13 +21,14 @@ export interface WhiteVueElement {
   angle: number;
   boundElements: BoundElement[] | null;
   updated: number;
-  [key: string]: any;
+  // Optional fields for arrows and bindings
   startBinding?: BindingInfo;
   endBinding?: BindingInfo;
   startX?: number;
   startY?: number;
   endX?: number;
   endY?: number;
+  [key: string]: unknown;
 }
 
 export interface AppState {

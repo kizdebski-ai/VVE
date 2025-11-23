@@ -48,6 +48,8 @@ export interface RoomContext {
   connections: Map<WebSocket, Set<number>>;
   lastActive: number;
   initialized?: boolean;
+  hydrated?: boolean;
+  hydrating?: boolean;
   meta: RoomMetadata;
 }
 
@@ -56,14 +58,38 @@ export interface RoomLookup {
   created: boolean;
 }
 
+class InMemoryPersistence implements PersistenceLayer {
+  private storage = new Map<string, { update: Uint8Array; meta: RoomMetadata }>();
+
+  async saveRoom(roomId: string, doc: Y.Doc, meta: RoomMetadata): Promise<void> {
+    this.storage.set(roomId, { update: Y.encodeStateAsUpdate(doc), meta: { ...meta } });
+  }
+
+  async loadRoom(roomId: string): Promise<{ doc: Y.Doc; meta: RoomMetadata } | null> {
+    const entry = this.storage.get(roomId);
+    if (!entry) return null;
+    const doc = new Y.Doc();
+    Y.applyUpdate(doc, entry.update);
+    return { doc, meta: { ...entry.meta } };
+  }
+
+  async listRooms(): Promise<RoomMetadata[]> {
+    return Array.from(this.storage.values()).map(({ meta }) => ({ ...meta }));
+  }
+
+  async deleteRoom(roomId: string): Promise<void> {
+    this.storage.delete(roomId);
+  }
+}
+
 const now = () => Date.now();
 
 export class RoomManager {
   private rooms = new Map<string, RoomContext>();
   private persistence: PersistenceLayer;
 
-  constructor(persistence: PersistenceLayer) {
-    this.persistence = persistence;
+  constructor(persistence?: PersistenceLayer) {
+    this.persistence = persistence ?? new InMemoryPersistence();
     this.loadFromPersistence();
   }
 
@@ -88,7 +114,9 @@ export class RoomManager {
         awareness,
         connections: new Map(),
         lastActive: meta.lastActiveAt || now(),
-        initialized: false, // Mark as not initialized
+        initialized: false, // Will be set by initializeRoom on first connection
+        hydrated: false, // Mark as not yet loaded from disk
+        hydrating: false,
         meta
       };
       this.rooms.set(roomId, room);
@@ -119,6 +147,8 @@ export class RoomManager {
       connections: new Map(),
       lastActive: timestamp,
       initialized: false,
+      hydrated: true,
+      hydrating: false,
       meta: {
         roomId,
         displayName: roomId,
@@ -169,7 +199,7 @@ export class RoomManager {
     let room = this.rooms.get(roomId);
     let created = false;
 
-    if (room && !room.initialized) {
+    if (room && room.hydrated === false && !room.hydrating) {
       // Lazy load the full room data
       // We need to do this synchronously or handle async in get().
       // Since get() is synchronous in the current architecture (and used by ws connection),
@@ -208,21 +238,25 @@ export class RoomManager {
       // Yjs docs can be updated anytime. Clients will receive updates when the doc is loaded.
       // This is actually a valid strategy!
 
+      room.hydrating = true;
       this.persistence.loadRoom(roomId).then(data => {
         if (data && room) {
           // Apply the loaded state to the existing doc
           Y.applyUpdate(room.doc, Y.encodeStateAsUpdate(data.doc));
           room.meta = data.meta;
-          room.initialized = true;
+          room.hydrated = true;
+          room.hydrating = false;
           logger.info(`Lazy loaded room ${roomId}`);
+        } else if (room) {
+          room.hydrated = true;
+          room.hydrating = false;
         }
       }).catch(err => {
         logger.error(`Failed to lazy load room ${roomId}`, err);
+        if (room) {
+          room.hydrating = false;
+        }
       });
-
-      // Mark as initialized so we don't try again immediately? 
-      // Or wait for promise? For now, let's mark it as "loading" (initialized=true to prevent double load)
-      room.initialized = true;
     }
 
     if (!room) {
@@ -230,7 +264,6 @@ export class RoomManager {
       this.rooms.set(roomId, room);
       created = true;
       this.saveRoom(room);
-      room.initialized = true;
     }
 
     this.bumpActivity(room);

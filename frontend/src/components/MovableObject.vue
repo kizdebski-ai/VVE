@@ -39,6 +39,7 @@
              :style="{
                color: objectData.color || '#000000',
                fontSize: `${(objectData.fontSize || 16) * props.zoomLevel}px`, 
+               fontFamily: '\'Kalam\', cursive',
                width: '100%',
                height: '100%',
                display: 'flex',

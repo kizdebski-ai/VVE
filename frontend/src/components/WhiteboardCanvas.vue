@@ -267,17 +267,73 @@ export default {
         minWidth: '50px',
         minHeight: '1.2em',
         zIndex: 1000,
-        background: '#ffffff',
-        border: '1px dashed #94a3b8',
+        background: 'transparent', // Transparent for "on board" feel
+        border: 'none',            // No border
         outline: 'none',
         resize: 'none',
         overflow: 'hidden',
-        fontFamily: 'sans-serif',
+        fontFamily: '"Kalam", cursive', // Hand-like font
+        fontWeight: '400',
         lineHeight: '1.2',
-        padding: '6px 8px',
-        boxShadow: '0 4px 10px rgba(0,0,0,0.08)'
+        padding: '0',              // Remove padding to match text render
+        margin: '0'
       };
     });
+
+    // ... inside setup ...
+
+    const addTextElement = (coords, text, fontSize = 24) => {
+       if (!ydoc.value || !yDrawings.value) return;
+
+       const textElement = {
+         id: `text-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+         type: 'text',
+         x: coords.x,
+         y: coords.y,
+         position: { x: coords.x, y: coords.y },
+         text: text,
+         color: currentColor.value,
+         fontSize: fontSize,
+         fontFamily: '"Kalam", cursive', // Store font
+         rotation: 0,
+         width: text.length * (fontSize * 0.6), 
+         height: fontSize * 1.2
+     };
+
+     ydoc.value.transact(() => {
+       const yMap = new Y.Map();
+       for (const [key, value] of Object.entries(textElement)) {
+          if (key === 'position') {
+            const posMap = new Y.Map();
+            posMap.set('x', value.x);
+            posMap.set('y', value.y);
+            yMap.set('position', posMap);
+          } else {
+            yMap.set(key, value);
+          }
+       }
+       yDrawings.value.push([yMap]);
+     }, 'local-text');
+     
+     refreshMovableElements();
+  };
+
+// ... inside handleKeyDown ...
+
+        // Auto-start text editing on typing
+        if (event.key.length === 1 && !inlineTextEditor.visible && !activeConfigPanel.value) {
+            if (lastMouseCoords.value) {
+                event.preventDefault(); // Stop browser from inserting the key elsewhere
+                setTool('text');
+                startInlineText(lastMouseCoords.value);
+                
+                // Insert key manually after editor is ready
+                nextTick(() => {
+                    inlineTextEditor.value = event.key; 
+                });
+                return;
+            }
+        }
 
     const isDrawing = ref(false);
     const currentTool = ref('pen'); // Default to pen (matches App.vue)

@@ -227,38 +227,62 @@ export class OpenRouterEquationSolver implements EquationSolver {
     const apiKey = process.env.OPENROUTER_API_KEY;
     if (!apiKey) throw new HttpError(500, 'OPENROUTER_API_KEY is not configured.');
 
-    const response = await this.fetchImpl('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        model: this.ocrModel,
-        messages: [
-          {
-            role: 'user',
-            content: [
-              { type: 'text', text: 'Transcribe the mathematical equation in this image into LaTeX format. Return ONLY the LaTeX string, no other text.' },
-              { type: 'image_url', image_url: { url: imageBase64 } } // imageBase64 should include data:image/... prefix
-            ]
-          }
-        ]
-      })
-    });
+    // Define fallback models for OCR
+    const fallbackModels = [
+      this.ocrModel,
+      process.env.OCR_MODEL_FALLBACK_1 || 'x-ai/grok-4.1-fast:free',
+      process.env.OCR_MODEL_FALLBACK_2 || 'nvidia/nemotron-nano-12b-v2-vl:free',
+    ];
 
-    if (!response.ok) {
-      const text = await response.text();
-      console.error(`[AI Solver] OCR request failed. Status: ${response.status}, Body: ${text}`);
-      const status = response.status === 429 ? 503 : response.status;
-      const reason = response.status === 429 ? 'OCR provider is rate limited' : `OCR request failed (${response.status})`;
-      throw new HttpError(status, reason, text);
+    let lastError: Error | null = null;
+
+    for (const currentModel of fallbackModels) {
+      try {
+        const response = await this.fetchImpl('https://openrouter.ai/api/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            model: currentModel,
+            messages: [
+              {
+                role: 'user',
+                content: [
+                  { type: 'text', text: 'Transcribe the mathematical equation in this image into LaTeX format. Return ONLY the LaTeX string, no other text.' },
+                  { type: 'image_url', image_url: { url: imageBase64 } }
+                ]
+              }
+            ]
+          })
+        });
+
+        if (!response.ok) {
+          const text = await response.text();
+          throw new HttpError(response.status, `OCR request failed for model ${currentModel} (${response.status})`, text);
+        }
+
+        const payload = (await response.json()) as any;
+        const content = payload.choices?.[0]?.message?.content?.trim();
+
+        // Success!
+        console.log(`[AI] OCR successfully used model: ${currentModel}`);
+        return content ? content.replace(/```latex|```/g, '').trim() : '';
+      } catch (error) {
+        lastError = error as Error;
+        console.warn(`[AI] OCR model ${currentModel} failed:`, (error as Error).message);
+
+        if (currentModel !== fallbackModels[fallbackModels.length - 1]) {
+          console.log(`[AI] Trying fallback OCR model...`);
+          continue;
+        }
+
+        throw error;
+      }
     }
 
-    const payload = (await response.json()) as any;
-    const content = payload.choices?.[0]?.message?.content?.trim();
-    // Cleanup markdown code blocks if present
-    return content ? content.replace(/```latex|```/g, '').trim() : '';
+    throw lastError || new HttpError(502, 'All OCR models failed');
   }
 
   private async callSolver(equation: string): Promise<string> {
@@ -271,33 +295,59 @@ export class OpenRouterEquationSolver implements EquationSolver {
       'If the input is a LaTeX equation, solve it.';
     const userPrompt = `Solve this equation and return just the final result: ${equation}`;
 
-    const response = await this.fetchImpl('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        model: this.solverModel,
-        temperature: this.temperature,
-        max_tokens: this.maxTokens,
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt }
-        ]
-      })
-    });
+    // Define fallback models for Solver
+    const fallbackModels = [
+      this.solverModel,
+      process.env.SOLVER_MODEL_FALLBACK_1 || 'x-ai/grok-4.1-fast:free',
+      process.env.SOLVER_MODEL_FALLBACK_2 || 'deepseek/deepseek-r1:free',
+    ];
 
-    if (!response.ok) {
-      const text = await response.text();
-      console.error(`[AI Solver] Solver request failed. Status: ${response.status}, Body: ${text}`);
-      const status = response.status === 429 ? 503 : response.status;
-      const reason = response.status === 429 ? 'Solver provider is rate limited' : `Solver request failed (${response.status})`;
-      throw new HttpError(status, reason, text);
+    let lastError: Error | null = null;
+
+    for (const currentModel of fallbackModels) {
+      try {
+        const response = await this.fetchImpl('https://openrouter.ai/api/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            model: currentModel,
+            temperature: this.temperature,
+            max_tokens: this.maxTokens,
+            messages: [
+              { role: 'system', content: systemPrompt },
+              { role: 'user', content: userPrompt }
+            ]
+          })
+        });
+
+        if (!response.ok) {
+          const text = await response.text();
+          throw new HttpError(response.status, `Solver request failed for model ${currentModel} (${response.status})`, text);
+        }
+
+        const payload = (await response.json()) as any;
+        const result = payload.choices?.[0]?.message?.content?.trim() || '';
+
+        // Success!
+        console.log(`[AI] Solver successfully used model: ${currentModel}`);
+        return result;
+      } catch (error) {
+        lastError = error as Error;
+        console.warn(`[AI] Solver model ${currentModel} failed:`, (error as Error).message);
+
+        if (currentModel !== fallbackModels[fallbackModels.length - 1]) {
+          console.log(`[AI] Trying fallback Solver model...`);
+          continue;
+        }
+
+        throw error;
+      }
     }
 
-    const payload = (await response.json()) as any;
-    return payload.choices?.[0]?.message?.content?.trim() || '';
+    throw lastError || new HttpError(502, 'All Solver models failed');
   }
   async chatWithVision(messages: Array<{ role: string; content: string; image?: string }>): Promise<string> {
     const apiKey = process.env.OPENROUTER_API_KEY;

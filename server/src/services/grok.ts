@@ -35,34 +35,71 @@ export async function callGrok({
     throw new HttpError(500, 'OPENROUTER_API_KEY is not configured.');
   }
 
-  const fetchClient = fetchImpl ?? resolveFetch();
-  const response = await fetchClient('https://openrouter.ai/api/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-      'HTTP-Referer': process.env.OPENROUTER_REFERER || 'https://whitevue.app',
-      'X-Title': 'WhiteVue AI Assistant',
-    },
-    body: JSON.stringify({
+  // Determine fallback models based on the model type
+  let fallbackModels: string[] = [];
+  if (model.includes('grok') || model === process.env.CHAT_MODEL) {
+    fallbackModels = [
       model,
-      temperature,
-      max_tokens: maxTokens,
-      messages,
-    }),
-  });
-
-  if (!response.ok) {
-    const text = await safeReadBody(response);
-    throw new HttpError(response.status, `OpenRouter error ${response.status}`, text);
+      process.env.CHAT_MODEL_FALLBACK_1 || 'x-ai/grok-4.1-fast:free',
+      process.env.CHAT_MODEL_FALLBACK_2 || 'nvidia/nemotron-nano-12b-v2-vl:free',
+    ];
+  } else {
+    fallbackModels = [model];
   }
 
-  const payload = (await response.json()) as any;
-  const content = payload.choices?.[0]?.message?.content;
-  if (!content || typeof content !== 'string') {
-    throw new HttpError(502, 'Invalid OpenRouter response: missing content.');
+  const fetchClient = fetchImpl ?? resolveFetch();
+  let lastError: Error | null = null;
+
+  // Try each model in sequence
+  for (const currentModel of fallbackModels) {
+    try {
+      const response = await fetchClient('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+          'HTTP-Referer': process.env.OPENROUTER_REFERER || 'https://whitevue.app',
+          'X-Title': 'WhiteVue AI Assistant',
+        },
+        body: JSON.stringify({
+          model: currentModel,
+          temperature,
+          max_tokens: maxTokens,
+          messages,
+        }),
+      });
+
+      if (!response.ok) {
+        const text = await safeReadBody(response);
+        throw new HttpError(response.status, `OpenRouter error ${response.status} for model ${currentModel}`, text);
+      }
+
+      const payload = (await response.json()) as any;
+      const content = payload.choices?.[0]?.message?.content;
+      if (!content || typeof content !== 'string') {
+        throw new HttpError(502, `Invalid OpenRouter response for model ${currentModel}: missing content.`);
+      }
+
+      // Success! Return the result
+      console.log(`[AI] Successfully used model: ${currentModel}`);
+      return content.trim();
+    } catch (error) {
+      lastError = error as Error;
+      console.warn(`[AI] Model ${currentModel} failed:`, (error as Error).message);
+
+      // If this is not the last model, continue to next fallback
+      if (currentModel !== fallbackModels[fallbackModels.length - 1]) {
+        console.log(`[AI] Trying fallback model...`);
+        continue;
+      }
+
+      // This was the last model, throw the error
+      throw error;
+    }
   }
-  return content.trim();
+
+  // Should never reach here, but just in case
+  throw lastError || new HttpError(502, 'All AI models failed');
 }
 
 async function safeReadBody(res: Response) {

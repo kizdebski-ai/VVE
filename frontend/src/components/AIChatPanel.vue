@@ -1,5 +1,5 @@
 <template>
-  <div class="ai-chat-panel" :class="{ minimized: isMinimized }">
+  <div class="ai-chat-panel glass-panel" :class="{ minimized: isMinimized }">
     <div class="chat-header" @click="toggleMinimize">
       <div class="header-title">
         <component :is="SparklesIcon" class="icon" />
@@ -76,7 +76,9 @@
   </div>
 </template>
 
+<!-- ... script section remains same ... -->
 <script setup>
+// ... (script content same as original, omitted for brevity as replace tool handles context) ...
 import { ref, nextTick, onMounted } from 'vue';
 import { Sparkles, Minus, Maximize2, Camera, Send } from 'lucide-vue-next';
 import html2canvas from 'html2canvas';
@@ -122,7 +124,6 @@ const toggleMinimize = () => {
 
 const renderMarkdown = (text) => {
   if (!text) return '';
-  // Render LaTeX ($...$ or $$...$$) into HTML via KaTeX before markdown parsing
   const withLatex = text
     .replace(/\$\$([\s\S]+?)\$\$/g, (_, expr) => katex.renderToString(expr, { displayMode: true, throwOnError: false }))
     .replace(/\$([^$\n]+?)\$/g, (_, expr) => katex.renderToString(expr, { displayMode: false, throwOnError: false }));
@@ -231,7 +232,6 @@ const sendMessage = async (mode = 'normal_chat') => {
         }
         errText = parsed?.error || errText;
       } catch {
-        // ignore JSON parse errors, fall back to raw text
       }
       throw new Error(`API ${response.status}: ${errText}`);
     }
@@ -270,7 +270,6 @@ const onKeyDown = (e) => {
 };
 
 onMounted(() => {
-  // Auto intro with screenshot
   sendMessage('screenshot_intro');
 });
 </script>
@@ -282,15 +281,11 @@ onMounted(() => {
   right: 20px;
   width: 360px;
   height: 520px;
-  background: rgba(255, 255, 255, 0.95);
-  backdrop-filter: blur(10px);
-  border-radius: 12px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
+  /* Glass style handled by global .glass-panel */
   display: flex;
   flex-direction: column;
   z-index: 1050;
   transition: height 0.3s ease, width 0.3s ease;
-  border: 1px solid rgba(0, 0, 0, 0.1);
   overflow: hidden;
 }
 
@@ -301,13 +296,14 @@ onMounted(() => {
 
 .chat-header {
   padding: 12px 16px;
-  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  background: linear-gradient(135deg, #6366f1, #8b5cf6); /* Keep header distinct */
   color: white;
   display: flex;
   justify-content: space-between;
   align-items: center;
   cursor: pointer;
   flex-shrink: 0;
+  border-bottom: 1px solid var(--glass-border);
 }
 
 .header-title {
@@ -354,14 +350,15 @@ onMounted(() => {
 
 .empty-state {
   text-align: center;
-  color: #666;
+  color: var(--text-secondary);
   margin-top: 40px;
   font-size: 14px;
 }
 
 .sub-text {
   font-size: 12px;
-  color: #999;
+  color: var(--text-secondary);
+  opacity: 0.8;
   margin-top: 4px;
 }
 
@@ -383,32 +380,61 @@ onMounted(() => {
   padding: 10px 14px;
   border-radius: 12px;
   font-size: 14px;
-  line-height: 1.4;
+  line-height: 1.5;
+  color: white;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.message-content :deep(p) {
+  margin: 0 0 8px 0;
+}
+.message-content :deep(p:last-child) {
+  margin-bottom: 0;
+}
+.message-content :deep(pre) {
+  background: rgba(0,0,0,0.3);
+  padding: 8px;
+  border-radius: 6px;
+  overflow-x: auto;
+  white-space: pre-wrap;
+}
+.message-content :deep(code) {
+  font-family: monospace;
+  background: rgba(0,0,0,0.3);
+  padding: 2px 4px;
+  border-radius: 4px;
 }
 
 .message.user .message-content {
-  background: #6366f1;
-  color: white;
+  background: var(--accent-primary);
   border-bottom-right-radius: 2px;
 }
 
 .message.assistant .message-content {
-  background: #f3f4f6;
-  color: #1f2937;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--glass-border);
   border-bottom-left-radius: 2px;
 }
 
-.message-image img {
-  max-width: 100%;
-  border-radius: 8px;
+.message-image {
   margin-bottom: 8px;
-  border: 1px solid rgba(0, 0, 0, 0.1);
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid var(--glass-border);
+}
+
+.message-image img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  object-fit: contain;
 }
 
 .chat-input-area {
   padding: 12px;
-  border-top: 1px solid #eee;
-  background: white;
+  border-top: 1px solid var(--glass-border);
+  background: transparent; /* Transparent to show glass */
 }
 
 .screenshot-toggle {
@@ -416,7 +442,7 @@ onMounted(() => {
   align-items: center;
   gap: 6px;
   font-size: 12px;
-  color: #4b5563;
+  color: var(--text-secondary);
   margin-bottom: 6px;
 }
 
@@ -429,14 +455,14 @@ onMounted(() => {
 .snapshot-preview img {
   height: 60px;
   border-radius: 6px;
-  border: 1px solid #ddd;
+  border: 1px solid var(--glass-border);
 }
 
 .remove-snapshot {
   position: absolute;
   top: -6px;
   right: -6px;
-  background: #ef4444;
+  background: var(--danger-color);
   color: white;
   border: none;
   border-radius: 50%;
@@ -461,27 +487,19 @@ onMounted(() => {
 }
 
 textarea {
+  /* Global glass styles handle background/borders */
   width: 100%;
-  border: 1px solid #e5e7eb;
-  border-radius: 12px;
   padding: 10px 12px;
   resize: none;
   font-family: inherit;
   font-size: 14px;
-  outline: none;
-  background: #fff;
-  color: #111827;
-}
-
-textarea:focus {
-  border-color: #6366f1;
 }
 
 .ghost {
   pointer-events: none;
   position: absolute;
   inset: 0;
-  padding: 10px 12px;
+  padding: 10px 12px; /* Match textarea padding */
   white-space: pre-wrap;
   color: transparent;
   font-family: inherit;
@@ -490,7 +508,7 @@ textarea:focus {
 }
 
 .ghost-tail {
-  color: #9ca3af;
+  color: rgba(255, 255, 255, 0.3);
 }
 
 .snap-btn,
@@ -500,14 +518,14 @@ textarea:focus {
   cursor: pointer;
   padding: 8px;
   border-radius: 50%;
-  color: #6b7280;
+  color: var(--text-secondary);
   transition: all 0.2s;
 }
 
 .snap-btn:hover,
 .send-btn:hover {
-  background: #f3f4f6;
-  color: #6366f1;
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--accent-primary);
 }
 
 .snap-btn:disabled,
@@ -520,7 +538,7 @@ textarea:focus {
   display: inline-block;
   width: 6px;
   height: 6px;
-  background: #9ca3af;
+  background: var(--text-secondary);
   border-radius: 50%;
   margin: 0 2px;
   animation: bounce 1.4s infinite ease-in-out both;
@@ -535,38 +553,7 @@ textarea:focus {
 }
 
 @keyframes bounce {
-  0%,
-  80%,
-  100% {
-    transform: scale(0);
-  }
-  40% {
-    transform: scale(1);
-  }
-}
-
-:global(.dark-mode) .ai-chat-panel {
-  background: rgba(31, 41, 55, 0.95);
-  border-color: rgba(255, 255, 255, 0.1);
-}
-
-:global(.dark-mode) .chat-input-area {
-  background: #1f2937;
-  border-top-color: #374151;
-}
-
-:global(.dark-mode) textarea {
-  background: transparent;
-  border-color: #4b5563;
-  color: white;
-}
-
-:global(.dark-mode) .message.assistant .message-content {
-  background: #374151;
-  color: #e5e7eb;
-}
-
-:global(.dark-mode) .empty-state {
-  color: #9ca3af;
+  0%, 80%, 100% { transform: scale(0); }
+  40% { transform: scale(1); }
 }
 </style>

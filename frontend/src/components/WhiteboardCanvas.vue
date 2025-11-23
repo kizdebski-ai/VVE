@@ -2617,7 +2617,7 @@ export default {
   width: 100%;
   height: 100%;
   overflow: hidden;
-  background-color: white;
+  background-color: transparent;
   position: relative;
   flex: 1; /* Ensure it fills space if in flex container */
   cursor: crosshair; /* Default cursor */
@@ -2626,7 +2626,7 @@ export default {
 }
 
 .whiteboard-container.dark-mode {
-  background-color: #1e1e1e; /* Darker background for dark mode */
+  background-color: transparent;
 }
 
 .whiteboard-canvas {

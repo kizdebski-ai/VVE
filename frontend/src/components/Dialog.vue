@@ -96,7 +96,7 @@ export default {
   left: 0;
   right: 0;
   bottom: 0;
-  background-color: rgba(0, 0, 0, 0.4);
+  background-color: rgba(0, 0, 0, 0.6); /* Darker overlay */
   backdrop-filter: blur(4px);
   display: flex;
   justify-content: center;
@@ -106,7 +106,7 @@ export default {
 }
 
 .dialog {
-  border-radius: 16px;
+  /* Global .glass-panel handles appearance */
   padding: 0;
   width: 90%;
   max-width: 500px;
@@ -116,32 +116,25 @@ export default {
   flex-direction: column;
 }
 
-.glass-panel {
-  background: rgba(255, 255, 255, 0.95);
-  backdrop-filter: blur(16px);
-  border: 1px solid rgba(255, 255, 255, 0.5);
-  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.15);
-}
-
 .dialog-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
   padding: 16px 24px;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+  /* Border handled by global style */
 }
 
 .dialog-header h4 {
   font-size: 18px;
   font-weight: 600;
   margin: 0;
-  color: #1f2937;
+  color: var(--text-primary);
 }
 
 .close-btn {
   background: none;
   border: none;
-  color: #9ca3af;
+  color: var(--text-secondary);
   cursor: pointer;
   padding: 4px;
   display: flex;
@@ -152,15 +145,15 @@ export default {
 }
 
 .close-btn:hover {
-  color: #4b5563;
-  background-color: rgba(0, 0, 0, 0.05);
+  color: var(--text-primary);
+  background-color: rgba(255, 255, 255, 0.1);
 }
 
 .dialog-content {
   padding: 24px;
   overflow-y: auto;
   flex: 1;
-  color: #4b5563;
+  color: var(--text-primary);
   font-size: 15px;
   line-height: 1.5;
 }
@@ -170,28 +163,26 @@ export default {
   justify-content: flex-end;
   gap: 12px;
   padding: 16px 24px;
-  border-top: 1px solid rgba(0, 0, 0, 0.06);
-  background: rgba(250, 250, 250, 0.5);
-  border-bottom-left-radius: 16px;
-  border-bottom-right-radius: 16px;
+  /* Removed background/borders to let glass show through */
+  border-top: 1px solid var(--glass-border);
 }
 
 .action-button {
   padding: 10px 18px;
-  background-color: #2563eb;
+  background-color: var(--accent-primary);
   color: white;
   border: none;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   font-size: 14px;
-  font-weight: 500;
+  font-weight: 600;
   transition: all 0.2s;
 }
 
 .action-button:hover {
-  background-color: #1d4ed8;
+  background-color: var(--accent-hover);
   transform: translateY(-1px);
-  box-shadow: 0 4px 6px rgba(37, 99, 235, 0.2);
+  box-shadow: 0 4px 10px rgba(59, 130, 246, 0.3);
 }
 
 .action-button:active {
@@ -199,15 +190,15 @@ export default {
 }
 
 .action-button.cancel {
-  background-color: white;
-  color: #4b5563;
-  border: 1px solid #e5e7eb;
+  background-color: transparent;
+  color: var(--text-secondary);
+  border: 1px solid var(--glass-border);
 }
 
 .action-button.cancel:hover {
-  background-color: #f9fafb;
-  border-color: #d1d5db;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+  background-color: rgba(255, 255, 255, 0.1);
+  color: var(--text-primary);
+  border-color: var(--text-primary);
 }
 
 @keyframes fadeIn {

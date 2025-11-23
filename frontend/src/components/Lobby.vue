@@ -183,104 +183,121 @@ export default {
   justify-content: center;
   align-items: center;
   min-height: 100vh;
-  background: radial-gradient(circle at top left, #2b32b2, #1488cc);
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  /* Remove local background to show global mesh gradient */
   padding: 20px;
 }
 
 .lobby-card {
-  background: rgba(255, 255, 255, 0.95);
-  backdrop-filter: blur(20px);
+  /* Use global glass variables indirectly or mimic them */
+  background: var(--glass-surface);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
   padding: 40px;
-  border-radius: 24px;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.2);
+  border-radius: var(--radius-xl);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-shadow);
   width: 100%;
   max-width: 480px;
   display: flex;
   flex-direction: column;
   gap: 24px;
+  position: relative;
+  overflow: hidden;
+}
+
+/* Shine effect */
+.lobby-card::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0; height: 1px;
+  background: linear-gradient(90deg, transparent, var(--glass-highlight), transparent);
+  opacity: 0.5;
 }
 
 .logo-section {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 12px;
+  gap: 16px;
+  margin-bottom: 10px;
 }
 
 .logo-icon {
-  background: linear-gradient(135deg, #4285f4, #34a853);
-  padding: 8px;
-  border-radius: 12px;
+  background: linear-gradient(135deg, var(--accent-primary), #2563eb);
+  padding: 10px;
+  border-radius: 14px;
   display: flex;
-  box-shadow: 0 4px 12px rgba(66, 133, 244, 0.3);
+  box-shadow: var(--accent-glow);
 }
 
 .logo-section h1 {
   font-size: 32px;
-  font-weight: 800;
-  background: linear-gradient(135deg, #2c3e50 0%, #3498db 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
+  font-weight: 700;
+  color: var(--text-primary);
   margin: 0;
+  letter-spacing: -0.5px;
 }
 
 .tagline {
   text-align: center;
-  color: #7f8c8d;
+  color: var(--text-secondary);
   font-size: 16px;
   margin-top: -10px;
+  font-weight: 400;
 }
 
 .actions-section {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 20px;
 }
 
 .btn-primary {
   width: 100%;
   padding: 16px;
-  background: linear-gradient(135deg, #4285f4, #3367d6);
+  /* Using global variables mostly, but ensuring specifity here */
+  background: linear-gradient(135deg, var(--accent-primary), #2563eb);
   color: white;
   border: none;
-  border-radius: 16px;
-  font-size: 18px;
+  border-radius: var(--radius-md);
+  font-size: 16px;
   font-weight: 600;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 10px;
-  transition: all 0.2s ease;
-  box-shadow: 0 4px 12px rgba(66, 133, 244, 0.3);
+  transition: all 0.2s var(--ease-fluid);
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
 }
 
 .btn-primary:hover:not(:disabled) {
   transform: translateY(-2px);
-  box-shadow: 0 6px 16px rgba(66, 133, 244, 0.4);
+  box-shadow: 0 6px 20px rgba(59, 130, 246, 0.5);
 }
 
 .btn-primary:disabled {
   opacity: 0.7;
   cursor: wait;
+  filter: grayscale(0.5);
 }
 
 .divider {
   display: flex;
   align-items: center;
   text-align: center;
-  color: #95a5a6;
-  font-size: 12px;
+  color: var(--text-secondary);
+  font-size: 11px;
   font-weight: 600;
   letter-spacing: 1px;
+  text-transform: uppercase;
 }
 
 .divider::before,
 .divider::after {
   content: '';
   flex: 1;
-  border-bottom: 1px solid #e0e0e0;
+  border-bottom: 1px solid var(--glass-border);
 }
 
 .divider span {
@@ -289,40 +306,24 @@ export default {
 
 .join-section {
   display: flex;
-  gap: 12px;
+  gap: 10px;
 }
 
-input {
-  flex: 1;
-  padding: 14px 16px;
-  border: 2px solid #f1f3f4;
-  border-radius: 14px;
-  font-size: 16px;
-  outline: none;
-  transition: all 0.2s;
-  background: #f8f9fa;
-}
-
-input:focus {
-  border-color: #4285f4;
-  background: white;
-  box-shadow: 0 0 0 4px rgba(66, 133, 244, 0.1);
-}
-
+/* Input styles handled globally in style.css */
 .btn-secondary {
   padding: 0 24px;
-  background: #f1f3f4;
-  color: #2c3e50;
-  border: none;
-  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-primary);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md);
   font-weight: 600;
   cursor: pointer;
   transition: all 0.2s;
 }
 
 .btn-secondary:hover:not(:disabled) {
-  background: #e8eaed;
-  color: #1a73e8;
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.2);
 }
 
 .rooms-section {
@@ -331,13 +332,13 @@ input:focus {
   flex-direction: column;
   gap: 16px;
   flex: 1;
-  min-height: 0; /* For scrolling */
+  min-height: 0; 
 }
 
 .tabs {
   display: flex;
   gap: 20px;
-  border-bottom: 1px solid #eee;
+  border-bottom: 1px solid var(--glass-border);
   padding-bottom: 10px;
 }
 
@@ -345,15 +346,21 @@ input:focus {
   background: none;
   border: none;
   font-size: 14px;
-  font-weight: 600;
-  color: #95a5a6;
+  font-weight: 500;
+  color: var(--text-secondary);
   cursor: pointer;
   padding: 4px 0;
   position: relative;
+  transition: color 0.2s;
+}
+
+.tabs button:hover {
+  color: var(--text-primary);
 }
 
 .tabs button.active {
-  color: #4285f4;
+  color: var(--accent-primary);
+  font-weight: 600;
 }
 
 .tabs button.active::after {
@@ -363,7 +370,8 @@ input:focus {
   left: 0;
   width: 100%;
   height: 2px;
-  background: #4285f4;
+  background: var(--accent-primary);
+  box-shadow: 0 0 8px var(--accent-primary);
 }
 
 .room-list {
@@ -375,31 +383,22 @@ input:focus {
   padding-right: 4px;
 }
 
-.room-list::-webkit-scrollbar {
-  width: 6px;
-}
-
-.room-list::-webkit-scrollbar-thumb {
-  background: #ddd;
-  border-radius: 3px;
-}
-
 .room-item {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 16px;
-  background: white;
-  border: 1px solid #eee;
-  border-radius: 16px;
+  padding: 12px 16px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
   cursor: pointer;
   transition: all 0.2s;
 }
 
 .room-item:hover {
-  border-color: #4285f4;
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.1);
   transform: translateX(4px);
-  box-shadow: 0 4px 12px rgba(0,0,0,0.05);
 }
 
 .room-info {
@@ -410,22 +409,23 @@ input:focus {
 
 .room-name {
   font-weight: 600;
-  color: #2c3e50;
+  color: var(--text-primary);
+  font-size: 14px;
 }
 
 .room-meta {
   font-size: 12px;
-  color: #95a5a6;
+  color: var(--text-secondary);
 }
 
 .online-badge {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
-  color: #27ae60;
-  background: rgba(39, 174, 96, 0.1);
+  color: #4ade80; /* Green-400 */
+  background: rgba(74, 222, 128, 0.1);
   padding: 4px 8px;
   border-radius: 20px;
 }
@@ -433,15 +433,17 @@ input:focus {
 .dot {
   width: 6px;
   height: 6px;
-  background: #27ae60;
+  background: #4ade80;
   border-radius: 50%;
+  box-shadow: 0 0 5px #4ade80;
 }
 
 .empty-state, .loading-state {
   text-align: center;
-  color: #95a5a6;
+  color: var(--text-secondary);
   padding: 20px;
   font-size: 14px;
+  font-style: italic;
 }
 
 .spinner {

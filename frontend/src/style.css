@@ -1,271 +1,171 @@
-/* Reset CSS dla pewności */
-* {
-  margin: 0;
-  padding: 0;
-  box-sizing: border-box;
-}
+/* White Frosted Glass Theme (Black Text/Icons) */
 
 :root {
-  font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
-  line-height: 1.5;
-  font-weight: 400;
+  /* --- Palette --- */
+  --bg-base: #eef2ff; /* Very light blueish gray base */
+  
+  /* GLASS VARIABLES - White & Translucent */
+  /* Surface: White with 65% opacity - lets background color show through but stays bright */
+  --glass-surface: rgba(255, 255, 255, 0.65); 
+  --glass-border: rgba(255, 255, 255, 0.8); /* Solid white border */
+  --glass-highlight: rgba(255, 255, 255, 0.9);
+  --glass-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.15); /* Soft colored shadow */
+  --backdrop-blur: blur(20px); /* Strong blur implies "frosted" material */
 
-  color-scheme: light dark;
-  color: rgba(255, 255, 255, 0.87);
-  background-color: #242424;
+  /* Text & Icons - DARK/BLACK for contrast on white glass */
+  --text-primary: #1e293b; /* Slate 800 (Almost Black) */
+  --text-secondary: #475569; /* Slate 600 */
+  --icon-color: #1e293b;      /* FORCE BLACK ICONS */
+  
+  /* Accent */
+  --accent-primary: #2563eb; /* Blue 600 */
+  --accent-hover: #3b82f6;
+  --accent-glass: rgba(37, 99, 235, 0.15); /* Light blue tint for active state */
+  
+  /* Input Fields */
+  --input-bg: rgba(255, 255, 255, 0.6); /* White-ish input */
+  --input-text: #0f172a;
+  --input-border: rgba(0, 0, 0, 0.1);
+  --input-placeholder: rgba(0, 0, 0, 0.4);
 
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-
-  --bg-color: #ffffff;
-  --text-color: #213547;
-  --grid-color: rgba(100, 100, 100, 0.2);
-  --header-bg: #f0f0f0;
-  --toolbar-bg: #f5f5f5;
-  --border-color: #ddd;
-  --btn-bg: #e0e0e0;
-  --btn-color: #333;
-  --btn-hover-bg: #d0d0d0;
-  --btn-active-bg: #4285f4;
-  --btn-active-color: white;
-  --tooltip-bg: rgba(0, 0, 0, 0.8);
-  --tooltip-color: white;
+  --radius-md: 16px;
+  --ease-fluid: cubic-bezier(0.25, 0.8, 0.25, 1);
 }
 
-body.dark-mode, 
-#app.dark-mode {
-  --bg-color: #242424;
-  --text-color: rgba(255, 255, 255, 0.87);
-  --grid-color: rgba(255, 255, 255, 0.1);
-  --header-bg: #1a1a1a;
-  --toolbar-bg: #2a2a2a;
-  --border-color: #333;
-  --btn-bg: #333;
-  --btn-color: #eee;
-  --btn-hover-bg: #444;
-  --btn-active-bg: #4285f4;
-  --btn-active-color: white;
-  --tooltip-bg: rgba(0, 0, 0, 0.8);
-  --tooltip-color: white;
-}
-
-html, body {
-  width: 100%;
-  height: 100%;
-  overflow: hidden;
-}
+/* --- Global Reset --- */
+* { margin: 0; padding: 0; box-sizing: border-box; }
 
 body {
-  margin: 0;
-  width: 100vw;
-  height: 100vh;
+  font-family: 'Inter', system-ui, sans-serif;
+  background-color: var(--bg-base);
+  /* Vibrant Gradient to show off the white glass transparency */
+  background-image: 
+    radial-gradient(at 0% 0%, rgba(167, 243, 208, 0.6) 0, transparent 50%), 
+    radial-gradient(at 100% 0%, rgba(165, 180, 252, 0.6) 0, transparent 50%), 
+    radial-gradient(at 100% 100%, rgba(253, 164, 175, 0.5) 0, transparent 50%),
+    radial-gradient(at 0% 100%, rgba(147, 197, 253, 0.6) 0, transparent 50%);
+  background-attachment: fixed;
+  background-size: cover;
+  color: var(--text-primary);
   overflow: hidden;
-  background-color: var(--bg-color);
-  color: var(--text-color);
 }
 
-/* Główny układ aplikacji */
-#app {
-  display: flex;
-  flex-direction: column;
-  width: 100%;
-  height: 100%;
-  overflow: hidden;
-  background-color: var(--bg-color);
-  color: var(--text-color);
+#app { width: 100vw; height: 100vh; overflow: hidden; }
+
+/* --- THE GLASS PANEL (White) --- */
+.glass-panel, .toolbar, .top-menu, .feature-panel, .dialog, .ai-chat-panel, .lobby-card {
+  background: var(--glass-surface) !important;
+  backdrop-filter: var(--backdrop-blur) !important;
+  -webkit-backdrop-filter: var(--backdrop-blur) !important;
+  border: 1px solid var(--glass-border) !important;
+  box-shadow: var(--glass-shadow) !important;
+  border-radius: var(--radius-md);
+  color: var(--text-primary) !important;
 }
 
-.app-header {
-  display: flex;
-  align-items: center;
-  padding: 10px 15px;
-  background-color: var(--header-bg);
-  border-bottom: 1px solid var(--border-color);
-  color: var(--text-color);
-  height: 60px;
-  min-height: 60px;
+/* Top shine */
+.glass-panel::before, .toolbar::before, .top-menu::before, .feature-panel::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0; height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.8), transparent);
+  pointer-events: none;
 }
 
-.app-footer {
-  display: flex;
-  justify-content: space-between;
-  padding: 10px 15px;
-  background-color: var(--header-bg);
-  border-top: 1px solid var(--border-color);
-  font-size: 14px;
-  color: var(--text-color);
-  height: 40px;
-  min-height: 40px;
-}
-
-/* Kontener tablicy - główny element zajmujący pełną dostępną przestrzeń */
-.whiteboard-container {
-  flex: 1;
-  display: flex;
-  position: relative;
-  overflow: hidden;
-  background-color: var(--bg-color);
-  width: 100%;
-}
-
-/* Pasek narzędzi - zintegrowany z tableboardem */
-.toolbar-container {
-  width: 60px;
-  min-width: 60px;
-  height: 100%;
-  background-color: var(--toolbar-bg);
-  border-right: 1px solid var(--border-color);
-  padding: 5px;
-  overflow-y: auto;
-  scrollbar-width: none; /* Firefox */
-  z-index: 10;
-}
-
-/* Ukrywamy scrollbar w pasku narzędzi */
-.toolbar-container::-webkit-scrollbar {
-  width: 0;
+/* --- Icons & Buttons (Dark on White) --- */
+.icon-btn, .tool-btn, .menu-btn, .close-button, .control-btn {
+  color: var(--icon-color) !important; /* Black Icons */
   background: transparent;
-}
-
-/* Canvas zajmujący całą dostępną przestrzeń */
-.whiteboard-container canvas {
-  flex: 1;
-  width: 100%;
-  height: 100%;
-  touch-action: none;
-  background-color: var(--bg-color);
-}
-
-/* Styl dla narzędzi w pasku */
-.toolbar {
-  display: flex;
-  flex-direction: column;
-  gap: 15px;
-  align-items: center;
-  width: 100%;
-  height: 100%;
-}
-
-.tool-btn {
-  width: 40px;
-  height: 40px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  transition: all 0.2s;
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 8px;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  background-color: var(--btn-bg);
-  color: var(--btn-color);
-  border: none;
-  padding: 0;
 }
 
-.tool-btn:hover {
-  background-color: var(--btn-hover-bg);
-  transform: translateY(-2px);
+.icon-btn:hover, .tool-btn:hover, .menu-btn:hover, .close-button:hover {
+  background: rgba(0, 0, 0, 0.05); /* Darken on hover */
+  color: #000000 !important;
+  transform: scale(1.05);
 }
 
-.tool-btn.active {
-  background-color: var(--btn-active-bg);
-  color: var(--btn-active-color);
+.tool-btn.active, .menu-btn.active-feature {
+  background: var(--accent-glass) !important; /* Light Blue bg */
+  color: var(--accent-primary) !important; /* Blue icon */
+  border-color: rgba(37, 99, 235, 0.3) !important;
+  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.15);
 }
 
-/* Komponenty pomocnicze */
-.theme-toggle-container {
-  position: absolute;
-  bottom: 20px;
-  right: 20px;
-  z-index: 50;
+/* Ensure SVGs inherit the dark color */
+svg {
+  stroke: currentColor;
 }
 
-.status-message {
-  background-color: var(--tooltip-bg);
-  color: var(--tooltip-color);
-  padding: 8px 12px;
-  border-radius: 4px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
-  z-index: 2000;
-}
-
-/* Style dla header */
-.logo {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.logo svg {
-  stroke: #4285f4;
-}
-
-.logo h1 {
-  margin: 0;
-  font-size: 18px;
-  font-weight: 500;
-}
-
-.username-container {
-  margin-left: 20px;
-}
-
-.username-input {
-  background-color: var(--btn-bg);
-  border: 1px solid var(--border-color);
-  border-radius: 4px;
-  padding: 8px 12px;
-  color: var(--text-color);
-  font-size: 14px;
+/* --- Inputs --- */
+input, textarea, select {
+  background-color: var(--input-bg) !important;
+  color: var(--input-text) !important;
+  border: 1px solid var(--input-border) !important;
+  border-radius: 8px !important;
+  padding: 10px 12px !important;
+  font-family: inherit;
   outline: none;
 }
 
-.user-count {
-  display: flex;
-  align-items: center;
-  margin-left: 15px;
-  gap: 5px;
+input::placeholder, textarea::placeholder {
+  color: var(--input-placeholder) !important;
 }
 
-.user-count-badge {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background-color: #4285f4;
+input:focus, textarea:focus {
+  background-color: #ffffff !important; /* Pure white on focus */
+  border-color: var(--accent-primary) !important;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.2) !important;
+}
+
+/* --- Layout Fixes --- */
+.whiteboard-container, .whiteboard-container canvas {
+  background: transparent !important;
+}
+
+/* AI Chat Tweaks */
+.ai-chat-panel {
+  border-top: 1px solid white !important;
+}
+
+.message-content {
+  color: #ffffff !important; /* Bubbles need white text usually, handled below */
+}
+
+.message.user .message-content {
+  background: var(--accent-primary);
+  color: white !important;
+}
+
+.message.assistant .message-content {
+  background: rgba(255, 255, 255, 0.5); /* White-ish bubble */
+  border: 1px solid rgba(0,0,0,0.05);
+  color: #1e293b !important; /* Dark text for assistant */
+}
+
+/* Primary Button */
+.btn-primary {
+  background: var(--accent-primary);
   color: white;
-  border-radius: 50%;
-  width: 24px;
-  height: 24px;
-  font-size: 12px;
-  font-weight: bold;
-}
-
-.actions {
-  margin-left: auto;
-  display: flex;
-  gap: 10px;
-}
-
-.import-export-btn {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  background-color: var(--btn-bg);
   border: none;
-  border-radius: 4px;
-  color: var(--text-color);
-  padding: 8px 12px;
-  font-size: 14px;
-  cursor: pointer;
-  transition: all 0.2s;
+  padding: 10px 20px;
+  border-radius: 8px;
+  font-weight: 600;
+  box-shadow: 0 4px 10px rgba(37, 99, 235, 0.3);
 }
 
-/* Optymalizacja dla canvas */
-canvas {
-  image-rendering: crisp-edges;
-  shape-rendering: geometricPrecision;
-  text-rendering: geometricPrecision;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+.btn-primary:hover {
+  background: var(--accent-hover);
+  transform: translateY(-1px);
 }
+
+/* Scrollbars */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.1); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,0.2); }

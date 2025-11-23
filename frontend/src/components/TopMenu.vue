@@ -246,20 +246,8 @@ const openRoomManager = () => {
     pointer-events: auto; /* Capture mouse events */
 }
 
-/* Glass Panel Style (Matching ToolBar) */
-.glass-panel {
-  background: rgba(255, 255, 255, 0.9);
-  backdrop-filter: blur(12px);
-  border: 1px solid rgba(255, 255, 255, 0.5);
-  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
-}
-
-.dark-mode .glass-panel {
-  background: rgba(30, 41, 59, 0.85);
-  border-color: rgba(255, 255, 255, 0.1);
-}
-
 .gear-btn {
+  /* Uses global glass-panel class for bg/blur */
   border-radius: 50%;
   width: 40px;
   height: 40px;
@@ -267,75 +255,73 @@ const openRoomManager = () => {
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  transition: all 0.2s ease;
-  color: #4b5563;
-  position: relative; /* Keep relative for stacking */
-  z-index: 3; /* Above hover area and menu */
-  pointer-events: auto; /* Gear button is clickable */
-  margin-top: 10px; /* Add small margin from top */
+  transition: all 0.3s var(--ease-fluid);
+  color: var(--text-secondary);
+  position: relative; 
+  z-index: 3; 
+  pointer-events: auto; 
+  margin-top: 10px; 
 }
 
-.gear-btn:hover {
-  background: rgba(255, 255, 255, 1);
-  transform: scale(1.05);
-  color: #2563eb;
-  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+.gear-btn:hover, .gear-btn.active {
+  background: var(--glass-highlight);
+  color: var(--accent-primary);
+  transform: scale(1.1) rotate(90deg);
+  box-shadow: 0 0 15px rgba(59, 130, 246, 0.3);
+  border-color: rgba(59, 130, 246, 0.3);
 }
 
 .top-menu {
-  margin-top: 8px; /* Space below gear */
-  border-radius: 12px;
+  margin-top: 8px;
   padding: 8px;
   display: flex;
-  gap: 4px;
+  gap: 6px;
   align-items: center;
-  position: relative; /* Relative to the container */
-  z-index: 2; /* Below gear */
-  pointer-events: auto; /* Menu is interactive */
+  position: relative;
+  z-index: 2;
+  pointer-events: auto;
 }
 
 .menu-btn {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 12px;
-  border-radius: 8px;
+  padding: 8px 16px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all 0.2s var(--ease-fluid);
   background: transparent;
-  color: #4b5563;
-  border: none;
+  color: var(--text-secondary);
+  border: 1px solid transparent;
   font-size: 13px;
   font-weight: 500;
 }
 
 .menu-btn:hover {
-  background: rgba(0, 0, 0, 0.05);
-  color: #111827;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-primary);
+  border-color: rgba(255, 255, 255, 0.1);
 }
 
 .divider-vertical {
   width: 1px;
   height: 24px;
-  background: rgba(0, 0, 0, 0.1);
+  background: var(--glass-border);
   margin: 0 4px;
 }
 
-/* Style for active feature button */
+/* Active feature button */
 .menu-btn.active-feature {
-  background: #eff6ff;
-  color: #2563eb;
-}
-
-.dark-mode .menu-btn.active-feature {
-  background: rgba(37, 99, 235, 0.2);
-  color: #60a5fa;
+  background: rgba(59, 130, 246, 0.15);
+  color: var(--accent-primary);
+  border-color: rgba(59, 130, 246, 0.3);
+  box-shadow: 0 0 10px rgba(59, 130, 246, 0.1);
 }
 
 /* Transitions */
 .fade-enter-active,
 .fade-leave-active {
-  transition: opacity 0.2s ease;
+  transition: opacity 0.3s ease;
 }
 .fade-enter-from,
 .fade-leave-to {
@@ -343,30 +329,30 @@ const openRoomManager = () => {
 }
 
 .slide-fade-enter-active {
-  transition: all 0.2s ease-out;
+  transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1); /* Bouncy effect */
 }
 .slide-fade-leave-active {
-  transition: all 0.2s cubic-bezier(1, 0.5, 0.8, 1);
+  transition: all 0.2s ease-in;
 }
 .slide-fade-enter-from,
 .slide-fade-leave-to {
-  transform: translateY(-10px);
+  transform: translateY(-20px) scale(0.95);
   opacity: 0;
 }
 
-/* Styles for shortcuts dialog */
+/* Shortcuts Dialog */
 .shortcuts-dialog {
   position: fixed;
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
-  border-radius: 16px;
-  z-index: 1050;
+  z-index: 2000; /* Higher than everything */
   max-width: 400px;
   width: 90%;
   max-height: 85vh;
   overflow-y: auto;
   pointer-events: auto;
+  /* Uses global glass-panel styles */
 }
 
 .shortcuts-dialog-header {
@@ -374,31 +360,31 @@ const openRoomManager = () => {
   justify-content: space-between;
   align-items: center;
   padding: 16px 20px;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+  border-bottom: 1px solid var(--glass-border);
 }
 
 .shortcuts-dialog-header h3 {
   margin: 0;
   font-size: 18px;
   font-weight: 600;
-  color: #111827;
+  color: var(--text-primary);
 }
 
 .close-btn {
   background: none;
   border: none;
   cursor: pointer;
-  color: #6b7280;
+  color: var(--text-secondary);
   padding: 4px;
-  border-radius: 4px;
+  border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
   transition: all 0.2s;
 }
 .close-btn:hover {
-  background: rgba(0, 0, 0, 0.05);
-  color: #111827;
+  background: rgba(255, 255, 255, 0.1);
+  color: white;
 }
 
 .shortcuts-list {
@@ -413,20 +399,20 @@ const openRoomManager = () => {
 }
 
 .shortcut-key {
-  background: rgba(0, 0, 0, 0.05);
+  background: rgba(0, 0, 0, 0.3);
   padding: 4px 8px;
   border-radius: 6px;
   margin-right: 12px;
   min-width: 80px;
   text-align: center;
   font-weight: 600;
-  color: #374151;
+  color: var(--accent-hover);
   font-family: monospace;
   font-size: 12px;
-  border: 1px solid rgba(0, 0, 0, 0.1);
+  border: 1px solid var(--glass-border);
 }
 
 .shortcut-desc {
-  color: #4b5563;
+  color: var(--text-secondary);
 }
 </style>

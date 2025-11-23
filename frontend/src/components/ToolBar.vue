@@ -622,29 +622,19 @@ onBeforeUnmount(() => {
   align-items: center;
 }
 
-.glass-panel {
-  background: rgba(255, 255, 255, 0.9);
-  backdrop-filter: blur(12px);
-  border: 1px solid rgba(255, 255, 255, 0.5);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
-  border-radius: 16px;
-  padding: 8px;
-  pointer-events: auto;
-  transition: all 0.2s ease;
-}
-
 .toolbar {
   pointer-events: auto;
   display: flex;
-  gap: 8px;
-  align-items: center; /* Ensure items are centered */
+  gap: 6px;
+  align-items: center;
   justify-content: center;
+  padding: 8px;
 }
 
 .toolbar-container.vertical .toolbar {
   flex-direction: column;
-  min-width: 56px; /* Prevent collapse */
-  padding: 12px 8px; /* More padding */
+  min-width: 56px;
+  padding: 12px 6px;
 }
 
 .toolbar-container.horizontal .toolbar {
@@ -663,49 +653,54 @@ onBeforeUnmount(() => {
 }
 
 .divider {
-  background-color: rgba(0, 0, 0, 0.1);
+  background-color: var(--glass-border);
   margin: 0 4px;
 }
 
-.divider:not(.horizontal) { /* Vertical divider for horizontal toolbar */
+.divider:not(.horizontal) {
   width: 1px;
   height: 24px;
 }
 
-.divider.horizontal { /* Horizontal divider for vertical toolbar */
+.divider.horizontal {
   width: 24px;
   height: 1px;
   margin: 4px 0;
 }
 
 .tool-btn {
+  /* Base styles matching icon-btn global class but specific to toolbar sizing */
   display: flex;
   align-items: center;
   justify-content: center;
   width: 40px;
   height: 40px;
-  border: none;
+  border: 1px solid transparent;
   background: transparent;
-  border-radius: 10px;
-  color: #4b5563;
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all 0.2s var(--ease-fluid);
   position: relative;
 }
 
 .tool-btn:hover {
-  background: rgba(0, 0, 0, 0.05);
-  color: #111827;
+  background: var(--glass-highlight);
+  color: var(--text-primary);
+  transform: scale(1.05);
 }
 
 .tool-btn.active {
-  background: #eff6ff;
-  color: #2563eb;
+  background: rgba(59, 130, 246, 0.2);
+  color: var(--accent-primary);
+  border-color: rgba(59, 130, 246, 0.3);
+  box-shadow: 0 0 10px rgba(59, 130, 246, 0.2);
 }
 
 .tool-btn.danger:hover {
-  background: #fef2f2;
-  color: #dc2626;
+  background: rgba(239, 68, 68, 0.2);
+  color: var(--danger-color);
+  border-color: rgba(239, 68, 68, 0.3);
 }
 
 .dropdown-trigger {
@@ -714,130 +709,138 @@ onBeforeUnmount(() => {
 
 .dropdown-arrow {
   position: absolute;
-  bottom: 4px;
-  right: 4px;
+  bottom: 2px;
+  right: 2px;
   opacity: 0.6;
+  font-size: 10px;
 }
 
+/* Popovers */
 .toolbar-popover {
   position: fixed;
-  padding: 12px;
-  min-width: 220px;
+  padding: 16px;
+  min-width: 240px;
   z-index: 4000;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 16px;
+  /* Global glass-panel style applies background/blur */
 }
 
 .shapes-popover {
-  min-width: 260px;
+  min-width: 280px;
 }
 
 .coordinate-menu {
-  min-width: 180px;
-  display: flex;
-  flex-direction: column;
+  min-width: 200px;
   gap: 8px;
 }
 
 .popover-section {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
 }
 
 .section-title {
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: #6b7280;
+  color: var(--text-secondary);
   font-weight: 600;
 }
 
 .option-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 8px;
 }
 
 .option-pill {
-  border: 1px solid rgba(15, 23, 42, 0.15);
-  background: rgba(255, 255, 255, 0.8);
+  border: 1px solid var(--glass-border);
+  background: rgba(255, 255, 255, 0.05);
   border-radius: 9999px;
-  padding: 4px 10px;
+  padding: 6px 12px;
   font-size: 12px;
-  color: #374151;
+  color: var(--text-secondary);
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: all 0.2s;
 }
 
 .option-pill:hover {
-  border-color: #2563eb;
-  color: #2563eb;
+  border-color: var(--accent-primary);
+  color: var(--text-primary);
+  background: rgba(59, 130, 246, 0.1);
 }
 
 .option-pill.active {
-  background: #2563eb;
-  color: #fff;
-  border-color: #2563eb;
+  background: var(--accent-primary);
+  color: white;
+  border-color: var(--accent-primary);
+  box-shadow: 0 2px 8px rgba(59, 130, 246, 0.4);
 }
 
 .color-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 8px;
 }
 
 .color-swatch {
-  width: 20px;
-  height: 20px;
+  width: 24px;
+  height: 24px;
   border-radius: 50%;
   border: 2px solid transparent;
   cursor: pointer;
-  transition: transform 0.15s ease, border-color 0.15s ease;
+  transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
 .color-swatch:hover {
-  transform: scale(1.1);
+  transform: scale(1.2);
+  border-color: white;
 }
 
 .color-swatch.active {
-  border-color: #2563eb;
-  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.2);
+  border-color: white;
+  box-shadow: 0 0 0 2px var(--accent-primary);
+  transform: scale(1.1);
 }
 
 .shapes-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 4px;
+  gap: 8px;
 }
 
 .shape-btn {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 36px;
-  height: 36px;
-  border: none;
-  background: transparent;
-  border-radius: 8px;
-  color: #4b5563;
+  width: 100%;
+  aspect-ratio: 1;
+  border: 1px solid transparent;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
   cursor: pointer;
+  transition: all 0.2s;
 }
 
 .shape-btn:hover {
-  background: rgba(0, 0, 0, 0.05);
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text-primary);
 }
 
 .shape-btn.active {
-  background: #eff6ff;
-  color: #2563eb;
+  background: rgba(59, 130, 246, 0.2);
+  color: var(--accent-primary);
+  border-color: rgba(59, 130, 246, 0.3);
 }
 
 .coordinate-btn {
   justify-content: flex-start;
-  width: 100%;
-  padding: 6px 10px;
+  aspect-ratio: auto;
+  padding: 8px 12px;
   font-size: 13px;
 }
 
@@ -849,24 +852,23 @@ onBeforeUnmount(() => {
   padding: 8px 16px;
 }
 
-.properties-bar.vertical {
-    /* If we want vertical properties bar? No, usually horizontal bar popping out */
-    /* Let's keep it horizontal but positioned to the right */
-}
-
 .property-group {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
 }
 
 .color-preview {
   width: 24px;
   height: 24px;
   border-radius: 50%;
-  border: 2px solid rgba(0, 0, 0, 0.1);
+  border: 2px solid rgba(255, 255, 255, 0.2);
   cursor: pointer;
-  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+  box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+  transition: transform 0.2s;
+}
+.color-preview:hover {
+  transform: scale(1.1);
 }
 
 .hidden-color-input {
@@ -876,13 +878,13 @@ onBeforeUnmount(() => {
 }
 
 .slider-group {
-  color: #6b7280;
+  color: var(--text-secondary);
 }
 
 .width-slider {
   width: 100px;
   height: 4px;
-  background: #e5e7eb;
+  background: rgba(255, 255, 255, 0.1);
   border-radius: 2px;
   appearance: none;
   outline: none;
@@ -892,37 +894,22 @@ onBeforeUnmount(() => {
   appearance: none;
   width: 16px;
   height: 16px;
-  background: #2563eb;
+  background: var(--accent-primary);
   border-radius: 50%;
   cursor: pointer;
-  border: 2px solid white;
-  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+  border: 2px solid var(--bg-color);
+  box-shadow: 0 0 0 2px var(--glass-border);
+  transition: transform 0.2s;
+}
+
+.width-slider::-webkit-slider-thumb:hover {
+  transform: scale(1.2);
 }
 
 .label {
     font-size: 12px;
-    color: #6b7280;
+    color: var(--text-secondary);
     font-weight: 500;
-}
-
-/* Dark Mode Support */
-:global(.dark) .glass-panel {
-  background: rgba(30, 41, 59, 0.9);
-  border-color: rgba(255, 255, 255, 0.1);
-}
-
-:global(.dark) .tool-btn {
-  color: #9ca3af;
-}
-
-:global(.dark) .tool-btn:hover {
-  background: rgba(255, 255, 255, 0.1);
-  color: #f3f4f6;
-}
-
-:global(.dark) .tool-btn.active {
-  background: rgba(37, 99, 235, 0.2);
-  color: #60a5fa;
 }
 </style>
 

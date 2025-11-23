@@ -764,7 +764,13 @@ export default {
     const toggleDarkMode = () => {
       darkMode.value = !darkMode.value;
       localStorage.setItem('darkMode', darkMode.value);
-      document.body.classList.toggle('dark-mode', darkMode.value);
+      // My new CSS is dark by default, so we toggle 'light-mode' when darkMode is FALSE
+      if (darkMode.value) {
+        document.body.classList.remove('light-mode');
+      } else {
+        document.body.classList.add('light-mode');
+      }
+      
       if (whiteboard.value) {
         nextTick(() => { whiteboard.value.redrawCanvas(); });
       }
@@ -950,7 +956,13 @@ export default {
       bootstrapRoom();
       nextTick(syncWhiteboardState);
 
-      document.body.classList.toggle('dark-mode', darkMode.value);
+      // Initial theme set
+      if (!darkMode.value) {
+        document.body.classList.add('light-mode');
+      } else {
+        document.body.classList.remove('light-mode');
+      }
+      
       window.addEventListener('beforeunload', handleBeforeUnload);
       window.addEventListener('keydown', handleGlobalKeyDown); // Add global key listener
     });
@@ -1054,308 +1066,543 @@ export default {
 </script>
 
 <style>
-/* Styles remain largely the same */
-.theme-toggle-container {
-  position: absolute;
-  bottom: 20px;
-  right: 20px;
-  z-index: 50;
+
+/* Layout Styles Only - Theme is handled in style.css */
+
+
+
+html, body {
+
+  width: 100%;
+
+  height: 100%;
+
+  overflow: hidden;
+
 }
+
+
+
+body {
+
+  margin: 0;
+
+  width: 100vw;
+
+  height: 100vh;
+
+  /* Background handled in style.css */
+
+}
+
+
+
+#app {
+
+  display: flex;
+
+  flex-direction: column;
+
+  width: 100%;
+
+  height: 100%;
+
+  overflow: hidden;
+
+  /* Colors handled in style.css */
+
+}
+
+
+
+.whiteboard-container {
+
+  flex: 1;
+
+  display: flex;
+
+  position: relative;
+
+  overflow: hidden;
+
+  width: 100%;
+
+}
+
+
+
+/* Canvas taking full available space */
+
+.whiteboard-container canvas {
+
+  flex: 1;
+
+  width: 100%;
+
+  height: 100%;
+
+  touch-action: none;
+
+}
+
+
+
+/* UI Overlays Positioned Absolute */
+
+
+
+.theme-toggle-container {
+
+  position: absolute;
+
+  bottom: 20px;
+
+  right: 20px;
+
+  z-index: 50;
+
+}
+
+
+
+.status-message {
+
+  background-color: rgba(0, 0, 0, 0.8);
+
+  color: white;
+
+  padding: 8px 12px;
+
+  border-radius: 4px;
+
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+
+  z-index: 2000;
+
+}
+
+
+
 .logo { display: flex; align-items: center; gap: 10px; }
-.logo svg { stroke: #4285f4; }
-.logo h1 { margin: 0; font-size: 18px; font-weight: 500; }
+
+.logo svg { stroke: var(--accent-primary); }
+
+.logo h1 { margin: 0; font-size: 18px; font-weight: 500; color: var(--text-primary); }
+
 .username-container { margin-left: 20px; }
 
 
+
 .global-error-overlay {
+
   position: fixed;
+
   top: 0;
+
   left: 0;
+
   width: 100%;
+
   height: 100%;
+
   background: rgba(0,0,0,0.8);
+
   z-index: 9999;
+
   display: flex;
+
   align-items: center;
+
   justify-content: center;
+
 }
+
+
+
 .error-box {
-  background: white;
+
+  background: #1e293b;
+
   padding: 20px;
+
   border-radius: 8px;
+
   max-width: 80%;
-  color: red;
+
+  color: #ef4444;
+
+  border: 1px solid rgba(255,255,255,0.1);
+
 }
+
+
+
 .error-box pre {
+
   white-space: pre-wrap;
-  background: #eee;
+
+  background: rgba(0,0,0,0.2);
+
   padding: 10px;
+
   margin: 10px 0;
-  color: black;
+
+  color: #e2e8f0;
+
 }
+
+
 
 .username-input {
-  background-color: var(--btn-bg);
-  border: 1px solid var(--border-color);
-  border-radius: 4px;
-  padding: 8px 12px;
-  color: var(--text-color);
-  font-size: 14px;
-  outline: none;
+
+  /* Styled globally in style.css */
+
 }
-.username-input:focus { border-color: #4285f4; }
+
+
+
 .user-count { display: flex; align-items: center; margin-left: 15px; gap: 5px; }
+
 .user-count-badge {
+
   display: flex; align-items: center; justify-content: center;
-  background-color: #4285f4; color: white; border-radius: 50%;
+
+  background-color: var(--accent-primary); color: white; border-radius: 50%;
+
   min-width: 24px; height: 24px; padding: 0 6px;
+
   font-size: 12px; font-weight: bold;
+
 }
-.user-count-label { font-size: 14px; color: var(--text-color); }
+
+.user-count-label { font-size: 14px; color: var(--text-secondary); }
+
+
+
 .actions { margin-left: auto; display: flex; gap: 10px; }
-.import-export-btn {
-  display: flex; align-items: center; gap: 5px;
-  background-color: var(--btn-bg); border: none; border-radius: 4px;
-  color: var(--text-color); padding: 8px 12px; font-size: 14px;
-  cursor: pointer; transition: all 0.2s;
-}
+
+
+
+/* Floating Toolbar Container Positioning */
 
 .floating-toolbar {
+
   position: absolute !important;
-  left: 15px;
+
+  left: 20px;
+
   top: 50%;
+
   transform: translateY(-50%);
+
   display: flex;
+
   flex-direction: column;
+
   pointer-events: none;
+
   z-index: 3000;
+
 }
 
-/* Keep the toolbar wrapper fully transparent - the ToolBar
-   component itself provides the glass/floating background */
-.floating-toolbar {
-  background: transparent;
-}
 
-/* Make the floating toolbar look like a light, floating pill instead of a gray block */
-.floating-toolbar .toolbar-container {
-  background: transparent;
-  border: none;
-  padding: 0;
-  width: auto;
-  min-width: 0;
-  height: auto;
-  box-shadow: none;
-}
 
-.floating-toolbar .toolbar.glass-panel {
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0.75));
-  border: 1px solid rgba(15, 23, 42, 0.06);
-  box-shadow: 0 14px 38px rgba(15, 23, 42, 0.16);
-  padding: 10px 8px;
-}
+/* Floating User Info */
 
-.dark-mode .floating-toolbar .toolbar.glass-panel {
-  background: linear-gradient(180deg, rgba(26, 32, 44, 0.92), rgba(26, 32, 44, 0.82));
-  border-color: rgba(255, 255, 255, 0.08);
-  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.5);
-}
 .floating-user-info {
+
   position: fixed;
+
   top: 20px;
+
   right: 20px;
+
   display: flex;
+
   align-items: center;
+
   gap: 10px;
+
   z-index: 3000;
-  background: rgba(255, 255, 255, 0.9);
-  backdrop-filter: blur(8px);
+
+  
+
+  /* Use Glass Style */
+
+  background: var(--glass-surface);
+
+  backdrop-filter: blur(16px);
+
+  -webkit-backdrop-filter: blur(16px);
+
+  border: 1px solid var(--glass-border);
+
   padding: 8px 16px;
-  border-radius: 12px;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.1);
-  border: 1px solid rgba(0,0,0,0.05);
+
+  border-radius: var(--radius-md);
+
+  box-shadow: var(--glass-shadow);
+
+  color: var(--text-primary);
+
 }
 
-:not(.dark-mode) .floating-user-info { background-color: rgba(255, 255, 255, 0.9); }
+
+
 .share-btn {
-  transition: all 0.3s ease; transform: translateY(100px); opacity: 0;
-}
-.notification.show { transform: translateY(0); opacity: 1; }
-.notification-info { background-color: #2196F3; }
-.notification-success { background-color: #4CAF50; }
-.notification-warning { background-color: #FF9800; }
-.notification-error { background-color: #F44336; }
 
-/* 3. Add CSS for panel debug */
-.debug-panel {
-  position: fixed;
-  top: 10px;
-  left: 50%;
-  transform: translateX(-50%);
-  background: rgba(0,0,0,0.8);
-  color: white;
-  padding: 10px;
-  border-radius: 4px;
-  z-index: 9999;
-  font-size: 12px;
-}
+  transition: all 0.3s ease;
 
-/* Feature Panel Styles */
-.feature-panel {
-  position: absolute;
-  top: 60px; /* Adjust as needed */
-  left: 50%;
-  transform: translateX(-50%);
-  width: 320px;
-  background-color: var(--dialog-bg, #ffffff);
-  color: var(--text-color, #333);
-  border: 1px solid var(--border-color, #dee2e6);
-  border-radius: 8px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-  z-index: 1010; /* Above canvas, below modals? */
+  /* Button styles handled by class if added, or default */
+
+  background: rgba(255,255,255,0.1);
+
+  border: none;
+
+  color: var(--text-primary);
+
+  padding: 6px 12px;
+
+  border-radius: 6px;
+
+  cursor: pointer;
+
   display: flex;
-  flex-direction: column;
+
+  align-items: center;
+
+  gap: 6px;
+
 }
 
-.dark-mode .feature-panel {
-  background-color: var(--dialog-bg-dark, #2f2f2f);
-  color: var(--text-color-dark, #e0e0e0);
-  border: 1px solid var(--border-color-dark, #444);
+.share-btn:hover {
+
+  background: rgba(255,255,255,0.2);
+
 }
+
+
+
+.debug-btn {
+
+    background: transparent;
+
+    border: 1px solid var(--glass-border);
+
+    color: var(--text-secondary);
+
+    padding: 4px 8px;
+
+    border-radius: 4px;
+
+    cursor: pointer;
+
+    font-size: 12px;
+
+}
+
+
+
+/* Notifications */
+
+.notification-info { background-color: var(--accent-primary); }
+
+.notification-success { background-color: #10b981; }
+
+.notification-warning { background-color: #f59e0b; }
+
+.notification-error { background-color: #ef4444; }
+
+
+
+/* Feature Panels (Draggable/Absolute) */
+
+.feature-panel {
+
+  position: absolute;
+
+  top: 80px;
+
+  left: 50%;
+
+  transform: translateX(-50%);
+
+  width: 320px;
+
+  z-index: 1010;
+
+  display: flex;
+
+  flex-direction: column;
+
+  /* Glass style applied via global class .feature-panel in style.css */
+
+}
+
+
 
 .panel-header {
+
   display: flex;
+
   justify-content: space-between;
+
   align-items: center;
-  padding: 10px 15px;
-  border-bottom: 1px solid var(--border-color, #dee2e6);
+
+  padding: 12px 16px;
+
   font-weight: 600;
-}
-.dark-mode .panel-header {
-  border-bottom: 1px solid var(--border-color-dark, #444);
+
 }
 
-.panel-header span {
-  font-size: 16px;
-}
 
-.close-button {
-  background: none;
-  border: none;
-  font-size: 24px;
-  line-height: 1;
-  cursor: pointer;
-  color: var(--btn-close-color, #6c757d);
-  padding: 0 5px;
-}
-.dark-mode .close-button {
-  color: var(--btn-close-color-dark, #aaa);
-}
-.close-button:hover {
-  color: var(--btn-close-hover-color, #333);
-}
-.dark-mode .close-button:hover {
-  color: var(--btn-close-hover-color-dark, #eee);
-}
 
 .panel-content {
-  padding: 15px;
+
+  padding: 16px;
+
   display: flex;
+
   flex-direction: column;
-  gap: 15px;
-  overflow-y: auto; /* Add scroll if content overflows */
-  max-height: 70vh; /* Limit panel height */
+
+  gap: 16px;
+
+  overflow-y: auto;
+
+  max-height: 70vh;
+
 }
+
+
 
 .slider-container,
+
 .checkbox-container,
+
 .status-display,
+
 .latex-preview-container,
+
 .button-group {
+
   display: flex;
+
   flex-direction: column;
-  gap: 5px;
+
+  gap: 6px;
+
 }
+
+
+
 .checkbox-container {
+
   flex-direction: row;
+
   align-items: center;
-  gap: 8px;
+
+  gap: 10px;
+
 }
+
+
 
 .slider-container label,
+
 .checkbox-container label {
-  font-size: 14px;
-  color: var(--text-color-secondary, #555);
-}
-.dark-mode .slider-container label,
-.dark-mode .checkbox-container label {
-  color: var(--text-color-secondary-dark, #bbb);
+
+  font-size: 13px;
+
+  color: var(--text-secondary);
+
 }
 
-.slider-container input[type="range"] {
-  width: 100%;
-  cursor: pointer;
-}
+
 
 .action-button {
+
   padding: 8px 12px;
-  background-color: var(--btn-primary-bg, #007bff);
+
+  background-color: var(--accent-primary);
+
   color: white;
+
   border: none;
-  border-radius: 4px;
+
+  border-radius: 6px;
+
   cursor: pointer;
-  font-size: 14px;
+
+  font-size: 13px;
+
   transition: background-color 0.2s ease;
+
 }
+
 .action-button:hover:not(:disabled) {
-  background-color: var(--btn-primary-hover-bg, #0056b3);
+
+  background-color: var(--accent-hover);
+
 }
+
 .action-button:disabled {
-  background-color: var(--btn-disabled-bg, #cccccc);
+
+  background-color: rgba(255,255,255,0.1);
+
+  color: rgba(255,255,255,0.3);
+
   cursor: not-allowed;
-  opacity: 0.7;
+
 }
-.dark-mode .action-button:disabled {
-   background-color: var(--btn-disabled-bg-dark, #555);
-}
+
+
 
 .button-group {
+
   display: flex;
-  flex-wrap: wrap; /* Allow buttons to wrap */
-  gap: 10px;
-}
-.button-group .action-button {
-  flex-grow: 1; /* Allow buttons to grow */
+
+  flex-direction: row;
+
+  flex-wrap: wrap;
+
+  gap: 8px;
+
 }
 
-.status-display {
-  font-size: 14px;
-  color: var(--text-color-secondary, #555);
-  min-height: 20px; /* Ensure space even when empty */
+.button-group .action-button {
+
+  flex-grow: 1;
+
 }
-.dark-mode .status-display {
-  color: var(--text-color-secondary-dark, #bbb);
-}
+
+
 
 .latex-preview-container {
+
   margin-top: 5px;
-  padding: 8px;
-  background-color: var(--input-bg, #f1f1f1);
-  border: 1px solid var(--border-color, #ccc);
-  border-radius: 4px;
+
+  padding: 10px;
+
+  background-color: rgba(0,0,0,0.2);
+
+  border: 1px solid var(--glass-border);
+
+  border-radius: 6px;
+
   overflow-x: auto;
-  font-size: 14px; /* Adjust KaTeX font size if needed */
+
+  font-size: 14px;
+
+  color: var(--text-primary);
+
 }
-.dark-mode .latex-preview-container {
-  background-color: var(--input-bg-dark, #3a3a3a);
-  border: 1px solid var(--border-color-dark, #555);
-}
-/* Ensure KaTeX elements inherit color */
+
+
+
 .latex-preview-container .katex {
-   color: var(--text-color, #333) !important;
-}
-.dark-mode .latex-preview-container .katex {
-   color: var(--text-color-dark, #e0e0e0) !important;
+
+   color: var(--text-primary) !important;
+
 }
 
 </style>

@@ -719,11 +719,16 @@ onUnmounted(() => {
 .movable-object {
   position: absolute;
   box-sizing: border-box;
-  transition: border-color 0.2s ease, z-index 0s;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
+
+/* Subtle Glass Selection */
 .movable-object.is-selected {
-  border: 2px solid dodgerblue;
+  border: 1px solid rgba(37, 99, 235, 0.6); /* Semi-transparent blue */
+  background-color: rgba(37, 99, 235, 0.05); /* Very light tint */
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.2); /* Inner white glow */
 }
+
 .object-content {
   width: 100%;
   height: 100%;
@@ -733,6 +738,7 @@ onUnmounted(() => {
   justify-content: center;
   align-items: center;
 }
+
 .object-content img,
 .object-content svg {
     display: block;
@@ -742,23 +748,38 @@ onUnmounted(() => {
     max-height: 100%;
     object-fit: contain;
 }
+
 .movable-object:active .object-content {
     cursor: grabbing;
 }
 
+/* Rotation Handle - Modern Stick Style */
 .rotation-handle {
   position: absolute;
-  top: -20px; 
+  top: -24px; 
   left: 50%;
   transform: translateX(-50%);
-  width: 14px;
-  height: 14px;
-  background-color: dodgerblue;
-  border: 1px solid white;
+  width: 10px;
+  height: 10px;
+  background-color: white;
+  border: 1px solid #2563eb;
   border-radius: 50%;
   cursor: alias; 
   z-index: 12; 
-  box-shadow: 0 0 3px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+/* Connector line for rotation handle */
+.rotation-handle::after {
+  content: '';
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 1px;
+  height: 12px;
+  background-color: #2563eb;
+  pointer-events: none;
 }
 
 .resize-handles {
@@ -768,17 +789,26 @@ onUnmounted(() => {
   pointer-events: none; 
 }
 
+/* Circular Handles */
 .resize-handle {
   position: absolute;
-  width: 10px;
+  width: 10px; /* Smaller */
   height: 10px;
   background-color: white;
-  border: 1px solid dodgerblue;
-  border-radius: 2px;
+  border: 1px solid #2563eb; /* Blue border */
+  border-radius: 50%; /* Circular */
   z-index: 11; 
   pointer-events: all; 
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+  transition: transform 0.1s;
 }
 
+.resize-handle:hover {
+  transform: scale(1.2);
+  background-color: #2563eb; /* Fill on hover */
+}
+
+/* Positioning offsets adjusted for circular handles */
 .nw-handle { top: -5px; left: -5px; cursor: nwse-resize; }
 .n-handle { top: -5px; left: 50%; transform: translateX(-50%); cursor: ns-resize; }
 .ne-handle { top: -5px; right: -5px; cursor: nesw-resize; }

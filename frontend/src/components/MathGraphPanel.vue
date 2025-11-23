@@ -1,8 +1,8 @@
 <template>
   <DraggablePanel 
-    :initialX="windowWidth - 340" 
+    :initialX="windowWidth - 400" 
     :initialY="80" 
-    width="320px"
+    width="380px"
     @close="$emit('close')"
   >
     <template #header>

@@ -513,6 +513,11 @@ export default {
       }
 
       try {
+        // Ensure ID exists
+        if (!elementData.id) {
+            elementData.id = uuidv4();
+        }
+
         ydoc.value.transact(() => {
           const yElementMap = new Y.Map();
 
@@ -556,7 +561,7 @@ export default {
 
           yDrawings.value.push([yElementMap]);
           refreshMovableElements();
-        });
+        }, 'local-plot'); // Origin
 
         nextTick(() => {
           if (undoManager.value) {

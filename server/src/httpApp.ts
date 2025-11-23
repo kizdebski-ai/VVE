@@ -183,7 +183,17 @@ export const createHttpApp = ({ roomManager, aiSolver }: CreateAppOptions) => {
           'Skup się WYŁĄCZNIE na zawartości canvas - rysunkach, tekście, kształtach, diagramach, równaniach i innych elementach narysowanych na tablicy. ' +
           'Nie opisuj UI, nie wspominaj o przyciskach, toolbarach czy innych elementach interfejsu. ' +
           'Odpowiadaj po polsku, zwięźle (3-8 zdań lub punktów). ' +
-          'Math/latex renderuj w $...$ lub $$...$$, nie dodawaj dekoracji ani długich dygresji.',
+          '\n\nFORMATOWANIE MATEMATYCZNE I FIZYCZNE:\n' +
+          '- Wzory matematyczne i fizyczne ZAWSZE formatuj w LaTeX\n' +
+          '- Wzory inline (w tekście): użyj $wzór$ (pojedyncze dolary)\n' +
+          '- Wzory display (wycentrowane): użyj $$wzór$$ (podwójne dolary)\n' +
+          '- Przykłady poprawnego formatowania:\n' +
+          '  * Inline: "Wierzchołek paraboli to $x = -\\frac{b}{2a}$"\n' +
+          '  * Display: "Wzór kwadratowy:\\n$$x = \\frac{-b \\pm \\sqrt{b^2-4ac}}{2a}$$"\n' +
+          '  * Fizyka: "Energia kinetyczna: $E_k = \\frac{1}{2}mv^2$"\n' +
+          '  * Układ równań: "$$\\begin{cases} x + y = 5 \\\\ 2x - y = 1 \\end{cases}$$"\n' +
+          '- NIE używaj zwykłego tekstu dla wzorów (np. "x = -b/2a" jest ZŁE)\n' +
+          '- Używaj poprawnej składni LaTeX: \\frac{}{}, \\sqrt{}, ^{}, _{}, \\pm, \\times, itp.',
       };
 
       const messages: ChatMessage[] = [system];

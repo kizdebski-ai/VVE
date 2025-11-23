@@ -406,6 +406,31 @@ onMounted(() => {
   border-radius: 4px;
 }
 
+/* KaTeX Math Rendering */
+.message-content :deep(.katex) {
+  font-size: 1.1em;
+  color: inherit;
+}
+
+.message-content :deep(.katex-display) {
+  margin: 12px 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.message-content :deep(.katex-html) {
+  color: inherit;
+}
+
+/* Ensure math formulas are readable */
+.message.assistant .message-content :deep(.katex) {
+  color: #e2e8f0;
+}
+
+.message.user .message-content :deep(.katex) {
+  color: #ffffff;
+}
+
 .message.user .message-content {
   background: var(--accent-primary);
   border-bottom-right-radius: 2px;

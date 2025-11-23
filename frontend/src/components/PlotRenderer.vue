@@ -3,13 +3,19 @@
     <!-- Coordinate System 2D -->
     <g v-if="type === 'coordinateSystem2D'">
       <!-- X Axis -->
-      <line :x1="0" :y1="height/2" :x2="width" :y2="height/2" stroke="black" stroke-width="2" />
-      <polygon :points="`${width},${height/2} ${width-10},${height/2-5} ${width-10},${height/2+5}`" fill="black" />
+      <line :x1="0" :y1="height/2" :x2="width" :y2="height/2" stroke="black" stroke-width="2" marker-end="url(#arrowhead)" />
       <!-- Y Axis -->
-      <line :x1="width/2" :y1="height" :x2="width/2" :y2="0" stroke="black" stroke-width="2" />
-      <polygon :points="`${width/2},0 ${width/2-5},10 ${width/2+5},10`" fill="black" />
+      <line :x1="width/2" :y1="height" :x2="width/2" :y2="0" stroke="black" stroke-width="2" marker-end="url(#arrowhead)" />
+      
+      <!-- Labels -->
+      <text :x="width - 15" :y="height/2 + 20" font-family="sans-serif" font-size="14">x</text>
+      <text :x="width/2 + 10" :y="15" font-family="sans-serif" font-size="14">y</text>
+
       <!-- Grid (Optional) -->
       <defs>
+        <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+          <polygon points="0 0, 10 3.5, 0 7" fill="black" />
+        </marker>
         <pattern id="grid" width="20" height="20" patternUnits="userSpaceOnUse">
           <path d="M 20 0 L 0 0 0 20" fill="none" stroke="gray" stroke-width="0.5" opacity="0.3"/>
         </pattern>
@@ -30,8 +36,12 @@
     <!-- Math Function Plot -->
     <g v-else-if="type === 'mathFunctionPlot'">
       <!-- Background/Axes -->
-      <line :x1="0" :y1="height/2" :x2="width" :y2="height/2" stroke="#ccc" stroke-width="1" />
-      <line :x1="width/2" :y1="height" :x2="width/2" :y2="0" stroke="#ccc" stroke-width="1" />
+      <!-- Background/Axes -->
+      <line :x1="0" :y1="height/2" :x2="width" :y2="height/2" stroke="#ccc" stroke-width="1" marker-end="url(#arrowhead)" />
+      <line :x1="width/2" :y1="height" :x2="width/2" :y2="0" stroke="#ccc" stroke-width="1" marker-end="url(#arrowhead)" />
+      
+      <text :x="width - 15" :y="height/2 + 20" font-family="sans-serif" font-size="14" fill="#666">x</text>
+      <text :x="width/2 + 10" :y="15" font-family="sans-serif" font-size="14" fill="#666">f(x)</text>
       
       <!-- Function Path -->
       <path :d="functionPath" :stroke="color" stroke-width="2" fill="none" />
@@ -40,8 +50,12 @@
     <!-- Physics Data Plot -->
     <g v-else-if="type === 'physicsDataPlot'">
        <!-- Background/Axes -->
-      <line :x1="0" :y1="height" :x2="width" :y2="height" stroke="black" stroke-width="2" /> <!-- X -->
-      <line :x1="0" :y1="height" :x2="0" :y2="0" stroke="black" stroke-width="2" /> <!-- Y -->
+       <!-- Background/Axes -->
+      <line :x1="0" :y1="height" :x2="width" :y2="height" stroke="black" stroke-width="2" marker-end="url(#arrowhead)" /> <!-- X -->
+      <line :x1="0" :y1="height" :x2="0" :y2="0" stroke="black" stroke-width="2" marker-end="url(#arrowhead)" /> <!-- Y -->
+
+      <text :x="width - 15" :y="height - 10" font-family="sans-serif" font-size="14">t</text>
+      <text :x="10" :y="15" font-family="sans-serif" font-size="14">v</text>
 
       <!-- Data Points -->
       <circle v-for="(pt, i) in scaledPoints" :key="i" :cx="pt.x" :cy="pt.y" r="3" :fill="color" />
@@ -53,6 +67,9 @@
 
 <script setup>
 import { computed } from 'vue';
+import { create, all } from 'mathjs';
+
+const math = create(all);
 
 const props = defineProps({
   type: String,
@@ -73,41 +90,46 @@ const functionPath = computed(() => {
   const [minX, maxX] = xRange;
   const rangeX = maxX - minX;
   
-  // Simple safe eval replacement
-  // Supported: x, sin, cos, tan, pow, sqrt, abs, etc.
-  const evaluate = (x) => {
-    try {
-      // Replace 'x' with value, handle basic math functions
-      // This is a very basic parser/evaluator for demonstration
-      const scope = { x, ...Math };
-      const func = new Function('x', `with(Math) { return ${expr} }`);
-      return func(x);
-    } catch (e) {
-      return 0;
-    }
-  };
+  // Calculate Y range based on aspect ratio to keep 1:1 scale if possible
+  // or just use a reasonable default.
+  // For now, let's match X range magnitude but scaled by aspect ratio
+  const aspectRatio = props.height / props.width;
+  const rangeY = rangeX * aspectRatio;
+  const minY = -(rangeY / 2);
+  const maxY = rangeY / 2;
+
+  let compiled;
+  try {
+      compiled = math.compile(expr);
+  } catch (e) {
+      console.error("Math compile error", e);
+      return '';
+  }
 
   const points = [];
-  const steps = 100;
+  const steps = 200; // Higher resolution
   for (let i = 0; i <= steps; i++) {
     const t = i / steps;
     const xVal = minX + t * rangeX;
-    const yVal = evaluate(xVal);
     
-    // Map to SVG coordinates
-    // Map xVal from [minX, maxX] to [0, width]
-    const svgX = (xVal - minX) / rangeX * props.width;
+    let yVal;
+    try {
+        const scope = { x: xVal };
+        yVal = compiled.evaluate(scope);
+    } catch (e) {
+        yVal = NaN;
+    }
     
-    // Map yVal. Assuming Y range roughly matches X range aspect ratio or fixed
-    // Let's assume Y range is also [-10, 10] for simplicity, or auto-scale?
-    // For now, fixed range [-10, 10] mapped to [height, 0] (inverted Y)
-    const minY = -10;
-    const maxY = 10;
-    const rangeY = maxY - minY;
-    const svgY = props.height - ((yVal - minY) / rangeY * props.height);
-    
-    if (Number.isFinite(svgY)) {
-        points.push(`${svgX},${svgY}`);
+    if (typeof yVal === 'number' && isFinite(yVal)) {
+        // Map to SVG coordinates
+        const svgX = (xVal - minX) / rangeX * props.width;
+        // Invert Y for SVG (0 is top)
+        const svgY = props.height - ((yVal - minY) / rangeY * props.height);
+        
+        // Clip to view? SVG handles it, but we might want to avoid huge numbers
+        if (svgY >= -props.height && svgY <= props.height * 2) {
+             points.push(`${svgX},${svgY}`);
+        }
     }
   }
   

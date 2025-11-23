@@ -21,6 +21,7 @@
         :current-shape="currentShape"
         :current-line-style="currentLineStyle"
         :current-arrow-style="currentArrowStyle"
+        :current-roughness="currentRoughness"
         :active-feature="activeFeature"
         :grid-align-options="gridAlignOptions"
         :handwriting-styler-options="handwritingStylerOptions"
@@ -32,8 +33,8 @@
         @update:has-stylized-strokes="hasStylizedStrokes = $event"
       />
       <AIChatPanel
-        v-if="whiteboard && whiteboard.containerRef?.value"
-        :whiteboard-ref="whiteboard.containerRef?.value || null"
+        v-if="roomId"
+        :whiteboard-ref="whiteboard?.containerRef?.value || null"
       />
        <div v-if="activeFeature === 'gridAlign'" class="feature-panel grid-align-panel">
          <div class="panel-header">
@@ -119,29 +120,40 @@
         @close="togglePhysicsGraphPanel"
         @plot-data="handleAddElement"
       />
+      <DiagramPanel
+        v-if="showDiagramPanel"
+        @close="toggleDiagramPanel"
+        @apply="handleDiagramApply"
+      />
 
       <!-- Floating Toolbar (Left) -->
       <div class="floating-toolbar">
-        <ToolBar 
+        <ToolBar
           :active-tool="currentTool"
           :color="currentColor"
           :line-width="currentLineWidth"
+          :current-shape="currentShape"
           :line-style="currentLineStyle"
           :arrow-style="currentArrowStyle"
+          :roughness="currentRoughness"
           :is-math-panel-open="showMathGraphPanel"
           :is-physics-panel-open="showPhysicsGraphPanel"
+          :is-diagram-panel-open="showDiagramPanel"
           orientation="vertical"
           @update:activeTool="handleToolChange"
           @update:color="handleColorChange"
           @update:lineWidth="handleLineWidthChange"
+          @update:shape="handleShapeChange"
           @update:lineStyle="handleLineStyleChange"
           @update:arrowStyle="handleArrowStyleChange"
+          @update:roughness="handleRoughnessChange"
           @update:eraserSize="handleEraserSizeChange"
           @undo="callWhiteboardUndo"
           @redo="callWhiteboardRedo"
           @clear="handleClearCanvas"
           @toggle-math-panel="toggleMathGraphPanel"
           @toggle-physics-panel="togglePhysicsGraphPanel"
+          @toggle-diagram-panel="toggleDiagramPanel"
           @add-coordinate-system="handleAddCoordinateSystem"
           @toggle-calculator="toggleCalculator"
           @toggle-debug="toggleDebugMode"
@@ -228,10 +240,12 @@ import ExportDialog from './components/ExportDialog.vue';
 import CalculatorModal from './components/CalculatorModal.vue';
 import MathGraphPanel from './components/MathGraphPanel.vue';
 import PhysicsGraphPanel from './components/PhysicsGraphPanel.vue';
+import DiagramPanel from './components/DiagramPanel.vue';
 import AIChatPanel from './components/AIChatPanel.vue';
 import EncryptionStatus from './components/EncryptionStatus.vue';
 import * as Y from 'yjs';
-import { Buffer } from 'buffer';
+import { undoRedoState as globalUndoRedoState } from './utils/undoRedoState';
+
 import katex from 'katex';
 import { buildRoomHash, createNewRoomUrl, parseRoomHash } from './lib/roomLink';
 import { generateEncryptionKey } from './lib/crypto';
@@ -254,6 +268,7 @@ export default {
     CalculatorModal,
     MathGraphPanel,
     PhysicsGraphPanel,
+    DiagramPanel,
     AIChatPanel,
     EncryptionStatus
   },
@@ -264,6 +279,12 @@ export default {
     const roomId = ref(null);
     const roomKey = ref(null);
     const username = ref(localStorage.getItem('username') || 'Guest');
+    const updateUsername = () => {
+      localStorage.setItem('username', username.value);
+      if (whiteboard.value && whiteboard.value.updateAwarenessUser) {
+        whiteboard.value.updateAwarenessUser(username.value);
+      }
+    };
     const showImportDialog = ref(false);
     const showExportDialog = ref(false);
     const exportedState = ref('');
@@ -272,6 +293,9 @@ export default {
     const darkMode = ref(localStorage.getItem('darkMode') === 'true');
     const debugMode = ref(false);
     const isCalculatorVisible = ref(false);
+    const toggleCalculator = () => {
+      isCalculatorVisible.value = !isCalculatorVisible.value;
+    };
     const globalError = ref(null);
     const currentTool = ref('pen');
     const currentColor = ref('#000000');
@@ -279,6 +303,7 @@ export default {
     const currentShape = ref('rectangle');
     const currentLineStyle = ref('solid');
     const currentArrowStyle = ref('none');
+    const currentRoughness = ref(1);
 
     // Feature flags/state
     const activeFeature = ref(null); // 'gridAlign', 'styleHandwriting', 'mathRecognizer'
@@ -289,92 +314,49 @@ export default {
       widthNormalization: 50,
       smoothingFactor: 50
     });
-    const mathRecognizerOptions = ref({ ghostOpacity: 0.5, showHint: true });
-    const recognitionStatus = ref('Idle');
-    const latexEquation = ref('');
-    const solution = ref('');
-    const hasCharGroups = ref(false);
-    const hasStylizedStrokes = ref(false);
-    
-    // Graph Panels
-    const showMathGraphPanel = ref(false);
-    const showPhysicsGraphPanel = ref(false);
+  const mathRecognizerOptions = ref({ ghostOpacity: 0.5, showHint: true });
+  const recognitionStatus = ref('Idle');
+  const latexEquation = ref('');
+  const solution = ref('');
+  const hasCharGroups = ref(false);
+  const hasStylizedStrokes = ref(false);
 
-    // Yjs Awareness
+    // Yjs awareness state (count/badges)
     const awarenessStates = ref([]);
     const activeUsersCount = computed(() => awarenessStates.value.length);
     const localClientId = ref(null);
-
-    // Undo/Redo State (Global)
-    const globalUndoRedoState = ref({ canUndo: false, canRedo: false });
-
     const formattedLastSaved = computed(() => {
       if (!lastSaved.value) return '';
       return new Date(lastSaved.value).toLocaleTimeString();
     });
 
-    // --- Methods ---
-    
-    const updateUsername = () => {
-      localStorage.setItem('username', username.value);
-      if (whiteboard.value) {
-        whiteboard.value.updateAwarenessUser?.(username.value);
-      }
-    };
+    // Graph Panels
+    const showMathGraphPanel = ref(false);
+    const showPhysicsGraphPanel = ref(false);
+    const showDiagramPanel = ref(false);
 
-    const handleToolChange = (tool) => {
-      currentTool.value = tool;
-      whiteboard.value?.setTool?.(tool);
-      if (tool === 'eraser') {
-        // Eraser logic handled in canvas
-      }
-    };
-
-    const handleColorChange = (color) => {
-      currentColor.value = color;
-      whiteboard.value?.setColor?.(color);
-    };
-
-    const handleLineWidthChange = (width) => {
-      currentLineWidth.value = width;
-      whiteboard.value?.setLineWidth?.(width);
-    };
-    
-    const handleEraserSizeChange = (size) => {
-        if (whiteboard.value) {
-            whiteboard.value.setEraserSize?.(size);
+    const toggleMathGraphPanel = () => {
+        showMathGraphPanel.value = !showMathGraphPanel.value;
+        if (showMathGraphPanel.value) {
+          showPhysicsGraphPanel.value = false;
+          showDiagramPanel.value = false;
         }
     };
 
-    const handleShapeChange = (shape) => {
-      currentShape.value = shape;
-      // If tool is not shape, switch to shape?
-      // The toolbar handles this logic usually, but we ensure consistency
-      if (currentTool.value !== 'shape') {
-        currentTool.value = 'shape';
-      }
-    };
-    
-    const handleLineStyleChange = (style) => {
-        currentLineStyle.value = style;
-    };
-    
-    const handleArrowStyleChange = (style) => {
-        currentArrowStyle.value = style;
-    };
-
-    const toggleCalculator = () => {
-      isCalculatorVisible.value = !isCalculatorVisible.value;
-    };
-    
-    const toggleMathGraphPanel = () => {
-        showMathGraphPanel.value = !showMathGraphPanel.value;
-        if (showMathGraphPanel.value) showPhysicsGraphPanel.value = false;
-    };
-    
     const togglePhysicsGraphPanel = () => {
         showPhysicsGraphPanel.value = !showPhysicsGraphPanel.value;
-        if (showPhysicsGraphPanel.value) showMathGraphPanel.value = false;
+        if (showPhysicsGraphPanel.value) {
+          showMathGraphPanel.value = false;
+          showDiagramPanel.value = false;
+        }
+    };
+
+    const toggleDiagramPanel = () => {
+        showDiagramPanel.value = !showDiagramPanel.value;
+        if (showDiagramPanel.value) {
+          showMathGraphPanel.value = false;
+          showPhysicsGraphPanel.value = false;
+        }
     };
 
     const handleAddElement = (elementData) => {
@@ -385,18 +367,188 @@ export default {
       }
     };
 
+    const handleDiagramApply = (diagramData) => {
+      if (!diagramData?.nodes?.length) return;
+      const elements = [];
+
+      // --- Layout: try to derive levels from edges, fallback to grid ---
+      const nodeIds = diagramData.nodes.map((n, i) => n.id || `node-${i}`);
+      const indeg = new Map(nodeIds.map((id) => [id, 0]));
+      diagramData.edges?.forEach((e) => {
+        if (indeg.has(e.to)) indeg.set(e.to, (indeg.get(e.to) || 0) + 1);
+      });
+      const levels = new Map();
+      const queue = nodeIds.filter((id) => (indeg.get(id) || 0) === 0);
+      queue.forEach((id) => levels.set(id, 0));
+      const adj = new Map(nodeIds.map((id) => [id, []]));
+      diagramData.edges?.forEach((e) => {
+        if (adj.has(e.from)) adj.get(e.from).push(e.to);
+      });
+      while (queue.length) {
+        const id = queue.shift();
+        const lvl = levels.get(id) || 0;
+        (adj.get(id) || []).forEach((nxt) => {
+          if ((indeg.get(nxt) || 0) > 0) indeg.set(nxt, indeg.get(nxt) - 1);
+          if ((indeg.get(nxt) || 0) === 0) {
+            levels.set(nxt, lvl + 1);
+            queue.push(nxt);
+          }
+        });
+      }
+
+      const groupByLevel = new Map();
+      nodeIds.forEach((id, idx) => {
+        const lvl = levels.has(id) ? levels.get(id) : 0;
+        if (!groupByLevel.has(lvl)) groupByLevel.set(lvl, []);
+        groupByLevel.get(lvl).push({ id, idx });
+      });
+
+      const spacingX = 340;
+      const spacingY = 190;
+      const startX = 140;
+      const startY = 140;
+      const width = 220;
+      const height = 110;
+
+      const nodePos = new Map();
+      Array.from(groupByLevel.entries())
+        .sort((a, b) => a[0] - b[0])
+        .forEach(([lvl, list], lvlIdx) => {
+          list.forEach((item, rowIdx) => {
+            const x1 = startX + lvlIdx * spacingX;
+            const y1 = startY + rowIdx * spacingY;
+            nodePos.set(item.id, {
+              start: { x: x1, y: y1 },
+              end: { x: x1 + width, y: y1 + height },
+              center: { x: x1 + width / 2, y: y1 + height / 2 }
+            });
+          });
+        });
+
+      // Node styles
+      const baseStroke = '#111827';
+      const baseFill = '#ffffff';
+      const textColor = '#111827';
+
+      diagramData.nodes.forEach((node, idx) => {
+        const id = node.id || `node-${idx}`;
+        const pos = nodePos.get(id);
+        const shapeType = (node.type || '').toLowerCase();
+        const shape =
+          shapeType === 'decision'
+            ? 'diamond'
+            : shapeType === 'start' || shapeType === 'end'
+              ? 'circle'
+              : 'rectangle';
+
+        elements.push({
+          type: shape,
+          start: pos.start,
+          end: pos.end,
+          strokeColor: baseStroke,
+          fillColor: baseFill,
+          lineWidth: 2,
+          id
+        });
+
+        // Label (centered)
+        const label = node.label || id;
+        elements.push({
+          type: 'text',
+          position: { x: pos.center.x - label.length * 3.2, y: pos.center.y - 10 },
+          text: label,
+          fontSize: 18,
+          color: textColor,
+          id: `${id}-label`
+        });
+      });
+
+      // Edges with arrow + labels
+      diagramData.edges?.forEach((edge, idx) => {
+        const from = nodePos.get(edge.from);
+        const to = nodePos.get(edge.to);
+        if (!from || !to) return;
+        elements.push({
+          type: 'line',
+          start: from.center,
+          end: to.center,
+          arrowStyle: 'end',
+          strokeColor: '#0f172a',
+          lineWidth: 2.2,
+          id: edge.id || `edge-${idx}`
+        });
+        if (edge.label) {
+          const midX = (from.center.x + to.center.x) / 2;
+          const midY = (from.center.y + to.center.y) / 2;
+          elements.push({
+            type: 'text',
+            position: { x: midX + 6, y: midY - 12 },
+            text: edge.label,
+            fontSize: 14,
+            color: '#334155',
+            id: `${edge.id || `edge-${idx}`}-label`
+          });
+        }
+      });
+
+      elements.forEach((el) => handleAddElement(el));
+    };
+
     const handleClearCanvas = () => {
       if (confirm('Are you sure you want to clear the canvas? This cannot be undone.')) {
-        if (whiteboard.value) whiteboard.value.clearCanvas();
+        whiteboard.value?.clearCanvas?.();
       }
     };
 
     const callWhiteboardUndo = () => {
-      if (whiteboard.value) whiteboard.value.undo();
+      whiteboard.value?.undo?.();
     };
 
     const callWhiteboardRedo = () => {
-      if (whiteboard.value) whiteboard.value.redo();
+      whiteboard.value?.redo?.();
+    };
+
+    // Tool/brush handlers
+    const handleLineWidthChange = (width) => {
+      currentLineWidth.value = width;
+      whiteboard.value?.setLineWidth?.(width);
+    };
+
+    const handleArrowStyleChange = (style) => {
+      currentArrowStyle.value = style;
+      whiteboard.value?.setArrowStyle?.(style);
+    };
+
+    const handleRoughnessChange = (value) => {
+      currentRoughness.value = value;
+      whiteboard.value?.setRoughness?.(value);
+    };
+
+    const handleEraserSizeChange = (size) => {
+      whiteboard.value?.setEraserSize?.(size);
+    };
+
+    const handleLineStyleChange = (style) => {
+      currentLineStyle.value = style;
+      whiteboard.value?.setLineStyle?.(style);
+    };
+
+    const handleShapeChange = (shape) => {
+      currentShape.value = shape;
+      if (currentTool.value !== 'shapes') {
+        currentTool.value = 'shapes';
+        whiteboard.value?.setTool?.('shapes');
+      }
+    };
+
+    const handleColorChange = (color) => {
+      currentColor.value = color;
+      whiteboard.value?.setColor?.(color);
+    };
+
+    const handleToolChange = (tool) => {
+      currentTool.value = tool;
+      whiteboard.value?.setTool?.(tool);
     };
     
     const forceUpdateUndoRedo = () => {
@@ -474,7 +626,12 @@ export default {
       }
       if (whiteboard.value?.yjsConnection?.ydoc) {
         try {
-          const stateUpdate = Buffer.from(base64State, 'base64');
+          const binaryString = window.atob(base64State);
+          const len = binaryString.length;
+          const stateUpdate = new Uint8Array(len);
+          for (let i = 0; i < len; i++) {
+            stateUpdate[i] = binaryString.charCodeAt(i);
+          }
           whiteboard.value.yjsConnection.ydoc.transact(() => {
             Y.applyUpdate(whiteboard.value.yjsConnection.ydoc, stateUpdate);
           });
@@ -772,6 +929,7 @@ export default {
       currentShape,
       currentLineStyle,
       currentArrowStyle,
+      currentRoughness,
       isCalculatorVisible, // Return state for modal
       activeUsersCount,
       localClientId,
@@ -783,6 +941,7 @@ export default {
       handleShapeChange,
       handleLineStyleChange,
       handleArrowStyleChange,
+      handleRoughnessChange,
       toggleCalculator, // Return toggle method
       handleClearCanvas,
       handleExportRequest,
@@ -800,7 +959,6 @@ export default {
       showNotification,
       callWhiteboardUndo,
       callWhiteboardRedo,
-      // 4. Add new variables to return
       globalUndoRedoState,
       forceUpdateUndoRedo,
       globalError,
@@ -818,11 +976,14 @@ export default {
       toggleFeature,
       toggleMathGraphPanel,
       togglePhysicsGraphPanel,
+      toggleDiagramPanel,
       triggerWhiteboardAction,
       handleJoinRoom,
       showMathGraphPanel,
       showPhysicsGraphPanel,
+      showDiagramPanel,
       handleAddElement,
+      handleDiagramApply,
       handleAddCoordinateSystem: (type) => {
         // Create default coordinate system element
         const elementData = {

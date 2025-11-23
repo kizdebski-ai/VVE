@@ -40,7 +40,8 @@ export interface CreateAppOptions {
 export const createHttpApp = ({ roomManager, aiSolver }: CreateAppOptions) => {
   const app = express();
   app.use(cors());
-  app.use(express.json({ limit: '10mb' }));
+  // AI endpoints accept screenshots, so allow a slightly larger body size
+  app.use(express.json({ limit: '20mb' }));
 
   app.get('/health', (_, res) => {
     res.json({
@@ -176,7 +177,9 @@ export const createHttpApp = ({ roomManager, aiSolver }: CreateAppOptions) => {
       const system: ChatMessage = {
         role: 'system',
         content:
-          'Jesteś asystentem dla tablicy WhiteVue. Potrafisz analizować obraz tablicy, rozwiązywać zadania i wyjaśniać krok po kroku. Odpowiadaj po polsku, zwięźle.',
+          'Jesteś asystentem tablicy WhiteVue. Odpowiadaj po polsku, zwięźle (3-8 zdań lub punktów). ' +
+          'Gdy analizujesz screenshot, nie zmyślaj – opisz tylko to, co widzisz. ' +
+          'Math/latex renderuj w $...$ lub $$...$$, nie dodawaj dekoracji ani długich dygresji.',
       };
 
       const messages: ChatMessage[] = [system];
@@ -184,6 +187,27 @@ export const createHttpApp = ({ roomManager, aiSolver }: CreateAppOptions) => {
         if (item && (item.role === 'user' || item.role === 'assistant') && item.content) {
           messages.push({ role: item.role, content: item.content });
         }
+      }
+
+      const hasVision = typeof aiSolver.chatWithVision === 'function';
+      const wantVision = (includeScreenshot || mode === 'screenshot_intro') && Boolean(screenshotDataUrl);
+
+      if (wantVision && hasVision) {
+        const visionMessages = history.map((item) => ({
+          role: item.role,
+          content: typeof item.content === 'string' ? item.content : '',
+        }));
+        visionMessages.unshift({ role: 'system', content: system.content as string });
+        if (message || screenshotDataUrl) {
+          visionMessages.push({
+            role: 'user',
+            content: message || 'Przeanalizuj ten screenshot.',
+            image: screenshotDataUrl || undefined,
+          });
+        }
+        const answer = await aiSolver.chatWithVision!(visionMessages);
+        res.json({ answer });
+        return;
       }
 
       if ((includeScreenshot || mode === 'screenshot_intro') && screenshotDataUrl) {
@@ -203,12 +227,13 @@ export const createHttpApp = ({ roomManager, aiSolver }: CreateAppOptions) => {
         messages.push({ role: 'user', content: message });
       }
 
-      const answer = await callGrok({ messages });
+      const answer = await callGrok({ messages, model: process.env.CHAT_MODEL });
       res.json({ answer });
     } catch (error) {
       const err = error as any;
       const status = err instanceof HttpError ? err.status : 502;
-      res.status(status).json({ error: err.message, details: err.body });
+      const fallback = status === 429 ? 'AI chwilowo niedostępne (limit). Spróbuj ponownie za chwilę.' : null;
+      res.status(status).json({ error: err.message, details: err.body, fallback });
     }
   });
 

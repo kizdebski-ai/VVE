@@ -97,6 +97,25 @@ interface MovableObjectData {
   points?: {x: number, y: number}[]; // For physics plot
 }
 
+const props = withDefaults(defineProps<{
+  object: Y.Map<any>; 
+  isSelected: boolean; 
+  zoomLevel: number; 
+  panOffset: { x: number; y: number }; 
+  snapTargets?: { vertical: number[], horizontal: number[] };
+  interactionEnabled?: boolean;
+}>(), {
+  interactionEnabled: true,
+  snapTargets: () => ({ vertical: [], horizontal: [] })
+});
+
+const emit = defineEmits<{
+  (e: 'request-select', id: string | number): void;
+  (e: 'update:object', object: Y.Map<any>): void;
+  (e: 'clone-object', data: any): void;
+  (e: 'update:snap-guides', guides: any[]): void;
+}>();
+
 const CONTENT_RENDER_TYPES = new Set([
   'text', 
   'image', 
@@ -175,18 +194,6 @@ const scalePointsFromSnapshot = (
     };
   });
 };
-
-const props = withDefaults(defineProps<{
-  object: Y.Map<any>; 
-  isSelected: boolean; 
-  zoomLevel: number; 
-  panOffset: { x: number; y: number }; 
-  interactionEnabled?: boolean;
-}>(), {
-  interactionEnabled: true,
-});
-
-const emit = defineEmits(['request-select', 'update:object']);
 
 const movableObjectRef = ref<HTMLElement | null>(null);
 const internalIsSelected = ref(props.isSelected);
@@ -392,6 +399,11 @@ const startDragIfSelectedOrRequestSelect = (event: MouseEvent) => {
 const startDrag = (event: MouseEvent) => {
   if (!movableObjectRef.value || !internalIsSelected.value) return; 
   
+  // Check for Alt key for duplication
+  if (event.altKey) {
+      emit('clone-object', objectData);
+  }
+
   isDragging.value = true;
   initialMousePos.x = event.clientX;
   initialMousePos.y = event.clientY;
@@ -405,8 +417,59 @@ const handleDrag = (event: MouseEvent) => {
   if (!isDragging.value) return;
   const dx = (event.clientX - initialMousePos.x) / props.zoomLevel; 
   const dy = (event.clientY - initialMousePos.y) / props.zoomLevel; 
-  const newX = initialObjectState.x + dx;
-  const newY = initialObjectState.y + dy;
+  let newX = initialObjectState.x + dx;
+  let newY = initialObjectState.y + dy;
+  
+  // Snapping Logic
+  const SNAP_THRESHOLD = 10 / props.zoomLevel;
+  const guides = [];
+  
+  if (props.snapTargets) {
+      const { vertical, horizontal } = props.snapTargets;
+      const myW = objectData.width;
+      const myH = objectData.height;
+      
+      // Vertical Snapping (X)
+      // Check left, center, right edges
+      const xPoints = [newX, newX + myW / 2, newX + myW];
+      let snappedX = null;
+      
+      for (const targetX of vertical) {
+          if (Math.abs(newX - targetX) < SNAP_THRESHOLD) { snappedX = targetX; break; }
+          if (Math.abs((newX + myW / 2) - targetX) < SNAP_THRESHOLD) { snappedX = targetX - myW / 2; break; }
+          if (Math.abs((newX + myW) - targetX) < SNAP_THRESHOLD) { snappedX = targetX - myW; break; }
+      }
+      
+      if (snappedX !== null) {
+          newX = snappedX;
+          // Add guide
+          // Find which edge snapped
+          if (Math.abs(newX - snappedX) < 0.01) guides.push({ x1: newX, y1: -10000, x2: newX, y2: 10000 }); // Left
+          else if (Math.abs((newX + myW/2) - (snappedX + myW/2)) < 0.01) guides.push({ x1: newX + myW/2, y1: -10000, x2: newX + myW/2, y2: 10000 }); // Center
+          else guides.push({ x1: newX + myW, y1: -10000, x2: newX + myW, y2: 10000 }); // Right
+      }
+
+      // Horizontal Snapping (Y)
+      const yPoints = [newY, newY + myH / 2, newY + myH];
+      let snappedY = null;
+      
+      for (const targetY of horizontal) {
+          if (Math.abs(newY - targetY) < SNAP_THRESHOLD) { snappedY = targetY; break; }
+          if (Math.abs((newY + myH / 2) - targetY) < SNAP_THRESHOLD) { snappedY = targetY - myH / 2; break; }
+          if (Math.abs((newY + myH) - targetY) < SNAP_THRESHOLD) { snappedY = targetY - myH; break; }
+      }
+      
+      if (snappedY !== null) {
+          newY = snappedY;
+          // Add guide
+           if (Math.abs(newY - snappedY) < 0.01) guides.push({ x1: -10000, y1: newY, x2: 10000, y2: newY }); // Top
+          else if (Math.abs((newY + myH/2) - (snappedY + myH/2)) < 0.01) guides.push({ x1: -10000, y1: newY + myH/2, x2: 10000, y2: newY + myH/2 }); // Center
+          else guides.push({ x1: -10000, y1: newY + myH, x2: 10000, y2: newY + myH }); // Bottom
+      }
+  }
+  
+  emit('update:snap-guides', guides);
+
   const deltaX = newX - objectData.x;
   const deltaY = newY - objectData.y;
   
@@ -426,6 +489,7 @@ const handleDrag = (event: MouseEvent) => {
 const stopDrag = () => {
   if (isDragging.value) {
     isDragging.value = false;
+    emit('update:snap-guides', []); // Clear guides
     document.removeEventListener('mousemove', handleDrag);
     document.removeEventListener('mouseup', stopDrag);
   }

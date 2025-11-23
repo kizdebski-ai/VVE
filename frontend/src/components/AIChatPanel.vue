@@ -50,16 +50,15 @@
             <component :is="CameraIcon" class="icon" />
           </button>
 
-          <div class="input-wrapper">
-            <textarea
-              v-model="userInput"
-              @keydown="onKeyDown"
-              placeholder="Napisz wiadomość..."
-              :disabled="isLoading"
-              rows="2"
-              ref="inputRef"
-            ></textarea>
-            <div class="ghost" aria-hidden="true">
+      <div class="input-wrapper">
+        <textarea
+          v-model="userInput"
+          @keydown="onKeyDown"
+          placeholder="Napisz wiadomość..."
+          rows="2"
+          ref="inputRef"
+        ></textarea>
+        <div class="ghost" aria-hidden="true">
               <span>{{ userInput }}</span><span class="ghost-tail">{{ suggestionTail }}</span>
             </div>
           </div>
@@ -83,6 +82,7 @@ import { Sparkles, Minus, Maximize2, Camera, Send } from 'lucide-vue-next';
 import html2canvas from 'html2canvas';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
+import katex from 'katex';
 
 const API_BASE = ((import.meta && import.meta.env && import.meta.env.VITE_BACKEND_URL) || '').replace(/\/$/, '');
 
@@ -95,8 +95,8 @@ const SendIcon = Send;
 
 const props = defineProps({
   whiteboardRef: {
-    type: Object,
-    required: true,
+    type: [Object, null],
+    default: null,
   },
 });
 
@@ -121,7 +121,13 @@ const toggleMinimize = () => {
 
 const renderMarkdown = (text) => {
   if (!text) return '';
-  return DOMPurify.sanitize(marked.parse(text));
+  // Render LaTeX ($...$ or $$...$$) into HTML via KaTeX before markdown parsing
+  const withLatex = text
+    .replace(/\$\$([\s\S]+?)\$\$/g, (_, expr) => katex.renderToString(expr, { displayMode: true, throwOnError: false }))
+    .replace(/\$([^$\n]+?)\$/g, (_, expr) => katex.renderToString(expr, { displayMode: false, throwOnError: false }));
+
+  const html = marked.parse(withLatex);
+  return DOMPurify.sanitize(html);
 };
 
 const scrollToBottom = () => {
@@ -133,11 +139,12 @@ const scrollToBottom = () => {
 };
 
 const captureSnapshot = async () => {
-  if (!props.whiteboardRef) return null;
+  const targetEl = props.whiteboardRef || document.querySelector('.whiteboard-container');
+  if (!targetEl) return null;
   try {
     const panel = document.querySelector('.ai-chat-panel');
     if (panel) panel.style.opacity = '0';
-    const canvas = await html2canvas(props.whiteboardRef, { useCORS: true, scale: 1 });
+    const canvas = await html2canvas(targetEl, { useCORS: true, scale: 1 });
     if (panel) panel.style.opacity = '1';
     const dataUrl = canvas.toDataURL('image/png');
     pendingSnapshot.value = dataUrl;
@@ -203,12 +210,22 @@ const sendMessage = async (mode = 'normal_chat') => {
     });
 
     if (!response.ok) {
-      const errText = await response.text();
+      let errText = await response.text();
+      try {
+        const parsed = JSON.parse(errText);
+        if (parsed?.fallback) {
+          messages.value.push({ role: 'assistant', content: parsed.fallback });
+          return;
+        }
+        errText = parsed?.error || errText;
+      } catch {
+        // ignore JSON parse errors, fall back to raw text
+      }
       throw new Error(`API ${response.status}: ${errText}`);
     }
 
     const data = await response.json();
-    messages.value.push({ role: 'assistant', content: data.answer || 'Brak odpowiedzi' });
+    messages.value.push({ role: 'assistant', content: data.answer || data.fallback || 'Brak odpowiedzi' });
     updateSuggestion(data.answer || '');
     sentIntro.value = true;
   } catch (error) {
@@ -437,7 +454,8 @@ textarea {
   font-family: inherit;
   font-size: 14px;
   outline: none;
-  background: transparent;
+  background: #fff;
+  color: #111827;
 }
 
 textarea:focus {

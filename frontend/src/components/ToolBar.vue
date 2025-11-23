@@ -73,6 +73,21 @@
               </div>
 
               <div class="popover-section">
+                <div class="section-title">Roughness</div>
+                <div class="option-row">
+                  <button
+                    v-for="option in roughnessOptions"
+                    :key="option.value"
+                    class="option-pill"
+                    :class="{ active: currentRoughness === option.value }"
+                    @click="selectRoughness(option.value)"
+                  >
+                    {{ option.label }}
+                  </button>
+                </div>
+              </div>
+
+              <div class="popover-section">
                 <div class="section-title">Arrowheads</div>
                 <div class="option-row">
                   <button
@@ -124,25 +139,33 @@
 
       <!-- Features Group -->
       <div class="tool-group" :class="{ vertical: orientation === 'vertical' }">
-        <button 
-          class="tool-btn" 
+        <button
+          class="tool-btn"
           :class="{ active: isMathPanelOpen }"
-          @click="$emit('toggle-math-panel')" 
+          @click="$emit('toggle-math-panel')"
           title="Math Function Panel"
         >
           <LineChart :size="20" />
         </button>
-        <button 
-          class="tool-btn" 
+        <button
+          class="tool-btn"
           :class="{ active: isPhysicsPanelOpen }"
-          @click="$emit('toggle-physics-panel')" 
+          @click="$emit('toggle-physics-panel')"
           title="Physics Plot Panel"
         >
           <Activity :size="20" />
         </button>
-        <button 
-          class="tool-btn" 
-          @click="$emit('toggle-calculator')" 
+        <button
+          class="tool-btn"
+          :class="{ active: isDiagramPanelOpen }"
+          @click="$emit('toggle-diagram-panel')"
+          title="AI Diagram Panel"
+        >
+          <GitBranch :size="20" />
+        </button>
+        <button
+          class="tool-btn"
+          @click="$emit('toggle-calculator')"
           title="Scientific Calculator"
         >
           <Calculator :size="20" />
@@ -237,30 +260,28 @@
 
 <script setup>
 import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue';
-import { 
-  Pencil, 
-  Eraser, 
-  Type, 
-  MousePointer2, 
-  Square, 
-  Circle as CircleIcon, 
-  Triangle, 
-  Minus, 
-  Undo2, 
-  Redo2, 
-  Trash2, 
+import {
+  Pencil,
+  Eraser,
+  Type,
+  MousePointer2,
+  Square,
+  Circle as CircleIcon,
+  Triangle,
+  Minus,
+  Undo2,
+  Redo2,
+  Trash2,
   ChevronDown,
   Calculator,
   Activity,
   Axis3d,
   LineChart,
-  ArrowRight,
-  ArrowLeftRight,
   Diamond,
   Octagon,
+  GitBranch,
   Bug,
   Circle,
-  ImageIcon,
   Box,
   Cylinder,
   Cone,
@@ -273,156 +294,56 @@ const props = defineProps({
   lineWidth: { type: Number, default: 2 },
   lineStyle: { type: String, default: 'solid' },
   arrowStyle: { type: String, default: 'none' },
+  roughness: { type: Number, default: 1 },
+  currentShape: { type: String, default: 'rectangle' },
   isMathPanelOpen: Boolean,
   isPhysicsPanelOpen: Boolean,
+  isDiagramPanelOpen: Boolean,
   orientation: { type: String, default: 'vertical' } // 'vertical' or 'horizontal'
 });
 
 const emit = defineEmits([
-  'update:activeTool', 
-  'update:color', 
-  'update:lineWidth', 
+  'update:activeTool',
+  'update:color',
+  'update:lineWidth',
   'update:lineStyle',
   'update:arrowStyle',
+  'update:roughness',
   'update:eraserSize',
-  'undo', 
-  'redo', 
+  'update:shape',
+  'undo',
+  'redo',
   'clear',
   'toggle-math-panel',
   'toggle-physics-panel',
+  'toggle-diagram-panel',
   'add-coordinate-system',
   'toggle-calculator',
   'toggle-debug'
 ]);
 
-// State
-const currentTool = ref(props.activeTool);
-const currentColor = ref(props.color);
-const currentLineWidth = ref(props.lineWidth);
-const currentEraserSize = ref(30);
-const showShapesMenu = ref(false);
-const showCoordinateMenu = ref(false);
-const colorInput = ref(null);
-const shapesTriggerRef = ref(null);
-const dropdownTriggerRef = ref(null);
-const coordinateTriggerRef = ref(null);
-const shapesMenuRef = ref(null);
-const coordinateMenuRef = ref(null);
-const shapesMenuStyle = ref({});
-const coordinateMenuStyle = ref({});
-const currentLineStyle = ref(props.lineStyle);
-const currentArrowStyle = ref(props.arrowStyle);
-const colorSwatches = ['#111827', '#2563eb', '#7c3aed', '#0f766e', '#c026d3', '#dc2626', '#f97316', '#1d4ed8'];
-
-const positionShapesMenu = () => {
-  if (!showShapesMenu.value) return;
-  const btn = shapesTriggerRef.value;
-  if (!btn) return;
-  const rect = btn.getBoundingClientRect();
-  const style = {
-    position: 'fixed',
-    zIndex: 4000
-  };
-
-  if (props.orientation === 'vertical') {
-    style.top = Math.round(rect.top) + 'px';
-    style.left = Math.round(rect.right + 8) + 'px';
-    style.transform = 'none';
-  } else {
-    style.top = Math.round(rect.bottom + 8) + 'px';
-    style.left = Math.round(rect.left + rect.width / 2) + 'px';
-    style.transform = 'translateX(-50%)';
-  }
-
-  shapesMenuStyle.value = style;
-};
-
-const positionCoordinateMenu = () => {
-  if (!showCoordinateMenu.value) return;
-  const btn = coordinateTriggerRef.value?.querySelector('.tool-btn');
-  if (!btn) return;
-  const rect = btn.getBoundingClientRect();
-  coordinateMenuStyle.value = {
-    position: 'fixed',
-    top: Math.round(rect.bottom + 8) + 'px',
-    left: Math.round(rect.left + rect.width / 2) + 'px',
-    transform: 'translateX(-50%)',
-    zIndex: 4000
-  };
-};
-
-const handleGlobalPointer = (e) => {
-  const shapeContainer = dropdownTriggerRef.value;
-  const coordContainer = coordinateTriggerRef.value;
-  const shapeMenuEl = shapesMenuRef.value;
-  const coordMenuEl = coordinateMenuRef.value;
-
-  if (
-    showShapesMenu.value &&
-    shapeContainer &&
-    !(shapeContainer.contains(e.target) || shapeMenuEl?.contains(e.target))
-  ) {
-    showShapesMenu.value = false;
-  }
-  if (
-    showCoordinateMenu.value &&
-    coordContainer &&
-    !(coordContainer.contains(e.target) || coordMenuEl?.contains(e.target))
-  ) {
-    showCoordinateMenu.value = false;
-  }
-};
-
-onMounted(() => {
-  window.addEventListener('resize', positionShapesMenu);
-  window.addEventListener('scroll', positionShapesMenu, true);
-  window.addEventListener('resize', positionCoordinateMenu);
-  window.addEventListener('scroll', positionCoordinateMenu, true);
-  document.addEventListener('mousedown', handleGlobalPointer);
-});
-
-onBeforeUnmount(() => {
-  window.removeEventListener('resize', positionShapesMenu);
-  window.removeEventListener('scroll', positionShapesMenu, true);
-  window.removeEventListener('resize', positionCoordinateMenu);
-  window.removeEventListener('scroll', positionCoordinateMenu, true);
-  document.removeEventListener('mousedown', handleGlobalPointer);
-});
-
-// Watch for prop changes
-watch(() => props.activeTool, (newVal) => currentTool.value = newVal);
-watch(() => props.color, (newVal) => currentColor.value = newVal);
-watch(() => props.lineWidth, (newVal) => currentLineWidth.value = newVal);
-watch(() => props.lineStyle, (newVal) => currentLineStyle.value = newVal);
-watch(() => props.arrowStyle, (newVal) => currentArrowStyle.value = newVal);
-watch(() => props.orientation, () => {
-  nextTick(() => {
-    positionShapesMenu();
-    positionCoordinateMenu();
-  });
-});
-
-// Tools Configuration
 const mainTools = [
   { name: 'select', label: 'Select (V)', icon: MousePointer2 },
   { name: 'pen', label: 'Pen (P)', icon: Pencil },
-  { name: 'eraser', label: 'Eraser (E)', icon: Eraser },
   { name: 'text', label: 'Text (T)', icon: Type },
+  { name: 'eraser', label: 'Eraser (E)', icon: Eraser }
 ];
 
 const shapeOptions = [
-  { id: 'line', tool: 'line', label: 'Line', icon: Minus, resetArrow: true },
-  { id: 'arrow', tool: 'line', label: 'Arrow', icon: ArrowRight, presetArrow: 'end' },
-  { id: 'double-arrow', tool: 'line', label: '↔', icon: ArrowLeftRight, presetArrow: 'both' },
-  { id: 'rectangle', tool: 'rectangle', label: 'Rectangle', icon: Square },
-  { id: 'circle', tool: 'circle', label: 'Ellipse', icon: CircleIcon },
-  { id: 'triangle', tool: 'triangle', label: 'Triangle', icon: Triangle },
-  { id: 'diamond', tool: 'deltoid', label: 'Diamond', icon: Diamond },
-  { id: 'parallelogram', tool: 'parallelogram', label: 'Parallelogram', icon: Octagon },
-  { id: 'cube', tool: 'cube', label: 'Cube', icon: Box },
-  { id: 'cylinder', tool: 'cylinder', label: 'Cylinder', icon: Cylinder },
-  { id: 'cone', tool: 'cone', label: 'Cone', icon: Cone },
-  { id: 'pyramid', tool: 'pyramid', label: 'Pyramid', icon: Pyramid },
+  { tool: 'rectangle', label: 'Rectangle', icon: Square },
+  { tool: 'circle', label: 'Circle', icon: CircleIcon },
+  { tool: 'triangle', label: 'Triangle', icon: Triangle },
+  { tool: 'square', label: 'Square', icon: Square },
+  { tool: 'trapezoid', label: 'Trapezoid', icon: Diamond },
+  { tool: 'parallelogram', label: 'Parallelogram', icon: Diamond },
+  { tool: 'deltoid', label: 'Kite', icon: Diamond },
+  { tool: 'cube', label: 'Cube', icon: Box },
+  { tool: 'cuboid', label: 'Cuboid', icon: Box },
+  { tool: 'cylinder', label: 'Cylinder', icon: Cylinder },
+  { tool: 'cone', label: 'Cone', icon: Cone },
+  { tool: 'pyramid', label: 'Pyramid', icon: Pyramid },
+  { tool: 'tetrahedron', label: 'Tetrahedron', icon: Octagon },
+  { tool: 'line', label: 'Line', icon: Minus, toolType: 'lines' }
 ];
 
 const lineStyleOptions = [
@@ -431,57 +352,88 @@ const lineStyleOptions = [
   { value: 'dotted', label: 'Dotted' }
 ];
 
+const roughnessOptions = [
+  { value: 0, label: 'Clean' },
+  { value: 1, label: 'Sketchy' },
+  { value: 2, label: 'Rough' }
+];
+
 const arrowStyleOptions = [
   { value: 'none', label: 'None' },
+  { value: 'start', label: 'Start' },
   { value: 'end', label: 'End' },
   { value: 'both', label: 'Both' }
 ];
 
-const isShapeActive = (shapeOption) => {
-  if (shapeOption.id === 'arrow') {
-    return currentTool.value === 'line' && currentArrowStyle.value === 'end';
-  }
-  if (shapeOption.id === 'double-arrow') {
-    return currentTool.value === 'line' && currentArrowStyle.value === 'both';
-  }
-  if (shapeOption.id === 'line') {
-    return currentTool.value === 'line' && currentArrowStyle.value === 'none';
-  }
-  return currentTool.value === shapeOption.tool;
-};
-
-const coordinateOptions = [
-  { type: '2d', label: 'Add 2D System' },
-  { type: '3d', label: 'Add 3D System' },
+const colorSwatches = [
+  '#000000',
+  '#4b5563',
+  '#2563eb',
+  '#16a34a',
+  '#f59e0b',
+  '#dc2626',
+  '#7c3aed',
+  '#14b8a6'
 ];
 
-// Computed
-const showProperties = computed(() => {
-  return ['pen', 'line', 'rectangle', 'circle', 'triangle', 'eraser', 'cube', 'cylinder', 'cone', 'pyramid'].includes(currentTool.value);
-});
+const coordinateOptions = [
+  { type: '2d', label: '2D Coordinate System' },
+  { type: '3d', label: '3D Coordinate System' }
+];
+
+const currentTool = ref(props.activeTool);
+const currentColor = ref(props.color);
+const currentLineWidth = ref(props.lineWidth);
+const currentLineStyle = ref(props.lineStyle);
+const currentArrowStyle = ref(props.arrowStyle);
+const currentRoughness = ref(props.roughness);
+const currentEraserSize = ref(30);
+
+const showShapesMenu = ref(false);
+const showCoordinateMenu = ref(false);
+const shapesMenuStyle = ref({});
+const coordinateMenuStyle = ref({});
+
+const dropdownTriggerRef = ref(null);
+const shapesTriggerRef = ref(null);
+const shapesMenuRef = ref(null);
+const coordinateTriggerRef = ref(null);
+const coordinateMenuRef = ref(null);
+const colorInput = ref(null);
+
+watch(() => props.activeTool, (val) => { currentTool.value = val; });
+watch(() => props.color, (val) => { currentColor.value = val; });
+watch(() => props.lineWidth, (val) => { currentLineWidth.value = val; });
+watch(() => props.lineStyle, (val) => { currentLineStyle.value = val; });
+watch(() => props.arrowStyle, (val) => { currentArrowStyle.value = val; });
+watch(() => props.roughness, (val) => { currentRoughness.value = val; });
+
+const showProperties = computed(() =>
+  ['pen', 'text', 'eraser', 'shapes', 'lines'].includes(currentTool.value)
+);
 
 const currentShapeIcon = computed(() => {
-  const activeShape = shapeOptions.find(option => isShapeActive(option));
-  return activeShape ? activeShape.icon : Square;
+  if (currentTool.value === 'lines') {
+    const lineOption = shapeOptions.find(opt => opt.toolType === 'lines');
+    return lineOption?.icon || Minus;
+  }
+  const activeShape = shapeOptions.find(opt => opt.tool === props.currentShape);
+  return activeShape?.icon || Square;
 });
 
-// Methods
-const selectTool = (toolName, options = { closeMenus: true }) => {
-  currentTool.value = toolName;
-  emit('update:activeTool', toolName);
-  if (options.closeMenus !== false) {
-    showShapesMenu.value = false;
-    showCoordinateMenu.value = false;
-  }
+const selectTool = (tool) => {
+  currentTool.value = tool;
+  emit('update:activeTool', tool);
+  showShapesMenu.value = false;
 };
 
-const selectShape = (shapeOption) => {
-  selectTool(shapeOption.tool, { closeMenus: false });
-  if (shapeOption.presetArrow) {
-    selectArrowStyle(shapeOption.presetArrow);
-  } else if (shapeOption.resetArrow || shapeOption.tool !== 'line') {
-    selectArrowStyle('none');
+const isShapeTool = (tool) => tool === 'shapes' || tool === 'lines';
+
+const isShapeActive = (shape) => {
+  if (shape.toolType === 'lines') {
+    return currentTool.value === 'lines';
   }
+  return props.currentShape === shape.tool && currentTool.value === 'shapes';
 };
 
 const toggleShapesMenu = () => {
@@ -491,9 +443,41 @@ const toggleShapesMenu = () => {
   }
 };
 
+const positionShapesMenu = () => {
+  const trigger = shapesTriggerRef.value;
+  if (!trigger) return;
+  const rect = trigger.getBoundingClientRect();
+  if (props.orientation === 'vertical') {
+    shapesMenuStyle.value = {
+      top: `${rect.top}px`,
+      left: `${rect.right + 8}px`
+    };
+  } else {
+    shapesMenuStyle.value = {
+      top: `${rect.bottom + 8}px`,
+      left: `${rect.left}px`
+    };
+  }
+};
+
+const selectShape = (shape) => {
+  const nextTool = shape.toolType === 'lines' ? 'lines' : 'shapes';
+  currentTool.value = nextTool;
+  emit('update:activeTool', nextTool);
+  if (shape.toolType !== 'lines') {
+    emit('update:shape', shape.tool);
+  }
+  showShapesMenu.value = false;
+};
+
 const selectLineStyle = (style) => {
   currentLineStyle.value = style;
   emit('update:lineStyle', style);
+};
+
+const selectRoughness = (value) => {
+  currentRoughness.value = value;
+  emit('update:roughness', value);
 };
 
 const selectArrowStyle = (style) => {
@@ -501,9 +485,9 @@ const selectArrowStyle = (style) => {
   emit('update:arrowStyle', style);
 };
 
-const selectColorSwatch = (color) => {
-  currentColor.value = color;
-  emit('update:color', color);
+const selectColorSwatch = (swatch) => {
+  currentColor.value = swatch;
+  emit('update:color', swatch);
 };
 
 const toggleCoordinateMenu = () => {
@@ -513,17 +497,30 @@ const toggleCoordinateMenu = () => {
   }
 };
 
+const positionCoordinateMenu = () => {
+  const trigger = coordinateTriggerRef.value;
+  if (!trigger) return;
+  const rect = trigger.getBoundingClientRect();
+  if (props.orientation === 'vertical') {
+    coordinateMenuStyle.value = {
+      top: `${rect.top}px`,
+      left: `${rect.right + 8}px`
+    };
+  } else {
+    coordinateMenuStyle.value = {
+      top: `${rect.bottom + 8}px`,
+      left: `${rect.left}px`
+    };
+  }
+};
+
 const selectCoordinateSystem = (type) => {
   emit('add-coordinate-system', type);
   showCoordinateMenu.value = false;
 };
 
-const isShapeTool = (tool) => {
-  return shapeOptions.some(s => s.tool === tool);
-};
-
 const toggleColorPicker = () => {
-  colorInput.value.click();
+  colorInput.value?.click();
 };
 
 const updateColor = () => {
@@ -535,8 +532,49 @@ const updateLineWidth = () => {
 };
 
 const updateEraserSize = () => {
-    emit('update:eraserSize', currentEraserSize.value);
+  emit('update:eraserSize', currentEraserSize.value);
 };
+
+const handleClickOutside = (event) => {
+  const target = event.target;
+  if (
+    showShapesMenu.value &&
+    !shapesTriggerRef.value?.contains(target) &&
+    !shapesMenuRef.value?.contains(target)
+  ) {
+    showShapesMenu.value = false;
+  }
+
+  if (
+    showCoordinateMenu.value &&
+    !coordinateTriggerRef.value?.contains(target) &&
+    !coordinateMenuRef.value?.contains(target)
+  ) {
+    showCoordinateMenu.value = false;
+  }
+};
+
+const handleResize = () => {
+  if (showShapesMenu.value) positionShapesMenu();
+  if (showCoordinateMenu.value) positionCoordinateMenu();
+};
+
+watch(() => props.orientation, () => {
+  nextTick(() => {
+    if (showShapesMenu.value) positionShapesMenu();
+    if (showCoordinateMenu.value) positionCoordinateMenu();
+  });
+});
+
+onMounted(() => {
+  document.addEventListener('click', handleClickOutside);
+  window.addEventListener('resize', handleResize);
+});
+
+onBeforeUnmount(() => {
+  document.removeEventListener('click', handleClickOutside);
+  window.removeEventListener('resize', handleResize);
+});
 
 </script>
 

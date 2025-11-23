@@ -1,6 +1,7 @@
 /**
  * Canvas Drawing Utilities
- * Provides functions for drawing different elements on the canvas using Rough.js for a hand-drawn aesthetic.
+ * Provides functions for drawing different elements on the canvas using Rough.js for a hand-drawn aesthetic,
+ * or native Canvas API for a "Clean" aesthetic.
  */
 
 import rough from 'roughjs';
@@ -46,20 +47,38 @@ export const drawElement = (
   const baseColor = element.color || '#000000';
   const color = isHighlighted ? '#ff5252' : baseColor;
   const lw = element.lineWidth || 2;
+  const lineStyle = element.lineStyle || 'solid'; // solid, dashed, dotted
+  const roughness = element.roughness !== undefined ? element.roughness : 1; // 0 = clean, 1 = default, 2 = sloppy
+
+  // Determine dash pattern
+  let strokeLineDash = [];
+  if (lineStyle === 'dashed') strokeLineDash = [12, 8];
+  if (lineStyle === 'dotted') strokeLineDash = [3, 6];
 
   // RoughJS options
   const options = {
     stroke: color,
     strokeWidth: lw,
-    roughness: 1.5, // Hand-drawn feel
-    bowing: 1,      // Slight curve to lines
-    seed: element.seed || 1 // Consistent seed for stable rendering
+    roughness: roughness,
+    bowing: roughness > 0 ? 1 : 0, // No bowing if clean
+    seed: element.seed || 1,
+    strokeLineDash: strokeLineDash,
+    disableMultiStroke: roughness === 0, // Single stroke for clean look
+    disableMultiStrokeFiller: roughness === 0
   };
 
   context.save();
   context.strokeStyle = color;
   context.fillStyle = color;
   context.lineWidth = lw;
+  context.lineCap = 'round';
+  context.lineJoin = 'round';
+  if (strokeLineDash.length) {
+    context.setLineDash(strokeLineDash);
+  }
+
+  // Helper for "Clean" mode (Native Canvas)
+  const isClean = roughness === 0;
 
   switch (type) {
     case 'pen':
@@ -68,13 +87,17 @@ export const drawElement = (
       if (points.length < 2) break;
 
       context.beginPath();
+      // Always use native path for pen for performance and smoothness, 
+      // but we could apply roughjs if we wanted "sketchy" pen. 
+      // For now, sticking to native for pen to ensure responsiveness.
+
       if (points.length < 3 || type === 'eraser') {
         context.moveTo(points[0].x, points[0].y);
         for (let i = 1; i < points.length; i++) {
           context.lineTo(points[i].x, points[i].y);
         }
       } else {
-        // Catmull-Rom spline for smooth pen strokes (native canvas for performance)
+        // Catmull-Rom spline for smooth pen strokes
         context.moveTo(points[0].x, points[0].y);
         for (let i = 0; i < points.length - 1; i++) {
           const p0 = points[Math.max(0, i - 1)];
@@ -97,15 +120,23 @@ export const drawElement = (
 
     case 'line': {
       if (!element.start || !element.end) break;
-      rc.line(element.start.x, element.start.y, element.end.x, element.end.y, options);
+
+      if (isClean) {
+        context.beginPath();
+        context.moveTo(element.start.x, element.start.y);
+        context.lineTo(element.end.x, element.end.y);
+        context.stroke();
+      } else {
+        rc.line(element.start.x, element.start.y, element.end.x, element.end.y, options);
+      }
 
       // Arrowheads
       const arrowStyle = element.arrowStyle || 'none';
       if (arrowStyle === 'end' || arrowStyle === 'both') {
-        drawArrowheadRough(rc, element.start, element.end, options);
+        drawArrowhead(context, rc, element.start, element.end, options, isClean);
       }
       if (arrowStyle === 'start' || arrowStyle === 'both') {
-        drawArrowheadRough(rc, element.end, element.start, options);
+        drawArrowhead(context, rc, element.end, element.start, options, isClean);
       }
       break;
     }
@@ -117,7 +148,12 @@ export const drawElement = (
         const y = Math.min(element.start.y, element.end.y);
         const w = Math.abs(element.end.x - element.start.x);
         const h = Math.abs(element.end.y - element.start.y);
-        rc.rectangle(x, y, w, h, options);
+
+        if (isClean) {
+          context.strokeRect(x, y, w, h);
+        } else {
+          rc.rectangle(x, y, w, h, options);
+        }
       }
       break;
 
@@ -127,18 +163,36 @@ export const drawElement = (
         const centerY = (element.start.y + element.end.y) / 2;
         const width = Math.abs(element.end.x - element.start.x);
         const height = Math.abs(element.end.y - element.start.y);
-        rc.ellipse(centerX, centerY, width, height, options);
+
+        if (isClean) {
+          context.beginPath();
+          context.ellipse(centerX, centerY, width / 2, height / 2, 0, 0, 2 * Math.PI);
+          context.stroke();
+        } else {
+          rc.ellipse(centerX, centerY, width, height, options);
+        }
       }
       break;
 
     case 'triangle':
       if (element.start && element.end) {
         const midX = element.start.x + (element.end.x - element.start.x) / 2;
-        rc.polygon([
+        const points = [
           [midX, element.start.y],
           [element.end.x, element.end.y],
           [element.start.x, element.end.y]
-        ], options);
+        ];
+
+        if (isClean) {
+          context.beginPath();
+          context.moveTo(points[0][0], points[0][1]);
+          context.lineTo(points[1][0], points[1][1]);
+          context.lineTo(points[2][0], points[2][1]);
+          context.closePath();
+          context.stroke();
+        } else {
+          rc.polygon(points, options);
+        }
       }
       break;
 
@@ -157,33 +211,36 @@ export const drawElement = (
     // --- Advanced Shapes (RoughJS Implementation) ---
 
     case 'coordinateSystem2D':
-      if (element.position) drawCoordinateSystem2D(rc, context, element, options);
+      if (element.position) drawCoordinateSystem2D(rc, context, element, options, isClean);
       break;
 
     case 'mathFunctionPlot':
-      if (element.position && element.expression) drawMathFunctionPlot(rc, context, element, options);
+      if (element.position && element.expression) drawMathFunctionPlot(rc, context, element, options, isClean);
       break;
 
     case 'physicsDataPlot':
-      if (element.position) drawPhysicsDataPlot(rc, context, element, options);
+      if (element.position) drawPhysicsDataPlot(rc, context, element, options, isClean);
       break;
 
     case 'coordinateSystem3D':
-      if (element.position) drawCoordinateSystem3D(rc, context, element, options);
+      if (element.position) drawCoordinateSystem3D(rc, context, element, options, isClean);
       break;
 
     // --- 3D Primitives (2D Projection) ---
     case 'cube':
-      drawCube(rc, element, options);
+      drawCube(rc, context, element, options, isClean);
       break;
     case 'sphere':
-      drawSphere(rc, element, options);
+      drawSphere(rc, context, element, options, isClean);
       break;
     case 'cylinder':
-      drawCylinder(rc, element, options);
+      drawCylinder(rc, context, element, options, isClean);
       break;
     case 'pyramid':
-      drawPyramid(rc, element, options);
+      drawPyramid(rc, context, element, options, isClean);
+      break;
+    case 'cone':
+      drawCone(rc, context, element, options, isClean);
       break;
 
     default:
@@ -195,7 +252,7 @@ export const drawElement = (
 
 // --- Helper Functions ---
 
-const drawArrowheadRough = (rc, from, to, options) => {
+const drawArrowhead = (context, rc, from, to, options, isClean) => {
   const angle = Math.atan2(to.y - from.y, to.x - from.x);
   const headLength = 15;
   const x1 = to.x - headLength * Math.cos(angle - Math.PI / 6);
@@ -203,8 +260,17 @@ const drawArrowheadRough = (rc, from, to, options) => {
   const x2 = to.x - headLength * Math.cos(angle + Math.PI / 6);
   const y2 = to.y - headLength * Math.sin(angle + Math.PI / 6);
 
-  rc.line(to.x, to.y, x1, y1, options);
-  rc.line(to.x, to.y, x2, y2, options);
+  if (isClean) {
+    context.beginPath();
+    context.moveTo(to.x, to.y);
+    context.lineTo(x1, y1);
+    context.moveTo(to.x, to.y);
+    context.lineTo(x2, y2);
+    context.stroke();
+  } else {
+    rc.line(to.x, to.y, x1, y1, options);
+    rc.line(to.x, to.y, x2, y2, options);
+  }
 };
 
 const drawText = (context, element) => {
@@ -232,17 +298,26 @@ const drawImage = (context, element, imageCache, requestRedraw) => {
 
 // --- Graph & Plot Implementations ---
 
-const drawCoordinateSystem2D = (rc, context, element, options) => {
+const drawCoordinateSystem2D = (rc, context, element, options, isClean) => {
   const { x, y } = element.position;
   const { width, height, xLabel, yLabel } = element;
 
   // Axes
-  rc.line(x, y + height / 2, x + width, y + height / 2, options); // X
-  rc.line(x + width / 2, y, x + width / 2, y + height, options); // Y
+  if (isClean) {
+    context.beginPath();
+    context.moveTo(x, y + height / 2);
+    context.lineTo(x + width, y + height / 2); // X
+    context.moveTo(x + width / 2, y);
+    context.lineTo(x + width / 2, y + height); // Y
+    context.stroke();
+  } else {
+    rc.line(x, y + height / 2, x + width, y + height / 2, options); // X
+    rc.line(x + width / 2, y, x + width / 2, y + height, options); // Y
+  }
 
   // Arrows
-  drawArrowheadRough(rc, { x, y: y + height / 2 }, { x: x + width, y: y + height / 2 }, options);
-  drawArrowheadRough(rc, { x: x + width / 2, y: y + height }, { x: x + width / 2, y }, options);
+  drawArrowhead(context, rc, { x, y: y + height / 2 }, { x: x + width, y: y + height / 2 }, options, isClean);
+  drawArrowhead(context, rc, { x: x + width / 2, y: y + height }, { x: x + width / 2, y }, options, isClean);
 
   // Labels
   context.fillStyle = options.stroke;
@@ -251,12 +326,12 @@ const drawCoordinateSystem2D = (rc, context, element, options) => {
   context.fillText(yLabel || 'y', x + width / 2 + 10, y);
 };
 
-const drawMathFunctionPlot = (rc, context, element, options) => {
+const drawMathFunctionPlot = (rc, context, element, options, isClean) => {
   const { x: plotX, y: plotY } = element.position;
   const { width, height, expression } = element;
 
   // Draw axes first
-  drawCoordinateSystem2D(rc, context, { ...element, xLabel: 'x', yLabel: 'f(x)' }, { ...options, stroke: '#666' });
+  drawCoordinateSystem2D(rc, context, { ...element, xLabel: 'x', yLabel: 'f(x)' }, { ...options, stroke: '#666' }, isClean);
 
   // Plot function
   try {
@@ -278,24 +353,44 @@ const drawMathFunctionPlot = (rc, context, element, options) => {
         if (canvasY >= plotY && canvasY <= plotY + height) {
           points.push([canvasX, canvasY]);
         } else {
-          if (points.length > 1) rc.curve(points, { ...options, stroke: element.color || '#007bff', strokeWidth: 3 });
+          if (points.length > 1) {
+            if (isClean) drawCleanCurve(context, points, element.color || '#007bff');
+            else rc.curve(points, { ...options, stroke: element.color || '#007bff', strokeWidth: 3 });
+          }
           points.length = 0;
         }
       }
     }
-    if (points.length > 1) rc.curve(points, { ...options, stroke: element.color || '#007bff', strokeWidth: 3 });
+    if (points.length > 1) {
+      if (isClean) drawCleanCurve(context, points, element.color || '#007bff');
+      else rc.curve(points, { ...options, stroke: element.color || '#007bff', strokeWidth: 3 });
+    }
 
   } catch (e) {
     context.fillText('Error', plotX, plotY);
   }
 };
 
-const drawPhysicsDataPlot = (rc, context, element, options) => {
+const drawCleanCurve = (context, points, color) => {
+  if (points.length < 2) return;
+  context.save();
+  context.strokeStyle = color;
+  context.lineWidth = 3;
+  context.beginPath();
+  context.moveTo(points[0][0], points[0][1]);
+  for (let i = 1; i < points.length; i++) {
+    context.lineTo(points[i][0], points[i][1]);
+  }
+  context.stroke();
+  context.restore();
+};
+
+const drawPhysicsDataPlot = (rc, context, element, options, isClean) => {
   const { x: plotX, y: plotY } = element.position;
   const { width, height, xData, yData } = element;
 
   // Axes
-  drawCoordinateSystem2D(rc, context, { ...element, xLabel: 't', yLabel: 'v' }, { ...options, stroke: '#666' });
+  drawCoordinateSystem2D(rc, context, { ...element, xLabel: 't', yLabel: 'v' }, { ...options, stroke: '#666' }, isClean);
 
   if (!xData || !yData || xData.length === 0) return;
 
@@ -311,15 +406,23 @@ const drawPhysicsDataPlot = (rc, context, element, options) => {
   });
 
   // Draw curve
-  rc.curve(points, { ...options, stroke: element.color || '#dc3545', strokeWidth: 3 });
+  if (isClean) drawCleanCurve(context, points, element.color || '#dc3545');
+  else rc.curve(points, { ...options, stroke: element.color || '#dc3545', strokeWidth: 3 });
 
   // Draw points
   points.forEach(([px, py]) => {
-    rc.circle(px, py, 6, { ...options, fill: element.color || '#dc3545', fillStyle: 'solid' });
+    if (isClean) {
+      context.fillStyle = element.color || '#dc3545';
+      context.beginPath();
+      context.arc(px, py, 3, 0, 2 * Math.PI);
+      context.fill();
+    } else {
+      rc.circle(px, py, 6, { ...options, fill: element.color || '#dc3545', fillStyle: 'solid' });
+    }
   });
 };
 
-const drawCoordinateSystem3D = (rc, context, element, options) => {
+const drawCoordinateSystem3D = (rc, context, element, options, isClean) => {
   const { x, y } = element.position;
   const size = element.size || 200;
   const half = size / 2;
@@ -332,9 +435,17 @@ const drawCoordinateSystem3D = (rc, context, element, options) => {
   const yEnd = { x: cx - half, y: cy + half * 0.5 };
   const zEnd = { x: cx, y: cy - half };
 
-  rc.line(cx, cy, xEnd.x, xEnd.y, options);
-  rc.line(cx, cy, yEnd.x, yEnd.y, options);
-  rc.line(cx, cy, zEnd.x, zEnd.y, options);
+  if (isClean) {
+    context.beginPath();
+    context.moveTo(cx, cy); context.lineTo(xEnd.x, xEnd.y);
+    context.moveTo(cx, cy); context.lineTo(yEnd.x, yEnd.y);
+    context.moveTo(cx, cy); context.lineTo(zEnd.x, zEnd.y);
+    context.stroke();
+  } else {
+    rc.line(cx, cy, xEnd.x, xEnd.y, options);
+    rc.line(cx, cy, yEnd.x, yEnd.y, options);
+    rc.line(cx, cy, zEnd.x, zEnd.y, options);
+  }
 
   context.fillText('x', xEnd.x, xEnd.y);
   context.fillText('y', yEnd.x, yEnd.y);
@@ -343,52 +454,78 @@ const drawCoordinateSystem3D = (rc, context, element, options) => {
 
 // --- 3D Shapes ---
 
-const drawCube = (rc, element, options) => {
+const drawCube = (rc, context, element, options, isClean) => {
   const { start, end } = element;
   const size = Math.min(Math.abs(end.x - start.x), Math.abs(end.y - start.y));
   const x = Math.min(start.x, end.x);
   const y = Math.min(start.y, end.y);
 
-  // Front face
-  rc.rectangle(x, y + size * 0.25, size, size, options);
-  // Top face
-  rc.polygon([
-    [x, y + size * 0.25],
-    [x + size * 0.5, y],
-    [x + size * 1.5, y],
-    [x + size, y + size * 0.25]
-  ], options);
-  // Side face
-  rc.polygon([
-    [x + size, y + size * 0.25],
-    [x + size * 1.5, y],
-    [x + size * 1.5, y + size],
-    [x + size, y + size + size * 0.25]
-  ], options);
+  const pointsFront = [[x, y + size * 0.25], [x + size, y + size * 0.25], [x + size, y + size + size * 0.25], [x, y + size + size * 0.25]];
+  const pointsTop = [[x, y + size * 0.25], [x + size * 0.5, y], [x + size * 1.5, y], [x + size, y + size * 0.25]];
+  const pointsSide = [[x + size, y + size * 0.25], [x + size * 1.5, y], [x + size * 1.5, y + size], [x + size, y + size + size * 0.25]];
+
+  if (isClean) {
+    const drawPoly = (pts) => {
+      context.beginPath();
+      context.moveTo(pts[0][0], pts[0][1]);
+      for (let i = 1; i < pts.length; i++) context.lineTo(pts[i][0], pts[i][1]);
+      context.closePath();
+      context.stroke();
+    };
+    drawPoly(pointsFront);
+    drawPoly(pointsTop);
+    drawPoly(pointsSide);
+  } else {
+    rc.rectangle(x, y + size * 0.25, size, size, options);
+    rc.polygon(pointsTop, options);
+    rc.polygon(pointsSide, options);
+  }
 };
 
-const drawSphere = (rc, element, options) => {
+const drawSphere = (rc, context, element, options, isClean) => {
   const cx = (element.start.x + element.end.x) / 2;
   const cy = (element.start.y + element.end.y) / 2;
   const w = Math.abs(element.end.x - element.start.x);
 
-  rc.circle(cx, cy, w, options);
-  rc.ellipse(cx, cy, w, w * 0.3, options); // Equator
+  if (isClean) {
+    context.beginPath();
+    context.arc(cx, cy, w / 2, 0, 2 * Math.PI);
+    context.stroke();
+    context.beginPath();
+    context.ellipse(cx, cy, w / 2, w * 0.15, 0, 0, 2 * Math.PI);
+    context.stroke();
+  } else {
+    rc.circle(cx, cy, w, options);
+    rc.ellipse(cx, cy, w, w * 0.3, options); // Equator
+  }
 };
 
-const drawCylinder = (rc, element, options) => {
+const drawCylinder = (rc, context, element, options, isClean) => {
   const w = Math.abs(element.end.x - element.start.x);
   const h = Math.abs(element.end.y - element.start.y);
   const x = Math.min(element.start.x, element.end.x);
   const y = Math.min(element.start.y, element.end.y);
 
-  rc.ellipse(x + w / 2, y, w, w * 0.3, options); // Top
-  rc.ellipse(x + w / 2, y + h, w, w * 0.3, options); // Bottom
-  rc.line(x, y, x, y + h, options);
-  rc.line(x + w, y, x + w, y + h, options);
+  if (isClean) {
+    context.beginPath();
+    context.ellipse(x + w / 2, y, w / 2, w * 0.15, 0, 0, 2 * Math.PI);
+    context.stroke();
+    context.beginPath();
+    context.ellipse(x + w / 2, y + h, w / 2, w * 0.15, 0, 0, 2 * Math.PI);
+    context.stroke();
+    context.beginPath();
+    context.moveTo(x, y); context.lineTo(x, y + h);
+    context.moveTo(x + w, y); context.lineTo(x + w, y + h);
+    context.stroke();
+  } else {
+    rc.ellipse(x + w / 2, y, w, w * 0.3, options); // Top
+    rc.ellipse(x + w / 2, y + h, w, w * 0.3, options); // Bottom
+    rc.line(x, y, x, y + h, options);
+    rc.line(x + w, y, x + w, y + h, options);
+  }
 };
 
-const drawPyramid = (rc, element, options) => {
+const drawPyramid = (rc, context, element, options, isClean) => {
   const w = Math.abs(element.end.x - element.start.x);
   const h = Math.abs(element.end.y - element.start.y);
   const x = Math.min(element.start.x, element.end.x);
@@ -399,11 +536,49 @@ const drawPyramid = (rc, element, options) => {
   const br = { x: x + w, y: y + h };
   const back = { x: x + w * 0.7, y: y + h * 0.8 };
 
-  rc.polygon([
-    [bl.x, bl.y], [br.x, br.y], [top.x, top.y]
-  ], options);
-  rc.line(top.x, top.y, back.x, back.y, { ...options, strokeLineDash: [5, 5] });
+  if (isClean) {
+    context.beginPath();
+    context.moveTo(bl.x, bl.y);
+    context.lineTo(br.x, br.y);
+    context.lineTo(top.x, top.y);
+    context.closePath();
+    context.stroke();
+
+    context.beginPath();
+    context.setLineDash([5, 5]);
+    context.moveTo(top.x, top.y);
+    context.lineTo(back.x, back.y);
+    context.stroke();
+    context.setLineDash([]);
+  } else {
+    rc.polygon([
+      [bl.x, bl.y], [br.x, br.y], [top.x, top.y]
+    ], options);
+    rc.line(top.x, top.y, back.x, back.y, { ...options, strokeLineDash: [5, 5] });
+  }
 };
+
+const drawCone = (rc, context, element, options, isClean) => {
+  const w = Math.abs(element.end.x - element.start.x);
+  const h = Math.abs(element.end.y - element.start.y);
+  const x = Math.min(element.start.x, element.end.x);
+  const y = Math.min(element.start.y, element.end.y);
+
+  if (isClean) {
+    context.beginPath();
+    context.ellipse(x + w / 2, y + h, w / 2, w * 0.15, 0, 0, 2 * Math.PI);
+    context.stroke();
+    context.beginPath();
+    context.moveTo(x, y + h);
+    context.lineTo(x + w / 2, y);
+    context.lineTo(x + w, y + h);
+    context.stroke();
+  } else {
+    rc.ellipse(x + w / 2, y + h, w, w * 0.3, options);
+    rc.line(x, y + h, x + w / 2, y, options);
+    rc.line(x + w, y + h, x + w / 2, y, options);
+  }
+}
 
 // Export hit detection (kept mostly same but imported)
 

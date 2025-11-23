@@ -44,7 +44,19 @@
       :interaction-enabled="currentTool === 'select' || ['coordinateSystem2D', 'coordinateSystem3D', 'mathFunctionPlot', 'physicsDataPlot'].includes(elementMap.get('type'))"
       @update:object="handleObjectUpdate"
       @request-select="handleObjectSelectionRequest"
+      @clone-object="handleCloneObject"
+      @update:snap-guides="handleSnapGuidesUpdate"
+      :snap-targets="snapTargets"
     ></movable-object>
+    
+    <!-- Snap Guides -->
+    <svg v-if="snapGuides.length > 0" class="snap-guides-layer" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 1000;">
+      <line v-for="(guide, i) in snapGuides" :key="i"
+        :x1="transformX(guide.x1)" :y1="transformY(guide.y1)"
+        :x2="transformX(guide.x2)" :y2="transformY(guide.y2)"
+        stroke="#ff0000" stroke-width="1" stroke-dasharray="4"
+      />
+    </svg>
 
     <!-- Inline Text Editor -->
     <textarea
@@ -111,6 +123,7 @@
 <script>
 import { ref, onMounted, onBeforeUnmount, watch, nextTick, shallowRef, reactive, computed, toRaw } from 'vue';
 import * as Y from 'yjs';
+import { v4 as uuidv4 } from 'uuid';
 import katex from 'katex';
 import 'katex/dist/katex.min.css';
 import { undoRedoState } from '../utils/undoRedoState';
@@ -190,6 +203,7 @@ export default {
     currentShape: { type: String, default: 'rectangle' },
     currentLineStyle: { type: String, default: 'solid' },
     currentArrowStyle: { type: String, default: 'none' },
+    currentRoughness: { type: Number, default: 1 }, // 0 = clean, 1 = default/sloppy
     // Feature configuration
     activeFeature: { type: String, default: null },
     gridAlignOptions: { type: Object, default: () => ({}) },
@@ -783,6 +797,8 @@ export default {
     };
 
 
+
+
     const initCanvas = () => {
       if (!canvas.value) return;
       context.value = canvas.value.getContext('2d');
@@ -1143,17 +1159,6 @@ export default {
           addElementFromPanel(elementData);
         } else {
           startDrawing(event); 
-        }
-      }
-      redrawCanvas();
-    };
-    
-    const handleObjectSelectionRequest = (objectId) => {
-      debugLog('[WhiteboardCanvas] Received object selection request for ID:', objectId);
-      
-      if (currentTool.value === 'eraser') {
-        if (yDrawings.value) {
-          const elementsArray = yDrawings.value.toArray();
           const index = elementsArray.findIndex(elMap => elMap.get('id') === objectId);
           if (index !== -1) {
             debugLog(`[WhiteboardCanvas] Eraser tool active, erasing element ID ${objectId} at index ${index} due to selection request.`);
@@ -1394,12 +1399,15 @@ export default {
           toolType = 'line';
       }
 
-      // If it's a line - always set lineStyle, even if toolType wasn't "lines"
-      if (toolType === 'line') {
+      // Apply styles to all shapes and lines
+      if (SHAPE_TOOLS.has(toolType) || toolType === 'line') {
           elementData.lineStyle = props.currentLineStyle;
-          elementData.arrowStyle = props.currentArrowStyle;
+          elementData.roughness = props.currentRoughness;
+          if (toolType === 'line') {
+             elementData.arrowStyle = props.currentArrowStyle;
+          }
           if (props.debugMode) {
-              debugLog(`[startDrawing] Line style set to: ${elementData.lineStyle}`);
+              debugLog(`[startDrawing] Style set: ${elementData.lineStyle}, Roughness: ${elementData.roughness}`);
           }
       }
 
@@ -2426,6 +2434,40 @@ export default {
       addElementFromPanel,
     });
 
+    const snapGuides = ref([]);
+    
+    const handleSnapGuidesUpdate = (guides) => {
+        snapGuides.value = guides;
+    };
+    
+    const transformX = (x) => x * zoomLevel.value + panOffset.value.x;
+    const transformY = (y) => y * zoomLevel.value + panOffset.value.y;
+
+    const snapTargets = computed(() => {
+      if (!selectedObjectId.value || !yDrawings.value) return { vertical: [], horizontal: [] };
+      
+      const targets = { vertical: [], horizontal: [] };
+      yDrawings.value.forEach(el => {
+        if (el.get('id') === selectedObjectId.value) return; // Skip self
+        
+        const x = el.get('x');
+        const y = el.get('y');
+        const w = el.get('width');
+        const h = el.get('height');
+        
+        if (x === undefined || y === undefined || w === undefined || h === undefined) return;
+        
+        targets.vertical.push(x, x + w/2, x + w);
+        targets.horizontal.push(y, y + h/2, y + h);
+      });
+      return targets;
+    });
+
+    const handleObjectSelectionRequest = (id) => {
+      selectedObjectId.value = id;
+      redrawCanvas();
+    };
+
     return {
       // Refs
       containerRef,
@@ -2509,6 +2551,13 @@ export default {
       confirmStyleChanges,
       cancelStyleChanges,
       recognizeEquation,
+      // Snap guides
+      snapTargets,
+      snapGuides,
+      handleSnapGuidesUpdate,
+      transformX,
+      transformY,
+      
       applyGhostAnswer: (payload) => { 
             const stroke = mathRecognizerModule.value?.applyGhostAnswer();
             if (stroke) applyMathAnswer(stroke);

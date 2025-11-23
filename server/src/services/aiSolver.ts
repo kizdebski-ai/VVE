@@ -5,6 +5,9 @@ import { create, all } from 'mathjs';
 export interface EquationSolver {
   solveEquation(equation: string): Promise<string>;
   solveEquationFromImage(imageBase64: string): Promise<{ equation: string; solution: string }>;
+  chatWithVision?(
+    messages: Array<{ role: string; content: string; image?: string }>
+  ): Promise<string>;
 }
 
 type FetchImpl = (input: string, init?: RequestInit) => Promise<Response>;
@@ -167,6 +170,7 @@ export class OpenRouterEquationSolver implements EquationSolver {
   private readonly fetchImpl: FetchImpl;
   private readonly ocrModel: string;
   private readonly solverModel: string;
+  private readonly chatModel: string;
   private readonly temperature: number;
   private readonly maxTokens: number;
 
@@ -175,6 +179,7 @@ export class OpenRouterEquationSolver implements EquationSolver {
     // Use configured models or defaults
     this.ocrModel = process.env.OCR_MODEL || 'nvidia/nemotron-nano-12b-v2-vl:free';
     this.solverModel = process.env.SOLVER_MODEL || 'deepseek/deepseek-r1:free';
+    this.chatModel = process.env.CHAT_MODEL || process.env.OCR_MODEL || 'openai/gpt-4o-mini';
     this.temperature = options.temperature ?? 0;
     this.maxTokens = options.maxTokens ?? 1024; // Increased for chain of thought
   }
@@ -328,10 +333,12 @@ export class OpenRouterEquationSolver implements EquationSolver {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
+        'HTTP-Referer': process.env.OPENROUTER_REFERER || 'https://whitevue.local',
+        'X-Title': 'WhiteVue AI Assistant'
       },
       body: JSON.stringify({
-        model: this.ocrModel, // Using the vision capable model
+        model: this.chatModel, // Vision-capable chat model
         messages: apiMessages,
         temperature: 0.7,
         max_tokens: 1024

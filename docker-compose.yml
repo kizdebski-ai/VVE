@@ -1,0 +1,30 @@
+version: "3.9"
+
+services:
+  backend:
+    build:
+      context: ./server
+    ports:
+      - "8000:8000"
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8000
+      DATA_DIR: /data
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OCR_MODEL: ${OCR_MODEL:-}
+      SOLVER_MODEL: ${SOLVER_MODEL:-}
+    volumes:
+      - backend_data:/data
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_BACKEND_URL: ${VITE_BACKEND_URL:-http://localhost:8000}
+    ports:
+      - "4173:80"
+    depends_on:
+      - backend
+
+volumes:
+  backend_data:

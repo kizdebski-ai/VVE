@@ -1,0 +1,15 @@
+# Global ignores
+.git
+node_modules
+**/node_modules
+dist
+**/dist
+temp
+venv
+npm-debug.log*
+yarn-error.log*
+
+# Local env/secrets
+.env
+**/.env
+*.log

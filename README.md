@@ -58,6 +58,19 @@ npm run build   # production bundle
 
 The client automatically points to `http://localhost:8000` when running in dev mode. Override via `VITE_BACKEND_URL` if you host the server elsewhere.
 
+## Docker / Railway
+
+- Build & run locally:
+  ```bash
+  docker compose build
+  docker compose up
+  ```
+  Frontend: http://localhost:4173, Backend API/WebSocket: http://localhost:8000.
+- Railway deploy (two services from this repo):
+  1. **Backend service** �?" root directory `server`, Dockerfile auto-detected. Set env vars: `OPENROUTER_API_KEY` (if needed), `OCR_MODEL` / `SOLVER_MODEL` overrides, and let Railway provide `PORT`. No extra start command needed.
+  2. **Frontend service** �?" root directory `frontend`, Dockerfile auto-detected. Set build arg/env `VITE_BACKEND_URL` to your backend public URL (e.g. `https://<backend-service>.up.railway.app`). Exposes port 80 by default.
+  3. Optional: attach a volume to the backend service and mount it at `/data` to persist room data (`DATA_DIR` defaults there).
+
 ## Testing
 
 Automated tests live in `server/tests/` (Vitest + Supertest).

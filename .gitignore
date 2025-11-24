@@ -10,6 +10,14 @@ venv/
 ENV/
 env/
 
+# === ENVIRONMENT FILES ===
+.env
+*.env
+*.env.local
+*.env.secrets
+server/.env
+server/.env.secrets
+
 # === VUE / NODE ===
 node_modules/
 dist/

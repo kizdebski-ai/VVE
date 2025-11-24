@@ -42,6 +42,8 @@ Environment variables:
 | `OPENROUTER_API_KEY` | _(required for AI route)_ | API key used to talk to OpenRouter |
 | `OPENROUTER_MODEL` | `openai/gpt-4o-mini` | Optional override for the model name |
 
+> **Env files:** Copy `server/.env.example` to `server/.env` for non-sensitive defaults. Secrets such as `OPENROUTER_API_KEY` belong in `server/.env.secrets` (ignored) or should be injected through your platform (Railway, Docker secrets, etc.).
+
 The backend exposes:
 - `/health` – service status
 - `/api/rooms` – CRUD endpoints for whiteboard rooms

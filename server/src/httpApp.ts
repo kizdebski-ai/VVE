@@ -43,6 +43,15 @@ export const createHttpApp = ({ roomManager, aiSolver }: CreateAppOptions) => {
   // AI endpoints accept screenshots, so allow a slightly larger body size
   app.use(express.json({ limit: '20mb' }));
 
+  // Basic root status page so Railway shows a friendly message instead of "Cannot GET /"
+  app.get('/', (_, res) => {
+    res.json({
+      status: 'ok',
+      message: 'WhiteVue realtime backend is running.',
+      endpoints: ['/health', '/api/rooms', '/ws/whiteboard/:roomId']
+    });
+  });
+
   app.get('/health', (_, res) => {
     res.json({
       status: 'ok',

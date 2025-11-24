@@ -64,6 +64,7 @@
       ref="inlineTextRef"
       v-model="inlineTextEditor.value"
       class="inline-text-editor"
+      autofocus
       :style="inlineTextStyle"
       @blur="finalizeInlineText"
       @keydown.enter.stop="handleInlineTextEnter"
@@ -135,6 +136,7 @@ import StatusMessage from './StatusMessage.vue';
 import GridAlignModule from '../modules/GridAlignModule.js';
 import HandwritingStylerModule from '../modules/HandwritingStylerModule.js';
 import MathRecognizerModule from '../modules/MathRecognizerModule.js';
+import { DEFAULT_PEN_PRESETS } from '../utils/penStyles.js';
 // Utils and Services
 import { connectToYjs } from '../services/connectToYjs';
 import { drawElement, throttle, isPointInElement, distanceToSegment } from '../utils/canvasDrawing.js';
@@ -146,7 +148,7 @@ import {
   createCoordinateSystem2DElement,
   createCoordinateSystem3DElement
 } from '../utils/canvasTools.js';
-import { drawGrid as drawUtilGrid } from '../utils/canvasGrid.js';
+import { drawGrid as drawUtilGrid, computeGridSteps } from '../utils/canvasGrid.js';
 import MovableObject from './MovableObject.vue';
 
 
@@ -252,6 +254,23 @@ export default {
       fontSize: 24
     });
     const inlineTextRef = ref(null);
+    const focusInlineEditor = () => {
+      // Try multiple times in case of layout/nextTick timing
+      const tryFocus = (attempt = 0) => {
+        const el = inlineTextRef.value;
+        if (el) {
+          el.focus({ preventScroll: true });
+          // Place caret at end to start typing immediately
+          const len = el.value?.length ?? 0;
+          try { el.setSelectionRange(len, len); } catch (_) { /* Safari etc. */ }
+          return;
+        }
+        if (attempt < 3) {
+          requestAnimationFrame(() => tryFocus(attempt + 1));
+        }
+      };
+      requestAnimationFrame(() => tryFocus());
+    };
 
     // --- Computed ---
     const inlineTextStyle = computed(() => {
@@ -266,7 +285,7 @@ export default {
         color: safeColor,
         minWidth: '50px',
         minHeight: '1.2em',
-        zIndex: 1000,
+        zIndex: 2000,
         background: 'transparent', // Transparent for "on board" feel
         border: 'none',            // No border
         outline: 'none',
@@ -297,6 +316,7 @@ export default {
     const lastReleasedElementIndex = ref(-1);
     const currentElementPreview = ref(null);
     const pointsBuffer = ref([]);
+    const snapIndicator = ref(null);
     const smoothingFactor = ref(0.65);
     const PEN_SMOOTHING_WINDOW = 4;
     const PEN_COORD_PRECISION = 2;
@@ -316,6 +336,11 @@ export default {
     };
     const clipboardInput = ref(null);
     const imageCache = ref(new Map());
+    const activePenPresetKey = computed(() => props.handwritingStylerOptions?.preset || 'gel');
+    const activePenPreset = computed(() => {
+      const options = props.handwritingStylerOptions || {};
+      return (options.presets && options.presets[activePenPresetKey.value]) || DEFAULT_PEN_PRESETS[activePenPresetKey.value] || {};
+    });
     const movableElementTypes = new Set([
         'pen',
         'line',
@@ -613,6 +638,7 @@ export default {
 
       const ctx = context.value;
       const ratio = devicePixelRatio.value || 1;
+      const gridMetrics = computeGridSteps(zoomLevel.value);
 
       // Ensure base HiDPI transform before clearing
       ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
@@ -643,12 +669,28 @@ export default {
           return; // Avoid double-rendering plots/coordinate systems already handled by MovableObject/PlotRenderer
         }
         const isHighlighted = index === hoveredElementIndex.value && currentTool.value === 'eraser';
-        drawElement(ctx, element, isHighlighted, smoothingFactor.value, imageCache.value, redrawCanvas);
+        drawElement(
+          ctx,
+          element,
+          isHighlighted,
+          smoothingFactor.value,
+          imageCache.value,
+          redrawCanvas,
+          props.handwritingStylerOptions || {}
+        );
       });
 
       // Draw current preview if any
       if (isDrawing.value && currentElementPreview.value) {
-        drawElement(ctx, currentElementPreview.value, false, smoothingFactor.value);
+        drawElement(
+          ctx,
+          currentElementPreview.value,
+          false,
+          smoothingFactor.value,
+          undefined,
+          undefined,
+          props.handwritingStylerOptions || {}
+        );
       }
 
       // Draw helper overlays
@@ -658,6 +700,8 @@ export default {
         // Draw grid (if needed, or rely on drawUtilGrid)
         // drawGrid(); // This component's grid drawing method
         if (props.gridAlignOptions.showBaselines) {
+          gridAlignModule.value.setOptions({ ...props.gridAlignOptions, gridSize: gridMetrics.worldGridStep });
+          gridAlignModule.value.detectBaselines();
           gridAlignModule.value.drawBaselines(ctx);
         }
       } else if (props.activeFeature === 'styleHandwriting' && handwritingStylerModule.value) {
@@ -666,6 +710,50 @@ export default {
         mathRecognizerModule.value.drawGhostAnswer(ctx);
       }
 
+      if (snapIndicator.value && props.activeFeature === 'gridAlign') {
+        const indicator = snapIndicator.value;
+        const ratio = devicePixelRatio.value || 1;
+        const scale = zoomLevel.value * ratio;
+        const worldWidth = canvasWidth.value / zoomLevel.value;
+        const worldStartX = -panOffset.value.x / zoomLevel.value;
+        ctx.save();
+        ctx.lineWidth = 1 / scale;
+        ctx.strokeStyle = 'rgba(33, 150, 243, 0.9)';
+        ctx.fillStyle = 'rgba(33, 150, 243, 0.15)';
+
+        if (indicator.axis === 'y') {
+          const y = indicator.y;
+          ctx.beginPath();
+          ctx.moveTo(worldStartX, y);
+          ctx.lineTo(worldStartX + worldWidth, y);
+          ctx.stroke();
+          const r = Math.min(indicator.radius || 4, 8 / zoomLevel.value);
+          ctx.beginPath();
+          ctx.arc(indicator.x ?? worldStartX, y, r, 0, Math.PI * 2);
+          ctx.fill();
+        } else {
+          const fallbackRadius = gridMetrics.worldGridStep * 0.35;
+          const r = indicator.radius || fallbackRadius;
+          ctx.beginPath();
+          ctx.arc(indicator.x, indicator.y, r, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.beginPath();
+          ctx.arc(indicator.x, indicator.y, r, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+        ctx.restore();
+      }
+
+    };
+
+    let redrawQueued = false;
+    const scheduleRedraw = () => {
+      if (redrawQueued) return;
+      redrawQueued = true;
+      requestAnimationFrame(() => {
+        redrawQueued = false;
+        redrawCanvas();
+      });
     };
 
     // Helper to sync module state from Yjs
@@ -845,16 +933,33 @@ export default {
       redrawCanvas();
       updateCursor();
       nextTick(() => {
-        if (clipboardInput.value) clipboardInput.value.focus();
+        // Keep clipboard focus only when nothing else has focus to avoid stealing focus from inputs
+        const activeEl = document.activeElement;
+        if (
+          clipboardInput.value &&
+          (!activeEl || activeEl === document.body)
+        ) {
+          clipboardInput.value.focus({ preventScroll: true });
+        }
       });
     };
 
     const initClipboardHandler = () => {
       if (clipboardFocusHandler) return;
-      clipboardFocusHandler = () => {
-        if (clipboardInput.value) {
-          clipboardInput.value.focus();
-        }
+      clipboardFocusHandler = (event) => {
+        if (!clipboardInput.value) return;
+
+        const target = event?.target;
+        const tagName = target?.tagName?.toUpperCase?.() || '';
+        const isInteractive =
+          tagName === 'INPUT' ||
+          tagName === 'TEXTAREA' ||
+          target?.isContentEditable;
+
+        // Do not steal focus while typing in any input (including inline text)
+        if (isInteractive || inlineTextEditor.visible) return;
+
+        clipboardInput.value.focus({ preventScroll: true });
       };
       document.addEventListener('click', clipboardFocusHandler);
     };
@@ -937,6 +1042,7 @@ export default {
       isDrawing.value = false;
       currentElementPreview.value = null;
       pointsBuffer.value = [];
+      snapIndicator.value = null;
       redrawCanvas();
       return true;
     };
@@ -1045,13 +1151,17 @@ export default {
     };
 
     const addSmoothedPenPoint = (coords) => {
-      pointsBuffer.value.push(coords);
+      const stamped = {
+        ...coords,
+        t: coords.t ?? (typeof performance !== 'undefined' ? performance.now() : Date.now())
+      };
+      pointsBuffer.value.push(stamped);
       if (pointsBuffer.value.length > PEN_SMOOTHING_WINDOW) {
         pointsBuffer.value.shift();
       }
       const len = pointsBuffer.value.length;
       if (!len) {
-        return coords;
+        return stamped;
       }
       const averaged = pointsBuffer.value.reduce(
         (acc, point) => ({
@@ -1063,7 +1173,92 @@ export default {
       return {
         x: parseFloat((averaged.x / len).toFixed(PEN_COORD_PRECISION)),
         y: parseFloat((averaged.y / len).toFixed(PEN_COORD_PRECISION)),
+        t: stamped.t
       };
+    };
+
+    const computePenWidthFromPreset = (presetConfig, requestedWidth) => {
+      const base = presetConfig?.baseWidth
+        || presetConfig?.lineWidth
+        || presetConfig?.width
+        || requestedWidth
+        || 2;
+      const scale = Math.max(0.5, (requestedWidth || 2) / 2);
+      return parseFloat((base * scale).toFixed(2));
+    };
+
+    const getSnapSettings = () => {
+      const strengthRaw = props.gridAlignOptions?.snapStrength ?? 0;
+      const strength = Math.max(0, Math.min(1, strengthRaw / 100));
+      const showBaselines = !!props.gridAlignOptions?.showBaselines;
+      const { worldGridStep, screenGridSize } = computeGridSteps(zoomLevel.value);
+      return {
+        strength,
+        showBaselines,
+        gridSizeWorld: worldGridStep,
+        gridSizeScreen: screenGridSize
+      };
+    };
+
+    const applySoftGridSnap = (point, prevRawPoint = null) => {
+      if (props.activeFeature !== 'gridAlign') {
+        snapIndicator.value = null;
+        return point;
+      }
+
+      const { strength, showBaselines, gridSizeWorld, gridSizeScreen } = getSnapSettings();
+      if (strength <= 0 || !gridSizeWorld) {
+        snapIndicator.value = null;
+        return point;
+      }
+
+      const snapRadiusPx = 2 + strength * gridSizeScreen * 0.8;
+      const snapRadiusWorld = snapRadiusPx / zoomLevel.value;
+
+      const gx = Math.round(point.x / gridSizeWorld) * gridSizeWorld;
+      const gy = Math.round(point.y / gridSizeWorld) * gridSizeWorld;
+
+      const dx = showBaselines ? 0 : gx - point.x;
+      const dy = gy - point.y;
+      const dist = showBaselines ? Math.abs(dy) : Math.hypot(dx, dy);
+
+      if (dist < snapRadiusWorld && dist > 0.0001) {
+        const proximity = 1 - dist / snapRadiusWorld; // 0..1
+        let alpha = proximity * strength; // 0..1
+
+        if (prevRawPoint && typeof prevRawPoint.t === 'number') {
+          const dt = Math.max(1, point.t - prevRawPoint.t);
+          const v = Math.hypot(point.x - prevRawPoint.x, point.y - prevRawPoint.y) / dt;
+          const speedFactor = 1 / (1 + v * 0.02);
+          alpha *= speedFactor;
+        }
+
+        const snappedX = showBaselines ? point.x : point.x + alpha * dx;
+        const snappedY = point.y + alpha * dy;
+        snapIndicator.value = {
+          x: showBaselines ? point.x : gx,
+          y: gy,
+          axis: showBaselines ? 'y' : 'both',
+          radius: snapRadiusWorld
+        };
+        return { ...point, x: snappedX, y: snappedY };
+      }
+
+      snapIndicator.value = null;
+      return point;
+    };
+
+    const applyGridSnapHard = (point, gridSize, axisMode = 'both') => {
+      if (!point || !gridSize) return point;
+      const x = point.x ?? point[0];
+      const y = point.y ?? point[1];
+      if (!Number.isFinite(x) || !Number.isFinite(y)) return point;
+      const snappedX = axisMode === 'y' ? x : Math.round(x / gridSize) * gridSize;
+      const snappedY = Math.round(y / gridSize) * gridSize;
+      if (Array.isArray(point)) {
+        return [snappedX, snappedY, point[2]];
+      }
+      return { ...point, x: snappedX, y: snappedY };
     };
 
     const updateLocalAwarenessCursor = throttle((coords) => {
@@ -1096,7 +1291,7 @@ export default {
       }
 
       if (isDrawing.value && currentTool.value !== 'eraser') {
-        draw(transformedCoords, e.shiftKey); // Pass shift key state
+        draw(transformedCoords, e.shiftKey, e.timeStamp); // Pass shift key state
       } else if (currentTool.value === 'eraser') {
         let foundIndex = -1;
         if (yDrawings.value) {
@@ -1219,6 +1414,7 @@ export default {
              finishDrawing();
          }
       }
+      snapIndicator.value = null;
       redrawCanvas();
     };
 
@@ -1244,10 +1440,11 @@ export default {
        if (yjsConnection.value?.awareness) {
            yjsConnection.value.awareness.setLocalStateField('cursor', null);
            const userState = yjsConnection.value.awareness.getLocalState()?.user;
-           if (userState) {
+       if (userState) {
                yjsConnection.value.awareness.setLocalStateField('user', userState);
            }
        }
+       snapIndicator.value = null;
        redrawCanvas();
     };
 
@@ -1286,7 +1483,7 @@ export default {
             updateLocalAwarenessCursor(transformedCoords);
 
             if (isDrawing.value) {
-                draw(transformedCoords, false);
+                draw(transformedCoords, false, event.timeStamp);
             }
         }
     };
@@ -1312,6 +1509,7 @@ export default {
                 yjsConnection.value.awareness.setLocalStateField('user', userState);
             }
         }
+        snapIndicator.value = null;
     };
 
     // --- Drawing Logic (Yjs Integration) ---
@@ -1371,12 +1569,13 @@ export default {
       inlineTextEditor.visible = true;
       // Heuristic for font size based on line width or default
       inlineTextEditor.fontSize = currentLineWidth.value * 10 > 20 ? currentLineWidth.value * 10 : 24; 
+
+      // Move focus away from the hidden clipboard input so typing goes to the editor
+      if (clipboardInput.value) {
+        clipboardInput.value.blur();
+      }
       
-      nextTick(() => {
-        if (inlineTextRef.value) {
-          inlineTextRef.value.focus();
-        }
-      });
+      nextTick(focusInlineEditor);
     };
 
     const finalizeInlineText = () => {
@@ -1427,6 +1626,8 @@ export default {
 
       let toolType = currentTool.value;
       let elementData = {}; // Object to hold extra data like lineStyle
+      let lineWidthForElement = currentLineWidth.value;
+      let colorForElement = currentColor.value;
 
       // Handle Shift+Pen combination: Keep type 'pen' for now, store start point
       if (toolType === 'pen' && shiftPressedAtStart.value) {
@@ -1442,6 +1643,15 @@ export default {
           }
       } else if (toolType === 'lines') {
           toolType = 'line';
+      }
+
+      if (toolType === 'pen') {
+          elementData.penStyle = activePenPresetKey.value;
+          elementData.penConfig = { ...activePenPreset.value };
+          lineWidthForElement = computePenWidthFromPreset(activePenPreset.value, currentLineWidth.value);
+          const presetColor = activePenPreset.value?.color;
+          const prefersPreset = !currentColor.value || ['#000000', '#000', 'black'].includes(String(currentColor.value).toLowerCase());
+          colorForElement = prefersPreset ? (presetColor || currentColor.value || '#000000') : currentColor.value;
       }
 
       // Apply styles to all shapes and lines
@@ -1460,14 +1670,25 @@ export default {
       currentElementPreview.value = createNewElement(
         toolType,
         transformedCoords, 
-        currentColor.value,
-        currentLineWidth.value,
+        colorForElement,
+        lineWidthForElement,
         elementData // Pass extra data
       );
 
       if (currentElementPreview.value) {
           const localClientId = yjsConnection.value?.awareness?.clientID || 'unknown';
           currentElementPreview.value.id = `temp_${localClientId}_${Date.now()}`;
+          const startTime = event.timeStamp ?? (typeof performance !== 'undefined' ? performance.now() : Date.now());
+          if (toolType === 'pen') {
+              const stampedStart = { ...transformedCoords, t: startTime };
+              const snappedStart = applySoftGridSnap(stampedStart, null);
+              currentElementPreview.value.rawPoints = [stampedStart];
+              currentElementPreview.value.points = [{ x: snappedStart.x, y: snappedStart.y, t: snappedStart.t ?? startTime }];
+              currentElementPreview.value.snappedPoints = currentElementPreview.value.points;
+          } else if (SHAPE_TOOLS.has(toolType) || toolType === 'line') {
+              const snappedStart = applySoftGridSnap({ ...transformedCoords, t: startTime }, null);
+              currentElementPreview.value.start = { x: snappedStart.x, y: snappedStart.y };
+          }
           if (props.debugMode) {
               debugLog("[startDrawing] Preview element created:", JSON.stringify(currentElementPreview.value));
           }
@@ -1531,10 +1752,11 @@ export default {
       'mathFunctionPlot',
       'physicsDataPlot',
       'coordinateSystem2D',
-      'coordinateSystem3D'
+      'coordinateSystem3D',
+      'text' // Render text via MovableObject only to avoid double-drawing
     ]);
 
-    const draw = (coords, isShiftPressed) => { // Accept shift key state
+    const draw = (coords, isShiftPressed, inputTime) => { // Accept shift key state
       if (!isDrawing.value || !currentElementPreview.value) return;
       if (currentTool.value === 'eraser') return;
 
@@ -1545,40 +1767,58 @@ export default {
           ? 'line'
           : currentTool.value;
       const previewType = preview.type || resolvedTool;
+      const timestamp = typeof inputTime === 'number'
+        ? inputTime
+        : (typeof performance !== 'undefined' ? performance.now() : Date.now());
+      const stampedCoords = { ...coords, t: timestamp };
 
       // Update logic based on the actual tool and shift state
       if (resolvedTool === 'pen') {
           if (shiftPressedAtStart.value && startCoordsForShiftLine.value) {
-              // Update preview for Shift+Pen: Draw straight line from stored start to current coords
-              // Modify the preview element directly to represent a line for drawing purposes
               preview.type = 'line'; // Temporarily change type for drawElement
-              preview.start = startCoordsForShiftLine.value;
-              preview.end = coords;
+              const baseStart = preview.rawPoints?.[0] || { ...startCoordsForShiftLine.value, t: timestamp };
+              if (!preview.rawPoints) {
+                  preview.rawPoints = [baseStart];
+              }
+              const snappedStart = applySoftGridSnap(baseStart, null);
+              const snappedEnd = applySoftGridSnap(stampedCoords, baseStart);
+              preview.start = { x: snappedStart.x, y: snappedStart.y };
+              preview.end = { x: snappedEnd.x, y: snappedEnd.y };
               delete preview.points; // Remove points array for line preview
           } else if (!shiftPressedAtStart.value) {
               // Normal pen drawing - ensure preview type is 'pen'
               preview.type = 'pen';
               if (!preview.points) preview.points = []; // Initialize if needed
-              const smoothedPoint = addSmoothedPenPoint(coords);
-              preview.points.push(smoothedPoint);
+              if (!preview.rawPoints) preview.rawPoints = [];
+              const prevRaw = preview.rawPoints[preview.rawPoints.length - 1] || null;
+              preview.rawPoints.push(stampedCoords);
+              const smoothedPoint = addSmoothedPenPoint(stampedCoords);
+              const snappedPoint = applySoftGridSnap(smoothedPoint, prevRaw);
+              preview.points.push({
+                  x: snappedPoint.x,
+                  y: snappedPoint.y,
+                  t: snappedPoint.t ?? smoothedPoint.t
+              });
+              preview.snappedPoints = preview.points;
           }
       } else if (SHAPE_TOOLS.has(previewType) || LINE_TOOLS.has(previewType)) {
           // Update end coordinates for shapes and regular lines
-          preview.end = coords;
+          const snappedCoords = applySoftGridSnap(stampedCoords, preview.start ? { ...preview.start, t: timestamp } : null);
+          preview.end = { x: snappedCoords.x, y: snappedCoords.y };
 
           // Special handling for square aspect ratio during preview
           if (preview.type === 'square') {
-              const dx = Math.abs(coords.x - preview.start.x); // Use coords directly here
-              const dy = Math.abs(coords.y - preview.start.y);
+              const dx = Math.abs(snappedCoords.x - preview.start.x); // Use coords directly here
+              const dy = Math.abs(snappedCoords.y - preview.start.y);
               const size = Math.max(dx, dy);
               preview.end = {
-                  x: preview.start.x + size * Math.sign(coords.x - preview.start.x),
-                  y: preview.start.y + size * Math.sign(coords.y - preview.start.y)
+                  x: preview.start.x + size * Math.sign(snappedCoords.x - preview.start.x),
+                  y: preview.start.y + size * Math.sign(snappedCoords.y - preview.start.y)
               };
           }
       }
       // Redraw after updating preview element
-      redrawCanvas();
+      scheduleRedraw();
     };
 
     const finishDrawing = () => {
@@ -1587,6 +1827,7 @@ export default {
       const originalTool = currentTool.value; // Capture the tool selected in the toolbar
       shiftPressedAtStart.value = false; // Reset shift state
       startCoordsForShiftLine.value = null; // Reset start point
+      snapIndicator.value = null;
 
       if (!isDrawing.value || !currentElementPreview.value || !ydoc.value || !yDrawings.value) {
           isDrawing.value = false; // Ensure drawing state is reset
@@ -1614,12 +1855,13 @@ export default {
               }
               elementToAdd = {
                   type: 'line',
-                  start: shiftStartPoint, // Use the stored start point
+                  start: preview.start || shiftStartPoint, // Use snapped start if available
                   end: preview.end, // Use the final end point from the preview
                   color: preview.color,
                   lineWidth: preview.lineWidth,
                   timestamp: Date.now(), // Use current timestamp
-                  lineStyle: 'solid' // Force solid line style for Shift+Pen
+                  lineStyle: 'solid', // Force solid line style for Shift+Pen
+                  rawPoints: preview.rawPoints || []
               };
           } else {
               // Otherwise, use the preview element as is
@@ -1670,15 +1912,26 @@ export default {
 
                       // Handle type-specific properties and x, y, width, height
                       if (elementToAdd.type === 'pen') {
+                          if (elementToAdd.penStyle) {
+                              yElementMap.set('penStyle', elementToAdd.penStyle);
+                          }
+                          if (elementToAdd.penConfig) {
+                              yElementMap.set('penConfig', elementToAdd.penConfig);
+                          }
                           // Store points as an array (not a Y.Array)
                           yElementMap.set('points', elementToAdd.points);
+                          if (elementToAdd.rawPoints) {
+                              yElementMap.set('rawPoints', elementToAdd.rawPoints);
+                          }
                           if (elementToAdd.points && elementToAdd.points.length > 0) {
                               let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
                               elementToAdd.points.forEach(p => {
-                                  minX = Math.min(minX, p.x);
-                                  minY = Math.min(minY, p.y);
-                                  maxX = Math.max(maxX, p.x);
-                                  maxY = Math.max(maxY, p.y);
+                                  const px = typeof p.x === 'number' ? p.x : Array.isArray(p) ? p[0] : 0;
+                                  const py = typeof p.y === 'number' ? p.y : Array.isArray(p) ? p[1] : 0;
+                                  minX = Math.min(minX, px);
+                                  minY = Math.min(minY, py);
+                                  maxX = Math.max(maxX, px);
+                                  maxY = Math.max(maxY, py);
                               });
                               yElementMap.set('x', minX);
                               yElementMap.set('y', minY);
@@ -1872,7 +2125,11 @@ export default {
 
     // --- Keyboard handling ---
     const handleKeyDown = (event) => {
-      if (event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA') return;
+      const tagName = event.target.tagName.toUpperCase();
+      if (tagName === 'INPUT' || tagName === 'TEXTAREA' || event.target.isContentEditable) return;
+
+      // Double check if we are in the middle of editing text (e.g. focus lost momentarily)
+      if (currentTool.value === 'text' && inlineTextEditor.visible) return;
 
       if (event.code === 'Space') {
         event.preventDefault();
@@ -1916,6 +2173,7 @@ export default {
 
         // Tool shortcuts
         const lowerKey = event.key.toLowerCase();
+        // Check for single letter keys to avoid interfering with other inputs if any check failed
         if (lowerKey === 'v') {
             setTool('select');
             return;
@@ -2189,44 +2447,99 @@ export default {
     // --- Helper module actions (invoked via App.vue) ---
 
     const alignToGrid = () => {
-        if (!gridAlignModule.value || !ydoc.value || !yDrawings.value) {
-            debugWarn('[alignToGrid] Module or Yjs not ready.');
+        if (!ydoc.value || !yDrawings.value) {
+            debugWarn('[alignToGrid] Yjs not ready.');
             return;
         }
-        debugLog('[alignToGrid] Calling module.alignToGrid()');
-        const changedStrokes = gridAlignModule.value.alignToGrid(); // Module calculates changes
+        const { worldGridStep } = computeGridSteps(zoomLevel.value);
+        if (!worldGridStep || Number.isNaN(worldGridStep)) {
+            debugWarn('[alignToGrid] Invalid grid size');
+            return;
+        }
+        const axisMode = props.gridAlignOptions.showBaselines ? 'y' : 'both';
+        const changedIds = [];
 
-        if (changedStrokes && changedStrokes.length > 0) {
-            debugLog(`[alignToGrid] Module returned ${changedStrokes.length} changed strokes. Applying to Yjs...`);
-            ydoc.value.transact(() => {
-                // Iterate through yDrawings directly for potentially better performance/reliability
-                for (let i = 0; i < yDrawings.value.length; i++) {
-                    const yMap = yDrawings.value.get(i);
-                    const strokeId = yMap.get('id');
-                    const updatedStroke = changedStrokes.find(s => s.id === strokeId);
+        const recomputeBounds = (points) => {
+            if (!points || !points.length) return null;
+            let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+            points.forEach(p => {
+                const px = typeof p.x === 'number' ? p.x : Array.isArray(p) ? p[0] : 0;
+                const py = typeof p.y === 'number' ? p.y : Array.isArray(p) ? p[1] : 0;
+                minX = Math.min(minX, px);
+                minY = Math.min(minY, py);
+                maxX = Math.max(maxX, px);
+                maxY = Math.max(maxY, py);
+            });
+            return {
+                x: minX,
+                y: minY,
+                width: Math.max(0, maxX - minX),
+                height: Math.max(0, maxY - minY)
+            };
+        };
 
-                    if (updatedStroke) {
-                        debugLog(`[alignToGrid] Updating Y.Map for stroke ID: ${strokeId}`);
-                        // Update points in the Y.Map
-                        yMap.set('points', updatedStroke.points);
-                        yMap.set('aligned', true); // Mark as aligned
-      } else {
-                        // Log if a changed stroke ID wasn't found in yDrawings (shouldn't happen often)
-                        // if (changedStrokes.some(s => s.id === strokeId)) {
-                        //     console.warn(`[alignToGrid] Mismatch: Changed stroke ${strokeId} present but not found during Y.Map iteration?`);
-                        // }
+        ydoc.value.transact(() => {
+            for (let i = 0; i < yDrawings.value.length; i++) {
+                const yMap = yDrawings.value.get(i);
+                const type = yMap.get('type');
+                let updated = false;
+
+                if (type === 'pen') {
+                    const pts = yMap.get('points');
+                    if (Array.isArray(pts) && pts.length) {
+                        const snappedPts = pts.map(p => applyGridSnapHard(p, worldGridStep, axisMode));
+                        yMap.set('points', snappedPts);
+                        const rawPts = yMap.get('rawPoints');
+                        if (Array.isArray(rawPts) && rawPts.length) {
+                            yMap.set('rawPoints', rawPts.map(p => applyGridSnapHard(p, worldGridStep, axisMode)));
+                        }
+                        const bounds = recomputeBounds(snappedPts);
+                        if (bounds) {
+                            yMap.set('x', bounds.x);
+                            yMap.set('y', bounds.y);
+                            yMap.set('width', bounds.width);
+                            yMap.set('height', bounds.height);
+                        }
+                        updated = true;
+                    }
+                } else if (type === 'line' || (yMap.get('start') && yMap.get('end'))) {
+                    const startMap = yMap.get('start');
+                    const endMap = yMap.get('end');
+                    if (startMap && endMap) {
+                        const start = applyGridSnapHard({ x: startMap.get('x'), y: startMap.get('y') }, worldGridStep, axisMode);
+                        const end = applyGridSnapHard({ x: endMap.get('x'), y: endMap.get('y') }, worldGridStep, axisMode);
+                        const startY = new Y.Map();
+                        startY.set('x', start.x);
+                        startY.set('y', start.y);
+                        const endY = new Y.Map();
+                        endY.set('x', end.x);
+                        endY.set('y', end.y);
+                        yMap.set('start', startY);
+                        yMap.set('end', endY);
+                        yMap.set('x', Math.min(start.x, end.x));
+                        yMap.set('y', Math.min(start.y, end.y));
+                        yMap.set('width', Math.abs(start.x - end.x));
+                        yMap.set('height', Math.abs(start.y - end.y));
+                        updated = true;
                     }
                 }
-            }, 'ai-align'); // Origin for undo/redo
 
+                if (updated) {
+                    changedIds.push(yMap.get('id'));
+                    yMap.set('aligned', true);
+                }
+            }
+        }, 'ai-align');
+
+        if (changedIds.length) {
             nextTick(() => {
-                debugLog('[alignToGrid] Yjs transaction complete. Updating global state and redrawing.');
+                debugLog(`[alignToGrid] Hard snapped ${changedIds.length} elements.`);
                 updateGlobalState();
+                syncModulesWithYjs();
                 redrawCanvas(); // Redraw to show aligned strokes
             });
         } else {
-             debugLog('[alignToGrid] Module returned no changed strokes.');
-             // Still redraw in case baselines visibility changed
+             debugLog('[alignToGrid] No elements needed snapping.');
              redrawCanvas();
         }
     };
@@ -2344,6 +2657,7 @@ export default {
     // Feature activation watcher
     watch(() => props.activeFeature, (newFeature, oldFeature) => {
         debugLog(`[Watch] Active feature changed from ${oldFeature} to ${newFeature}`);
+        snapIndicator.value = null;
         // Disable old module
         const oldModule = getActiveModule(oldFeature); // Pass old feature name
         if (oldModule?.disable) {
@@ -2384,7 +2698,15 @@ export default {
     }, { deep: true });
 
     watch(() => props.handwritingStylerOptions, (newOptions) => {
-        handwritingStylerModule.value?.setOptions(newOptions);
+        const sanitized = newOptions ? {
+            angleNormalization: newOptions.angleNormalization,
+            heightNormalization: newOptions.heightNormalization,
+            widthNormalization: newOptions.widthNormalization,
+            smoothingFactor: newOptions.smoothingFactor,
+            groupingTimeThreshold: newOptions.groupingTimeThreshold,
+            groupingDistanceThreshold: newOptions.groupingDistanceThreshold
+        } : {};
+        handwritingStylerModule.value?.setOptions(sanitized);
         // Re-apply style preview if options change while preview is active
         if (props.activeFeature === 'styleHandwriting' && handwritingStylerModule.value?.hasStylizedStrokes()) {
             applyStyleTransformation();
@@ -2425,7 +2747,15 @@ export default {
       // Initialize helper modules after context is ready
       if (context.value) {
           gridAlignModule.value = new GridAlignModule(context.value, props.gridAlignOptions);
-          handwritingStylerModule.value = new HandwritingStylerModule(context.value, props.handwritingStylerOptions);
+          const stylerOpts = props.handwritingStylerOptions ? {
+              angleNormalization: props.handwritingStylerOptions.angleNormalization,
+              heightNormalization: props.handwritingStylerOptions.heightNormalization,
+              widthNormalization: props.handwritingStylerOptions.widthNormalization,
+              smoothingFactor: props.handwritingStylerOptions.smoothingFactor,
+              groupingTimeThreshold: props.handwritingStylerOptions.groupingTimeThreshold,
+              groupingDistanceThreshold: props.handwritingStylerOptions.groupingDistanceThreshold
+          } : {};
+          handwritingStylerModule.value = new HandwritingStylerModule(context.value, stylerOpts);
           mathRecognizerModule.value = new MathRecognizerModule(context.value, {
               ...props.mathRecognizerOptions,
               renderLatexFn: renderLatex, // Pass the render function

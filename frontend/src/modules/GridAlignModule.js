@@ -1,6 +1,38 @@
 // GridAlignModule.js
 // Moduł do wyrównywania tekstu pisanego ręcznie do kratki
 
+const toPointObject = (point) => {
+  if (Array.isArray(point)) {
+    const [x, y, pressure] = point;
+    return Number.isFinite(x) && Number.isFinite(y) ? { x, y, pressure } : null;
+  }
+  if (point && typeof point === 'object') {
+    const { x, y, pressure, p, t } = point;
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+    const normalized = { x, y };
+    if (pressure !== undefined) normalized.pressure = pressure;
+    if (p !== undefined && normalized.pressure === undefined) normalized.pressure = p;
+    if (t !== undefined) normalized.t = t;
+    return normalized;
+  }
+  return null;
+};
+
+const normalizePoints = (points = []) => points.map(toPointObject).filter(Boolean);
+const getStrokePoints = (stroke) => {
+  if (!stroke) return [];
+  if (Array.isArray(stroke.rawPoints) && stroke.rawPoints.length) {
+    return normalizePoints(stroke.rawPoints);
+  }
+  return normalizePoints(stroke.points);
+};
+const toStoredPoints = (points = []) => points.map((p) => {
+  const stored = { x: p.x, y: p.y };
+  if (p.pressure !== undefined) stored.pressure = p.pressure;
+  if (p.t !== undefined) stored.t = p.t;
+  return stored;
+});
+
 export default class GridAlignModule {
   constructor(canvasContext, options = {}) {
     // Zapisz kontekst canvas
@@ -46,8 +78,12 @@ export default class GridAlignModule {
   addStroke(stroke) {
     if (!this.enabled) return this;
     console.log(`[Aligner] addStroke called with stroke ID: ${stroke.id}`); // DEBUG
+    const normalizedPoints = toStoredPoints(getStrokePoints(stroke));
+    const normalizedRaw = stroke.rawPoints ? toStoredPoints(stroke.rawPoints) : null;
     this.strokes.push({
       ...stroke,
+      points: normalizedPoints,
+      rawPoints: normalizedRaw || undefined,
       aligned: false
     });
     // Reset baselines when a new stroke is added, as they might change
@@ -58,10 +94,16 @@ export default class GridAlignModule {
   // Ustawienie wszystkich ścieżek
   setStrokes(strokes) {
     console.log(`[Aligner] setStrokes called with ${strokes.length} strokes.`); // DEBUG
-    this.strokes = strokes.map(stroke => ({
-      ...stroke,
-      aligned: stroke.aligned || false // Preserve existing aligned status if available
-    }));
+    this.strokes = strokes.map(stroke => {
+      const normalizedPoints = toStoredPoints(getStrokePoints(stroke));
+      const normalizedRaw = stroke.rawPoints ? toStoredPoints(stroke.rawPoints) : null;
+      return {
+        ...stroke,
+        points: normalizedPoints,
+        rawPoints: normalizedRaw || undefined,
+        aligned: stroke.aligned || false // Preserve existing aligned status if available
+      };
+    });
     // Reset baselines when strokes are completely replaced
     this.baselines = [];
     return this;
@@ -85,13 +127,12 @@ export default class GridAlignModule {
 
     // Dla każdej ścieżki oblicz średnią pozycję Y
     const strokesWithY = this.strokes.map(stroke => {
-      // Ensure points exist and are not empty
-      if (!stroke.points || stroke.points.length === 0) {
-          console.warn(`[Aligner] Stroke ID ${stroke.id} has no points.`);
+      const points = getStrokePoints(stroke);
+      if (!points.length) {
+          console.warn(`[Aligner] Stroke ID ${stroke?.id} has no points.`);
           return { ...stroke, avgY: null }; // Handle strokes without points
       }
-      const yValues = stroke.points.map(p => p[1]);
-      const avgY = yValues.reduce((sum, y) => sum + y, 0) / yValues.length;
+      const avgY = points.reduce((sum, pt) => sum + pt.y, 0) / points.length;
       return { ...stroke, avgY };
     }).filter(s => s.avgY !== null); // Filter out strokes without points
 
@@ -111,7 +152,7 @@ export default class GridAlignModule {
     for (let i = 1; i < strokesWithY.length; i++) {
       const stroke = strokesWithY[i];
 
-      // Jeśli ścieżka jest blisko poprzedniej (w granicach 1.5 * gridSize), dodaj do bieżącej grupy
+      // Jeżeli ścieżka jest blisko poprzedniej (w granicach 1.5 * gridSize), dodaj do bieżącej grupy
       if (Math.abs(stroke.avgY - currentY) < this.options.gridSize * 1.5) {
         currentGroup.push(stroke);
         // Aktualizuj średnią pozycję Y dla grupy
@@ -152,7 +193,7 @@ export default class GridAlignModule {
     }
     console.log('[Aligner] alignToGrid called.'); // DEBUG
 
-    // Najpierw wykryj linie bazowe jeśli jeszcze nie zostały wykryte
+    // Najpierw wykryj linie bazowe jeżeli jeszcze nie zostały wykryte
     if (!this.baselines.length) {
       console.log('[Aligner] No baselines found, detecting...'); // DEBUG
       this.detectBaselines();
@@ -188,28 +229,31 @@ export default class GridAlignModule {
             return;
         }
 
-        // Ensure points exist before mapping
-        if (!this.strokes[strokeIndex].points) {
+        const sourcePoints = getStrokePoints(this.strokes[strokeIndex]);
+        if (!sourcePoints.length) {
             console.warn(`[Aligner] Stroke ID ${strokeId} has no points to align.`);
             return;
         }
 
         // Klonuj punkty i zastosuj przesunięcie
-        const updatedPoints = this.strokes[strokeIndex].points.map(point => [
-          point[0],
-          point[1] + effectiveOffset,
-          point[2] // Preserve pressure if available
-        ]);
+        const updatedPoints = sourcePoints.map(point => ({
+          ...point,
+          y: point.y + effectiveOffset
+        }));
 
         // Aktualizuj ścieżkę w lokalnym stanie modułu
-        this.strokes[strokeIndex] = {
+        const updatedStroke = {
           ...this.strokes[strokeIndex],
-          points: updatedPoints,
+          points: toStoredPoints(updatedPoints),
           aligned: true
         };
+        if (this.strokes[strokeIndex].rawPoints) {
+          updatedStroke.rawPoints = toStoredPoints(updatedPoints);
+        }
+        this.strokes[strokeIndex] = updatedStroke;
 
         // Dodaj do listy zmienionych ścieżek, które zostaną zwrócone
-        changedStrokes.push(this.strokes[strokeIndex]);
+        changedStrokes.push(updatedStroke);
       });
     });
 
@@ -221,6 +265,7 @@ export default class GridAlignModule {
   // Rysowanie linii bazowych
   drawBaselines(ctx = this.ctx) {
     if (!this.enabled || !this.options.showBaselines || !this.baselines.length) return this;
+    if (!ctx) return this;
 
     ctx.save();
     ctx.strokeStyle = 'rgba(255, 0, 0, 0.5)';
@@ -232,9 +277,9 @@ export default class GridAlignModule {
       let count = 0;
       baseline.strokes.forEach(strokeId => {
           const stroke = this.strokes.find(s => s.id === strokeId);
-          if (stroke && stroke.points && stroke.points.length > 0) { // Check points exist
-              const yValues = stroke.points.map(p => p[1]);
-              currentBaselineY += yValues.reduce((sum, y) => sum + y, 0) / yValues.length;
+          const points = getStrokePoints(stroke);
+          if (points.length > 0) {
+              currentBaselineY += points.reduce((sum, pt) => sum + pt.y, 0) / points.length;
               count++;
           }
       });

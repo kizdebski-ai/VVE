@@ -36,55 +36,27 @@
         v-if="roomId"
         :whiteboard-ref="whiteboard?.containerRef?.value || null"
       />
-       <div v-if="activeFeature === 'gridAlign'" class="feature-panel grid-align-panel">
-         <div class="panel-header">
-           <span>Grid Align Options</span>
-           <button class="close-button" @click="toggleFeature(null)">X</button>
-         </div>
+       <GridAlignPanel
+         v-if="activeFeature === 'gridAlign'"
+         :options="gridAlignOptions"
+         @update:options="gridAlignOptions = $event"
+         @close="toggleFeature(null)"
+         @align="triggerWhiteboardAction('alignToGrid')"
+       />
 
-         <div class="panel-content">
-           <div class="slider-container">
-             <label>Snap Strength: {{ gridAlignOptions.snapStrength }}</label>
-             <input type="range" min="0" max="100" v-model.number="gridAlignOptions.snapStrength">
-           </div>
-           <div class="checkbox-container">
-             <input type="checkbox" id="show-baselines" v-model="gridAlignOptions.showBaselines">
-             <label for="show-baselines"> Show Baselines</label>
-           </div>
-           <button class="action-button" @click="triggerWhiteboardAction('alignToGrid')">Align to Grid</button>
-         </div>
-       </div>
-
-       <div v-if="activeFeature === 'styleHandwriting'" class="feature-panel handwriting-styler-panel">
-         <div class="panel-header">
-           <span>Handwriting Styler</span>
-           <button class="close-button" @click="toggleFeature(null)">X</button>
-         </div>
-         <div class="panel-content">
-           <div class="slider-container">
-             <label>Angle Norm: {{ handwritingStylerOptions.angleNormalization }}</label>
-             <input type="range" min="0" max="100" v-model.number="handwritingStylerOptions.angleNormalization">
-           </div>
-           <div class="slider-container">
-             <label>Height Norm: {{ handwritingStylerOptions.heightNormalization }}</label>
-             <input type="range" min="0" max="100" v-model.number="handwritingStylerOptions.heightNormalization">
-           </div>
-           <div class="slider-container">
-             <label>Width Norm: {{ handwritingStylerOptions.widthNormalization }}</label>
-             <input type="range" min="0" max="100" v-model.number="handwritingStylerOptions.widthNormalization">
-           </div>
-           <div class="slider-container">
-             <label>Smoothing: {{ handwritingStylerOptions.smoothingFactor }}</label>
-             <input type="range" min="0" max="100" v-model.number="handwritingStylerOptions.smoothingFactor">
-           </div>
-           <div class="button-group">
-             <button class="action-button" @click="triggerWhiteboardAction('groupStrokes')" :disabled="hasStylizedStrokes">Group Strokes</button>
-             <button class="action-button" @click="triggerWhiteboardAction('applyStyleTransformation')" :disabled="!hasCharGroups || hasStylizedStrokes">Apply Style</button>
-             <button class="action-button" @click="triggerWhiteboardAction('confirmStyleChanges')" :disabled="!hasStylizedStrokes">Confirm</button>
-             <button class="action-button" @click="triggerWhiteboardAction('cancelStyleChanges')" :disabled="!hasStylizedStrokes">Cancel</button>
-           </div>
-         </div>
-       </div>
+       <HandwritingStylerPanel
+         v-if="activeFeature === 'styleHandwriting'"
+         :options="handwritingStylerOptions"
+         :preset-cards="penPresetCards"
+         :has-char-groups="hasCharGroups"
+         :has-stylized-strokes="hasStylizedStrokes"
+         @update:options="handwritingStylerOptions = $event"
+         @close="toggleFeature(null)"
+         @select-preset="selectPenPreset"
+         @set-canvas-ref="setPresetCanvasRef"
+         @set-main-preview-ref="setMainPreviewRef"
+         @action="triggerWhiteboardAction"
+       />
 
        <div v-if="activeFeature === 'mathRecognizer'" class="feature-panel math-recognizer-panel">
          <div class="panel-header">
@@ -252,6 +224,8 @@ import PhysicsGraphPanel from './components/PhysicsGraphPanel.vue';
 import DiagramPanel from './components/DiagramPanel.vue';
 import AIChatPanel from './components/AIChatPanel.vue';
 import EncryptionStatus from './components/EncryptionStatus.vue';
+import GridAlignPanel from './components/GridAlignPanel.vue';
+import HandwritingStylerPanel from './components/HandwritingStylerPanel.vue';
 import * as Y from 'yjs';
 import { undoRedoState as globalUndoRedoState } from './utils/undoRedoState';
 
@@ -259,6 +233,7 @@ import katex from 'katex';
 import { buildRoomHash, createNewRoomUrl, parseRoomHash } from './lib/roomLink';
 import { generateEncryptionKey } from './lib/crypto';
 import 'katex/dist/katex.min.css';
+import { drawStyledPen, DEFAULT_PEN_PRESETS, makePreviewPoints } from './utils/penStyles';
 
 // Debug logger
 const appDebugLog = (msg, ...args) => {
@@ -279,7 +254,9 @@ export default {
     PhysicsGraphPanel,
     DiagramPanel,
     AIChatPanel,
-    EncryptionStatus
+    EncryptionStatus,
+    GridAlignPanel,
+    HandwritingStylerPanel
   },
   setup() {
     // --- State ---
@@ -322,10 +299,48 @@ export default {
     const activeFeature = ref(null); // 'gridAlign', 'styleHandwriting', 'mathRecognizer'
     const gridAlignOptions = ref({ snapStrength: 10, showBaselines: false });
     const handwritingStylerOptions = ref({
+      preset: 'gel',
       angleNormalization: 50,
       heightNormalization: 50,
       widthNormalization: 50,
-      smoothingFactor: 50
+      smoothingFactor: 50,
+      presets: {
+        gel: {
+          minWidth: 1.6,
+          maxWidth: 3.4,
+          velocityK: 0.045,
+          shadowAlpha: 0.16,
+          shadowOffset: 0.45,
+          shadowInflate: 0.9,
+          color: '#0057ff',
+          smoothing: 0.12
+        },
+        technical: {
+          lineWidth: 2.4,
+          shadowAlpha: 0.06,
+          shadowInflate: 0.8,
+          color: '#0f172a',
+          smoothing: 0.25
+        },
+        marker: {
+          width: 14,
+          alpha: 0.35,
+          composite: 'multiply',
+          color: '#ffeb3b',
+          shadowAlpha: 0.08,
+          shadowOffset: 0.6,
+          shadowInflate: 1.2,
+          smoothing: 0.15
+        },
+        calligraphy: {
+          minWidth: 2.2,
+          maxWidth: 5,
+          nibAngle: -0.35,
+          variation: 0.65,
+          color: '#0b1021',
+          smoothing: 0.2
+        }
+      }
     });
   const mathRecognizerOptions = ref({ ghostOpacity: 0.5, showHint: true });
   const recognitionStatus = ref('Idle');
@@ -333,6 +348,16 @@ export default {
   const solution = ref('');
   const hasCharGroups = ref(false);
   const hasStylizedStrokes = ref(false);
+  const penPreviewRef = ref(null);
+  const presetCanvasRefs = ref({});
+  const previewPoints = ref(makePreviewPoints(320, 110));
+  const penPresetCards = computed(() => ([
+    { key: 'gel', title: 'Gel Pen', pill: 'Ultra smooth', desc: 'Soft ink with micro-shadow and speed-based width.' },
+    { key: 'technical', title: 'Technical Pen', pill: 'Monoline', desc: 'Stable, crisp stroke for math and schematics.' },
+    { key: 'marker', title: 'Highlighter', pill: 'Multiply', desc: 'Wide translucent marker with gentle offset shadow.' },
+    { key: 'calligraphy', title: 'Calligraphy', pill: 'Tilted nib', desc: 'Angled tip with expressive width variation.' }
+  ]));
+  const activePresetLabel = computed(() => penPresetCards.value.find(p => p.key === handwritingStylerOptions.value.preset)?.title || 'Preset');
 
     // Yjs awareness state (count/badges)
     const awarenessStates = ref([]);
@@ -370,6 +395,76 @@ export default {
           showMathGraphPanel.value = false;
           showPhysicsGraphPanel.value = false;
         }
+    };
+
+    const resolvePresetConfig = (presetKey) => ({
+      ...(DEFAULT_PEN_PRESETS[presetKey] || {}),
+      ...(handwritingStylerOptions.value.presets?.[presetKey] || {})
+    });
+
+    let previewRaf = null;
+    const renderPresetPreview = (presetKey) => {
+      const canvas = presetCanvasRefs.value[presetKey];
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+      const cfg = resolvePresetConfig(presetKey);
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      drawStyledPen(ctx, makePreviewPoints(canvas.width, canvas.height), {
+        style: presetKey,
+        color: cfg.color || '#0f172a',
+        lineWidth: cfg.previewWidth || 2.8,
+        config: cfg,
+        globalSmoothing: (handwritingStylerOptions.value.smoothingFactor || 0) / 100
+      });
+    };
+
+    const renderMainPenPreview = () => {
+      const canvas = penPreviewRef.value;
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+      const presetKey = handwritingStylerOptions.value.preset || 'gel';
+      const cfg = resolvePresetConfig(presetKey);
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      const prefersPreset = !currentColor.value || ['#000000', '#000', 'black'].includes(String(currentColor.value).toLowerCase());
+      const strokeColor = prefersPreset ? (cfg.color || currentColor.value || '#0f172a') : currentColor.value;
+      drawStyledPen(ctx, previewPoints.value, {
+        style: presetKey,
+        color: strokeColor,
+        lineWidth: cfg.previewWidth || 3,
+        config: cfg,
+        globalSmoothing: (handwritingStylerOptions.value.smoothingFactor || 0) / 100
+      });
+    };
+
+    const renderAllPenPreviews = () => {
+      Object.keys(presetCanvasRefs.value || {}).forEach(renderPresetPreview);
+      renderMainPenPreview();
+    };
+
+    const queuePreviewRender = () => {
+      if (previewRaf) return;
+      previewRaf = requestAnimationFrame(() => {
+        previewRaf = null;
+        renderAllPenPreviews();
+      });
+    };
+
+    const setPresetCanvasRef = (key, el) => {
+      if (!el) return;
+      presetCanvasRefs.value[key] = el;
+      queuePreviewRender();
+    };
+
+    const setMainPreviewRef = (el) => {
+      penPreviewRef.value = el;
+      queuePreviewRender();
+    };
+
+    const selectPenPreset = (presetKey) => {
+      handwritingStylerOptions.value.preset = presetKey;
+      queuePreviewRender();
     };
 
     const handleAddElement = (elementData) => {
@@ -931,6 +1026,26 @@ export default {
       }
     };
 
+    watch(handwritingStylerOptions, () => {
+      if (activeFeature.value === 'styleHandwriting') {
+        queuePreviewRender();
+      }
+    }, { deep: true });
+
+    watch(currentColor, () => {
+      if (activeFeature.value === 'styleHandwriting') {
+        queuePreviewRender();
+      }
+    });
+
+    watch(activeFeature, (val) => {
+      if (val === 'styleHandwriting') {
+        nextTick(() => queuePreviewRender());
+      } else {
+        presetCanvasRefs.value = {};
+      }
+    });
+
     watch(whiteboard, (instance) => {
       if (instance) {
         syncWhiteboardState();
@@ -978,6 +1093,7 @@ export default {
       
       window.addEventListener('beforeunload', handleBeforeUnload);
       window.addEventListener('keydown', handleGlobalKeyDown); // Add global key listener
+      queuePreviewRender();
     });
 
     onBeforeUnmount(() => {
@@ -1046,6 +1162,12 @@ export default {
       activeFeature,
       gridAlignOptions,
       handwritingStylerOptions,
+      penPresetCards,
+      selectPenPreset,
+      setPresetCanvasRef,
+      setMainPreviewRef,
+      penPreviewRef,
+      activePresetLabel,
       mathRecognizerOptions,
       recognitionStatus,
       latexEquation,
@@ -1508,7 +1630,8 @@ body {
 
   transform: translateX(-50%);
 
-  width: 320px;
+  width: 420px;
+  max-width: 92vw;
 
   z-index: 1010;
 
@@ -1553,8 +1676,6 @@ body {
   max-height: 70vh;
 
 }
-
-
 
 .slider-container,
 

@@ -6,6 +6,31 @@
 const MINOR_GRID_WORLD_SIZE = 20; // Base size of a small grid cell in world units
 const MAJOR_GRID_FACTOR = 5; // Draw a major line every 5 minor lines
 
+export const computeGridSteps = (zoomLevel) => {
+  const baseWorldGridSize = MINOR_GRID_WORLD_SIZE;
+  let worldGridStep = baseWorldGridSize;
+  let screenGridSize = worldGridStep * zoomLevel;
+
+  while (screenGridSize < 10 && worldGridStep < baseWorldGridSize * 100) {
+    worldGridStep *= 2;
+    screenGridSize = worldGridStep * zoomLevel;
+  }
+  while (screenGridSize > 40 && worldGridStep > baseWorldGridSize / 4) {
+    worldGridStep /= 2;
+    screenGridSize = worldGridStep * zoomLevel;
+  }
+
+  const majorWorldGridSize = worldGridStep * MAJOR_GRID_FACTOR;
+  const majorScreenGridSize = majorWorldGridSize * zoomLevel;
+
+  return {
+    worldGridStep,
+    screenGridSize,
+    majorWorldGridSize,
+    majorScreenGridSize,
+  };
+};
+
 /**
  * Draw grid on canvas, aligned to world coordinates.
  * @param {CanvasRenderingContext2D} ctx - Canvas 2D context
@@ -25,29 +50,13 @@ export const drawGrid = (ctx, zoomLevel, panOffset, canvasWidth, canvasHeight, d
   ctx.fillRect(0, 0, canvasWidth, canvasHeight);
 
   // --- Calculate grid properties based on zoom ---
-  const baseWorldGridSize = MINOR_GRID_WORLD_SIZE;
-  let screenGridSize = baseWorldGridSize * zoomLevel;
-  let worldGridStep = baseWorldGridSize;
-
-  // Adjust grid density based on visual size on screen
-  // Aim for visible grid lines roughly between 10px and 40px apart
-  while (screenGridSize < 10 && worldGridStep < baseWorldGridSize * 100) {
-    worldGridStep *= 2; // Double the world size step
-    screenGridSize = worldGridStep * zoomLevel;
-  }
-  while (screenGridSize > 40 && worldGridStep > baseWorldGridSize / 4) {
-     worldGridStep /= 2; // Halve the world size step
-     screenGridSize = worldGridStep * zoomLevel;
-  }
+  const { worldGridStep, screenGridSize, majorWorldGridSize, majorScreenGridSize } = computeGridSteps(zoomLevel);
 
   // Don't draw if lines are too dense or too sparse
   if (screenGridSize < 5 || screenGridSize > canvasWidth * 2) {
      ctx.restore();
      return;
   }
-
-  const majorWorldGridSize = worldGridStep * MAJOR_GRID_FACTOR;
-  const majorScreenGridSize = majorWorldGridSize * zoomLevel;
 
   // --- Calculate visible world bounds ---
   const worldXMin = -panOffset.x / zoomLevel;

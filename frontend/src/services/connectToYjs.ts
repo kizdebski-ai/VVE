@@ -13,15 +13,37 @@ export interface YjsConnection {
   disconnect: () => void;
 }
 
+const buildWebSocketUrl = (roomId: string) => {
+  const envBackendUrl = (import.meta?.env?.VITE_BACKEND_URL as string | undefined)?.trim();
+  if (envBackendUrl) {
+    try {
+      const backendUrl = new URL(envBackendUrl, window.location.origin);
+      backendUrl.pathname = backendUrl.pathname.replace(/\/+$/, '') + `/ws/whiteboard/${roomId}`;
+      backendUrl.protocol =
+        backendUrl.protocol === 'https:' ? 'wss:' : backendUrl.protocol === 'http:' ? 'ws:' : backendUrl.protocol;
+      backendUrl.search = '';
+      backendUrl.hash = '';
+      return backendUrl.toString();
+    } catch (error) {
+      console.warn('[connectToYjs] Invalid VITE_BACKEND_URL, falling back to window location', {
+        envBackendUrl,
+        error,
+      });
+    }
+  }
+
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const host = window.location.host;
+  return `${protocol}//${host}/ws/whiteboard/${roomId}`;
+};
+
 export function connectToYjs(roomId: string): YjsConnection {
   const ydoc = new Y.Doc();
   const awareness = new Awareness(ydoc);
   const yDrawings: Y.Array<any> = ydoc.getArray('drawings');
 
   // Determine WebSocket URL
-  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const host = window.location.host;
-  const wsUrl = `${protocol}//${host}/ws/whiteboard/${roomId}`;
+  const wsUrl = buildWebSocketUrl(roomId);
 
   let socket: WebSocket | null = null;
   let reconnectTimeout = 1000;

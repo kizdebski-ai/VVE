@@ -18,20 +18,25 @@ export const createNewElement = (tool, coords, color, lineWidth, extraData = {})
   const elementId = uuidv4();
 
   switch (tool) {
-    case 'pen':
+    case 'pen': {
       // Pen doesn't use start/end or lineStyle
+      const initialPoint = coords?.t ? coords : { ...coords, t: (typeof performance !== 'undefined' ? performance.now() : Date.now()) };
       const penElement = {
         id: elementId, // Keep ID for preview consistency if needed
         type: tool,
-        points: [coords],
+        points: [initialPoint],
+        rawPoints: [initialPoint],
+        snappedPoints: [initialPoint],
         smoothedPoints: [],
         color: color,
         lineWidth: lineWidth,
-        timestamp: Date.now()
+        timestamp: Date.now(),
+        ...extraData
       };
       // Remove potential lineStyle from extraData if passed incorrectly
       delete penElement.lineStyle;
       return penElement;
+    }
 
     case 'eraser':
       // Eraser preview might still be needed, but it won't be added to Yjs

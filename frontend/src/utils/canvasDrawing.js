@@ -6,6 +6,7 @@
 
 import rough from 'roughjs';
 import * as math from 'mathjs';
+import { drawStyledPen } from './penStyles';
 
 // Throttle function to limit the rate of function calls
 export const throttle = (fn, delay) => {
@@ -36,7 +37,8 @@ export const drawElement = (
   isHighlighted = false,
   smoothingFactor = 0.65,
   imageCache,
-  requestRedraw
+  requestRedraw,
+  penStyleOptions = {}
 ) => {
   if (!context || !element || !element.type) return;
 
@@ -88,38 +90,35 @@ export const drawElement = (
   const isClean = roughness === 0;
 
   switch (type) {
-    case 'pen':
+    case 'pen': {
+      const points = element.points || [];
+      if (points.length < 2) break;
+      const penStyle = element.penStyle || 'technical';
+      const presetConfig = element.penConfig || (penStyleOptions.presets ? penStyleOptions.presets[penStyle] : {}) || {};
+      const globalSmoothing = typeof penStyleOptions.smoothingFactor === 'number'
+        ? Math.min(Math.max(penStyleOptions.smoothingFactor / 100, 0), 1)
+        : 0.25;
+      const strokeColor = element.strokeColor || element.color || color;
+
+      drawStyledPen(context, points, {
+        style: penStyle,
+        color: strokeColor,
+        lineWidth: lw,
+        config: presetConfig,
+        globalSmoothing
+      });
+      break;
+    }
     case 'eraser': {
       const points = element.points || [];
       if (points.length < 2) break;
-
+      const normalize = (pt) => (Array.isArray(pt) ? { x: pt[0], y: pt[1] } : pt);
+      const first = normalize(points[0]);
       context.beginPath();
-      // Always use native path for pen for performance and smoothness, 
-      // but we could apply roughjs if we wanted "sketchy" pen. 
-      // For now, sticking to native for pen to ensure responsiveness.
-
-      if (points.length < 3 || type === 'eraser') {
-        context.moveTo(points[0].x, points[0].y);
-        for (let i = 1; i < points.length; i++) {
-          context.lineTo(points[i].x, points[i].y);
-        }
-      } else {
-        // Catmull-Rom spline for smooth pen strokes
-        context.moveTo(points[0].x, points[0].y);
-        for (let i = 0; i < points.length - 1; i++) {
-          const p0 = points[Math.max(0, i - 1)];
-          const p1 = points[i];
-          const p2 = points[i + 1];
-          const p3 = points[Math.min(points.length - 1, i + 2)];
-
-          const tension = 1;
-          const cp1x = p1.x + (p2.x - p0.x) / 6 * tension;
-          const cp1y = p1.y + (p2.y - p0.y) / 6 * tension;
-          const cp2x = p2.x - (p3.x - p1.x) / 6 * tension;
-          const cp2y = p2.y - (p3.y - p1.y) / 6 * tension;
-
-          context.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, p2.x, p2.y);
-        }
+      context.moveTo(first.x, first.y);
+      for (let i = 1; i < points.length; i++) {
+        const pt = normalize(points[i]);
+        context.lineTo(pt.x, pt.y);
       }
       context.stroke();
       break;

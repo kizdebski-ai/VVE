@@ -220,7 +220,7 @@
     <!-- Properties Bar (Contextual) -->
     <div
       class="properties-bar glass-panel"
-      v-if="showProperties && isToolbarHovered"
+      v-if="shouldShowProperties"
       :class="orientation"
       @pointerenter="handleHoverEnter"
       @pointerleave="handleHoverLeave"
@@ -424,6 +424,11 @@ watch(() => props.roughness, (val) => { currentRoughness.value = val; });
 
 const showProperties = computed(() =>
   ['pen', 'text', 'eraser', 'shapes', 'lines'].includes(currentTool.value)
+);
+
+// Keep the properties bar visible for pen to allow changing width without hover
+const shouldShowProperties = computed(() =>
+  showProperties.value && (currentTool.value === 'pen' || isToolbarHovered.value)
 );
 
 const currentShapeIcon = computed(() => {
@@ -850,6 +855,7 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 16px;
   padding: 8px 16px;
+  pointer-events: auto; /* allow interaction inside while container is non-interactive */
 }
 
 .property-group {

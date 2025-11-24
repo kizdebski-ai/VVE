@@ -133,44 +133,46 @@
       </div>
 
       <!-- User info in top-right corner -->
-      <button
-        class="user-info-toggle glass-panel"
-        :class="{ collapsed: userInfoCollapsed }"
-        @click="toggleUserInfoPanel"
-        :aria-expanded="!userInfoCollapsed"
-        :title="userInfoCollapsed ? 'Show user panel' : 'Hide user panel'"
-      >
-        {{ userInfoCollapsed ? 'Show' : 'Hide' }}
-      </button>
-      <div class="floating-user-info" :class="{ collapsed: userInfoCollapsed }">
+      <transition name="fade">
+        <button
+          v-if="userInfoCollapsed"
+          class="user-info-toggle-btn glass-panel"
+          @click="toggleUserInfoPanel"
+          title="Show user panel"
+        >
+          <component :is="UsersIcon" :size="20" />
+        </button>
+      </transition>
+
+      <div class="floating-user-info glass-panel" :class="{ collapsed: userInfoCollapsed }">
         <div class="username-container">
           <input 
             type="text" 
             v-model="username" 
-            placeholder="Your Name"
+            placeholder="Guest"
             class="username-input"
             @blur="updateUsername"
           />
         </div>
         
-        <div class="user-count">
-          <!-- Display count from Yjs awareness -->
-          <span class="user-count-badge">{{ activeUsersCount }}</span>
-          <span class="user-count-label">Online</span>
+        <div class="divider-vertical"></div>
+
+        <div class="user-count" title="Online users">
+          <div class="status-dot"></div>
+          <span>{{ activeUsersCount }} Online</span>
         </div>
         
         <button class="share-btn" @click="shareRoom">
-          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"></path>
-            <polyline points="16 6 12 2 8 6"></polyline>
-            <line x1="12" y1="2" x2="12" y2="15"></line>
-          </svg>
-          Share Room
+          <component :is="ShareIcon" :size="16" />
+          <span>Share</span>
         </button>
 
-        <!-- Debug button -->
-        <button class="debug-btn" @click="toggleDebugMode">
-          Debug {{ debugMode ? 'ON' : 'OFF' }}
+        <button class="debug-btn" @click="toggleDebugMode" :class="{ active: debugMode }" title="Toggle Debug">
+          D
+        </button>
+
+        <button class="minimize-btn" @click="toggleUserInfoPanel" title="Hide">
+           <component :is="ChevronRightIcon" :size="18" />
         </button>
       </div>
     </div>
@@ -234,6 +236,7 @@ import { buildRoomHash, createNewRoomUrl, parseRoomHash } from './lib/roomLink';
 import { generateEncryptionKey } from './lib/crypto';
 import 'katex/dist/katex.min.css';
 import { drawStyledPen, DEFAULT_PEN_PRESETS, makePreviewPoints } from './utils/penStyles';
+import { Users, Share2, ChevronRight, ChevronLeft } from 'lucide-vue-next';
 
 // Debug logger
 const appDebugLog = (msg, ...args) => {
@@ -1103,6 +1106,10 @@ export default {
 
     // --- Return values accessible to the template ---
     return {
+      UsersIcon: Users,
+      ShareIcon: Share2,
+      ChevronRightIcon: ChevronRight,
+      ChevronLeftIcon: ChevronLeft,
       whiteboard,
       toolbar,
       lastSaved,
@@ -1445,164 +1452,189 @@ body {
 
 
 /* Floating User Info */
-
 .floating-user-info {
-
   position: fixed;
-
-  top: 64px;
-
+  top: 20px;
   right: 20px;
-
   display: flex;
-
   align-items: center;
-
-  gap: 10px;
-
+  gap: 16px; /* Increased from 12px to prevent overlap */
   z-index: 3000;
-
   pointer-events: auto;
-
-  transition: transform 0.25s ease, opacity 0.2s ease;
-
+  transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
   
-
-  /* Use Glass Style */
-
-  background: var(--glass-surface);
-
-  backdrop-filter: blur(16px);
-
-  -webkit-backdrop-filter: blur(16px);
-
-  border: 1px solid var(--glass-border);
-
-  padding: 8px 16px;
-
-  border-radius: var(--radius-md);
-
-  box-shadow: var(--glass-shadow);
-
+  /* Glass Style */
+  background: rgba(255, 255, 255, 0.8);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  padding: 8px 12px 8px 18px; /* Increased padding for better spacing */
+  border-radius: 30px;
+  box-shadow: 
+    0 4px 20px -5px rgba(0, 0, 0, 0.1),
+    0 0 0 1px rgba(255, 255, 255, 0.1);
   color: var(--text-primary);
+}
 
+.dark-mode .floating-user-info {
+  background: rgba(30, 41, 59, 0.8);
+  border-color: rgba(255, 255, 255, 0.1);
+  box-shadow: 
+    0 4px 20px -5px rgba(0, 0, 0, 0.3),
+    0 0 0 1px rgba(255, 255, 255, 0.05);
 }
 
 .floating-user-info.collapsed {
-
-  transform: translateX(calc(100% + 20px));
-
+  transform: translateX(calc(100% + 40px));
   opacity: 0;
-
   pointer-events: none;
-
 }
 
-.user-info-toggle {
-
+.user-info-toggle-btn {
   position: fixed;
-
-  top: 64px;
-
-  right: 16px;
-
+  top: 20px;
+  right: 20px;
   z-index: 3001;
-
-  height: 36px;
-
-  min-width: 56px;
-
-  padding: 0 12px;
-
+  width: 40px;
+  height: 40px;
   display: flex;
-
   align-items: center;
-
   justify-content: center;
-
-  border-radius: var(--radius-sm);
-
-  border: 1px solid var(--glass-border);
-
-  background: var(--glass-surface);
-
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  background: rgba(255, 255, 255, 0.8);
+  backdrop-filter: blur(12px);
   color: var(--text-primary);
-
   cursor: pointer;
-
   transition: all 0.2s ease;
-
-  box-shadow: var(--glass-shadow);
-
-  pointer-events: auto;
-
+  box-shadow: 0 4px 12px rgba(0,0,0,0.1);
 }
 
-.user-info-toggle:hover {
-
-  background: var(--glass-highlight);
-
+.dark-mode .user-info-toggle-btn {
+  background: rgba(30, 41, 59, 0.8);
+  border-color: rgba(255, 255, 255, 0.1);
 }
 
-.user-info-toggle.collapsed {
-
-  opacity: 0.9;
-
+.user-info-toggle-btn:hover {
+  transform: scale(1.05);
+  background: white;
 }
 
+.dark-mode .user-info-toggle-btn:hover {
+  background: #334155;
+}
 
+.username-input {
+  background: transparent;
+  border: none;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-primary);
+  width: 100px;
+  outline: none;
+  padding: 4px 0;
+}
+
+.username-input:focus {
+  border-bottom: 1px solid var(--accent-primary);
+}
+
+.divider-vertical {
+  width: 1px;
+  height: 20px;
+  background: rgba(0, 0, 0, 0.1);
+}
+
+.dark-mode .divider-vertical {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.user-count {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  background: #22c55e;
+  border-radius: 50%;
+  box-shadow: 0 0 8px rgba(34, 197, 94, 0.4);
+}
 
 .share-btn {
-
-  transition: all 0.3s ease;
-
-  /* Button styles handled by class if added, or default */
-
-  background: rgba(255,255,255,0.1);
-
-  border: none;
-
-  color: var(--text-primary);
-
-  padding: 6px 12px;
-
-  border-radius: 6px;
-
-  cursor: pointer;
-
   display: flex;
-
   align-items: center;
-
   gap: 6px;
-
+  background: var(--accent-primary);
+  color: white;
+  border: none;
+  padding: 6px 12px;
+  border-radius: 20px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+  margin-left: 4px;
 }
 
 .share-btn:hover {
-
-  background: rgba(255,255,255,0.2);
-
+  background: var(--accent-hover);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
 }
-
-
 
 .debug-btn {
-
-    background: transparent;
-
-    border: 1px solid var(--glass-border);
-
-    color: var(--text-secondary);
-
-    padding: 4px 8px;
-
-    border-radius: 4px;
-
-    cursor: pointer;
-
-    font-size: 12px;
-
+  background: transparent;
+  border: 1px solid rgba(0,0,0,0.1);
+  color: var(--text-tertiary);
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  font-size: 10px;
+  font-weight: bold;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 4px;
 }
+
+.debug-btn.active {
+  background: rgba(239, 68, 68, 0.1);
+  color: #ef4444;
+  border-color: rgba(239, 68, 68, 0.2);
+}
+
+.minimize-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 6px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+  margin-left: 4px;
+}
+
+.minimize-btn:hover {
+  background: rgba(0, 0, 0, 0.05);
+  color: var(--text-primary);
+}
+
+.dark-mode .minimize-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+
 
 
 

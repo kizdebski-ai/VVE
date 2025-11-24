@@ -5,6 +5,7 @@
     :class="{ 'is-selected': isSelected }"
     :style="objectStyle"
     @mousedown.stop="handleLeftClickOnObject" 
+    @dblclick.stop="handleDoubleClick"
   >
     <!-- Rotation Handle -->
     <div
@@ -65,6 +66,18 @@
           Unknown Type: {{ objectData.type }}
         </div>
       </template>
+
+      <!-- Text Overlay for Shapes -->
+      <div v-if="objectData.text && objectData.type !== 'text'"
+           class="text-overlay"
+           :style="{
+             fontSize: `${(objectData.fontSize || 24) * props.zoomLevel}px`,
+             fontFamily: '\'Kalam\', cursive',
+             color: objectData.color || '#000000',
+           }"
+      >
+        {{ objectData.text }}
+      </div>
     </div>
   </div>
 </template>
@@ -115,6 +128,7 @@ const emit = defineEmits<{
   (e: 'update:object', object: Y.Map<any>): void;
   (e: 'clone-object', data: any): void;
   (e: 'update:snap-guides', guides: any[]): void;
+  (e: 'double-click', id: string | number): void;
 }>();
 
 const CONTENT_RENDER_TYPES = new Set([
@@ -389,6 +403,10 @@ const handleLeftClickOnObject = (event: MouseEvent) => {
   if (event.button === 0) { 
     emit('request-select', objectData.id);
   }
+};
+
+const handleDoubleClick = (event: MouseEvent) => {
+  emit('double-click', objectData.id);
 };
 
 const startDragIfSelectedOrRequestSelect = (event: MouseEvent) => {
@@ -802,6 +820,23 @@ onUnmounted(() => {
   pointer-events: all; 
   box-shadow: 0 1px 3px rgba(0,0,0,0.1);
   transition: transform 0.1s;
+}
+
+.text-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  pointer-events: none; /* Let clicks pass through to object */
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  line-height: 1.2;
+  user-select: none;
 }
 
 .resize-handle:hover {

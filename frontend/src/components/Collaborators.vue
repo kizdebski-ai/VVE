@@ -246,25 +246,25 @@ export default {
 /* Active Users Avatars */
 .active-users {
   position: absolute;
-  top: 10px; /* Adjusted position */
-  right: 10px;
+  top: 10px; /* Above toolbar */
+  left: 80px; /* To the right of toolbar */
   display: flex;
-  flex-direction: row-reverse; /* Avatars stack leftwards */
-  gap: -8px; /* Overlap avatars slightly */
+  flex-direction: row; /* Stack rightwards */
+  gap: 6px; /* Small gap between avatars */
   pointer-events: auto; /* Allow interaction like tooltips */
   z-index: 1010; /* Above canvas, below toolbar/modals */
 }
 
 .user-avatar {
-  width: 30px; /* Slightly smaller avatars */
-  height: 30px;
+  width: 24px; /* Reduced from 30px */
+  height: 24px; /* Reduced from 30px */
   border-radius: 50%;
   background-color: grey; /* Default color */
   color: white;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 12px;
+  font-size: 10px; /* Reduced from 12px */
   font-weight: bold;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
   border: 1.5px solid white; /* White border */

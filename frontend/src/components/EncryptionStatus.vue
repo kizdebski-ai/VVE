@@ -1,24 +1,15 @@
 <template>
-  <div class="encryption-status" :class="{ error: state.error }">
+  <div class="encryption-status glass-panel" :class="{ error: state.error, active: state.active }">
     <div class="indicator" :class="{ error: state.error, active: state.active }"></div>
-    <div class="text">
-      <div class="label">E2E Encryption</div>
-      <div class="value">
-        <span v-if="state.error">Issue detected</span>
-        <span v-else-if="state.active">Active</span>
-        <span v-else-if="state.mode">{{ state.mode }}</span>
-        <span v-else>Idle</span>
-      </div>
-      <div class="meta">
-        <template v-if="state.lastOperation">
-          Last {{ state.lastOperation }} - {{ state.lastDuration.toFixed(1) }}ms - IV {{ state.ivPreview }}
-        </template>
-        <template v-else>
-          Waiting for secure traffic...
-        </template>
-      </div>
-      <div v-if="state.lastUpdated" class="meta">Updated at {{ state.lastUpdated }}</div>
-      <div v-if="state.error" class="meta error-text">{{ state.error }}</div>
+    <div class="content">
+      <span class="status-text">
+        <template v-if="state.error">E2E Error</template>
+        <template v-else-if="state.active">E2E Encrypted</template>
+        <template v-else>E2E Idle</template>
+      </span>
+      <span v-if="state.active && state.lastOperation" class="details">
+        {{ state.lastDuration.toFixed(0) }}ms
+      </span>
     </div>
   </div>
 </template>
@@ -78,67 +69,74 @@ onBeforeUnmount(() => {
 <style scoped>
 .encryption-status {
   position: fixed;
-  bottom: 16px;
-  left: 16px;
+  bottom: 20px;
+  left: 210px; /* Moved right to avoid overlap with zoom controls */
+  height: 40px; /* Match zoom controls height */
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 10px 12px;
-  border-radius: 12px;
-  background: rgba(0, 0, 0, 0.75);
-  color: #f5f5f5;
-  font-size: 12px;
+  gap: 8px;
+  padding: 0 16px; /* Horizontal padding */
+  border-radius: 20px; /* Match zoom controls */
   z-index: 850;
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
+  transition: all 0.3s ease;
+  /* Glass panel styles are inherited but we override some */
+  background: rgba(255, 255, 255, 0.9); /* Slightly more opaque to match zoom */
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  backdrop-filter: blur(8px);
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2); /* Match zoom controls shadow */
+  box-sizing: border-box;
+}
+
+.dark-mode .encryption-status {
+  background: rgba(30, 41, 59, 0.6);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+.encryption-status.active {
+  border-color: rgba(46, 204, 113, 0.3);
+  background: rgba(46, 204, 113, 0.1);
+}
+
+.encryption-status.error {
+  border-color: rgba(231, 76, 60, 0.3);
+  background: rgba(231, 76, 60, 0.1);
 }
 
 .indicator {
-  width: 10px;
-  height: 10px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
-  background: #9e9e9e;
-  box-shadow: 0 0 8px rgba(0, 0, 0, 0.2);
+  background: #cbd5e1;
+  transition: all 0.3s ease;
 }
 
 .indicator.active {
   background: #2ecc71;
-  box-shadow: 0 0 10px rgba(46, 204, 113, 0.8);
+  box-shadow: 0 0 8px rgba(46, 204, 113, 0.6);
 }
 
 .indicator.error {
   background: #e74c3c;
-  box-shadow: 0 0 10px rgba(231, 76, 60, 0.8);
+  box-shadow: 0 0 8px rgba(231, 76, 60, 0.6);
 }
 
-.text {
+.content {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
 }
 
-.label {
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
+.status-text {
   font-weight: 600;
-  font-size: 11px;
-  color: #cfd8dc;
+  color: var(--text-primary);
 }
 
-.value {
-  font-weight: 700;
-  font-size: 13px;
-}
-
-.meta {
-  color: #b0bec5;
-  font-size: 11px;
-}
-
-.error-text {
-  color: #ffb4a9;
-}
-
-.encryption-status.error {
-  background: rgba(55, 2, 2, 0.9);
+.details {
+  font-size: 10px;
+  opacity: 0.7;
+  font-family: monospace;
 }
 </style>

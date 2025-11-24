@@ -541,6 +541,63 @@ const handleRotate = (event: MouseEvent) => {
     let angleDiffDegrees = angleDiff * (180 / Math.PI);
     let newRotation = initialObjectState.rotation + angleDiffDegrees;
 
+    // Lines: bake rotation into start/end coordinates so the stroke visually rotates
+    if (objectData.type === 'line') {
+      const center = {
+        x: objectData.x + objectData.width / 2,
+        y: objectData.y + objectData.height / 2,
+      };
+      const rotatePoint = (pt: { x: number; y: number }) => {
+        const rad = angleDiff;
+        const cos = Math.cos(rad);
+        const sin = Math.sin(rad);
+        const dx = pt.x - center.x;
+        const dy = pt.y - center.y;
+        return {
+          x: center.x + dx * cos - dy * sin,
+          y: center.y + dx * sin + dy * cos,
+        };
+      };
+
+      const startPt = {
+        x: Number.isFinite(objectData.startX) ? objectData.startX! : objectData.x,
+        y: Number.isFinite(objectData.startY) ? objectData.startY! : objectData.y,
+      };
+      const endPt = {
+        x: Number.isFinite(objectData.endX) ? objectData.endX! : objectData.x + objectData.width,
+        y: Number.isFinite(objectData.endY) ? objectData.endY! : objectData.y + objectData.height,
+      };
+
+      const rotatedStart = rotatePoint(startPt);
+      const rotatedEnd = rotatePoint(endPt);
+
+      const minX = Math.min(rotatedStart.x, rotatedEnd.x);
+      const minY = Math.min(rotatedStart.y, rotatedEnd.y);
+      const width = Math.max(1, Math.abs(rotatedEnd.x - rotatedStart.x));
+      const height = Math.max(1, Math.abs(rotatedEnd.y - rotatedStart.y));
+
+      props.object.doc?.transact(() => {
+        updateStartEndMaps(rotatedStart.x, rotatedStart.y, rotatedEnd.x, rotatedEnd.y);
+        props.object.set('x', minX);
+        props.object.set('y', minY);
+        props.object.set('width', width);
+        props.object.set('height', height);
+        props.object.set('rotation', 0); // rotation baked into coordinates
+      }, 'local-movable-rotate');
+
+      objectData.x = minX;
+      objectData.y = minY;
+      objectData.width = width;
+      objectData.height = height;
+      objectData.startX = rotatedStart.x;
+      objectData.startY = rotatedStart.y;
+      objectData.endX = rotatedEnd.x;
+      objectData.endY = rotatedEnd.y;
+      objectData.rotation = 0;
+      emit('update:object', props.object);
+      return;
+    }
+
     props.object.doc?.transact(() => {
       props.object.set('rotation', newRotation);
     }, 'local-movable-rotate');

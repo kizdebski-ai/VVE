@@ -2114,6 +2114,11 @@ export default {
                   y: preview.start.y + size * Math.sign(snappedCoords.y - preview.start.y)
               };
           }
+
+          // Live binding snap for lines to mimic Excalidraw connectors
+          if (preview.type === 'line') {
+              attachBindingsToLineDraft(preview);
+          }
       }
       // Redraw after updating preview element
       scheduleRedraw();
@@ -2734,43 +2739,47 @@ export default {
     };
 
     // --- Public methods exposed via ref ---
-    const clearCanvas = () => {
-        if (ydoc.value && yDrawings.value) {
-            if (confirm('Are you sure you want to clear the canvas?')) {
-                // debugLog('[clearCanvas] Clearing all elements'); // Commented out
+    const clearCanvas = (options = {}) => {
+        const skipConfirm = options?.skipConfirm === true;
+        if (!ydoc.value || !yDrawings.value) {
+            showToast("Canvas is not ready to clear yet.", "warning");
+            return;
+        }
+        if (!skipConfirm && !confirm('Are you sure you want to clear the canvas?')) {
+            return;
+        }
+        // debugLog('[clearCanvas] Clearing all elements'); // Commented out
 
-                try {
-                    ydoc.value.transact(() => {
-                      // Store current length for better performance
-                      const length = yDrawings.value.length;
-                      if (length > 0) {
-                        yDrawings.value.delete(0, length);
-                      }
-                    }, 'local-clear'); // Add origin
-                    refreshMovableElements();
+        try {
+            ydoc.value.transact(() => {
+              // Store current length for better performance
+              const length = yDrawings.value.length;
+              if (length > 0) {
+                yDrawings.value.delete(0, length);
+              }
+            }, 'local-clear'); // Add origin
+            refreshMovableElements();
 
-                    showStatus('Canvas cleared');
+            showStatus('Canvas cleared');
 
-                    // Po każdej transakcji dodaj (inside try block):
-                    nextTick(() => {
-                       if (undoManager.value) {
-                          updateGlobalState(); // Use the shared function
-                       }
-                       // Reset helper module states as well
-                       gridAlignModule.value?.clear();
-                       handwritingStylerModule.value?.clear();
-                       mathRecognizerModule.value?.clear();
-                       emit('update:has-char-groups', false);
-                       emit('update:has-stylized-strokes', false);
-                       emit('update:recognition-status', '');
-                       emit('update:latex-equation', '');
-                       emit('update:solution', '');
-                    });
-                } catch (error) {
-                    // console.error('[clearCanvas] Error clearing canvas:', error); // Commented out
-                    showToast("Error clearing canvas.", "error");
-                }
-            }
+            // After each transaction make sure global state and helpers are reset
+            nextTick(() => {
+               if (undoManager.value) {
+                  updateGlobalState(); // Use the shared function
+               }
+               // Reset helper module states as well
+               gridAlignModule.value?.clear();
+               handwritingStylerModule.value?.clear();
+               mathRecognizerModule.value?.clear();
+               emit('update:has-char-groups', false);
+               emit('update:has-stylized-strokes', false);
+               emit('update:recognition-status', '');
+               emit('update:latex-equation', '');
+               emit('update:solution', '');
+            });
+        } catch (error) {
+            // console.error('[clearCanvas] Error clearing canvas:', error); // Commented out
+            showToast("Error clearing canvas.", "error");
         }
     };
 

@@ -661,7 +661,7 @@ export default {
 
     const handleClearCanvas = () => {
       if (confirm('Are you sure you want to clear the canvas? This cannot be undone.')) {
-        whiteboard.value?.clearCanvas?.();
+        whiteboard.value?.clearCanvas?.({ skipConfirm: true });
       }
     };
 

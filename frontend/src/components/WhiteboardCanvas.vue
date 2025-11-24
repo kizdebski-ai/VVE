@@ -373,6 +373,7 @@ export default {
     const hoveredElementIndex = ref(-1);
     const selectedObjectId = ref(null); // Added for selection state
     const spacePanActive = ref(false);
+    const connectorsVisible = computed(() => currentTool.value === 'lines' || (isDrawing.value && currentElementPreview.value?.type === 'line'));
     const panStartedWithSpace = ref(false);
     const pinchGesture = ref(null);
     let resizeObserver = null;
@@ -388,6 +389,7 @@ export default {
     const canUndo = ref(false);
     const canRedo = ref(false);
     
+            
     const BINDABLE_ELEMENT_TYPES = new Set([
       'rectangle',
       'circle',
@@ -410,23 +412,55 @@ export default {
       'mathFunctionPlot',
       'physicsDataPlot'
     ]);
-    const BINDING_PADDING = 16;
-    const BINDING_DISTANCE_THRESHOLD = 28;
-    const BINDING_GAP_DEFAULT = 8;
+    const BINDING_PADDING = 8;
+    const BINDING_DISTANCE_THRESHOLD = 18;
+    const BINDING_GAP_DEFAULT = 4;
 
+    const getConnectorAnchors = (rect) => {
+      if (!rect) return [];
+      const rot = (rect.rotation || 0) * Math.PI / 180;
+      const cosR = Math.cos(rot);
+      const sinR = Math.sin(rot);
+      const cx = rect.x + rect.width / 2;
+      const cy = rect.y + rect.height / 2;
+      const anchorsLocal = [
+        { x: -rect.width / 2, y: 0, normalLocal: { x: -1, y: 0 } }, // left
+        { x: rect.width / 2, y: 0, normalLocal: { x: 1, y: 0 } }, // right
+        { x: 0, y: -rect.height / 2, normalLocal: { x: 0, y: -1 } }, // top
+        { x: 0, y: rect.height / 2, normalLocal: { x: 0, y: 1 } }, // bottom
+        { x: 0, y: 0, normalLocal: null }, // center
+      ];
+      return anchorsLocal.map(({ x, y, normalLocal }) => {
+        const anchorWorld = {
+          x: cx + x * cosR - y * sinR,
+          y: cy + x * sinR + y * cosR,
+        };
+        const ratioX = rect.width ? (x + rect.width / 2) / rect.width : 0.5;
+        const ratioY = rect.height ? (y + rect.height / 2) / rect.height : 0.5;
+        return {
+          anchorLocal: { x, y },
+          anchorWorld,
+          ratioX,
+          ratioY,
+          normalLocal,
+        };
+      });
+    };
+    
     const findElementMapById = (id) => {
       if (!id || !yDrawings.value) return null;
       return yDrawings.value.toArray().find((el) => el.get('id') === id) || null;
     };
-
+    
     const getRectFromElementMap = (map) => {
       if (!map) return null;
       const x = Number(map.get('x'));
       const y = Number(map.get('y'));
       const width = Math.abs(Number(map.get('width'))) || 0;
       const height = Math.abs(Number(map.get('height'))) || 0;
+      const rotation = Number(map.get('rotation')) || 0;
       if ([x, y, width, height].every((v) => Number.isFinite(v))) {
-        return { x, y, width, height };
+        return { x, y, width, height, rotation };
       }
       const start = map.get('start');
       const end = map.get('end');
@@ -435,11 +469,17 @@ export default {
       const ex = end?.get?.('x');
       const ey = end?.get?.('y');
       if ([sx, sy, ex, ey].every((v) => Number.isFinite(v))) {
-        return { x: Math.min(sx, ex), y: Math.min(sy, ey), width: Math.abs(ex - sx), height: Math.abs(ey - sy) };
+        return {
+          x: Math.min(sx, ex),
+          y: Math.min(sy, ey),
+          width: Math.abs(ex - sx),
+          height: Math.abs(ey - sy),
+          rotation,
+        };
       }
       return null;
     };
-
+    
     const distanceToRect = (point, rect, padding = BINDING_PADDING) => {
       const padded = {
         x: rect.x - padding,
@@ -454,60 +494,135 @@ export default {
       const dy = Math.max(padded.y - point.y, 0, point.y - (padded.y + padded.height));
       return Math.hypot(dx, dy);
     };
-
-    const clampVectorToRect = (rect, reference) => {
+    
+    const clampVectorToRotatedRect = (rect, reference) => {
+      const rot = (rect.rotation || 0) * Math.PI / 180;
+      const cosR = Math.cos(-rot);
+      const sinR = Math.sin(-rot);
       const cx = rect.x + rect.width / 2;
       const cy = rect.y + rect.height / 2;
-      const dx = reference.x - cx;
-      const dy = reference.y - cy;
-      if (dx === 0 && dy === 0) return { x: cx, y: cy };
-      const absDx = Math.abs(dx);
-      const absDy = Math.abs(dy);
+      const toLocal = (pt) => {
+        const dx = pt.x - cx;
+        const dy = pt.y - cy;
+        return { x: dx * cosR - dy * sinR, y: dx * sinR + dy * cosR };
+      };
+      const toWorld = (pt) => {
+        const cosF = Math.cos(rot);
+        const sinF = Math.sin(rot);
+        return {
+          x: cx + pt.x * cosF - pt.y * sinF,
+          y: cy + pt.x * sinF + pt.y * cosF,
+        };
+      };
+    
+      const refLocal = toLocal(reference);
       const halfW = rect.width / 2;
       const halfH = rect.height / 2;
+      let dx = refLocal.x;
+      let dy = refLocal.y;
+      if (dx === 0 && dy === 0) dx = halfW;
+      const absDx = Math.abs(dx);
+      const absDy = Math.abs(dy);
+      let anchorLocal;
       if (absDx * halfH > absDy * halfW) {
-        const scale = halfW / absDx;
-        return { x: cx + Math.sign(dx) * halfW, y: cy + dy * scale };
+        const scale = absDx === 0 ? 1 : halfW / absDx;
+        anchorLocal = { x: Math.sign(dx) * halfW, y: dy * scale };
+      } else {
+        const scale = absDy === 0 ? 1 : halfH / absDy;
+        anchorLocal = { x: dx * scale, y: Math.sign(dy) * halfH };
       }
-      const scale = halfH / absDy;
-      return { x: cx + dx * scale, y: cy + Math.sign(dy) * halfH };
+      const anchorWorld = toWorld(anchorLocal);
+      return { anchorLocal, anchorWorld, toWorld };
     };
-
-    const makeBindingPayload = (targetMap, rect, referencePoint, fallbackPoint, lineWidth = 2) => {
+    
+    const makeBindingPayload = (targetMap, rect, referencePoint, fallbackPoint, lineWidth = 2, anchorOverride = null) => {
       if (!targetMap || !rect) return { binding: null, point: null };
+      const rot = (rect.rotation || 0) * Math.PI / 180;
+      const cosR = Math.cos(rot);
+      const sinR = Math.sin(rot);
+      const cosInv = Math.cos(-rot);
+      const sinInv = Math.sin(-rot);
+      const cx = rect.x + rect.width / 2;
+      const cy = rect.y + rect.height / 2;
       const ref = referencePoint || fallbackPoint || { x: rect.x + rect.width, y: rect.y + rect.height / 2 };
-      const anchor = clampVectorToRect(rect, ref);
-      const normal = { x: ref.x - anchor.x, y: ref.y - anchor.y };
-      const len = Math.hypot(normal.x, normal.y) || 1;
-      const nx = normal.x / len;
-      const ny = normal.y / len;
-      const ratioX = rect.width ? (anchor.x - rect.x) / rect.width : 0.5;
-      const ratioY = rect.height ? (anchor.y - rect.y) / rect.height : 0.5;
+
+      const anchorLocal = anchorOverride?.anchorLocal
+        ? { ...anchorOverride.anchorLocal }
+        : clampVectorToRotatedRect(rect, ref).anchorLocal;
+      const ratioX = anchorOverride?.ratioX ?? (rect.width ? (anchorLocal.x + rect.width / 2) / rect.width : 0.5);
+      const ratioY = anchorOverride?.ratioY ?? (rect.height ? (anchorLocal.y + rect.height / 2) / rect.height : 0.5);
+
+      const refLocal = {
+        x: (ref.x - cx) * cosInv - (ref.y - cy) * sinInv,
+        y: (ref.x - cx) * sinInv + (ref.y - cy) * cosInv,
+      };
+
+      let normalLocal = anchorOverride?.normalLocal || null;
+      if (!normalLocal) {
+        const vectorLocal = { x: refLocal.x - anchorLocal.x, y: refLocal.y - anchorLocal.y };
+        const len = Math.hypot(vectorLocal.x, vectorLocal.y);
+        if (!len || len < 1e-6) {
+          normalLocal = { x: 1, y: 0 };
+        } else {
+          normalLocal = { x: vectorLocal.x / len, y: vectorLocal.y / len };
+        }
+      }
+
       const gap = Math.max(BINDING_GAP_DEFAULT, (lineWidth || 2) * 1.1);
+      const normalWorld = {
+        x: normalLocal.x * cosR - normalLocal.y * sinR,
+        y: normalLocal.x * sinR + normalLocal.y * cosR,
+      };
+      const normalLen = Math.hypot(normalWorld.x, normalWorld.y) || 1;
+      const anchorWorld = {
+        x: cx + anchorLocal.x * cosR - anchorLocal.y * sinR,
+        y: cy + anchorLocal.x * sinR + anchorLocal.y * cosR,
+      };
+      const point = {
+        x: anchorWorld.x + (normalWorld.x / normalLen) * gap,
+        y: anchorWorld.y + (normalWorld.y / normalLen) * gap,
+      };
       const binding = {
         elementId: targetMap.get('id'),
         ratioX,
         ratioY,
-        normal: { x: nx, y: ny },
+        normalLocal,
         gap,
       };
-      return { binding, point: { x: anchor.x + nx * gap, y: anchor.y + ny * gap } };
+      return { binding, point };
     };
-
+    
     const resolveBindingPoint = (binding) => {
       if (!binding) return null;
       const target = findElementMapById(binding.elementId);
       const rect = getRectFromElementMap(target);
       if (!rect) return null;
-      const anchorX = rect.x + (binding.ratioX ?? 0.5) * rect.width;
-      const anchorY = rect.y + (binding.ratioY ?? 0.5) * rect.height;
-      const nx = binding.normal?.x ?? 0;
-      const ny = binding.normal?.y ?? 0;
-      const len = Math.hypot(nx, ny) || 1;
+      const rot = (rect.rotation || 0) * Math.PI / 180;
+      const cosR = Math.cos(rot);
+      const sinR = Math.sin(rot);
+      const cx = rect.x + rect.width / 2;
+      const cy = rect.y + rect.height / 2;
+      const anchorLocal = {
+        x: (binding.ratioX ?? 0.5) * rect.width - rect.width / 2,
+        y: (binding.ratioY ?? 0.5) * rect.height - rect.height / 2,
+      };
+      const anchorWorld = {
+        x: cx + anchorLocal.x * cosR - anchorLocal.y * sinR,
+        y: cy + anchorLocal.x * sinR + anchorLocal.y * cosR,
+      };
+      const normalLocal = binding.normalLocal ?? binding.normal ?? { x: 1, y: 0 };
       const gap = binding.gap ?? BINDING_GAP_DEFAULT;
-      return { x: anchorX + (nx / len) * gap, y: anchorY + (ny / len) * gap };
+      const normalWorld = {
+        x: normalLocal.x * cosR - normalLocal.y * sinR,
+        y: normalLocal.x * sinR + normalLocal.y * cosR,
+      };
+      const len = Math.hypot(normalWorld.x, normalWorld.y) || 1;
+      return {
+        x: anchorWorld.x + (normalWorld.x / len) * gap,
+        y: anchorWorld.y + (normalWorld.y / len) * gap,
+      };
     };
-
+    
     const getLineEndpoints = (lineMap) => {
       const startMap = lineMap?.get?.('start');
       const endMap = lineMap?.get?.('end');
@@ -515,7 +630,7 @@ export default {
       const end = endMap?.get ? { x: Number(endMap.get('x')), y: Number(endMap.get('y')) } : null;
       return { start, end };
     };
-
+    
     const setLineEndpoints = (lineMap, start, end) => {
       if (!lineMap || !start || !end) return;
       let startMap = lineMap.get('start');
@@ -537,12 +652,13 @@ export default {
       lineMap.set('width', Math.abs(end.x - start.x));
       lineMap.set('height', Math.abs(end.y - start.y));
     };
-
-    const findBindingTargetNearPoint = (point, excludeId = null) => {
-      if (!yDrawings.value || !point) return null;
+    
+    const findBindingTargetNearPoint = (point, excludeId = null, maxDistance = BINDING_DISTANCE_THRESHOLD, collectAll = false) => {
+      if (!yDrawings.value || !point) return collectAll ? [] : null;
       const elements = yDrawings.value.toArray();
       let best = null;
       let bestDistance = Infinity;
+      const hits = [];
       for (let i = elements.length - 1; i >= 0; i--) {
         const el = elements[i];
         const id = el.get('id');
@@ -551,21 +667,28 @@ export default {
         if (!BINDABLE_ELEMENT_TYPES.has(type)) continue;
         const rect = getRectFromElementMap(el);
         if (!rect) continue;
-        const dist = distanceToRect(point, rect);
-        if (dist <= BINDING_DISTANCE_THRESHOLD && dist < bestDistance) {
-          bestDistance = dist;
-          best = { map: el, rect };
-        }
+        const anchors = getConnectorAnchors(rect);
+        anchors.forEach((anchor) => {
+          const dist = Math.hypot(anchor.anchorWorld.x - point.x, anchor.anchorWorld.y - point.y);
+          if (dist <= maxDistance) {
+            const payload = { map: el, rect, anchor, distance: dist };
+            if (collectAll) hits.push(payload);
+            if (dist < bestDistance) {
+              bestDistance = dist;
+              best = payload;
+            }
+          }
+        });
       }
-      return best;
+      return collectAll ? hits : best;
     };
-
+    
     const attachBindingsToLineDraft = (lineDraft) => {
       if (!lineDraft || lineDraft.type !== 'line' || !lineDraft.start || !lineDraft.end || !yDrawings.value) return;
       const lineWidth = lineDraft.lineWidth || 2;
       const startTarget = findBindingTargetNearPoint(lineDraft.start, lineDraft.id);
       if (startTarget) {
-        const { binding, point } = makeBindingPayload(startTarget.map, startTarget.rect, lineDraft.end, lineDraft.start, lineWidth);
+        const { binding, point } = makeBindingPayload(startTarget.map, startTarget.rect, lineDraft.end, lineDraft.start, lineWidth, startTarget.anchor);
         if (binding && point) {
           lineDraft.startBinding = binding;
           lineDraft.start = point;
@@ -573,7 +696,7 @@ export default {
       }
       const endTarget = findBindingTargetNearPoint(lineDraft.end, lineDraft.id);
       if (endTarget) {
-        const { binding, point } = makeBindingPayload(endTarget.map, endTarget.rect, lineDraft.start, lineDraft.end, lineWidth);
+        const { binding, point } = makeBindingPayload(endTarget.map, endTarget.rect, lineDraft.start, lineDraft.end, lineWidth, endTarget.anchor);
         if (binding && point) {
           lineDraft.endBinding = binding;
           lineDraft.end = point;
@@ -584,7 +707,7 @@ export default {
       lineDraft.width = Math.abs(lineDraft.start.x - lineDraft.end.x);
       lineDraft.height = Math.abs(lineDraft.start.y - lineDraft.end.y);
     };
-
+    
     const updateBindingsForTarget = (targetId) => {
       if (!targetId || !yDrawings.value || !ydoc.value) return;
       const target = findElementMapById(targetId);
@@ -621,7 +744,7 @@ export default {
         });
       }, 'auto-binding');
     };
-
+    
     const refreshLineBindings = (lineMap) => {
       if (!lineMap || lineMap.get('type') !== 'line' || !ydoc.value) return;
       const lineId = lineMap.get('id');
@@ -632,7 +755,7 @@ export default {
         let nextStart = start;
         let nextEnd = end;
         let changed = false;
-
+    
         const startBinding = lineMap.get('startBinding');
         if (startBinding?.elementId) {
           const point = resolveBindingPoint(startBinding);
@@ -646,7 +769,7 @@ export default {
         } else {
           const target = findBindingTargetNearPoint(start, lineId);
           if (target) {
-            const { binding, point } = makeBindingPayload(target.map, target.rect, end, start, lineWidth);
+            const { binding, point } = makeBindingPayload(target.map, target.rect, end, start, lineWidth, target.anchor);
             if (binding && point) {
               lineMap.set('startBinding', binding);
               nextStart = point;
@@ -654,7 +777,7 @@ export default {
             }
           }
         }
-
+    
         const endBinding = lineMap.get('endBinding');
         if (endBinding?.elementId) {
           const point = resolveBindingPoint(endBinding);
@@ -668,7 +791,7 @@ export default {
         } else {
           const target = findBindingTargetNearPoint(end, lineId);
           if (target) {
-            const { binding, point } = makeBindingPayload(target.map, target.rect, start, end, lineWidth);
+            const { binding, point } = makeBindingPayload(target.map, target.rect, start, end, lineWidth, target.anchor);
             if (binding && point) {
               lineMap.set('endBinding', binding);
               nextEnd = point;
@@ -676,13 +799,12 @@ export default {
             }
           }
         }
-
+    
         if (changed && nextStart && nextEnd) {
           setLineEndpoints(lineMap, nextStart, nextEnd);
         }
       }, 'auto-binding');
     };
-
 // Define updateGlobalState outside initializeUndoManager to make it accessible in onBeforeUnmount
     const updateGlobalState = () => {
       if (undoManager.value) {
@@ -977,6 +1099,60 @@ export default {
           props.handwritingStylerOptions || {}
         );
       });
+
+      // Connector handles on bindable shapes
+      const drawCircle = (x, y, r, fill = 'rgba(99,102,241,0.28)', stroke = 'rgba(99,102,241,0.9)') => {
+        ctx.beginPath();
+        ctx.arc(x, y, r, 0, Math.PI * 2);
+        ctx.fillStyle = fill;
+        ctx.strokeStyle = stroke;
+        ctx.lineWidth = 1 / (zoomLevel.value * (devicePixelRatio.value || 1));
+        ctx.fill();
+        ctx.stroke();
+      };
+
+      const drawConnectorDotsForElement = (element) => {
+        const rect = getRectFromElementMap({
+          get: (k) => element[k],
+        });
+        if (!rect) return;
+        const anchors = getConnectorAnchors(rect);
+        anchors.forEach(({ anchorWorld }) => {
+          drawCircle(anchorWorld.x, anchorWorld.y, Math.max(4, 6 / zoomLevel.value));
+        });
+      };
+
+      if (connectorsVisible.value) {
+        const connectorElementIds = new Set();
+        const collectNearbyElements = (point) => {
+          if (!point) return;
+          const hits = findBindingTargetNearPoint(point, null, BINDING_DISTANCE_THRESHOLD * 1.1, true);
+          hits.forEach((hit) => {
+            const elementId = hit?.map?.get?.('id');
+            if (elementId) connectorElementIds.add(elementId);
+          });
+        };
+
+        if (lastMouseCoords.value) collectNearbyElements(lastMouseCoords.value);
+        if (isDrawing.value && currentElementPreview.value?.type === 'line') {
+          if (currentElementPreview.value.start) collectNearbyElements(currentElementPreview.value.start);
+          if (currentElementPreview.value.end) collectNearbyElements(currentElementPreview.value.end);
+        }
+
+        if (connectorElementIds.size > 0) {
+          strokesToDraw.forEach((element) => {
+            const elementId = element.id;
+            if (elementId && connectorElementIds.has(elementId) && BINDABLE_ELEMENT_TYPES.has(element.type)) {
+              drawConnectorDotsForElement(element);
+            }
+          });
+        }
+
+        if (isDrawing.value && currentElementPreview.value?.type === 'line' && currentElementPreview.value.start && currentElementPreview.value.end) {
+          drawCircle(currentElementPreview.value.start.x, currentElementPreview.value.start.y, Math.max(4, 6 / zoomLevel.value), 'rgba(147,197,253,0.35)', 'rgba(37,99,235,0.9)');
+          drawCircle(currentElementPreview.value.end.x, currentElementPreview.value.end.y, Math.max(4, 6 / zoomLevel.value), 'rgba(147,197,253,0.35)', 'rgba(37,99,235,0.9)');
+        }
+      }
 
       // Draw current preview if any
       if (isDrawing.value && currentElementPreview.value) {
@@ -1661,6 +1837,14 @@ export default {
         if (currentTool.value === 'select') {
             const hitObjectId = findMovableElementIdAtPoint(transformedCoords);
             if (hitObjectId) {
+                if (event.altKey) {
+                    const map = findElementMapById(hitObjectId);
+                    if (map && map.get('type') === 'line') {
+                        detachLineBindings(hitObjectId);
+                        redrawCanvas();
+                        return;
+                    }
+                }
                 handleObjectSelectionRequest(hitObjectId);
             } else if (selectedObjectId.value) {
                 selectedObjectId.value = null;
@@ -2758,7 +2942,10 @@ export default {
                 yDrawings.value.delete(0, length);
               }
             }, 'local-clear'); // Add origin
+            selectedObjectId.value = null;
+            snapGuides.value = [];
             refreshMovableElements();
+            redrawCanvas(); // Ensure immediate visual update even if observer lags
 
             showStatus('Canvas cleared');
 
@@ -3811,6 +3998,17 @@ export default {
     return publicApi;
   }
 };
+
+const detachLineBindings = (lineId) => {
+  if (!ydoc.value || !yDrawings.value) return;
+  const map = findElementMapById(lineId);
+  if (!map || map.get('type') !== 'line') return;
+  ydoc.value.transact(() => {
+    if (map.has('startBinding')) map.delete('startBinding');
+    if (map.has('endBinding')) map.delete('endBinding');
+  }, 'line-detach-binding');
+};
+
 </script>
 
 

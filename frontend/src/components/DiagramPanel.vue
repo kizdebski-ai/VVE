@@ -1,60 +1,79 @@
 <template>
   <DraggablePanel 
-    :initialX="windowWidth - 400" 
+    :initialX="windowWidth - 420" 
     :initialY="100" 
-    width="380px"
+    width="400px"
     @close="$emit('close')"
   >
     <template #header>
-      <GitBranch :size="18" />
-      <span>AI Diagram</span>
+      <div class="header-title">
+        <GitBranch :size="18" class="icon" />
+        <span>AI Diagram Generator</span>
+      </div>
     </template>
 
     <div class="panel-content-wrapper">
-      <div class="header-row">
-        <p class="subtitle">Opisz proces, a my narysujemy go za Ciebie.</p>
-        <select v-model="mode">
-          <option value="FLOWCHART">Flowchart</option>
-          <option value="CONCEPT_MAP">Mapa pojęć</option>
-        </select>
+      <p class="subtitle">Describe a process or system, and AI will visualize it for you.</p>
+      
+      <div class="mode-selector">
+        <button 
+          :class="{ active: mode === 'FLOWCHART' }" 
+          @click="mode = 'FLOWCHART'"
+        >Flowchart</button>
+        <button 
+          :class="{ active: mode === 'CONCEPT_MAP' }" 
+          @click="mode = 'CONCEPT_MAP'"
+        >Concept Map</button>
       </div>
 
-      <label class="field-label">Opis procesu / systemu</label>
-      <textarea
-        v-model="text"
-        rows="5"
-        placeholder="Opisz co ma zostać narysowane (np. logika aplikacji, kroki procesu, zależności)."
-      ></textarea>
-      <p class="hint">Podaj listę kroków, decyzji albo zależności – AI wypluje gotowy układ.</p>
+      <div class="input-group">
+        <textarea
+          v-model="text"
+          rows="6"
+          placeholder="e.g. User logs in -> System checks credentials -> If valid, redirect to Dashboard. If invalid, show error."
+          class="styled-textarea"
+        ></textarea>
+        <div class="hint-text">
+          <span class="info-icon">ℹ️</span>
+          Generates a Top-Down professional layout.
+        </div>
+      </div>
 
       <div class="actions-row">
-        <button class="btn-primary grow" :disabled="isLoading || !text.trim()" @click="generate">Generuj diagram</button>
-        <button class="btn-secondary" :disabled="isLoading" @click="reset">Wyczyść</button>
+        <button class="btn-primary grow" :disabled="isLoading || !text.trim()" @click="generate">
+          {{ isLoading ? 'Generating...' : 'Generate Diagram' }}
+        </button>
+        <button class="btn-secondary icon-only" :disabled="isLoading" @click="reset" title="Reset">
+          <span>↺</span>
+        </button>
       </div>
 
-      <div v-if="error" class="error">{{ error }}</div>
-      <div v-if="isLoading" class="loading">AI tworzy diagram...</div>
+      <div v-if="error" class="status-msg error">{{ error }}</div>
 
-      <div v-if="result" class="result-box">
-        <div class="subheader">Podgląd</div>
-        <div class="stats">
-          <span class="pill">{{ result.nodes.length }} węzłów</span>
-          <span class="pill">{{ result.edges.length }} krawędzi</span>
-        </div>
+      <transition name="fade">
+        <div v-if="result" class="result-box">
+          <div class="result-header">
+            <span class="result-title">Preview</span>
+            <div class="stats">
+              <span class="pill">{{ result.nodes.length }} nodes</span>
+              <span class="pill">{{ result.edges.length }} edges</span>
+            </div>
+          </div>
 
-        <div class="result-content">
-           <div class="scrollable-list">
-              <div v-for="node in result.nodes" :key="node.id" class="list-item">
-                <span class="badge" :data-type="node.type || 'node'">{{ node.type || 'node' }}</span>
-                <span class="label">{{ node.label || node.id }}</span>
-              </div>
-           </div>
-        </div>
+          <div class="result-content">
+             <div class="scrollable-list">
+                <div v-for="node in result.nodes" :key="node.id" class="list-item">
+                  <div class="node-icon" :class="node.type"></div>
+                  <span class="label">{{ node.label || node.id }}</span>
+                </div>
+             </div>
+          </div>
 
-        <div class="actions-row spaced">
-          <button class="btn-primary full-width" @click="applyToBoard" :disabled="!result?.nodes?.length">Wstaw na tablicę</button>
+          <button class="btn-primary full-width" @click="applyToBoard" :disabled="!result?.nodes?.length">
+            Add to Whiteboard
+          </button>
         </div>
-      </div>
+      </transition>
     </div>
   </DraggablePanel>
 </template>
@@ -94,7 +113,7 @@ const generate = async () => {
     });
     const payload = await response.json();
     if (!response.ok) {
-      throw new Error(payload?.error || `Błąd (${response.status})`);
+      throw new Error(payload?.error || `Error (${response.status})`);
     }
     result.value = {
       nodes: payload.nodes || [],
@@ -102,7 +121,7 @@ const generate = async () => {
       raw: payload.raw || ''
     };
   } catch (err) {
-    error.value = err.message || 'Nie udało się wygenerować diagramu.';
+    error.value = err.message || 'Failed to generate diagram.';
   } finally {
     isLoading.value = false;
   }
@@ -119,138 +138,216 @@ const applyToBoard = () => {
 .panel-content-wrapper {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 16px;
 }
 
-.header-row {
+.header-title {
   display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 10px;
+  align-items: center;
+  gap: 8px;
+}
+
+.header-title .icon {
+  color: var(--accent-primary);
 }
 
 .subtitle {
-  font-size: 12px;
+  font-size: 13px;
   color: var(--text-secondary);
   margin: 0;
+  line-height: 1.4;
+}
+
+/* Mode Selector */
+.mode-selector {
+  display: flex;
+  background: rgba(0,0,0,0.05);
+  padding: 4px;
+  border-radius: 10px;
+  gap: 4px;
+}
+
+.mode-selector button {
   flex: 1;
-}
-
-.field-label {
-  font-size: 12px;
-  color: var(--text-secondary);
+  border: none;
+  background: transparent;
+  padding: 8px;
+  border-radius: 8px;
+  font-size: 13px;
   font-weight: 500;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.2s;
 }
 
-textarea {
+.mode-selector button.active {
+  background: white;
+  color: var(--accent-primary);
+  box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+  font-weight: 600;
+}
+
+.input-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.styled-textarea {
   width: 100%;
   resize: vertical;
-  min-height: 80px;
+  min-height: 100px;
+  padding: 12px;
+  font-size: 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(0,0,0,0.1);
+  background: rgba(255,255,255,0.5);
+  transition: all 0.2s;
 }
 
-.hint {
+.styled-textarea:focus {
+  background: white;
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 0 3px var(--accent-glass);
+}
+
+.hint-text {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   font-size: 11px;
   color: var(--text-secondary);
   opacity: 0.8;
-  margin-top: -4px;
 }
 
 .actions-row {
   display: flex;
-  gap: 8px;
+  gap: 10px;
 }
 
 .grow {
   flex: 1;
 }
 
-.full-width {
-  width: 100%;
+.icon-only {
+  width: 40px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
 }
 
 .btn-secondary {
   background: transparent;
-  border: 1px solid var(--input-border);
+  border: 1px solid rgba(0,0,0,0.1);
   color: var(--text-secondary);
-  padding: 8px 12px;
-  border-radius: 8px;
+  border-radius: 10px;
+  cursor: pointer;
   transition: all 0.2s;
 }
 
 .btn-secondary:hover {
-  border-color: var(--accent-primary);
+  background: rgba(0,0,0,0.05);
   color: var(--text-primary);
 }
 
-.error {
-  color: var(--danger-color);
+.status-msg {
   font-size: 13px;
-}
-
-.loading {
-  font-size: 13px;
-  color: var(--text-secondary);
-  font-style: italic;
-}
-
-.result-box {
-  border: 1px solid var(--glass-border);
-  border-radius: 12px;
   padding: 10px;
-  background: rgba(255, 255, 255, 0.05);
+  border-radius: 8px;
+}
+
+.status-msg.error {
+  background: rgba(239, 68, 68, 0.1);
+  color: #ef4444;
+}
+
+/* Result Box */
+.result-box {
+  background: white;
+  border-radius: 16px;
+  padding: 16px;
+  box-shadow: 0 4px 15px rgba(0,0,0,0.05);
+  border: 1px solid rgba(0,0,0,0.05);
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 12px;
 }
 
-.subheader {
+.result-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.result-title {
   font-weight: 600;
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .stats {
   display: flex;
-  gap: 8px;
+  gap: 6px;
 }
 
 .pill {
-  background: var(--accent-glass);
-  color: var(--accent-primary);
-  border-radius: 999px;
+  background: var(--bg-base);
+  color: var(--text-secondary);
+  border-radius: 6px;
   padding: 2px 8px;
   font-size: 11px;
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .scrollable-list {
-  max-height: 120px;
+  max-height: 150px;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 6px;
+  padding-right: 4px;
 }
 
 .list-item {
   display: flex;
-  gap: 8px;
+  gap: 10px;
   align-items: center;
-  padding: 4px 8px;
-  border-radius: 6px;
-  background: rgba(255, 255, 255, 0.1);
-  font-size: 12px;
+  padding: 8px;
+  border-radius: 8px;
+  background: var(--bg-base);
+  font-size: 13px;
 }
 
-.badge {
-  font-size: 10px;
-  text-transform: uppercase;
-  padding: 2px 4px;
-  border-radius: 4px;
-  background: rgba(0,0,0,0.1);
-  opacity: 0.7;
+.node-icon {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-secondary);
 }
+
+.node-icon.start { background: #0f766e; }
+.node-icon.end { background: #b91c1c; }
+.node-icon.decision { background: #b45309; border-radius: 2px; transform: rotate(45deg); }
 
 .label {
   font-weight: 500;
   color: var(--text-primary);
+}
+
+.full-width {
+  width: 100%;
+  margin-top: 4px;
+}
+
+/* Transitions */
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.2s ease;
+}
+
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
 }
 </style>

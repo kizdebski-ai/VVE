@@ -267,6 +267,12 @@ export default class GridAlignModule {
     if (!this.enabled || !this.options.showBaselines || !this.baselines.length) return this;
     if (!ctx) return this;
 
+    const tr = ctx.getTransform ? ctx.getTransform() : { a: 1, e: 0 };
+    const scaleX = tr.a || 1;
+    const translateX = tr.e || 0;
+    const worldStartX = -translateX / scaleX;
+    const worldWidth = ctx.canvas.width / scaleX;
+
     ctx.save();
     ctx.strokeStyle = 'rgba(255, 0, 0, 0.5)';
     ctx.lineWidth = 1;
@@ -289,8 +295,8 @@ export default class GridAlignModule {
           const nearestGridLine = Math.round(currentBaselineY / this.options.gridSize) * this.options.gridSize;
 
           ctx.beginPath();
-          ctx.moveTo(0, nearestGridLine);
-          ctx.lineTo(ctx.canvas.width / this.ctx.getTransform().a, nearestGridLine); // Adjust line length for zoom
+          ctx.moveTo(worldStartX, nearestGridLine);
+          ctx.lineTo(worldStartX + worldWidth, nearestGridLine); // Adjust line length for zoom/pan
           ctx.stroke();
       }
     });

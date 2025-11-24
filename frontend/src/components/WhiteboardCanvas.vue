@@ -2457,7 +2457,68 @@ export default {
             return;
         }
         const axisMode = props.gridAlignOptions.showBaselines ? 'y' : 'both';
-        const changedIds = [];
+
+        const wrapMod = (v, size) => {
+            const r = v % size;
+            return Number.isFinite(r) ? (r + size) % size : 0;
+        };
+        const nearestGridShift = (meanR, size) => {
+            const option1 = -meanR;
+            const option2 = size - meanR;
+            return Math.abs(option1) <= Math.abs(option2) ? option1 : option2;
+        };
+
+        let sumRx = 0;
+        let sumRy = 0;
+        let count = 0;
+
+        const accumulatePoint = (x, y) => {
+            if (Number.isFinite(x) && axisMode !== 'y') {
+                sumRx += wrapMod(x, worldGridStep);
+            }
+            if (Number.isFinite(y)) {
+                sumRy += wrapMod(y, worldGridStep);
+            }
+            count++;
+        };
+
+        // Pass 1: measure mean residuals
+        yDrawings.value.forEach((yMap) => {
+            const type = yMap.get('type');
+            if (type === 'pen') {
+                const pts = yMap.get('points');
+                if (Array.isArray(pts)) {
+                    pts.forEach((p) => {
+                        const px = typeof p.x === 'number' ? p.x : Array.isArray(p) ? p[0] : null;
+                        const py = typeof p.y === 'number' ? p.y : Array.isArray(p) ? p[1] : null;
+                        accumulatePoint(px, py);
+                    });
+                }
+            } else if (type === 'line' || (yMap.get('start') && yMap.get('end'))) {
+                const start = yMap.get('start');
+                const end = yMap.get('end');
+                if (start && end) {
+                    accumulatePoint(start.get('x'), start.get('y'));
+                    accumulatePoint(end.get('x'), end.get('y'));
+                }
+            } else {
+                const px = yMap.get('x');
+                const py = yMap.get('y');
+                if (Number.isFinite(px) || Number.isFinite(py)) {
+                    accumulatePoint(px, py);
+                }
+            }
+        });
+
+        if (!count) {
+            debugLog('[alignToGrid] No points to align.');
+            return;
+        }
+
+        const meanRx = axisMode === 'y' ? 0 : sumRx / count;
+        const meanRy = sumRy / count;
+        const shiftX = axisMode === 'y' ? 0 : nearestGridShift(meanRx, worldGridStep);
+        const shiftY = nearestGridShift(meanRy, worldGridStep);
 
         const recomputeBounds = (points) => {
             if (!points || !points.length) return null;
@@ -2478,6 +2539,15 @@ export default {
             };
         };
 
+        const shiftPoint = (p) => {
+            if (Array.isArray(p)) {
+                return [p[0] + shiftX, p[1] + shiftY, p[2]];
+            }
+            return { ...p, x: (p.x ?? 0) + shiftX, y: (p.y ?? 0) + shiftY };
+        };
+
+        const changedIds = [];
+
         ydoc.value.transact(() => {
             for (let i = 0; i < yDrawings.value.length; i++) {
                 const yMap = yDrawings.value.get(i);
@@ -2487,13 +2557,13 @@ export default {
                 if (type === 'pen') {
                     const pts = yMap.get('points');
                     if (Array.isArray(pts) && pts.length) {
-                        const snappedPts = pts.map(p => applyGridSnapHard(p, worldGridStep, axisMode));
-                        yMap.set('points', snappedPts);
+                        const shiftedPts = pts.map(shiftPoint);
+                        yMap.set('points', shiftedPts);
                         const rawPts = yMap.get('rawPoints');
                         if (Array.isArray(rawPts) && rawPts.length) {
-                            yMap.set('rawPoints', rawPts.map(p => applyGridSnapHard(p, worldGridStep, axisMode)));
+                            yMap.set('rawPoints', rawPts.map(shiftPoint));
                         }
-                        const bounds = recomputeBounds(snappedPts);
+                        const bounds = recomputeBounds(shiftedPts);
                         if (bounds) {
                             yMap.set('x', bounds.x);
                             yMap.set('y', bounds.y);
@@ -2506,8 +2576,8 @@ export default {
                     const startMap = yMap.get('start');
                     const endMap = yMap.get('end');
                     if (startMap && endMap) {
-                        const start = applyGridSnapHard({ x: startMap.get('x'), y: startMap.get('y') }, worldGridStep, axisMode);
-                        const end = applyGridSnapHard({ x: endMap.get('x'), y: endMap.get('y') }, worldGridStep, axisMode);
+                        const start = shiftPoint({ x: startMap.get('x'), y: startMap.get('y') });
+                        const end = shiftPoint({ x: endMap.get('x'), y: endMap.get('y') });
                         const startY = new Y.Map();
                         startY.set('x', start.x);
                         startY.set('y', start.y);
@@ -2522,6 +2592,21 @@ export default {
                         yMap.set('height', Math.abs(start.y - end.y));
                         updated = true;
                     }
+                } else {
+                    let px = yMap.get('x');
+                    let py = yMap.get('y');
+                    const hasX = Number.isFinite(px);
+                    const hasY = Number.isFinite(py);
+                    if (hasX) {
+                        px += shiftX;
+                        yMap.set('x', px);
+                        updated = true;
+                    }
+                    if (hasY) {
+                        py += shiftY;
+                        yMap.set('y', py);
+                        updated = true;
+                    }
                 }
 
                 if (updated) {
@@ -2533,7 +2618,7 @@ export default {
 
         if (changedIds.length) {
             nextTick(() => {
-                debugLog(`[alignToGrid] Hard snapped ${changedIds.length} elements.`);
+                debugLog(`[alignToGrid] Shifted ${changedIds.length} elements by (${shiftX.toFixed(2)}, ${shiftY.toFixed(2)}).`);
                 updateGlobalState();
                 syncModulesWithYjs();
                 redrawCanvas(); // Redraw to show aligned strokes

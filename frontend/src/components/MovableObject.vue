@@ -743,9 +743,10 @@ onUnmounted(() => {
 
 /* Subtle Glass Selection */
 .movable-object.is-selected {
-  border: 1px solid rgba(37, 99, 235, 0.6); /* Semi-transparent blue */
-  background-color: rgba(37, 99, 235, 0.05); /* Very light tint */
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.2); /* Inner white glow */
+  border: 1px solid rgba(148, 163, 184, 0.9);
+  background-color: rgba(148, 163, 184, 0.06);
+  box-shadow: 0 0 0 6px rgba(148, 163, 184, 0.22);
+  border-radius: 12px;
 }
 
 .object-content {

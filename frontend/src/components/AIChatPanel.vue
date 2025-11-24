@@ -88,7 +88,7 @@ import katex from 'katex';
 import { resolveBackendBaseUrl } from '../services/backendUrl';
 
 const API_BASE = resolveBackendBaseUrl();
-const REQUEST_TIMEOUT_MS = 20000;
+const REQUEST_TIMEOUT_MS = Number(import.meta?.env?.VITE_AI_CHAT_TIMEOUT_MS) || 60000;
 
 // Icons
 const SparklesIcon = Sparkles;
@@ -307,14 +307,15 @@ onMounted(() => {
 }
 
 .ai-chat-panel.minimized {
-  height: 60px;
-  width: 200px;
-  border-radius: 30px;
+  height: 40px;
+  width: 180px;
+  border-radius: 20px;
   cursor: pointer;
 }
 
 .chat-header {
-  padding: 16px 20px;
+  height: 40px;
+  padding: 0 16px;
   background: transparent;
   color: var(--text-primary);
   display: flex;
@@ -325,6 +326,10 @@ onMounted(() => {
   border-bottom: 1px solid rgba(0, 0, 0, 0.05);
 }
 
+.ai-chat-panel.minimized .chat-header {
+  border-bottom: none;
+}
+
 .dark-mode .chat-header {
   border-bottom-color: rgba(255, 255, 255, 0.05);
 }
@@ -332,9 +337,9 @@ onMounted(() => {
 .header-title {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   font-weight: 600;
-  font-size: 15px;
+  font-size: 14px;
   color: var(--text-primary);
 }
 
@@ -590,15 +595,7 @@ textarea {
 }
 
 .ghost {
-  pointer-events: none;
-  position: absolute;
-  inset: 0;
-  padding: 8px 0;
-  white-space: pre-wrap;
-  color: transparent;
-  font-family: inherit;
-  font-size: 14px;
-  line-height: 1.4;
+  display: none;
 }
 
 .ghost-tail {

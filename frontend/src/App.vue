@@ -7,6 +7,8 @@
       @toggle-feature="toggleFeature"
       @open-room-manager="handleOpenRoomManager"
       @export-whiteboard="handleExportRequest"
+      @export-pdf-single="handleExportPdfSingle"
+      @export-pdf-paged="handleExportPdfPaged"
       @import-whiteboard="showImportDialog = true"
       :active-feature="activeFeature"
      ></TopMenu>
@@ -747,6 +749,26 @@ export default {
       }
     };
 
+    const handleExportPdfSingle = async () => {
+      console.log('[App] handleExportPdfSingle');
+      if (whiteboard.value?.exportBoardAsPdf) {
+        await whiteboard.value.exportBoardAsPdf();
+      } else {
+        console.warn('[App] whiteboard ref missing or exportBoardAsPdf not exposed');
+        showStatus('PDF export not available.', 3000);
+      }
+    };
+
+    const handleExportPdfPaged = async () => {
+      console.log('[App] handleExportPdfPaged');
+      if (whiteboard.value?.exportBoardAsPdfPaged) {
+        await whiteboard.value.exportBoardAsPdfPaged();
+      } else {
+        console.warn('[App] whiteboard ref missing or exportBoardAsPdfPaged not exposed');
+        showStatus('PDF export not available.', 3000);
+      }
+    };
+
     const copyToClipboardLocal = (text) => {
       if (navigator.clipboard && navigator.clipboard.writeText) {
         return navigator.clipboard.writeText(text);
@@ -1147,6 +1169,8 @@ export default {
       toggleUserInfoPanel,
       handleClearCanvas,
       handleExportRequest,
+      handleExportPdfSingle,
+      handleExportPdfPaged,
       handleImportState,
       handleImageSelected,
       copyToClipboard: copyToClipboardLocal,

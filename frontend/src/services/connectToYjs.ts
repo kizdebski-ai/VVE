@@ -48,17 +48,11 @@ export function connectToYjs(roomId: string): YjsConnection {
   };
 
   const ydocUpdateHandler = (update: Uint8Array, origin: any) => {
-    console.log('[connectToYjs] ydocUpdateHandler called. Origin:', origin, 'Update size:', update.length);
     if (origin !== 'websocketProvider' && socket?.readyState === WebSocket.OPEN) {
       const message = new Uint8Array(1 + update.length);
       message[0] = messageSync;
       message.set(update, 1);
       socket.send(message);
-      console.log('[connectToYjs] Sent update to server, size:', update.length, 'origin:', origin);
-    } else {
-      if (origin !== 'websocketProvider') {
-        console.warn('[connectToYjs] Skipped sending update. Socket readyState:', socket?.readyState);
-      }
     }
   };
 
@@ -79,7 +73,6 @@ export function connectToYjs(roomId: string): YjsConnection {
     socket.binaryType = 'arraybuffer';
 
     socket.onopen = () => {
-      console.log('[connectToYjs] WebSocket OPENED for room:', roomId);
       reconnectTimeout = 1000;
       if (reconnectTimer) {
         window.clearTimeout(reconnectTimer);
@@ -93,7 +86,6 @@ export function connectToYjs(roomId: string): YjsConnection {
         message[0] = messageAwareness;
         message.set(awarenessState, 1);
         socket.send(message);
-        console.log('[connectToYjs] Sent initial awareness, clientID:', awareness.clientID);
       }
 
       if (!listenersAttached) {

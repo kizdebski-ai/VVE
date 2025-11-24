@@ -7,6 +7,5 @@ export const undoRedoState = reactive({
   update(canUndo, canRedo) {
     this.canUndo = !!canUndo;
     this.canRedo = !!canRedo;
-    console.log(`[Global] UndoRedoState updated: canUndo=${this.canUndo}, canRedo=${this.canRedo}`);
   }
 });

@@ -126,6 +126,7 @@ import { ref, onMounted, onBeforeUnmount, watch, nextTick, shallowRef, reactive,
 import * as Y from 'yjs';
 import { v4 as uuidv4 } from 'uuid';
 import katex from 'katex';
+import { jsPDF } from 'jspdf';
 import 'katex/dist/katex.min.css';
 import { undoRedoState } from '../utils/undoRedoState';
 import Collaborators from './Collaborators.vue';
@@ -325,13 +326,14 @@ export default {
     const startCoordsForShiftLine = ref(null); // Store start coords specifically for Shift+Pen
     const notifications = ref([]);
     const notificationId = ref(0);
+    const debugModeEnabled = ref(props.debugMode);
     const debugLog = (...args) => {
-      if (props.debugMode) {
+      if (debugModeEnabled.value) {
         console.log(...args);
       }
     };
     const debugWarn = (...args) => {
-      if (props.debugMode) {
+      if (debugModeEnabled.value) {
         console.warn(...args);
       }
     };
@@ -385,8 +387,303 @@ export default {
     const undoManager = ref(null);
     const canUndo = ref(false);
     const canRedo = ref(false);
+    
+    const BINDABLE_ELEMENT_TYPES = new Set([
+      'rectangle',
+      'circle',
+      'square',
+      'triangle',
+      'trapezoid',
+      'parallelogram',
+      'deltoid',
+      'cube',
+      'cuboid',
+      'sphere',
+      'cylinder',
+      'cone',
+      'pyramid',
+      'tetrahedron',
+      'text',
+      'image',
+      'coordinateSystem2D',
+      'coordinateSystem3D',
+      'mathFunctionPlot',
+      'physicsDataPlot'
+    ]);
+    const BINDING_PADDING = 16;
+    const BINDING_DISTANCE_THRESHOLD = 28;
+    const BINDING_GAP_DEFAULT = 8;
 
-    // Define updateGlobalState outside initializeUndoManager to make it accessible in onBeforeUnmount
+    const findElementMapById = (id) => {
+      if (!id || !yDrawings.value) return null;
+      return yDrawings.value.toArray().find((el) => el.get('id') === id) || null;
+    };
+
+    const getRectFromElementMap = (map) => {
+      if (!map) return null;
+      const x = Number(map.get('x'));
+      const y = Number(map.get('y'));
+      const width = Math.abs(Number(map.get('width'))) || 0;
+      const height = Math.abs(Number(map.get('height'))) || 0;
+      if ([x, y, width, height].every((v) => Number.isFinite(v))) {
+        return { x, y, width, height };
+      }
+      const start = map.get('start');
+      const end = map.get('end');
+      const sx = start?.get?.('x');
+      const sy = start?.get?.('y');
+      const ex = end?.get?.('x');
+      const ey = end?.get?.('y');
+      if ([sx, sy, ex, ey].every((v) => Number.isFinite(v))) {
+        return { x: Math.min(sx, ex), y: Math.min(sy, ey), width: Math.abs(ex - sx), height: Math.abs(ey - sy) };
+      }
+      return null;
+    };
+
+    const distanceToRect = (point, rect, padding = BINDING_PADDING) => {
+      const padded = {
+        x: rect.x - padding,
+        y: rect.y - padding,
+        width: rect.width + padding * 2,
+        height: rect.height + padding * 2,
+      };
+      const withinX = point.x >= padded.x && point.x <= padded.x + padded.width;
+      const withinY = point.y >= padded.y && point.y <= padded.y + padded.height;
+      if (withinX && withinY) return 0;
+      const dx = Math.max(padded.x - point.x, 0, point.x - (padded.x + padded.width));
+      const dy = Math.max(padded.y - point.y, 0, point.y - (padded.y + padded.height));
+      return Math.hypot(dx, dy);
+    };
+
+    const clampVectorToRect = (rect, reference) => {
+      const cx = rect.x + rect.width / 2;
+      const cy = rect.y + rect.height / 2;
+      const dx = reference.x - cx;
+      const dy = reference.y - cy;
+      if (dx === 0 && dy === 0) return { x: cx, y: cy };
+      const absDx = Math.abs(dx);
+      const absDy = Math.abs(dy);
+      const halfW = rect.width / 2;
+      const halfH = rect.height / 2;
+      if (absDx * halfH > absDy * halfW) {
+        const scale = halfW / absDx;
+        return { x: cx + Math.sign(dx) * halfW, y: cy + dy * scale };
+      }
+      const scale = halfH / absDy;
+      return { x: cx + dx * scale, y: cy + Math.sign(dy) * halfH };
+    };
+
+    const makeBindingPayload = (targetMap, rect, referencePoint, fallbackPoint, lineWidth = 2) => {
+      if (!targetMap || !rect) return { binding: null, point: null };
+      const ref = referencePoint || fallbackPoint || { x: rect.x + rect.width, y: rect.y + rect.height / 2 };
+      const anchor = clampVectorToRect(rect, ref);
+      const normal = { x: ref.x - anchor.x, y: ref.y - anchor.y };
+      const len = Math.hypot(normal.x, normal.y) || 1;
+      const nx = normal.x / len;
+      const ny = normal.y / len;
+      const ratioX = rect.width ? (anchor.x - rect.x) / rect.width : 0.5;
+      const ratioY = rect.height ? (anchor.y - rect.y) / rect.height : 0.5;
+      const gap = Math.max(BINDING_GAP_DEFAULT, (lineWidth || 2) * 1.1);
+      const binding = {
+        elementId: targetMap.get('id'),
+        ratioX,
+        ratioY,
+        normal: { x: nx, y: ny },
+        gap,
+      };
+      return { binding, point: { x: anchor.x + nx * gap, y: anchor.y + ny * gap } };
+    };
+
+    const resolveBindingPoint = (binding) => {
+      if (!binding) return null;
+      const target = findElementMapById(binding.elementId);
+      const rect = getRectFromElementMap(target);
+      if (!rect) return null;
+      const anchorX = rect.x + (binding.ratioX ?? 0.5) * rect.width;
+      const anchorY = rect.y + (binding.ratioY ?? 0.5) * rect.height;
+      const nx = binding.normal?.x ?? 0;
+      const ny = binding.normal?.y ?? 0;
+      const len = Math.hypot(nx, ny) || 1;
+      const gap = binding.gap ?? BINDING_GAP_DEFAULT;
+      return { x: anchorX + (nx / len) * gap, y: anchorY + (ny / len) * gap };
+    };
+
+    const getLineEndpoints = (lineMap) => {
+      const startMap = lineMap?.get?.('start');
+      const endMap = lineMap?.get?.('end');
+      const start = startMap?.get ? { x: Number(startMap.get('x')), y: Number(startMap.get('y')) } : null;
+      const end = endMap?.get ? { x: Number(endMap.get('x')), y: Number(endMap.get('y')) } : null;
+      return { start, end };
+    };
+
+    const setLineEndpoints = (lineMap, start, end) => {
+      if (!lineMap || !start || !end) return;
+      let startMap = lineMap.get('start');
+      let endMap = lineMap.get('end');
+      if (!(startMap instanceof Y.Map)) {
+        startMap = new Y.Map();
+        lineMap.set('start', startMap);
+      }
+      if (!(endMap instanceof Y.Map)) {
+        endMap = new Y.Map();
+        lineMap.set('end', endMap);
+      }
+      startMap.set('x', start.x);
+      startMap.set('y', start.y);
+      endMap.set('x', end.x);
+      endMap.set('y', end.y);
+      lineMap.set('x', Math.min(start.x, end.x));
+      lineMap.set('y', Math.min(start.y, end.y));
+      lineMap.set('width', Math.abs(end.x - start.x));
+      lineMap.set('height', Math.abs(end.y - start.y));
+    };
+
+    const findBindingTargetNearPoint = (point, excludeId = null) => {
+      if (!yDrawings.value || !point) return null;
+      const elements = yDrawings.value.toArray();
+      let best = null;
+      let bestDistance = Infinity;
+      for (let i = elements.length - 1; i >= 0; i--) {
+        const el = elements[i];
+        const id = el.get('id');
+        if (excludeId && id === excludeId) continue;
+        const type = el.get('type');
+        if (!BINDABLE_ELEMENT_TYPES.has(type)) continue;
+        const rect = getRectFromElementMap(el);
+        if (!rect) continue;
+        const dist = distanceToRect(point, rect);
+        if (dist <= BINDING_DISTANCE_THRESHOLD && dist < bestDistance) {
+          bestDistance = dist;
+          best = { map: el, rect };
+        }
+      }
+      return best;
+    };
+
+    const attachBindingsToLineDraft = (lineDraft) => {
+      if (!lineDraft || lineDraft.type !== 'line' || !lineDraft.start || !lineDraft.end || !yDrawings.value) return;
+      const lineWidth = lineDraft.lineWidth || 2;
+      const startTarget = findBindingTargetNearPoint(lineDraft.start, lineDraft.id);
+      if (startTarget) {
+        const { binding, point } = makeBindingPayload(startTarget.map, startTarget.rect, lineDraft.end, lineDraft.start, lineWidth);
+        if (binding && point) {
+          lineDraft.startBinding = binding;
+          lineDraft.start = point;
+        }
+      }
+      const endTarget = findBindingTargetNearPoint(lineDraft.end, lineDraft.id);
+      if (endTarget) {
+        const { binding, point } = makeBindingPayload(endTarget.map, endTarget.rect, lineDraft.start, lineDraft.end, lineWidth);
+        if (binding && point) {
+          lineDraft.endBinding = binding;
+          lineDraft.end = point;
+        }
+      }
+      lineDraft.x = Math.min(lineDraft.start.x, lineDraft.end.x);
+      lineDraft.y = Math.min(lineDraft.start.y, lineDraft.end.y);
+      lineDraft.width = Math.abs(lineDraft.start.x - lineDraft.end.x);
+      lineDraft.height = Math.abs(lineDraft.start.y - lineDraft.end.y);
+    };
+
+    const updateBindingsForTarget = (targetId) => {
+      if (!targetId || !yDrawings.value || !ydoc.value) return;
+      const target = findElementMapById(targetId);
+      const rect = getRectFromElementMap(target);
+      if (!rect) return;
+      const lines = yDrawings.value.toArray().filter((el) => el.get('type') === 'line');
+      if (!lines.length) return;
+      ydoc.value.transact(() => {
+        lines.forEach((line) => {
+          const { start, end } = getLineEndpoints(line);
+          if (!start || !end) return;
+          let nextStart = start;
+          let nextEnd = end;
+          let changed = false;
+          const startBinding = line.get('startBinding');
+          if (startBinding?.elementId === targetId) {
+            const point = resolveBindingPoint(startBinding);
+            if (point) {
+              nextStart = point;
+              changed = true;
+            }
+          }
+          const endBinding = line.get('endBinding');
+          if (endBinding?.elementId === targetId) {
+            const point = resolveBindingPoint(endBinding);
+            if (point) {
+              nextEnd = point;
+              changed = true;
+            }
+          }
+          if (changed) {
+            setLineEndpoints(line, nextStart, nextEnd);
+          }
+        });
+      }, 'auto-binding');
+    };
+
+    const refreshLineBindings = (lineMap) => {
+      if (!lineMap || lineMap.get('type') !== 'line' || !ydoc.value) return;
+      const lineId = lineMap.get('id');
+      const { start, end } = getLineEndpoints(lineMap);
+      if (!start || !end) return;
+      const lineWidth = lineMap.get('lineWidth') || 2;
+      ydoc.value.transact(() => {
+        let nextStart = start;
+        let nextEnd = end;
+        let changed = false;
+
+        const startBinding = lineMap.get('startBinding');
+        if (startBinding?.elementId) {
+          const point = resolveBindingPoint(startBinding);
+          if (point) {
+            nextStart = point;
+            changed = true;
+          } else {
+            lineMap.delete('startBinding');
+            changed = true;
+          }
+        } else {
+          const target = findBindingTargetNearPoint(start, lineId);
+          if (target) {
+            const { binding, point } = makeBindingPayload(target.map, target.rect, end, start, lineWidth);
+            if (binding && point) {
+              lineMap.set('startBinding', binding);
+              nextStart = point;
+              changed = true;
+            }
+          }
+        }
+
+        const endBinding = lineMap.get('endBinding');
+        if (endBinding?.elementId) {
+          const point = resolveBindingPoint(endBinding);
+          if (point) {
+            nextEnd = point;
+            changed = true;
+          } else {
+            lineMap.delete('endBinding');
+            changed = true;
+          }
+        } else {
+          const target = findBindingTargetNearPoint(end, lineId);
+          if (target) {
+            const { binding, point } = makeBindingPayload(target.map, target.rect, start, end, lineWidth);
+            if (binding && point) {
+              lineMap.set('endBinding', binding);
+              nextEnd = point;
+              changed = true;
+            }
+          }
+        }
+
+        if (changed && nextStart && nextEnd) {
+          setLineEndpoints(lineMap, nextStart, nextEnd);
+        }
+      }, 'auto-binding');
+    };
+
+// Define updateGlobalState outside initializeUndoManager to make it accessible in onBeforeUnmount
     const updateGlobalState = () => {
       if (undoManager.value) {
         const hasUndo = undoManager.value.canUndo();
@@ -787,7 +1084,7 @@ export default {
                 return map;
             });
         movableElements.value = filtered;
-        console.log(`[refreshMovableElements] Updated: before=${beforeCount}, after=${filtered.length}, yDrawings=${yDrawings.value.length}`);
+        debugLog(`[refreshMovableElements] Updated: before=${beforeCount}, after=${filtered.length}, yDrawings=${yDrawings.value.length}`);
     };
 
     const findMovableElementIdAtPoint = (coords) => {
@@ -826,18 +1123,18 @@ export default {
 
     // Setup awareness listener to track other users
     const setupAwarenessListener = () => {
-        console.log('[WhiteboardCanvas] setupAwarenessListener called');
+        debugLog('[WhiteboardCanvas] setupAwarenessListener called');
         if (!yjsConnection.value?.awareness) {
             console.warn('[WhiteboardCanvas] No awareness available!');
             return;
         }
         
         const awareness = yjsConnection.value.awareness;
-        console.log('[WhiteboardCanvas] Setting up awareness listener, clientID:', awareness.clientID);
+        debugLog('[WhiteboardCanvas] Setting up awareness listener, clientID:', awareness.clientID);
         
         // Listen for awareness changes (cursors, online users)
         awareness.on('change', (changes) => {
-            console.log('[WhiteboardCanvas] Awareness changed:', changes);
+            debugLog('[WhiteboardCanvas] Awareness changed:', changes);
             // Trigger redraw to show updated cursors
             redrawCanvas();
         });
@@ -1632,14 +1929,14 @@ export default {
 
       // Handle Shift+Pen combination: Keep type 'pen' for now, store start point
       if (toolType === 'pen' && shiftPressedAtStart.value) {
-          if (props.debugMode) {
+          if (debugModeEnabled.value) {
               debugLog("[startDrawing] Shift+Pen detected, storing start point.");
           }
           startCoordsForShiftLine.value = transformedCoords; // Store the starting point
           // Preview element remains 'pen' type initially for simplicity
       } else if (toolType === 'shapes') {
           toolType = props.currentShape; // Use the specific shape from prop
-          if (props.debugMode) {
+          if (debugModeEnabled.value) {
               debugLog(`[startDrawing] Starting shape drawing with type: ${toolType}`);
           }
       } else if (toolType === 'lines') {
@@ -1662,7 +1959,7 @@ export default {
           if (toolType === 'line') {
              elementData.arrowStyle = props.currentArrowStyle;
           }
-          if (props.debugMode) {
+          if (debugModeEnabled.value) {
               debugLog(`[startDrawing] Style set: ${elementData.lineStyle}, Roughness: ${elementData.roughness}`);
           }
       }
@@ -1690,7 +1987,7 @@ export default {
               const snappedStart = applySoftGridSnap({ ...transformedCoords, t: startTime }, null);
               currentElementPreview.value.start = { x: snappedStart.x, y: snappedStart.y };
           }
-          if (props.debugMode) {
+          if (debugModeEnabled.value) {
               debugLog("[startDrawing] Preview element created:", JSON.stringify(currentElementPreview.value));
           }
       } else {
@@ -1851,12 +2148,12 @@ export default {
       if (isValidPen || (preview.type !== 'pen' && isValidElement) || isValidShiftPen) {
           // If Shift was held with the pen tool, create a 'line' element
           if (wasShiftPressed && originalTool === 'pen' && isValidShiftPen) {
-              if (props.debugMode) {
-                  debugLog("[finishDrawing] Shift held with Pen, creating Line element.");
-              }
-              elementToAdd = {
-                  type: 'line',
-                  start: preview.start || shiftStartPoint, // Use snapped start if available
+          if (debugModeEnabled.value) {
+              debugLog("[finishDrawing] Shift held with Pen, creating Line element.");
+          }
+          elementToAdd = {
+              type: 'line',
+              start: preview.start || shiftStartPoint, // Use snapped start if available
                   end: preview.end, // Use the final end point from the preview
                   color: preview.color,
                   lineWidth: preview.lineWidth,
@@ -1873,7 +2170,7 @@ export default {
               if (originalTool === 'lines' && elementToAdd.type === 'line') {
                  // Always assign the style from props when the tool was 'lines'
                  const styleFromProps = props.currentLineStyle || 'solid';
-                 if (props.debugMode) {
+                 if (debugModeEnabled.value) {
                      debugLog(`[finishDrawing] lineStyle missing or needs override, setting from prop: ${styleFromProps}`);
                  }
                  elementToAdd.lineStyle = styleFromProps;
@@ -1882,10 +2179,13 @@ export default {
 
           // Add only if elementToAdd is not null
           if (elementToAdd) {
+              if (elementToAdd.type === 'line') {
+                attachBindingsToLineDraft(elementToAdd);
+              }
               // Assign a unique ID before adding to Yjs
               elementToAdd.id = `${yjsConnection.value?.awareness?.clientID || 'local'}-${Date.now()}`;
 
-              if (props.debugMode) {
+              if (debugModeEnabled.value) {
                   debugLog('[finishDrawing] Final elementToAdd before Yjs transaction:', JSON.stringify(elementToAdd));
               }
 
@@ -1972,6 +2272,12 @@ export default {
                             const arrowStyle = elementToAdd.arrowStyle || props.currentArrowStyle || 'none';
                             yElementMap.set('arrowStyle', arrowStyle);
                           }
+                          if (elementToAdd.startBinding) {
+                            yElementMap.set('startBinding', elementToAdd.startBinding);
+                          }
+                          if (elementToAdd.endBinding) {
+                            yElementMap.set('endBinding', elementToAdd.endBinding);
+                          }
                       }
                       // text and image types are handled in their respective functions (addTextElement, addImageFromDataUrl)
                       // and should already have x, y, width, height. We just need to ensure rotation is set.
@@ -1983,7 +2289,7 @@ export default {
                         refreshMovableElements();
                       }
 
-                      if (props.debugMode) {
+                      if (debugModeEnabled.value) {
                           debugLog('[finishDrawing] Successfully pushed Y.Map to yDrawings');
                       }
                   }, 'local-drawing'); // Add origin
@@ -2014,7 +2320,7 @@ export default {
               }
           }
       } else {
-          if (props.debugMode) {
+          if (debugModeEnabled.value) {
               debugLog('Drawing finished but element was too small or invalid, not adding.');
           }
       }
@@ -2025,15 +2331,103 @@ export default {
     };
 
     const handleObjectUpdate = (updatedYMap) => {
-      // This function will be called when MovableObject emits an update.
-      // The yMap is already updated by MovableObject itself, so we might just need to
-      // trigger undo/redo state updates or redraw other parts of the UI if necessary.
-      // For now, we can log it.
+      if (!updatedYMap) return;
+      const type = updatedYMap.get('type');
+      const id = updatedYMap.get('id');
+      if (type === 'line') {
+        refreshLineBindings(updatedYMap);
+      } else if (BINDABLE_ELEMENT_TYPES.has(type) && id) {
+        updateBindingsForTarget(id);
+      }
       debugLog('[WhiteboardCanvas] MovableObject updated:', updatedYMap.toJSON());
-      // Potentially update undo/redo state if the change wasn't already part of a transaction
-      // that UndoManager is tracking from MovableObject.
-      // updateGlobalState(); // This might be redundant if MovableObject uses ydoc.transact
-      redrawCanvas(); // Redraw overlays or other elements if needed
+      redrawCanvas();
+    };
+
+    const cloneYValue = (value) => {
+      if (value instanceof Y.Map) {
+        const nested = new Y.Map();
+        value.forEach((nestedValue, nestedKey) => {
+          nested.set(nestedKey, cloneYValue(nestedValue));
+        });
+        return nested;
+      }
+      if (value instanceof Y.Array) {
+        return value.toArray().map(item => cloneYValue(item));
+      }
+      if (Array.isArray(value)) {
+        return value.map(item => (item && typeof item === 'object' ? { ...item } : item));
+      }
+      if (value && typeof value === 'object') {
+        return { ...value };
+      }
+      return value;
+    };
+
+    const handleCloneObject = (objectData) => {
+      if (!ydoc.value || !yDrawings.value) return;
+      const sourceId = objectData?.id;
+      const sourceMap = yDrawings.value.toArray().find(map => map.get('id') === sourceId);
+      if (!sourceMap) {
+        debugWarn('[handleCloneObject] Source element not found for id:', sourceId);
+        return;
+      }
+
+      const offset = 20;
+      const addOffset = (val) => (typeof val === 'number' && !Number.isNaN(val) ? val + offset : offset);
+      const cloneMap = new Y.Map();
+      sourceMap.forEach((value, key) => {
+        cloneMap.set(key, cloneYValue(value));
+      });
+
+      const shiftPointLike = (pointLike) => {
+        if (!pointLike || typeof pointLike !== 'object') return { x: offset, y: offset };
+        const baseX = typeof pointLike.x === 'number' && !Number.isNaN(pointLike.x) ? pointLike.x : 0;
+        const baseY = typeof pointLike.y === 'number' && !Number.isNaN(pointLike.y) ? pointLike.y : 0;
+        return { ...pointLike, x: baseX + offset, y: baseY + offset };
+      };
+
+      const shiftNestedPoint = (key) => {
+        const nested = cloneMap.get(key);
+        if (nested instanceof Y.Map) {
+          nested.set('x', addOffset(nested.get('x')));
+          nested.set('y', addOffset(nested.get('y')));
+          cloneMap.set(key, nested);
+        } else if (nested && typeof nested === 'object') {
+          cloneMap.set(key, shiftPointLike(nested));
+        }
+      };
+
+      if (cloneMap.has('x')) cloneMap.set('x', addOffset(cloneMap.get('x')));
+      if (cloneMap.has('y')) cloneMap.set('y', addOffset(cloneMap.get('y')));
+      shiftNestedPoint('start');
+      shiftNestedPoint('end');
+      shiftNestedPoint('position');
+
+      const points = cloneMap.get('points');
+      if (Array.isArray(points)) {
+        cloneMap.set('points', points.map(shiftPointLike));
+      }
+      const rawPoints = cloneMap.get('rawPoints');
+      if (Array.isArray(rawPoints)) {
+        cloneMap.set('rawPoints', rawPoints.map(shiftPointLike));
+      }
+
+      const newId = `${yjsConnection.value?.awareness?.clientID || 'local'}-${uuidv4()}`;
+      cloneMap.set('id', newId);
+      cloneMap.set('timestamp', Date.now());
+
+      ydoc.value.transact(() => {
+        yDrawings.value.push([cloneMap]);
+      }, 'clone-object');
+
+      refreshMovableElements();
+      redrawCanvas();
+      nextTick(() => {
+        if (undoManager.value) {
+          updateGlobalState();
+        }
+      });
+      debugLog('[handleCloneObject] Cloned element', sourceId, '->', newId);
     };
 
     const selectObject = (objectId) => {
@@ -2380,13 +2774,344 @@ export default {
         }
     };
 
+    // --- PDF Export helpers ---
+    const normalizePointForBounds = (pt) => {
+      if (!pt) return null;
+      if (Array.isArray(pt)) {
+        const [x, y] = pt;
+        if (Number.isFinite(x) && Number.isFinite(y)) return { x, y };
+        return null;
+      }
+      const x = Number.isFinite(pt.x) ? pt.x : null;
+      const y = Number.isFinite(pt.y) ? pt.y : null;
+      if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+      return { x, y };
+    };
+
+    const getElementBounds = (element) => {
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      const addPoint = (x, y) => {
+        if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+        minX = Math.min(minX, x);
+        minY = Math.min(minY, y);
+        maxX = Math.max(maxX, x);
+        maxY = Math.max(maxY, y);
+      };
+      const addRect = (x, y, w, h) => {
+        if (![x, y, w, h].every(Number.isFinite)) return;
+        addPoint(x, y);
+        addPoint(x + w, y + h);
+      };
+
+      if (Array.isArray(element?.points)) {
+        element.points.forEach((pt) => {
+          const p = normalizePointForBounds(pt);
+          if (p) addPoint(p.x, p.y);
+        });
+      }
+
+      if (element?.start && element?.end) {
+        const start = normalizePointForBounds(element.start);
+        const end = normalizePointForBounds(element.end);
+        if (start) addPoint(start.x, start.y);
+        if (end) addPoint(end.x, end.y);
+      }
+
+      if (element?.position) {
+        const { x, y } = element.position;
+        const width = Number.isFinite(element.width)
+          ? element.width
+          : Number.isFinite(element.size) ? element.size : 0;
+        const height = Number.isFinite(element.height)
+          ? element.height
+          : Number.isFinite(element.size) ? element.size : 0;
+        addRect(x, y, width, height);
+      }
+
+      if (Number.isFinite(element?.x) && Number.isFinite(element?.y)) {
+        const w = Number.isFinite(element.width) ? element.width : 0;
+        const h = Number.isFinite(element.height) ? element.height : 0;
+        addRect(element.x, element.y, w, h);
+      }
+
+      if (minX === Infinity || minY === Infinity || maxX === -Infinity || maxY === -Infinity) {
+        return null;
+      }
+      const padding = Math.max(2, Number.isFinite(element.lineWidth) ? element.lineWidth : 0);
+      return { x1: minX - padding, y1: minY - padding, x2: maxX + padding, y2: maxY + padding };
+    };
+
+    const getSceneBounds = (elements) => {
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      elements.forEach((el) => {
+        const bounds = getElementBounds(el);
+        if (!bounds) return;
+        minX = Math.min(minX, bounds.x1);
+        minY = Math.min(minY, bounds.y1);
+        maxX = Math.max(maxX, bounds.x2);
+        maxY = Math.max(maxY, bounds.y2);
+      });
+      if (minX === Infinity || minY === Infinity || maxX === -Infinity || maxY === -Infinity) {
+        return null;
+      }
+      return { x1: minX, y1: minY, x2: maxX, y2: maxY };
+    };
+
+    const preloadImagesForExport = async (elements) => {
+      const loaders = [];
+      elements.forEach((el) => {
+        if (el.type !== 'image') return;
+        const src = el.src || el.dataUrl;
+        if (!src) return;
+        const cached = imageCache.value?.get(src);
+        if (cached && cached.complete) return;
+        loaders.push(new Promise((resolve) => {
+          const img = new Image();
+          img.onload = () => {
+            imageCache.value?.set(src, img);
+            resolve(true);
+          };
+          img.onerror = () => resolve(false);
+          img.src = src;
+        }));
+      });
+      if (loaders.length) {
+        await Promise.all(loaders);
+      }
+    };
+
+    // PDF export config
+    const EXPORT_DPI = 600; // Very high DPI for crisp zoom (up to ~1000%)
+    const PAGE_SIZE_INCH = { w: 8.27, h: 11.69 }; // A4 portrait in inches
+    const PAGE_PX = {
+      w: Math.round(PAGE_SIZE_INCH.w * EXPORT_DPI),
+      h: Math.round(PAGE_SIZE_INCH.h * EXPORT_DPI),
+    };
+    const PDF_IMAGE_COMPRESSION = 'NONE'; // No extra compression to keep details sharp
+
+    const drawGridForExport = (ctx, bounds, scale, marginPx, pagePx) => {
+      const pan = {
+        x: marginPx - bounds.x1 * scale,
+        y: marginPx - bounds.y1 * scale,
+      };
+      // Use light grid in exports so the background stays printable even in dark mode.
+      drawUtilGrid(ctx, scale, pan, pagePx.w, pagePx.h, false);
+      return pan;
+    };
+
+    const exportBoardAsPdf = async () => {
+      try {
+        console.log('[WhiteboardCanvas] exportBoardAsPdf start');
+        showToast('Preparing PDF...', 'info', 1500);
+        if (!yDrawings.value || !yDrawings.value.length) {
+          showToast('Nothing to export yet.', 'warning');
+          return;
+        }
+
+        const elements = yDrawings.value.toArray().map(map => map.toJSON());
+        const sceneBounds = getSceneBounds(elements);
+        if (!sceneBounds) {
+          showToast('Nothing to export yet.', 'warning');
+          return;
+        }
+        console.log('[WhiteboardCanvas] exportBoardAsPdf scene bounds', sceneBounds);
+
+        await preloadImagesForExport(elements);
+
+        const marginPx = Math.round(0.2 * EXPORT_DPI); // ~0.2 inch margin
+        const worldW = Math.max(1, sceneBounds.x2 - sceneBounds.x1);
+        const worldH = Math.max(1, sceneBounds.y2 - sceneBounds.y1);
+        const scale = Math.min(
+          (PAGE_PX.w - 2 * marginPx) / worldW,
+          (PAGE_PX.h - 2 * marginPx) / worldH
+        );
+
+        const offscreen = document.createElement('canvas');
+        offscreen.width = PAGE_PX.w;
+        offscreen.height = PAGE_PX.h;
+        const ctx = offscreen.getContext('2d');
+        if (!ctx) {
+          showToast('Unable to prepare PDF canvas.', 'error');
+          return;
+        }
+
+        const pan = drawGridForExport(
+          ctx,
+          sceneBounds,
+          scale,
+          marginPx,
+          PAGE_PX
+        );
+
+        ctx.save();
+        ctx.translate(pan.x, pan.y);
+        ctx.scale(scale, scale);
+
+        elements.forEach((element) => {
+          drawElement(ctx, element, false, smoothingFactor.value, imageCache.value);
+        });
+
+        ctx.restore();
+
+        const pdf = new jsPDF('portrait', 'pt', 'a4');
+        const pageW = pdf.internal.pageSize.getWidth();
+        const pageH = pdf.internal.pageSize.getHeight();
+        pdf.addImage(
+          offscreen.toDataURL('image/png'),
+          'PNG',
+          0,
+          0,
+          pageW,
+          pageH,
+          undefined,
+          PDF_IMAGE_COMPRESSION
+        );
+        const blob = pdf.output('blob');
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'whiteboard.pdf';
+        a.click();
+        URL.revokeObjectURL(url);
+        console.log('[WhiteboardCanvas] exportBoardAsPdf done');
+        showToast('Exported to PDF', 'success');
+      } catch (err) {
+        console.error('[exportBoardAsPdf] failed', err);
+        showToast('PDF export failed. Check console.', 'error');
+      }
+    };
+
+    const tileIntersects = (tileRect, bounds) => {
+      return !(bounds.x2 <= tileRect.x1 || bounds.x1 >= tileRect.x2 || bounds.y2 <= tileRect.y1 || bounds.y1 >= tileRect.y2);
+    };
+
+    const renderTileToImage = (tileRect, elements) => {
+      const marginPx = Math.round(0.2 * EXPORT_DPI);
+      const worldW = Math.max(1, tileRect.x2 - tileRect.x1);
+      const worldH = Math.max(1, tileRect.y2 - tileRect.y1);
+      const scale = Math.min(
+        (PAGE_PX.w - 2 * marginPx) / worldW,
+        (PAGE_PX.h - 2 * marginPx) / worldH
+      );
+
+      const off = document.createElement('canvas');
+      off.width = PAGE_PX.w;
+      off.height = PAGE_PX.h;
+      const ctx = off.getContext('2d');
+      if (!ctx) return null;
+
+      const pan = drawGridForExport(
+        ctx,
+        tileRect,
+        scale,
+        marginPx,
+        PAGE_PX
+      );
+
+      ctx.save();
+      ctx.translate(pan.x, pan.y);
+      ctx.scale(scale, scale);
+
+      elements.forEach((el) => {
+        drawElement(ctx, el, false, smoothingFactor.value, imageCache.value);
+      });
+
+      ctx.restore();
+      return off.toDataURL('image/png');
+    };
+
+    const exportBoardAsPdfPaged = async () => {
+      try {
+        console.log('[WhiteboardCanvas] exportBoardAsPdfPaged start');
+        showToast('Preparing PDF...', 'info', 1500);
+        if (!yDrawings.value || !yDrawings.value.length) {
+          showToast('Nothing to export yet.', 'warning');
+          return;
+        }
+
+        const elements = yDrawings.value.toArray().map(map => map.toJSON());
+        const sceneBounds = getSceneBounds(elements);
+        if (!sceneBounds) {
+          showToast('Nothing to export yet.', 'warning');
+          return;
+        }
+
+        await preloadImagesForExport(elements);
+
+        const TILE_W = 2000;
+        const TILE_H = 1400;
+        const tilesX = Math.max(1, Math.ceil((sceneBounds.x2 - sceneBounds.x1) / TILE_W));
+        const tilesY = Math.max(1, Math.ceil((sceneBounds.y2 - sceneBounds.y1) / TILE_H));
+
+        const pdf = new jsPDF('portrait', 'pt', 'a4');
+        let isFirst = true;
+
+        for (let ty = 0; ty < tilesY; ty++) {
+          for (let tx = 0; tx < tilesX; tx++) {
+            const tileRect = {
+              x1: sceneBounds.x1 + tx * TILE_W,
+              y1: sceneBounds.y1 + ty * TILE_H,
+              x2: sceneBounds.x1 + (tx + 1) * TILE_W,
+              y2: sceneBounds.y1 + (ty + 1) * TILE_H,
+            };
+
+            const shapesInTile = elements.filter((el) => {
+              const b = getElementBounds(el);
+              if (!b) return false;
+              return tileIntersects(tileRect, b);
+            });
+
+            if (!shapesInTile.length) continue;
+
+            const imgData = renderTileToImage(tileRect, shapesInTile);
+            if (!imgData) continue;
+
+            if (!isFirst) pdf.addPage();
+            isFirst = false;
+            const pageW = pdf.internal.pageSize.getWidth();
+            const pageH = pdf.internal.pageSize.getHeight();
+            pdf.addImage(
+              imgData,
+              'PNG',
+              0,
+              0,
+              pageW,
+              pageH,
+              undefined,
+              PDF_IMAGE_COMPRESSION
+            );
+            pdf.setFontSize(10);
+            pdf.text(`Page ${pdf.getNumberOfPages()}`, pageW - 60, pageH - 20);
+          }
+        }
+
+        if (isFirst) {
+          showToast('Nothing to export yet.', 'warning');
+          return;
+        }
+
+        const blob = pdf.output('blob');
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'whiteboard-notes.pdf';
+        a.click();
+        URL.revokeObjectURL(url);
+        console.log('[WhiteboardCanvas] exportBoardAsPdfPaged done');
+        showToast('Exported to PDF (notes)', 'success');
+      } catch (err) {
+        console.error('[exportBoardAsPdfPaged] failed', err);
+        showToast('PDF export failed. Check console.', 'error');
+      }
+    };
+
     const getSerializableState = () => { return {}; }; // Placeholder
     const loadState = (state) => { return false; }; // Placeholder
     const exportAsText = () => { return ''; }; // Placeholder
     const importFromText = (text) => { return false; }; // Placeholder
 
     const toggleDebug = (enabled) => {
-        props.debugMode = enabled;
+        debugModeEnabled.value = enabled;
         redrawCanvas();
     };
 
@@ -2722,8 +3447,13 @@ export default {
 
 
     // --- Watchers ---
+    watch(() => props.debugMode, (newDebug) => {
+        debugModeEnabled.value = newDebug;
+        redrawCanvas();
+    });
+
     watch(() => props.currentShape, (newShape) => {
-        if (props.debugMode) {
+        if (debugModeEnabled.value) {
             debugLog(`[Watch] currentShape changed to: ${newShape}`);
         }
         if (currentTool.value === 'shapes') {
@@ -2732,7 +3462,7 @@ export default {
     });
 
     watch(() => props.currentLineStyle, (newLineStyle) => {
-        if (props.debugMode) {
+        if (debugModeEnabled.value) {
             debugLog(`[Watch] currentLineStyle changed to: ${newLineStyle}`);
         }
         if (currentTool.value === 'lines') {
@@ -2969,7 +3699,7 @@ export default {
       redrawCanvas();
     };
 
-    return {
+    const publicApi = {
       // Refs
       containerRef,
       canvas,
@@ -3005,6 +3735,7 @@ export default {
       handleTouchMove,
       handleTouchEnd,
       handleObjectSelectionRequest,
+      handleCloneObject,
 
       // Public API
       setTool,
@@ -3022,6 +3753,8 @@ export default {
       loadState,
       exportAsText,
       importFromText,
+      exportBoardAsPdf,
+      exportBoardAsPdfPaged,
       addImageFromDataUrl,
       getViewportCenter,
       toggleDebug,
@@ -3064,6 +3797,9 @@ export default {
             if (stroke) applyMathAnswer(stroke);
       }
     };
+
+    expose(publicApi);
+    return publicApi;
   }
 };
 </script>

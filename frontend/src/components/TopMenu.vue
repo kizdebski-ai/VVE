@@ -59,15 +59,16 @@
           <Grid3X3 :size="18" />
           <span>Align</span>
         </button>
-        <button
-          class="menu-btn"
-          :class="{ 'active-feature': props.activeFeature === 'mathRecognizer' }"
-          @click="emit('toggle-feature', 'mathRecognizer')"
-          title="Math Recognizer (Experimental)"
-        >
-          <Sigma :size="18" />
-          <span>Math</span>
-        </button>
+        <div class="menu-btn pdf-menu-wrapper" @mouseenter="showPdfMenu = true" @mouseleave="showPdfMenu = false">
+          <button class="menu-btn" @click="emitPdfExport('single')" title="Export to PDF (A4)">
+            <FileDown :size="18" />
+            <span>PDF</span>
+          </button>
+          <div v-if="showPdfMenu" class="pdf-dropdown glass-panel">
+            <button class="pdf-option" @click="emitPdfExport('single')">Cała tablica (1 strona)</button>
+            <button class="pdf-option" @click="emitPdfExport('paged')">Notatki z lekcji (A4, wiele stron)</button>
+          </div>
+        </div>
       </div>
     </transition>
 
@@ -144,7 +145,7 @@ import {
   Upload, 
   Wand2, 
   Grid3X3, 
-  Sigma,
+  FileDown,
   X
 } from 'lucide-vue-next';
 
@@ -157,12 +158,23 @@ const props = defineProps({
 });
 
 // Define emits
-const emit = defineEmits(['clear-canvas', 'toggle-feature', 'open-room-manager', 'export-whiteboard', 'import-whiteboard']);
+const emit = defineEmits(['clear-canvas', 'toggle-feature', 'open-room-manager', 'export-whiteboard', 'export-pdf-single', 'export-pdf-paged', 'import-whiteboard']);
 
 const showGear = ref(false); // Controls gear visibility
 const showMenu = ref(false); // Controls menu visibility
 const showShortcutsInfo = ref(false);
 let hideTimeout = null; // Timeout for hiding gear/menu
+const showPdfMenu = ref(false);
+
+const emitPdfExport = (mode) => {
+  if (mode === 'single') {
+    emit('export-pdf-single');
+  } else if (mode === 'paged') {
+    emit('export-pdf-paged');
+  }
+  showPdfMenu.value = false;
+};
+
 
 // Show gear on hover, clear any pending hide actions
 const handleMouseEnter = () => {
@@ -308,6 +320,39 @@ const openRoomManager = () => {
   height: 24px;
   background: var(--glass-border);
   margin: 0 4px;
+}
+
+.pdf-menu-wrapper {
+  position: relative;
+}
+
+.pdf-dropdown {
+  position: absolute;
+  top: 110%;
+  left: 0;
+  min-width: 200px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  z-index: 5;
+}
+
+.pdf-option {
+  text-align: left;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--glass-border);
+  background: rgba(255,255,255,0.04);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.2s var(--ease-fluid);
+}
+
+.pdf-option:hover {
+  background: rgba(59, 130, 246, 0.15);
+  color: var(--accent-primary);
+  border-color: rgba(59, 130, 246, 0.4);
 }
 
 /* Active feature button */

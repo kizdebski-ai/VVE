@@ -9,13 +9,27 @@
   >
     <!-- Rotation Handle -->
     <div
-      v-if="isSelected"
+      v-if="isSelected && !isLineType"
       class="rotation-handle"
       @mousedown.stop="startRotate"
     ></div>
 
+    <!-- Line Endpoint Handles -->
+    <div v-if="isSelected && isLineType" class="line-handles">
+      <div
+        class="line-end-handle line-start-handle"
+        :style="lineHandlePositions.start"
+        @mousedown.stop="startLineEndpointDrag($event, 'start')"
+      ></div>
+      <div
+        class="line-end-handle line-terminal-handle"
+        :style="lineHandlePositions.end"
+        @mousedown.stop="startLineEndpointDrag($event, 'end')"
+      ></div>
+    </div>
+
     <!-- Resize Handles -->
-    <div v-if="isSelected" class="resize-handles">
+    <div v-else-if="isSelected" class="resize-handles">
       <div class="resize-handle nw-handle" @mousedown.stop="startResize($event, 'nw')"></div>
       <div class="resize-handle n-handle" @mousedown.stop="startResize($event, 'n')"></div>
       <div class="resize-handle ne-handle" @mousedown.stop="startResize($event, 'ne')"></div>
@@ -216,6 +230,7 @@ const isDragging = ref(false);
 const isRotating = ref(false);
 const isResizing = ref(false);
 const currentResizeHandle = ref<string | null>(null);
+const currentLineHandle = ref<'start' | 'end' | null>(null);
 
 const initialObjectState = reactive({ x: 0, y: 0, width: 0, height: 0, rotation: 0 });
 const initialMousePos = reactive({ x: 0, y: 0 });
@@ -229,6 +244,12 @@ const initialGeometrySnapshot = reactive({
   endRatioX: 1 as number | null,
   endRatioY: 1 as number | null,
   points: null as { x: number; y: number }[] | null,
+});
+const initialLineSnapshot = reactive({
+  startX: 0,
+  startY: 0,
+  endX: 0,
+  endY: 0,
 });
 
 watch(() => props.isSelected, (newValue) => {
@@ -267,6 +288,7 @@ const bootstrapObjectData = () => {
 };
 
 const objectData = reactive<MovableObjectData>(bootstrapObjectData());
+const isLineType = computed(() => objectData.type === 'line');
 
 const syncDataFromYMap = () => {
     const startPoint = extractPoint(props.object.get('start'));
@@ -297,11 +319,40 @@ const syncDataFromYMap = () => {
     objectData.points = props.object.get('points');
 };
 
+const lineHitPadding = computed(() => {
+  const lineWidth = ensureNumber(objectData.lineWidth, 2);
+  const screenPadding = Math.max(12, lineWidth * props.zoomLevel * 2);
+  return screenPadding / props.zoomLevel;
+});
+
+const displayFrame = computed(() => {
+  if (!isLineType.value) {
+    return {
+      x: ensureNumber(objectData.x, 0),
+      y: ensureNumber(objectData.y, 0),
+      width: Math.max(1, ensureNumber(objectData.width, 1)),
+      height: Math.max(1, ensureNumber(objectData.height, 1)),
+      padding: 0,
+    };
+  }
+  const padding = lineHitPadding.value;
+  const baseWidth = Math.max(0, ensureNumber(objectData.width, 0));
+  const baseHeight = Math.max(0, ensureNumber(objectData.height, 0));
+  return {
+    x: ensureNumber(objectData.x, 0) - padding,
+    y: ensureNumber(objectData.y, 0) - padding,
+    width: Math.max(1, baseWidth + padding * 2),
+    height: Math.max(1, baseHeight + padding * 2),
+    padding,
+  };
+});
+
 const objectStyle = computed(() => {
-  const screenX = ensureNumber(objectData.x, 0) * props.zoomLevel + props.panOffset.x;
-  const screenY = ensureNumber(objectData.y, 0) * props.zoomLevel + props.panOffset.y;
-  const scaledWidth = Math.max(1, ensureNumber(objectData.width, 1) * props.zoomLevel);
-  const scaledHeight = Math.max(1, ensureNumber(objectData.height, 1) * props.zoomLevel);
+  const frame = displayFrame.value;
+  const screenX = ensureNumber(frame.x, 0) * props.zoomLevel + props.panOffset.x;
+  const screenY = ensureNumber(frame.y, 0) * props.zoomLevel + props.panOffset.y;
+  const scaledWidth = Math.max(1, ensureNumber(frame.width, 1) * props.zoomLevel);
+  const scaledHeight = Math.max(1, ensureNumber(frame.height, 1) * props.zoomLevel);
 
   return {
     position: 'absolute' as const,
@@ -323,6 +374,28 @@ const objectStyle = computed(() => {
 });
 
 const shouldRenderContent = computed(() => CONTENT_RENDER_TYPES.has(objectData.type));
+const lineHandlePositions = computed(() => {
+  if (!isLineType.value) {
+    return { start: {}, end: {} };
+  }
+  const frame = displayFrame.value;
+  const startX = ensureNumber(objectData.startX, objectData.x);
+  const startY = ensureNumber(objectData.startY, objectData.y);
+  const endX = ensureNumber(objectData.endX, objectData.x + objectData.width);
+  const endY = ensureNumber(objectData.endY, objectData.y + objectData.height);
+  return {
+    start: {
+      left: `${(startX - frame.x) * props.zoomLevel}px`,
+      top: `${(startY - frame.y) * props.zoomLevel}px`,
+      transform: 'translate(-50%, -50%)',
+    },
+    end: {
+      left: `${(endX - frame.x) * props.zoomLevel}px`,
+      top: `${(endY - frame.y) * props.zoomLevel}px`,
+      transform: 'translate(-50%, -50%)',
+    },
+  };
+});
 
 const getStartMap = () => props.object.get('start');
 const getEndMap = () => props.object.get('end');
@@ -410,6 +483,10 @@ const handleDoubleClick = (event: MouseEvent) => {
 };
 
 const startDragIfSelectedOrRequestSelect = (event: MouseEvent) => {
+  if (isLineType.value && !internalIsSelected.value) {
+    emit('request-select', objectData.id);
+    return;
+  }
   if (!internalIsSelected.value) {
     emit('request-select', objectData.id);
     return;
@@ -559,6 +636,7 @@ const stopRotate = () => {
 
 const startResize = (event: MouseEvent, handle: string) => {
   if (!movableObjectRef.value) return;
+  if (isLineType.value) return; // Lines use dedicated endpoint handles
    if (!internalIsSelected.value) {
     emit('request-select', objectData.id);
      if(!props.isSelected) return; // Check prop after emit, as internalIsSelected watcher might not have run
@@ -596,8 +674,74 @@ const startResize = (event: MouseEvent, handle: string) => {
   document.addEventListener('mouseup', stopResize);
 };
 
+const startLineEndpointDrag = (event: MouseEvent, handle: 'start' | 'end') => {
+  if (!internalIsSelected.value) {
+    emit('request-select', objectData.id);
+    return;
+  }
+  isResizing.value = true;
+  currentLineHandle.value = handle;
+  initialMousePos.x = event.clientX;
+  initialMousePos.y = event.clientY;
+  initialLineSnapshot.startX = Number.isFinite(objectData.startX) ? objectData.startX! : objectData.x;
+  initialLineSnapshot.startY = Number.isFinite(objectData.startY) ? objectData.startY! : objectData.y;
+  initialLineSnapshot.endX = Number.isFinite(objectData.endX) ? objectData.endX! : objectData.x + objectData.width;
+  initialLineSnapshot.endY = Number.isFinite(objectData.endY) ? objectData.endY! : objectData.y + objectData.height;
+  document.addEventListener('mousemove', handleResize);
+  document.addEventListener('mouseup', stopResize);
+};
+
+const handleLineResize = (event: MouseEvent) => {
+  if (!currentLineHandle.value) return;
+  const dx = (event.clientX - initialMousePos.x) / props.zoomLevel;
+  const dy = (event.clientY - initialMousePos.y) / props.zoomLevel;
+
+  let newStartX = initialLineSnapshot.startX;
+  let newStartY = initialLineSnapshot.startY;
+  let newEndX = initialLineSnapshot.endX;
+  let newEndY = initialLineSnapshot.endY;
+
+  if (currentLineHandle.value === 'start') {
+    newStartX += dx;
+    newStartY += dy;
+  } else if (currentLineHandle.value === 'end') {
+    newEndX += dx;
+    newEndY += dy;
+  }
+
+  const newX = Math.min(newStartX, newEndX);
+  const newY = Math.min(newStartY, newEndY);
+  const newWidth = Math.abs(newEndX - newStartX);
+  const newHeight = Math.abs(newEndY - newStartY);
+
+  objectData.startX = newStartX;
+  objectData.startY = newStartY;
+  objectData.endX = newEndX;
+  objectData.endY = newEndY;
+  objectData.x = newX;
+  objectData.y = newY;
+  objectData.width = newWidth;
+  objectData.height = newHeight;
+
+  props.object.doc?.transact(() => {
+    updateStartEndMaps(newStartX, newStartY, newEndX, newEndY);
+    props.object.set('x', newX);
+    props.object.set('y', newY);
+    props.object.set('width', newWidth);
+    props.object.set('height', newHeight);
+    updatePositionMap(newX, newY);
+  }, 'local-line-resize');
+};
+
 const handleResize = (event: MouseEvent) => {
-  if (!isResizing.value || !currentResizeHandle.value) return;
+  if (!isResizing.value) return;
+
+  if (isLineType.value && currentLineHandle.value) {
+    handleLineResize(event);
+    return;
+  }
+
+  if (!currentResizeHandle.value) return;
 
   const dxScreen = (event.clientX - initialMousePos.x) / props.zoomLevel;
   const dyScreen = (event.clientY - initialMousePos.y) / props.zoomLevel;
@@ -691,6 +835,7 @@ const stopResize = () => {
   if (!isResizing.value) return;
   isResizing.value = false;
   currentResizeHandle.value = null;
+  currentLineHandle.value = null;
 
   document.removeEventListener('mousemove', handleResize);
   document.removeEventListener('mouseup', stopResize);
@@ -713,7 +858,8 @@ onMounted(() => {
     if (transaction.local && (
         transaction.origin === 'local-movable-drag' || 
         transaction.origin === 'local-movable-rotate' ||
-        transaction.origin === 'local-movable-resize' 
+        transaction.origin === 'local-movable-resize' ||
+        transaction.origin === 'local-line-resize'
         )) {
       return;
     }
@@ -807,6 +953,34 @@ onUnmounted(() => {
   top: 0; left: 0;
   width: 100%; height: 100%;
   pointer-events: none; 
+}
+
+.line-handles {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.line-end-handle {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  background-color: white;
+  border: 2px solid #2563eb;
+  border-radius: 50%;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.15);
+  pointer-events: all;
+  transform: translate(-50%, -50%);
+  transition: transform 0.1s ease, background-color 0.1s ease;
+  z-index: 12;
+}
+
+.line-end-handle:hover {
+  transform: translate(-50%, -50%) scale(1.1);
+  background-color: #2563eb;
 }
 
 /* Circular Handles */

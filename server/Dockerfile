@@ -28,6 +28,5 @@ RUN mkdir -p /data
 COPY --from=builder /app/dist ./dist
 
 EXPOSE 8000
-VOLUME ["/data"]
 
 CMD ["node", "dist/server.js"]

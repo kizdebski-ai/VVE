@@ -7,7 +7,7 @@ import { logger } from './logger';
 import type { RoomManager } from './rooms';
 import type { EquationSolver } from './services/aiSolver';
 import { HttpError } from './services/httpError';
-import { callGrok, ChatMessage } from './services/grok';
+import { callGrok, ChatMessage, type CallGrokOptions } from './services/grok';
 
 const API_ROOMS = '/api/rooms';
 const AI_SOLVER_ROUTE = '/api/ai/solve-equation/';
@@ -224,11 +224,14 @@ export const createHttpApp = ({ roomManager, aiSolver }: CreateAppOptions) => {
       const wantVision = (includeScreenshot || mode === 'screenshot_intro') && Boolean(screenshotDataUrl);
 
       if (wantVision && hasVision) {
-        const visionMessages = history.map((item) => ({
+        const visionMessages: Array<{ role: string; content: string; image?: string }> = history.map((item) => ({
           role: item.role,
           content: typeof item.content === 'string' ? item.content : '',
         }));
-        visionMessages.unshift({ role: 'system', content: system.content as string });
+        visionMessages.unshift({
+          role: 'system',
+          content: typeof system.content === 'string' ? system.content : '',
+        });
         if (message || screenshotDataUrl) {
           visionMessages.push({
             role: 'user',
@@ -258,7 +261,11 @@ export const createHttpApp = ({ roomManager, aiSolver }: CreateAppOptions) => {
         messages.push({ role: 'user', content: message });
       }
 
-      const answer = await callGrok({ messages, model: process.env.CHAT_MODEL });
+      const callOptions: CallGrokOptions = { messages };
+      if (process.env.CHAT_MODEL) {
+        callOptions.model = process.env.CHAT_MODEL;
+      }
+      const answer = await callGrok(callOptions);
       res.json({ answer });
     } catch (error) {
       const err = error as any;

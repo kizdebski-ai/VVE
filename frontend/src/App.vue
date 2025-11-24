@@ -161,7 +161,16 @@
       </div>
 
       <!-- User info in top-right corner -->
-      <div class="floating-user-info">
+      <button
+        class="user-info-toggle glass-panel"
+        :class="{ collapsed: userInfoCollapsed }"
+        @click="toggleUserInfoPanel"
+        :aria-expanded="!userInfoCollapsed"
+        :title="userInfoCollapsed ? 'Show user panel' : 'Hide user panel'"
+      >
+        {{ userInfoCollapsed ? 'Show' : 'Hide' }}
+      </button>
+      <div class="floating-user-info" :class="{ collapsed: userInfoCollapsed }">
         <div class="username-container">
           <input 
             type="text" 
@@ -292,9 +301,13 @@ export default {
     const statusMessage = ref('');
     const darkMode = ref(localStorage.getItem('darkMode') === 'true');
     const debugMode = ref(false);
+    const userInfoCollapsed = ref(false);
     const isCalculatorVisible = ref(false);
     const toggleCalculator = () => {
       isCalculatorVisible.value = !isCalculatorVisible.value;
+    };
+    const toggleUserInfoPanel = () => {
+      userInfoCollapsed.value = !userInfoCollapsed.value;
     };
     const globalError = ref(null);
     const currentTool = ref('pen');
@@ -985,6 +998,7 @@ export default {
       statusMessage,
       darkMode,
       debugMode,
+      userInfoCollapsed,
       roomId,
       roomKey,
       currentTool,
@@ -1007,6 +1021,7 @@ export default {
       handleArrowStyleChange,
       handleRoughnessChange,
       toggleCalculator, // Return toggle method
+      toggleUserInfoPanel,
       handleClearCanvas,
       handleExportRequest,
       handleImportState,
@@ -1313,7 +1328,7 @@ body {
 
   position: fixed;
 
-  top: 20px;
+  top: 64px;
 
   right: 20px;
 
@@ -1324,6 +1339,10 @@ body {
   gap: 10px;
 
   z-index: 3000;
+
+  pointer-events: auto;
+
+  transition: transform 0.25s ease, opacity 0.2s ease;
 
   
 
@@ -1344,6 +1363,68 @@ body {
   box-shadow: var(--glass-shadow);
 
   color: var(--text-primary);
+
+}
+
+.floating-user-info.collapsed {
+
+  transform: translateX(calc(100% + 20px));
+
+  opacity: 0;
+
+  pointer-events: none;
+
+}
+
+.user-info-toggle {
+
+  position: fixed;
+
+  top: 64px;
+
+  right: 16px;
+
+  z-index: 3001;
+
+  height: 36px;
+
+  min-width: 56px;
+
+  padding: 0 12px;
+
+  display: flex;
+
+  align-items: center;
+
+  justify-content: center;
+
+  border-radius: var(--radius-sm);
+
+  border: 1px solid var(--glass-border);
+
+  background: var(--glass-surface);
+
+  color: var(--text-primary);
+
+  cursor: pointer;
+
+  transition: all 0.2s ease;
+
+  box-shadow: var(--glass-shadow);
+
+  pointer-events: auto;
+
+}
+
+.user-info-toggle:hover {
+
+  background: var(--glass-highlight);
+
+}
+
+.user-info-toggle.collapsed {
+
+  opacity: 0.9;
 
 }
 

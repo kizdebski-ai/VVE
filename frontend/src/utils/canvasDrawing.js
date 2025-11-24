@@ -434,7 +434,8 @@ export const drawElement = (
       break;
 
     case 'text':
-      if (element.position && element.text) {
+      // Allow drawing if either 'position' object exists OR top-level x/y exist
+      if ((element.position || (element.x !== undefined && element.y !== undefined)) && element.text) {
         drawText(context, element);
       }
       break;
@@ -518,21 +519,32 @@ const drawText = (context, element) => {
   context.textAlign = element.align || 'left';
   context.textBaseline = element.baseline || 'top';
   context.fillStyle = element.color || '#000000';
+  
+  // Fallback to top-level x/y if position object is missing
+  const posX = element.position ? element.position.x : element.x;
+  const posY = element.position ? element.position.y : element.y;
+
+  if (posX === undefined || posY === undefined) return;
+
   if (element.maxWidth) {
-    context.fillText(element.text, element.position.x, element.position.y, element.maxWidth);
+    context.fillText(element.text, posX, posY, element.maxWidth);
   } else {
-    context.fillText(element.text, element.position.x, element.position.y);
+    context.fillText(element.text, posX, posY);
   }
 };
 
 const drawImage = (context, element, imageCache, requestRedraw) => {
   const { dataUrl, position, width, height } = element;
-  if (!dataUrl || !position) return;
+  // Allow top-level x/y
+  const posX = position ? position.x : element.x;
+  const posY = position ? position.y : element.y;
+
+  if (!dataUrl || (posX === undefined || posY === undefined)) return;
 
   let img = imageCache.get(dataUrl);
   if (img) {
     if (img.complete && img.naturalWidth > 0) {
-      context.drawImage(img, position.x, position.y, width, height);
+      context.drawImage(img, posX, posY, width, height);
     }
   } else {
     img = new Image();
@@ -847,11 +859,15 @@ export const isPointInElement = (point, element, hitDistance = 10) => {
   // Simplified hit detection for now
   const { start, end, position, width, height } = element;
 
-  if (position && width && height) {
-    return point.x >= position.x - hitDistance &&
-      point.x <= position.x + width + hitDistance &&
-      point.y >= position.y - hitDistance &&
-      point.y <= position.y + height + hitDistance;
+  // Check for position object OR top-level x/y (used by text/images)
+  const posX = position ? position.x : element.x;
+  const posY = position ? position.y : element.y;
+
+  if (posX !== undefined && posY !== undefined && width && height) {
+    return point.x >= posX - hitDistance &&
+      point.x <= posX + width + hitDistance &&
+      point.y >= posY - hitDistance &&
+      point.y <= posY + height + hitDistance;
   }
 
   if (start && end) {

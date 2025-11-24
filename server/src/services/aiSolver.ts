@@ -1,6 +1,7 @@
 import nodeFetch, { Response, RequestInit } from 'node-fetch';
 import { HttpError } from './httpError';
 import { create, all } from 'mathjs';
+import type { FactoryFunctionMap } from 'mathjs';
 
 export interface EquationSolver {
   solveEquation(equation: string): Promise<string>;
@@ -19,7 +20,7 @@ const resolveFetch = (): FetchImpl => {
   return nodeFetch as unknown as FetchImpl;
 };
 
-const math = create(all, { number: 'number', precision: 12 });
+const math = create(all as FactoryFunctionMap, { number: 'number', precision: 12 });
 const RESERVED_FUNCTION_NAMES = new Set([
   'sin', 'cos', 'tan', 'log', 'ln', 'sqrt', 'pow', 'abs', 'exp', 'max', 'min', 'mod', 'round', 'floor', 'ceil'
 ]);

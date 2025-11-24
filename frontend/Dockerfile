@@ -9,10 +9,6 @@ RUN npm ci
 # Copy sources
 COPY . .
 
-# Backend URL available at build time for Vite
-ARG VITE_BACKEND_URL=http://localhost:8000
-ENV VITE_BACKEND_URL=${VITE_BACKEND_URL}
-
 # Build static assets
 RUN npm run build
 
@@ -23,9 +19,18 @@ WORKDIR /usr/share/nginx/html
 # Copy built assets
 COPY --from=builder /app/dist ./
 
-# Replace default nginx config to support SPA routing
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+# Copy nginx template
+COPY nginx.conf.template /etc/nginx/templates/default.conf.template
+
+# Create entrypoint script for env substitution
+RUN echo '#!/bin/sh' > /docker-entrypoint.sh && \
+    echo 'echo "BACKEND_URL is: $BACKEND_URL"' >> /docker-entrypoint.sh && \
+    echo 'envsubst "\$BACKEND_URL" < /etc/nginx/templates/default.conf.template > /etc/nginx/conf.d/default.conf' >> /docker-entrypoint.sh && \
+    echo 'echo "Generated nginx config:"' >> /docker-entrypoint.sh && \
+    echo 'cat /etc/nginx/conf.d/default.conf' >> /docker-entrypoint.sh && \
+    echo 'exec nginx -g "daemon off;"' >> /docker-entrypoint.sh && \
+    chmod +x /docker-entrypoint.sh
 
 EXPOSE 80
 
-CMD ["nginx", "-g", "daemon off;"]
+ENTRYPOINT ["/docker-entrypoint.sh"]

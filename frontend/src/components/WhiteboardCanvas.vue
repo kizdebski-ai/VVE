@@ -280,60 +280,6 @@ export default {
       };
     });
 
-    // ... inside setup ...
-
-    const addTextElement = (coords, text, fontSize = 24) => {
-       if (!ydoc.value || !yDrawings.value) return;
-
-       const textElement = {
-         id: `text-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-         type: 'text',
-         x: coords.x,
-         y: coords.y,
-         position: { x: coords.x, y: coords.y },
-         text: text,
-         color: currentColor.value,
-         fontSize: fontSize,
-         fontFamily: '"Kalam", cursive', // Store font
-         rotation: 0,
-         width: text.length * (fontSize * 0.6), 
-         height: fontSize * 1.2
-     };
-
-     ydoc.value.transact(() => {
-       const yMap = new Y.Map();
-       for (const [key, value] of Object.entries(textElement)) {
-          if (key === 'position') {
-            const posMap = new Y.Map();
-            posMap.set('x', value.x);
-            posMap.set('y', value.y);
-            yMap.set('position', posMap);
-          } else {
-            yMap.set(key, value);
-          }
-       }
-       yDrawings.value.push([yMap]);
-     }, 'local-text');
-     
-     refreshMovableElements();
-  };
-
-// ... inside handleKeyDown ...
-
-        // Auto-start text editing on typing
-        if (event.key.length === 1 && !inlineTextEditor.visible && !activeConfigPanel.value) {
-            if (lastMouseCoords.value) {
-                event.preventDefault(); // Stop browser from inserting the key elsewhere
-                setTool('text');
-                startInlineText(lastMouseCoords.value);
-                
-                // Insert key manually after editor is ready
-                nextTick(() => {
-                    inlineTextEditor.value = event.key; 
-                });
-                return;
-            }
-        }
 
     const isDrawing = ref(false);
     const currentTool = ref('pen'); // Default to pen (matches App.vue)
@@ -1371,6 +1317,53 @@ export default {
     // --- Drawing Logic (Yjs Integration) ---
 
     // --- Inline Text Methods ---
+    const addTextElement = (coords, text, fontSize = 24) => {
+      if (!ydoc.value || !yDrawings.value) return;
+
+      const id = `${yjsConnection.value?.awareness?.clientID || 'local'}-${Date.now()}`;
+
+      try {
+        ydoc.value.transact(() => {
+          const yTextMap = new Y.Map();
+          yTextMap.set('id', id);
+          yTextMap.set('type', 'text');
+          yTextMap.set('x', coords.x);
+          yTextMap.set('y', coords.y);
+          yTextMap.set('text', text);
+          yTextMap.set('fontSize', fontSize);
+          yTextMap.set('color', currentColor.value);
+          yTextMap.set('timestamp', Date.now());
+          yTextMap.set('rotation', 0);
+          
+          // Estimate size
+          if (context.value) {
+            context.value.save();
+            context.value.font = `${fontSize}px "Kalam", cursive`;
+            const metrics = context.value.measureText(text);
+            context.value.restore();
+            yTextMap.set('width', metrics.width);
+            yTextMap.set('height', fontSize * 1.2);
+          } else {
+             yTextMap.set('width', text.length * fontSize * 0.6);
+             yTextMap.set('height', fontSize * 1.2);
+          }
+
+          yDrawings.value.push([yTextMap]);
+          refreshMovableElements();
+        }, 'local-add-text');
+
+        nextTick(() => {
+            if (undoManager.value) {
+                updateGlobalState();
+            }
+            redrawCanvas();
+        });
+      } catch (error) {
+        console.error("Error adding text element:", error);
+        showToast("Failed to add text", "error");
+      }
+    };
+
     const startInlineText = (coords) => {
       inlineTextEditor.x = coords.x;
       inlineTextEditor.y = coords.y;
@@ -1405,40 +1398,7 @@ export default {
       }
     };
 
-    const addTextElement = (coords, text, fontSize = 24) => {
-       if (!ydoc.value || !yDrawings.value) return;
 
-       const textElement = {
-         id: `text-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-         type: 'text',
-         x: coords.x,
-         y: coords.y,
-         position: { x: coords.x, y: coords.y },
-         text: text,
-         color: currentColor.value,
-         fontSize: fontSize,
-         rotation: 0,
-       width: text.length * (fontSize * 0.6), // Approx width
-       height: fontSize * 1.2
-     };
-
-     ydoc.value.transact(() => {
-       const yMap = new Y.Map();
-       for (const [key, value] of Object.entries(textElement)) {
-          if (key === 'position') {
-            const posMap = new Y.Map();
-            posMap.set('x', value.x);
-            posMap.set('y', value.y);
-            yMap.set('position', posMap);
-          } else {
-            yMap.set(key, value);
-          }
-       }
-       yDrawings.value.push([yMap]);
-     }, 'local-text');
-     
-     refreshMovableElements();
-  };
 
     // --- Drawing Logic (Yjs Integration) ---
 
@@ -1954,15 +1914,23 @@ export default {
           return;
         }
 
-        // Auto-start text editing on typing
-        if (event.key.length === 1 && !inlineTextEditor.visible && !activeConfigPanel.value) {
-            if (lastMouseCoords.value) {
-                setTool('text');
-                startInlineText(lastMouseCoords.value);
-                inlineTextEditor.value = event.key; 
-                event.preventDefault();
-                return;
-            }
+        // Tool shortcuts
+        const lowerKey = event.key.toLowerCase();
+        if (lowerKey === 'v') {
+            setTool('select');
+            return;
+        }
+        if (lowerKey === 'p') {
+            setTool('pen');
+            return;
+        }
+        if (lowerKey === 't') {
+            setTool('text');
+            return;
+        }
+        if (lowerKey === 'e') {
+            setTool('eraser');
+            return;
         }
       }
 

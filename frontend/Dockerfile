@@ -2,6 +2,9 @@
 FROM node:20-slim AS builder
 WORKDIR /app
 
+ARG VITE_BACKEND_URL=http://vve.railway.internal:8000
+ENV VITE_BACKEND_URL=$VITE_BACKEND_URL
+
 # Install dependencies
 COPY package*.json ./
 RUN npm ci
@@ -24,6 +27,7 @@ COPY nginx.conf.template /etc/nginx/templates/default.conf.template
 
 # Create entrypoint script for env substitution
 RUN echo '#!/bin/sh' > /docker-entrypoint.sh && \
+    echo 'BACKEND_URL="${BACKEND_URL:-${VITE_BACKEND_URL:-http://vve.railway.internal:8000}}"' >> /docker-entrypoint.sh && \
     echo 'echo "BACKEND_URL is: $BACKEND_URL"' >> /docker-entrypoint.sh && \
     echo 'envsubst "\$BACKEND_URL" < /etc/nginx/templates/default.conf.template > /etc/nginx/conf.d/default.conf' >> /docker-entrypoint.sh && \
     echo 'echo "Generated nginx config:"' >> /docker-entrypoint.sh && \

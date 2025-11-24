@@ -1,7 +1,7 @@
 import path from 'path';
 import dotenv from 'dotenv';
 
-const envFiles = ['.env', '.env.secrets'];
+const envFiles = ['.env', '.env.secrets']; // load defaults first, then secrets override
 const searchDirs = [process.cwd(), path.resolve(__dirname, '..')];
 const loadedEnvFiles: Array<{ filename: string; path: string; loaded: boolean; parsedKeys: string[] }> = [];
 const resolvedPaths = new Set<string>();
@@ -14,7 +14,8 @@ for (const dir of searchDirs) {
       continue;
     }
     resolvedPaths.add(normalizedPath);
-    const result = dotenv.config({ path: normalizedPath });
+    const shouldOverride = filename === '.env.secrets';
+    const result = dotenv.config({ path: normalizedPath, override: shouldOverride });
     const error = result.error as NodeJS.ErrnoException | undefined;
     if (error && error.code !== 'ENOENT') {
       console.warn(`Failed to load ${filename} at ${normalizedPath}:`, error.message);

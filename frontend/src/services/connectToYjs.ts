@@ -1,5 +1,6 @@
 import * as Y from 'yjs';
 import { Awareness, applyAwarenessUpdate, encodeAwarenessUpdate, removeAwarenessStates } from 'y-protocols/awareness';
+import { resolveWsUrl } from './backendUrl';
 
 // Message types must match the backend
 const messageSync = 0;
@@ -14,23 +15,8 @@ export interface YjsConnection {
 }
 
 const buildWebSocketUrl = (roomId: string) => {
-  const envBackendUrl = (import.meta?.env?.VITE_BACKEND_URL as string | undefined)?.trim();
-  if (envBackendUrl) {
-    try {
-      const backendUrl = new URL(envBackendUrl, window.location.origin);
-      backendUrl.pathname = backendUrl.pathname.replace(/\/+$/, '') + `/ws/whiteboard/${roomId}`;
-      backendUrl.protocol =
-        backendUrl.protocol === 'https:' ? 'wss:' : backendUrl.protocol === 'http:' ? 'ws:' : backendUrl.protocol;
-      backendUrl.search = '';
-      backendUrl.hash = '';
-      return backendUrl.toString();
-    } catch (error) {
-      console.warn('[connectToYjs] Invalid VITE_BACKEND_URL, falling back to window location', {
-        envBackendUrl,
-        error,
-      });
-    }
-  }
+  const url = resolveWsUrl(roomId);
+  if (url) return url;
 
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   const host = window.location.host;

@@ -85,8 +85,9 @@ import html2canvas from 'html2canvas';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import katex from 'katex';
+import { resolveBackendBaseUrl } from '../services/backendUrl';
 
-const API_BASE = ((import.meta && import.meta.env && import.meta.env.VITE_BACKEND_URL) || '').replace(/\/$/, '');
+const API_BASE = resolveBackendBaseUrl();
 const REQUEST_TIMEOUT_MS = 20000;
 
 // Icons

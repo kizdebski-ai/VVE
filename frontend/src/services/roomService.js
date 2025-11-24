@@ -1,3 +1,5 @@
+import { resolveBackendBaseUrl } from './backendUrl';
+
 const resolveDefaultOrigin = () => {
   if (typeof window === 'undefined') return '';
   const { protocol, hostname, port } = window.location;
@@ -8,7 +10,7 @@ const resolveDefaultOrigin = () => {
 };
 
 const DEFAULT_ORIGIN = resolveDefaultOrigin();
-const API_ORIGIN = (import.meta.env?.VITE_BACKEND_URL || DEFAULT_ORIGIN || '').replace(/\/+$/, '');
+const API_ORIGIN = resolveBackendBaseUrl() || DEFAULT_ORIGIN;
 const API_BASE = `${API_ORIGIN}/api/rooms`;
 
 const withTrailingSlash = (url) => (url.endsWith('/') ? url : `${url}/`);

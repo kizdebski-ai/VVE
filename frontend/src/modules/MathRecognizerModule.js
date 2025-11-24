@@ -4,20 +4,10 @@
 import * as math from 'mathjs';
 import Tesseract from 'tesseract.js';
 import axios from 'axios';
+import { resolveBackendBaseUrl } from '../services/backendUrl';
 
-// Resolve backend base URL for AI calls:
-// - prefer VITE_BACKEND_URL if provided
-// - in Vite dev (port 5173), fall back to http://localhost:8000
-const DEFAULT_BACKEND_URL =
-  typeof window !== 'undefined' && window.location && window.location.port === '5173'
-    ? 'http://localhost:8000'
-    : '';
-
-const BACKEND_BASE_URL =
-  (typeof import.meta !== 'undefined' &&
-    import.meta.env &&
-    import.meta.env.VITE_BACKEND_URL) ||
-  DEFAULT_BACKEND_URL;
+// Resolve backend base URL for AI calls (sanitized for HTTPS/mixed-content).
+const BACKEND_BASE_URL = resolveBackendBaseUrl();
 
 const RESERVED_FUNCTION_NAMES = new Set([
   'sin', 'cos', 'tan', 'log', 'ln', 'sqrt', 'pow', 'abs', 'exp', 'max', 'min', 'mod', 'round', 'floor', 'ceil'

@@ -87,7 +87,9 @@
 import { ref, onMounted, computed } from 'vue';
 import axios from 'axios';
 
-const API_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000';
+import { resolveBackendBaseUrl } from '../services/backendUrl';
+
+const API_URL = resolveBackendBaseUrl();
 
 export default {
   name: 'Lobby',

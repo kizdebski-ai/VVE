@@ -138,6 +138,7 @@ import HandwritingStylerModule from '../modules/HandwritingStylerModule.js';
 import MathRecognizerModule from '../modules/MathRecognizerModule.js';
 import { DEFAULT_PEN_PRESETS } from '../utils/penStyles.js';
 // Utils and Services
+import { resolveBackendBaseUrl } from '../services/backendUrl';
 import { connectToYjs } from '../services/connectToYjs';
 import { drawElement, throttle, isPointInElement, distanceToSegment } from '../utils/canvasDrawing.js';
 import { isPointInRotatedRectangle } from '../utils/geometry.js';
@@ -2844,7 +2845,7 @@ export default {
           mathRecognizerModule.value = new MathRecognizerModule(context.value, {
               ...props.mathRecognizerOptions,
               renderLatexFn: renderLatex, // Pass the render function
-              backendUrl: import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000'
+              backendUrl: resolveBackendBaseUrl()
           });
           debugLog("Helper modules initialised");
       } else {

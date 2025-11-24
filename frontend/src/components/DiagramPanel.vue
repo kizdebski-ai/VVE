@@ -63,8 +63,9 @@
 import { ref, computed } from 'vue';
 import { GitBranch } from 'lucide-vue-next';
 import DraggablePanel from './DraggablePanel.vue';
+import { resolveBackendBaseUrl } from '../services/backendUrl';
 
-const API_BASE = ((import.meta && import.meta.env && import.meta.env.VITE_BACKEND_URL) || '').replace(/\/$/, '');
+const API_BASE = resolveBackendBaseUrl();
 
 const emit = defineEmits(['close', 'apply']);
 

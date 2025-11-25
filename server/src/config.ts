@@ -47,7 +47,11 @@ export const config = {
   dataDir: process.env.DATA_DIR || path.join(process.cwd(), 'data'),
   openRouterApiKey: process.env.OPENROUTER_API_KEY,
   ocrModel: process.env.OCR_MODEL || 'nvidia/nemotron-nano-12b-v2-vl:free',
-  solverModel: process.env.SOLVER_MODEL || 'deepseek/deepseek-r1:free'
+  solverModel: process.env.SOLVER_MODEL || 'deepseek/deepseek-r1:free',
+  // AI Board Assistant
+  aiModel: process.env.BOARD_AI_MODEL || 'x-ai/grok-4.1-fast:free', // Default to free Grok model
+  aiBaseUrl: 'https://openrouter.ai/api/v1',
+  aiBoardAssistantEnabled: !!process.env.OPENROUTER_API_KEY && process.env.AI_BOARD_ASSISTANT_ENABLED !== 'false'
 };
 
 export const paths = {

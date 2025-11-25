@@ -3809,58 +3809,6 @@ export default {
       teardownYjsConnection();
     });
 
-    // Expose methods and state for App.vue to call via template ref
-    expose({
-      // Core state used by App.vue
-      containerRef,
-      yjsConnection,
-      undoManager,
-      canUndo,
-      canRedo,
-
-      // Tool / style setters
-      setTool,
-      setColor,
-      setLineWidth,
-      setEraserMode,
-      setEraserSize,
-
-      // Undo / redo & canvas control
-      undo,
-      redo,
-      clearCanvas,
-      redrawCanvas,
-
-      // Serialization / import-export
-      getSerializableState,
-      loadState,
-      exportAsText,
-      importFromText,
-
-      // Media helpers
-      addImageFromDataUrl,
-
-      // Misc helpers
-      getViewportCenter,
-      toggleDebug,
-      updateAwarenessUser,
-
-      // Feature actions
-      alignToGrid,
-      groupStrokes,
-      applyStyleTransformation,
-      confirmStyleChanges,
-      cancelStyleChanges,
-      recognizeEquation,
-      applyGhostAnswer: (payload) => { 
-        const stroke = mathRecognizerModule.value?.applyGhostAnswer();
-        if (stroke) applyMathAnswer(stroke);
-      },
-
-      // Graph / panel integration
-      addElementFromPanel,
-    });
-
     const snapGuides = ref([]);
     
     const handleSnapGuidesUpdate = (guides) => {
@@ -3901,6 +3849,7 @@ export default {
       canvas,
 
       // State
+      roomId: props.roomId, // Expose roomId for AI Panel
       canvasWidth,
       canvasHeight,
       isDrawing,
@@ -4011,80 +3960,119 @@ const detachLineBindings = (lineId) => {
 
 </script>
 
-
-
 <style scoped>
 .whiteboard-container {
+  position: relative;
   width: 100%;
   height: 100%;
   overflow: hidden;
-  background-color: transparent;
-  position: relative;
-  flex: 1; /* Ensure it fills space if in flex container */
-  cursor: crosshair; /* Default cursor */
-  /* Ensure container allows absolute positioning of panels */
-  position: relative;
+  background-color: #f8f9fa;
+  touch-action: none;
+  user-select: none;
 }
 
 .whiteboard-container.dark-mode {
-  background-color: transparent;
+  background-color: #121212;
 }
 
 .whiteboard-canvas {
-  display: block; /* Remove extra space below canvas */
-  width: 100%;
-  height: 100%;
-  /* Cursor is set dynamically via JS */
+  position: absolute;
+  top: 0;
+  left: 0;
+  cursor: crosshair;
+  touch-action: none;
+}
+
+.inline-text-editor {
+  position: absolute;
+  background: transparent;
+  border: 1px dashed #007bff;
+  outline: none;
+  padding: 0;
+  margin: 0;
+  resize: none;
+  overflow: hidden;
+  font-family: 'Kalam', cursive;
+  line-height: 1.2;
+  z-index: 100;
+  color: black;
 }
 
 .clipboard-input {
   position: absolute;
+  top: -9999px;
+  left: -9999px;
   opacity: 0;
-  pointer-events: none;
-  top: -100px;
-  left: -100px; /* Position off-screen */
 }
 
-/* Styles for notifications container */
 .notifications {
-  position: fixed;
+  position: absolute;
   bottom: 20px;
-  left: 20px;
-  z-index: 1050; /* Ensure notifications are above other elements */
+  left: 50%;
+  transform: translateX(-50%);
   display: flex;
   flex-direction: column;
-  gap: 10px; /* Space between notifications */
+  gap: 10px;
+  z-index: 2000;
+  pointer-events: none;
 }
 
-/* Individual notification style */
 .notification {
-  padding: 10px 15px;
+  background: rgba(0, 0, 0, 0.8);
+  color: white;
+  padding: 10px 20px;
   border-radius: 4px;
-  color: #fff;
   font-size: 14px;
-  box-shadow: 0 2px 5px rgba(0,0,0,0.2);
-  transition: all 0.3s ease-in-out;
-  opacity: 0.9;
+  pointer-events: auto;
+  transition: all 0.3s ease;
 }
 
-.notification.default { background-color: #555; }
-.notification.info { background-color: #2196F3; }
-.notification.success { background-color: #4CAF50; }
-.notification.warning { background-color: #FF9800; }
-.notification.error { background-color: #F44336; }
+.notification.info { background: rgba(33, 150, 243, 0.9); }
+.notification.success { background: rgba(76, 175, 80, 0.9); }
+.notification.warning { background: rgba(255, 152, 0, 0.9); }
+.notification.error { background: rgba(244, 67, 54, 0.9); }
 
-/* Fade animation for notifications */
-.fade-enter-active, .fade-leave-active {
-  transition: opacity 0.5s, transform 0.5s;
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.3s, transform 0.3s;
 }
-.fade-enter-from, .fade-leave-to {
+
+.fade-enter-from,
+.fade-leave-to {
   opacity: 0;
   transform: translateY(10px);
+}
+
+.ai-assistant-toggle {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: white;
+  border: 1px solid #ddd;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  cursor: pointer;
+  z-index: 1000;
+  transition: transform 0.2s;
+}
+
+.ai-assistant-toggle:hover {
+  transform: scale(1.1);
+}
+
+.dark-mode .ai-assistant-toggle {
+  background: #333;
+  border-color: #555;
 }
 </style>
 
 <style>
-/* Global toast styles (if not defined elsewhere) */
 .toast {
   position: fixed;
   top: 20px;
@@ -4112,7 +4100,6 @@ const detachLineBindings = (lineId) => {
 .toast-info { background-color: #2196F3; }
 .toast-success { background-color: #4CAF50; }
 .toast-warning { background-color: #FF9800; }
-.toast-warning { background-color: #FF9800; }
 .toast-error { background-color: #F44336; }
 
 .inline-text-editor {
@@ -4124,6 +4111,5 @@ const detachLineBindings = (lineId) => {
 .inline-text-editor::placeholder {
   color: #94a3b8;
 }
-
-
 </style>
+

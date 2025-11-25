@@ -9,6 +9,8 @@ import type { EquationSolver } from './services/aiSolver';
 import { HttpError } from './services/httpError';
 import { callGrok, ChatMessage, type CallGrokOptions } from './services/grok';
 
+import { createAiBoardAssistantRouter } from './routes/aiBoardAssistant';
+
 const API_ROOMS = '/api/rooms';
 const AI_SOLVER_ROUTE = '/api/ai/solve-equation/';
 
@@ -42,6 +44,9 @@ export const createHttpApp = ({ roomManager, aiSolver }: CreateAppOptions) => {
   app.use(cors());
   // AI endpoints accept screenshots, so allow a slightly larger body size
   app.use(express.json({ limit: '20mb' }));
+
+  // Register AI Board Assistant Router
+  app.use('/api/ai/board-assistant', createAiBoardAssistantRouter(roomManager));
 
   // Basic root status page so Railway shows a friendly message instead of "Cannot GET /"
   app.get('/', (_, res) => {

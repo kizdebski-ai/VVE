@@ -1,131 +1,104 @@
-# 🎨 WhiteVue - Collaborative AI Whiteboard
+# WhiteVue
 
-![Project Status](https://img.shields.io/badge/Status-Active_Development-success)
-![Vue.js](https://img.shields.io/badge/Frontend-Vue_3-42b883)
-![Node.js](https://img.shields.io/badge/Backend-Node.js-339933)
-![Yjs](https://img.shields.io/badge/Sync-Yjs_CRDT-orange)
-![Vite](https://img.shields.io/badge/Build-Vite-646cff)
+WhiteVue is a high-performance, real-time collaborative whiteboard built for technical teams. It merges the flexibility of a vector-based canvas with the reliability of CRDT synchronization, allowing multiple users to brainstorm, diagram, and solve problems together without conflict.
 
-**WhiteVue** to zaawansowana, działająca w czasie rzeczywistym tablica kolaboracyjna (whiteboard), wzbogacona o asystenta AI, obsługę wykresów matematycznych i fizycznych oraz nowoczesny interfejs w stylu Glassmorphism.
+**Live Demo:** [https://frontend-copy-production-2b71.up.railway.app](https://frontend-copy-production-2b71.up.railway.app)
 
-🚀 **Live Demo:** [https://frontend-copy-production-2b71.up.railway.app](https://frontend-copy-production-2b71.up.railway.app)
+## Architecture Overview
 
----
+WhiteVue adopts a **Local-First** architecture. The application state lives primarily on the client, managed by a CRDT (Conflict-free Replicated Data Type) document. Synchronization happens in the background via WebSockets, ensuring the app remains responsive even under poor network conditions.
 
-## 🌟 Kluczowe Funkcjonalności
+```mermaid
+graph TD
+    subgraph Client [Frontend (Vue 3 + Vite)]
+        State[Yjs Doc (CRDT)]
+        Renderer[Hybrid Renderer]
+        Input[Input Handler]
+        
+        Input --> State
+        State --> Renderer
+        Renderer --> Canvas[Rough.js Canvas]
+        Renderer --> DOM[Interactive Overlay]
+    end
 
-*   **Kolaboracja w Czasie Rzeczywistym:** Wielu użytkowników może rysować i edytować jednocześnie. Widoczność kursorów i awatarów innych uczestników.
-*   **Inteligentny Asystent AI:** Zintegrowany Chatbot, który "widzi" tablicę (OCR/Vision) i pomaga w rozwiązywaniu zadań matematycznych czy generowaniu pomysłów.
-*   **System Kształtów i Linii:** Rysowanie odręczne (Pen), kształty geometryczne (Rough.js), edytowalne linie łączące, tekst.
-*   **Narzędzia Naukowe:**
-    *   Panel Matematyczny (wykresy funkcji).
-    *   Panel Fizyczny (symulacje).
-    *   Generator Diagramów.
-*   **Eksport:** Możliwość zapisu tablicy do PDF (pojedyncza strona lub stronicowany) oraz JSON.
-*   **Premium UI:** Nowoczesny design "Frosted Glass", tryb ciemny/jasny, płynne animacje.
+    subgraph Server [Backend (Node.js)]
+        WSS[WebSocket Server]
+        Persistence[In-Memory / DB]
+    end
 
----
+    State <-->|Binary Updates| WSS
+    WSS <--> Persistence
+    WSS <-->|Broadcast| Client2[Other Clients]
+```
 
-## 🏗️ Architektura i Uzasadnienie Stosu Technologicznego
+## Core Engineering Challenges & Solutions
 
-Projekt został zbudowany z myślą o wydajności, skalowalności i natychmiastowej reaktywności.
+Building a whiteboard that feels "native" while supporting real-time multiplayer involves solving several complex distributed system problems.
 
-### 1. Frontend: Vue 3 + Vite
-Wybraliśmy **Vue 3 (Composition API)** ze względu na jego znakomitą wydajność i elastyczność w zarządzaniu skomplikowanym stanem aplikacji.
-*   **Reaktywność:** System reaktywności Vue 3 idealnie współgra z dynamicznymi zmianami na tablicy.
-*   **Komponentowość:** Modularna budowa (`WhiteboardCanvas`, `ToolBar`, `AIChatPanel`) ułatwia utrzymanie kodu.
-*   **Vite:** Zapewnia błyskawiczny HMR (Hot Module Replacement) i szybkie buildy produkcyjne.
+### 1. The "Sticky" Binding System
+**The Challenge:** In a diagramming tool, lines must stay attached to shapes. If a user connects an arrow to a rectangle and then rotates that rectangle 45 degrees, the arrow should follow the specific anchor point (e.g., "top-center") naturally. Standard bounding-box logic fails here.
 
-### 2. Synchronizacja Danych: Yjs (CRDT) + WebSocket
-Sercem kolaboracji jest **Yjs** – biblioteka implementująca algorytmy **CRDT (Conflict-free Replicated Data Types)**.
-*   **Dlaczego CRDT?** W przeciwieństwie do prostego przesyłania zdarzeń, CRDT gwarantuje, że wszyscy użytkownicy osiągną ten sam stan końcowy, niezależnie od kolejności otrzymania pakietów i opóźnień sieciowych. Rozwiązuje to problem konfliktów edycji bez potrzeby centralnego blokowania zasobów.
-*   **Protokół:** Komunikacja odbywa się przez WebSockety (`y-websocket`), co zapewnia minimalne opóźnienia (low-latency).
+**The Solution:** We implemented a custom **Binding Protocol** on top of our CRDT structure.
+*   Instead of just storing `x,y` coordinates for line endpoints, we store a `bindingPayload` containing the target object's ID and a normalized relative coordinate (e.g., `0.5, 0` for top-center).
+*   We utilize **Yjs Transactions** (`ydoc.transact`) to create atomic updates. When a shape is moved or resized, a reactive watcher detects the change and triggers a `auto-binding` transaction that recalculates and updates the coordinates of all attached lines in the same tick. This ensures that all users see the lines move in perfect sync with the shape, with no visual lag or "detachment" artifacts.
 
-### 3. Backend: Node.js + Express
-Lekki serwer sygnalizacyjny odpowiedzialny za:
-*   Obsługę połączeń WebSocket.
-*   Zarządzanie pokojami (Rooms).
-*   Serwowanie statycznych plików frontendu (w produkcji).
-*   Proxy dla zapytań AI (bezpieczeństwo kluczy API).
+### 2. Hybrid Rendering Pipeline
+**The Challenge:** HTML5 Canvas is performant for drawing thousands of strokes but poor for interaction (no DOM events for individual shapes). DOM elements are great for interaction but heavy to render in large numbers.
 
-### 4. Rendering: Canvas & Rough.js
-Do renderowania grafiki używamy natywnego HTML5 Canvas wspomaganego przez **Rough.js**, co nadaje rysunkom estetyczny, "odręczny" styl, sprawiając, że aplikacja jest bardziej przyjazna i mniej techniczna w odbiorze.
+**The Solution:** WhiteVue uses a **Dual-Layer Rendering Engine**:
+*   **The Bottom Layer (Canvas):** Uses **Rough.js** to render the actual visual content. This library generates "hand-drawn" SVG paths which we rasterize onto a single HTML5 Canvas. This provides the aesthetic appeal and high rendering performance (60fps even with complex scenes).
+*   **The Top Layer (Vue Components):** We overlay lightweight Vue components (`MovableObject`) on top of the canvas. These components are invisible by default but handle hit-testing, selection boxes, and resize handles.
+*   **Synchronization:** A central `CoordinateSystem` utility maps the infinite pan/zoom canvas space to the viewport pixels, ensuring the DOM overlay always aligns perfectly with the canvas drawing, even during multi-touch pinch-to-zoom gestures.
 
----
+### 3. Conflict-Free State Management
+**The Challenge:** In a naive implementation, if User A moves an object and User B deletes it simultaneously, the app crashes. Or if two users drag the same object, it "jitters" between positions.
 
-## 🛠️ Wyzwania Techniczne i Rozwiązania
+**The Solution:** We use **Yjs** as our source of truth.
+*   **Data Structure:** The entire board state is a `Y.Array` of `Y.Map` objects.
+*   **Resolution:** Yjs automatically handles property conflicts using a "Last-Write-Wins" strategy for simple properties (like color) and sophisticated list merging for array data.
+*   **Awareness:** For ephemeral data that shouldn't be saved (like cursor positions or "who is selecting what"), we use the `y-protocols/awareness` protocol. This broadcasts tiny binary packets separate from the main document history, keeping the persistent storage clean and lightweight.
 
-Podczas tworzenia WhiteVue napotkaliśmy szereg wyzwań inżynieryjnych. Oto jak je rozwiązaliśmy:
+### 4. AI Vision Context
+**The Challenge:** Text-only AI assistants are useless on a whiteboard. The AI needs to "see" the diagram to understand context (e.g., "Is this architecture diagram secure?").
 
-### 1. Konflikty UI i Responsywność
-**Problem:** Przy dużej liczbie narzędzi, panele (Chat AI, Toolbar, Status E2E) zaczęły na siebie nachodzić, szczególnie na mniejszych ekranach.
-**Rozwiązanie:**
-*   Wdrożenie precyzyjnego pozycjonowania CSS (`fixed`, `z-index`) z systemem zmiennych.
-*   Dynamiczne ukrywanie/minimalizowanie paneli (np. Chatbot zwijany do małej ikonki).
-*   Inteligentne wyrównanie elementów (np. status E2E przesunięty względem kontrolek Zoomu, awatary użytkowników przeniesione nad Toolbar).
+**The Solution:** We integrated a **Multimodal RAG (Retrieval-Augmented Generation)** pipeline.
+*   When a user asks a question, we capture a high-resolution viewport snapshot of the canvas.
+*   We combine this visual data with a serialized JSON representation of the selected elements.
+*   This context is sent to a Vision-Language Model (like GPT-4o or Claude 3.5 Sonnet), allowing the AI to reason about spatial relationships and visual content, not just text.
 
-### 2. Edycja Linii i Połączeń
-**Problem:** Standardowe skalowanie obiektów (bounding box) nie sprawdzało się przy liniach łączących, gdzie użytkownik chce przesunąć tylko jeden koniec linii.
-**Rozwiązanie:**
-*   Stworzenie dedykowanej logiki obsługi zdarzeń dla obiektów typu `line`.
-*   Implementacja niezależnych uchwytów (`start-handle`, `end-handle`) z własną logiką aktualizacji współrzędnych w modelu Yjs (`local-line-resize`).
+## Tech Stack
 
-### 3. Synchronizacja Stanu "Awareness"
-**Problem:** Pokazywanie kursorów i nazw użytkowników w czasie rzeczywistym bez obciążania głównego kanału danych.
-**Rozwiązanie:**
-*   Wykorzystanie protokołu `y-protocols/awareness`. Dane efemeryczne (pozycja kursora, zaznaczenie) są przesyłane oddzielnym, lekkim kanałem i nie są zapisywane w historii dokumentu, co drastycznie zmniejsza narzut danych.
+*   **Frontend:** Vue 3, Vite, TailwindCSS (for UI panels)
+*   **Graphics:** HTML5 Canvas, Rough.js (hand-drawn style), Katex (math rendering)
+*   **State:** Yjs (CRDT), y-websocket
+*   **Backend:** Node.js, Express, WebSocket (ws)
 
-### 4. "Duchy" w UI (Ghost Text)
-**Problem:** W panelu AI Chat pojawiał się szary tekst (placeholder/sugestia), który nie znikał, myląc użytkownika.
-**Rozwiązanie:**
-*   Wdrożenie warunkowego renderowania (`v-if`) dla elementu `.ghost`, który wyświetla się tylko wtedy, gdy asystent faktycznie ma sugestię do uzupełnienia (`suggestionTail`).
+## Installation
 
----
-
-## 🔮 Roadmap (To-Do)
-
-Przyszłość WhiteVue to bezpieczeństwo i jeszcze lepsza integracja.
-
-*   [ ] **Szyfrowanie E2E (End-to-End):**
-    *   Implementacja pełnego szyfrowania po stronie klienta przy użyciu Web Crypto API.
-    *   Serwer nie będzie miał dostępu do treści tablicy – jedynie przekaże zaszyfrowane bloby.
-    *   Status "E2E Encrypted" w UI.
-*   [ ] **Wersjonowanie Historii:** Możliwość przywrócenia tablicy do stanu z konkretnej godziny.
-*   [ ] **Wsparcie dla Tabletów:** Lepsza obsługa zdarzeń dotykowych (Touch Events) i obsługa rysika (Pressure sensitivity).
-*   [ ] **Więcej Integracji AI:** Generowanie całych diagramów na podstawie opisu tekstowego.
-
----
-
-## 🚀 Instrukcja Uruchomienia (Lokalnie)
-
-Wymagania: Node.js v16+
-
-1.  **Sklonuj repozytorium:**
+1.  **Clone the repo:**
     ```bash
-    git clone https://github.com/your-repo/whitevue.git
-    cd whitevue
+    git clone https://github.com/your-username/WhiteVue.git
+    cd WhiteVue
     ```
 
-2.  **Uruchom Backend:**
+2.  **Start Backend:**
     ```bash
     cd server
     npm install
     npm run dev
     ```
 
-3.  **Uruchom Frontend:**
+3.  **Start Frontend:**
     ```bash
     cd frontend
     npm install
     npm run dev
     ```
 
-4.  **Otwórz w przeglądarce:**
-    Wejdź na `http://localhost:5173` (lub port wskazany przez Vite).
+4.  **Open:** `http://localhost:5173`
 
----
+## Future Roadmap
 
-## 📄 Licencja
-
-Projekt stworzony w celach edukacyjnych i demonstracyjnych.
-Copyright © 2025 WhiteVue Team.
+*   **End-to-End Encryption:** Client-side encryption of Yjs updates before they hit the WebSocket.
+*   **Time Travel:** A slider to replay the entire history of the whiteboard session.
+*   **Plugin System:** API for third-party developers to add custom shapes and tools.

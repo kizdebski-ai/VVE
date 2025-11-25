@@ -98,7 +98,7 @@
       <div v-if="activeTab === 'agent'" class="tab-content agent-tab">
         <div class="agent-content">
           <div v-if="agentLastReply" class="agent-reply">
-            <div class="reply-bubble">{{ agentLastReply }}</div>
+            <div class="reply-bubble" v-html="renderMarkdown(agentLastReply)"></div>
           </div>
           
           <div v-if="agentLoading" class="message assistant loading">

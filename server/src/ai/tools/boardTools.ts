@@ -91,3 +91,106 @@ export function toolSimplifyEquationBlock(
     doc.applyPatch(patch);
     return patch;
 }
+
+// --- New Tools ---
+
+type DrawBoardPatchArgs = { patch: BoardPatch };
+type InsertLatexArgs = { latex: string; x?: number; y?: number; width?: number; height?: number };
+type TextToLatexArgs = { objectId: string };
+type PlotFunctionArgs = { expression: string; xMin?: number; xMax?: number; x?: number; y?: number };
+
+// 4) Draw Board Patch (Low-level)
+export function toolDrawBoardPatch(
+    doc: BoardDoc,
+    _snapshot: BoardSnapshot,
+    args: DrawBoardPatchArgs,
+): BoardPatch {
+    const patch = args.patch;
+    // Basic validation
+    const createsLen = patch.creates?.length ?? 0;
+    const updatesLen = patch.updates?.length ?? 0;
+    if (createsLen + updatesLen > 200) {
+        throw new Error('Patch too large from AI');
+    }
+    doc.applyPatch(patch);
+    return patch;
+}
+
+// 5) Insert LaTeX Box
+export function toolInsertLatexBox(
+    doc: BoardDoc,
+    snapshot: BoardSnapshot,
+    args: InsertLatexArgs,
+): BoardPatch {
+    const baseX = args.x ?? snapshot.objects[0]?.x ?? 100;
+    const baseY = args.y ?? snapshot.objects[0]?.y ?? 100;
+
+    const latexObj: BoardObject = {
+        id: `ai-latex-${Date.now()}`,
+        type: 'latex',
+        x: baseX,
+        y: baseY,
+        width: args.width ?? 260,
+        height: args.height ?? 120,
+        latex: args.latex,
+    };
+
+    const patch: BoardPatch = { creates: [latexObj] };
+    doc.applyPatch(patch);
+    return patch;
+}
+
+// 6) Text Block to LaTeX Update
+export function toolTextBlockToLatexUpdate(
+    doc: BoardDoc,
+    snapshot: BoardSnapshot,
+    args: TextToLatexArgs,
+    latex: string,
+): BoardPatch {
+    const target = snapshot.objects.find(o => o.id === args.objectId);
+    if (!target) return { updates: [] };
+
+    const patch: BoardPatch = {
+        updates: [
+            {
+                id: target.id,
+                props: {
+                    type: 'latex',
+                    latex,
+                    text: '', // Clear text as it's now latex
+                },
+            },
+        ],
+    };
+
+    doc.applyPatch(patch);
+    return patch;
+}
+
+// 7) Plot Function
+export function toolPlotFunction(
+    doc: BoardDoc,
+    snapshot: BoardSnapshot,
+    args: PlotFunctionArgs,
+): BoardPatch {
+    const baseX = args.x ?? snapshot.objects[0]?.x ?? 100;
+    const baseY = args.y ?? snapshot.objects[0]?.y ?? 100;
+
+    const plot: BoardObject = {
+        id: `ai-fplot-${Date.now()}`,
+        type: 'functionPlot',
+        x: baseX,
+        y: baseY,
+        width: 400,
+        height: 260,
+        style: {
+            expression: args.expression,
+            xMin: args.xMin ?? -10,
+            xMax: args.xMax ?? 10,
+        },
+    };
+
+    const patch: BoardPatch = { creates: [plot] };
+    doc.applyPatch(patch);
+    return patch;
+}

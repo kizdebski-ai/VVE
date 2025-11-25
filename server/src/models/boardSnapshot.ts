@@ -12,9 +12,11 @@ export interface BoardObject {
     height?: number;
     rotation?: number;
     text?: string;
-    points?: BoardPoint[];   // paths, handwriting etc.
-    selected?: boolean;      // selection flag from frontend
-    [key: string]: any;      // Allow other properties
+    latex?: string; // For LaTeX content
+    points?: BoardPoint[];
+    selected?: boolean;
+    style?: Record<string, unknown>; // For custom properties like function expression, colors, etc.
+    [key: string]: any; // Allow other properties loosely
 }
 
 export interface BoardSnapshot {

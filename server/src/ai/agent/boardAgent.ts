@@ -10,7 +10,12 @@ import {
     toolAlignSelectionToGrid,
     toolGenerateDiagramFromPrompt,
     toolSimplifyEquationBlock,
+    toolDrawBoardPatch,
+    toolInsertLatexBox,
+    toolTextBlockToLatexUpdate,
+    toolPlotFunction,
 } from '../tools/boardTools';
+import { retrieveBoardDocs } from '../docs/boardCapabilities';
 
 if (!llmClient) {
     console.warn('[AI] Board Assistant disabled – no LLM client configured');
@@ -28,7 +33,7 @@ You receive:
 - optional viewport info
 - a user request
 
-Prefer using tools to modify the board (align to grid, generate diagrams, clean equations).
+Prefer using tools to modify the board (align to grid, generate diagrams, clean equations, plot functions).
 Return clear, short explanations for the user.
 When generating diagrams, create nodes as BoardObject[] with ids like "ai-node-<n>".
 `;
@@ -70,8 +75,20 @@ export async function runBoardAgent(params: {
         ];
     }
 
+    // RAG: Retrieve relevant docs
+    const docs = retrieveBoardDocs(userMessage);
+
     const baseMessages: ChatCompletionMessageParam[] = [
         { role: 'system', content: SYSTEM_PROMPT },
+        ...(docs.length
+            ? [
+                {
+                    role: 'system',
+                    content:
+                        'Board JSON schema and tools (documentation):\n\n' + docs.join('\n\n'),
+                } as ChatCompletionMessageParam,
+            ]
+            : []),
         {
             role: 'user',
             content: userContent,
@@ -182,6 +199,68 @@ export async function runBoardAgent(params: {
                 const patch = toolSimplifyEquationBlock(doc, snapshot, args, latex);
                 lastPatch = patch;
 
+                toolMessages.push({
+                    role: 'tool',
+                    tool_call_id: toolCall.id,
+                    content: JSON.stringify({ status: 'ok', patch }),
+                });
+                break;
+            }
+
+            case 'draw_board_patch': {
+                const patch = toolDrawBoardPatch(doc, snapshot, args);
+                lastPatch = patch;
+                toolMessages.push({
+                    role: 'tool',
+                    tool_call_id: toolCall.id,
+                    content: JSON.stringify({ status: 'ok', patch }),
+                });
+                break;
+            }
+
+            case 'insert_latex_box': {
+                const patch = toolInsertLatexBox(doc, snapshot, args);
+                lastPatch = patch;
+                toolMessages.push({
+                    role: 'tool',
+                    tool_call_id: toolCall.id,
+                    content: JSON.stringify({ status: 'ok', patch }),
+                });
+                break;
+            }
+
+            case 'text_block_to_latex': {
+                const block = snapshot.objects.find(o => o.id === args.objectId);
+                const original = block?.text ?? '';
+
+                const simp = await llmClient.chat.completions.create({
+                    model: BOARD_AI_MODEL,
+                    temperature: 0.0,
+                    messages: [
+                        {
+                            role: 'system',
+                            content:
+                                'Convert the following math text to pure LaTeX (inline or display). Output ONLY LaTeX, no commentary.',
+                        },
+                        { role: 'user', content: original },
+                    ],
+                });
+
+                const latex = simp.choices[0]?.message.content ?? original;
+                const patch = toolTextBlockToLatexUpdate(doc, snapshot, args, latex);
+                lastPatch = patch;
+
+                toolMessages.push({
+                    role: 'tool',
+                    tool_call_id: toolCall.id,
+                    content: JSON.stringify({ status: 'ok', patch }),
+                });
+                break;
+            }
+
+            case 'plot_function': {
+                const patch = toolPlotFunction(doc, snapshot, args);
+                lastPatch = patch;
                 toolMessages.push({
                     role: 'tool',
                     tool_call_id: toolCall.id,

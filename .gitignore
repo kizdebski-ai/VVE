@@ -40,6 +40,24 @@ lerna-debug.log*
 .idea/
 .DS_Store
 *.suo
+dist-ssr/
+*.local
+
+# === LOGI ===
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# === VSCODE / SYSTEM / IDE ===
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+*.suo
 *.ntvs*
 *.njsproj
 *.sln
@@ -47,3 +65,12 @@ lerna-debug.log*
 
 # === PLAYGROUND ===
 frontend-playground/
+
+# === DEPLOYMENT & TEMP ===
+deploy-all.ps1
+deploy-backend.ps1
+deploy-frontend.ps1
+mailmap.txt
+README_DEPLOY.md
+temp_websocket_cat.txt
+{*}.png

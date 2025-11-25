@@ -1,0 +1,35 @@
+MIT License with Mandatory Attribution
+--------------------------------------
+
+Copyright (c) 2025 Kordian (kordin33)
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal 
+in the Software without restriction, including without limitation the rights 
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell 
+copies of the Software, subject to the following conditions:
+
+1. **Attribution Requirement**
+   Any use, modification, or distribution of this Software, in source or 
+   binary form, must include a visible and explicit credit to the original 
+   author:  
+   **"Based on work by Kordian (github.com/kordin33)"**  
+   This notice must appear in:
+   - visible documentation of the project (README, About page, etc.),  
+   - and, when applicable, inside the user interface or "About" section
+     of any distributed application.
+
+2. The above copyright notice and this permission notice shall be included 
+   in all copies or substantial portions of the Software.
+
+3. The Software may not be misrepresented as entirely created by the 
+   redistributor. Forks or derived works must clearly indicate that they
+   are modifications of the original Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR 
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, 
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE 
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER 
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING 
+FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER 
+DEALINGS IN THE SOFTWARE.

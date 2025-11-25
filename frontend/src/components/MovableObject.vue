@@ -78,9 +78,14 @@
                display: 'flex',
                alignItems: 'center',
                justifyContent: 'center',
-               padding: '10px',
+               padding: '16px',
                overflow: 'auto',
-               userSelect: 'none'
+               userSelect: 'none',
+               color: objectData.color || '#1e293b',
+               backgroundColor: 'rgba(255, 255, 255, 0.95)',
+               borderRadius: '12px',
+               boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
+               border: '1px solid rgba(0,0,0,0.05)'
              }"
         ></div>
         <PlotRenderer
@@ -346,6 +351,7 @@ const syncDataFromYMap = () => {
     objectData.expression = props.object.get('expression');
     objectData.xRange = props.object.get('xRange');
     objectData.points = props.object.get('points');
+    objectData.latex = props.object.get('latex'); // Fix: Sync latex property
 };
 
 const lineHitPadding = computed(() => {

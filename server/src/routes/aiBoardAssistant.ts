@@ -25,6 +25,7 @@ export const createAiBoardAssistantRouter = (roomManager: RoomManager) => {
             // We use get() which lazily loads or creates. 
             // Ideally we should check if it exists first, but get() is safe.
             const { room } = roomManager.get(boardId);
+            console.log(`[AI Route] Request for boardId: ${boardId}. Room exists: ${!!room}, Doc exists: ${!!room?.doc}`);
 
             if (!room || !room.doc) {
                 res.status(404).json({ error: 'Board not found' });
@@ -32,6 +33,9 @@ export const createAiBoardAssistantRouter = (roomManager: RoomManager) => {
             }
 
             const doc = new BoardDoc(room.doc);
+            const snapshotBefore = doc.getSnapshot();
+            console.log(`[AI Route] Snapshot before: ${snapshotBefore.objects.length} objects`);
+
             // Optimization: We could filter the snapshot here based on viewport to save tokens
             const snapshot = doc.getSnapshot();
 
@@ -39,9 +43,12 @@ export const createAiBoardAssistantRouter = (roomManager: RoomManager) => {
                 doc,
                 snapshot,
                 userMessage: message,
-                viewport,
-                image, // Pass the image to the agent
+                ...(viewport && { viewport }),
+                ...(image && { image }),
             });
+
+            const snapshotAfter = doc.getSnapshot();
+            console.log(`[AI Route] Snapshot after: ${snapshotAfter.objects.length} objects`);
 
             res.json(result);
         } catch (err) {

@@ -367,7 +367,8 @@ export default {
         'coordinateSystem2D',
         'coordinateSystem3D',
         'mathFunctionPlot',
-        'physicsDataPlot'
+        'physicsDataPlot',
+        'latex'
     ]);
     const movableElements = shallowRef([]);
     const hoveredElementIndex = ref(-1);
@@ -1245,8 +1246,15 @@ export default {
             movableElements.value = [];
             return;
         }
-        const filtered = yDrawings.value
-            .toArray()
+        
+        // DEBUG: Log all objects in yDrawings
+        const allObjects = yDrawings.value.toArray();
+        console.log('[WhiteboardCanvas] refreshMovableElements: Total objects:', allObjects.length);
+        allObjects.forEach((map, i) => {
+            console.log(`[${i}] ID: ${map.get('id')}, Type: ${map.get('type')}, X: ${map.get('x')}, Y: ${map.get('y')}`);
+        });
+
+        const filtered = allObjects
             .filter(map => movableElementTypes.has(map.get('type')))
             .map(map => {
                 if (!map.get('id')) {
@@ -1260,6 +1268,7 @@ export default {
                 return map;
             });
         movableElements.value = filtered;
+        console.log(`[WhiteboardCanvas] refreshMovableElements: Filtered count: ${filtered.length}`);
         debugLog(`[refreshMovableElements] Updated: before=${beforeCount}, after=${filtered.length}, yDrawings=${yDrawings.value.length}`);
     };
 

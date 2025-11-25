@@ -87,7 +87,8 @@ const initializeRoom = (room: RoomContext) => {
     room.meta.updatedAt = timestamp;
     room.meta.lastActiveAt = timestamp;
     room.lastActive = timestamp;
-    logger.info('Generated update', { size: update.length, originIsWs: origin instanceof WebSocket });
+    logger.info('Generated update', { size: update.length, originIsWs: origin instanceof WebSocket, origin });
+    console.log(`[Server] Generated update. Size: ${update.length}, Origin: ${origin}`);
     broadcast(room, messageSync, update, origin as WebSocket | null);
   });
 

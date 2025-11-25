@@ -27,6 +27,9 @@ export class BoardDoc {
             if (m.has('height')) obj.height = Number(m.get('height'));
             if (m.has('rotation')) obj.rotation = Number(m.get('rotation'));
             if (m.has('text')) obj.text = String(m.get('text'));
+            if (m.has('latex')) obj.latex = String(m.get('latex'));
+            if (m.has('expression')) obj.expression = String(m.get('expression'));
+            if (m.has('xRange')) obj.xRange = m.get('xRange') as number[];
             if (m.has('selected')) obj.selected = Boolean(m.get('selected'));
 
             if (m.has('points')) {
@@ -57,6 +60,7 @@ export class BoardDoc {
         }
 
         this.doc.transact(() => {
+            console.log(`[BoardDoc] Applying patch. Updates: ${patch.updates?.length ?? 0}, Creates: ${patch.creates?.length ?? 0}`);
             // updates
             for (const upd of patch.updates ?? []) {
                 const target = idToMap.get(upd.id);
@@ -74,6 +78,7 @@ export class BoardDoc {
                     m.set(key, value as unknown);
                 }
                 arr.push([m]);
+                console.log(`[BoardDoc] Created object: ${obj.id} (${obj.type})`);
             }
         });
     }

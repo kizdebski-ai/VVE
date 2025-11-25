@@ -69,8 +69,22 @@
              @mousedown.stop="startDragIfSelectedOrRequestSelect">
           {{ objectData.text }}
         </div>
+        <div v-else-if="objectData.type === 'latex'"
+             class="latex-content"
+             v-html="renderLatex(objectData.latex || '')"
+             :style="{
+               width: '100%',
+               height: '100%',
+               display: 'flex',
+               alignItems: 'center',
+               justifyContent: 'center',
+               padding: '10px',
+               overflow: 'auto',
+               userSelect: 'none'
+             }"
+        ></div>
         <PlotRenderer
-          v-else-if="['mathFunctionPlot', 'physicsDataPlot', 'coordinateSystem2D', 'coordinateSystem3D'].includes(objectData.type)"
+          v-else-if="['functionPlot', 'mathFunctionPlot', 'physicsDataPlot', 'coordinateSystem2D', 'coordinateSystem3D'].includes(objectData.type)"
           :type="objectData.type"
           :width="objectData.width"
           :height="objectData.height"
@@ -99,7 +113,8 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, reactive, watch } from 'vue';
 import * as Y from 'yjs'; 
-import PlotRenderer from './PlotRenderer.vue'; 
+import PlotRenderer from './PlotRenderer.vue';
+import katex from 'katex'; 
 
 interface MovableObjectData {
   id: string | number;
@@ -120,6 +135,7 @@ interface MovableObjectData {
   lineStyle?: string; 
   text?: string;
   fontSize?: number;
+  latex?: string; // For LaTeX rendering
   expression?: string; // For math plot
   xRange?: number[]; // For math plot
   points?: {x: number, y: number}[]; // For physics plot
@@ -148,11 +164,24 @@ const emit = defineEmits<{
 const CONTENT_RENDER_TYPES = new Set([
   'text', 
   'image', 
+  'latex', // NEW
+  'functionPlot', // NEW 
   'mathFunctionPlot', 
   'physicsDataPlot', 
   'coordinateSystem2D', 
   'coordinateSystem3D'
 ]);
+
+const renderLatex = (latexCode: string) => {
+  try {
+    return katex.renderToString(latexCode, {
+      displayMode: true,
+      throwOnError: false
+    });
+  } catch (e) {
+    return `<span style="color: red;">LaTeX Error: ${latexCode}</span>`;
+  }
+};
 
 const ensureNumber = (value: any, fallback = 0) => (Number.isFinite(value) ? Number(value) : fallback);
 

@@ -176,6 +176,10 @@ const props = defineProps({
     type: [Object, null],
     default: null,
   },
+  roomId: {
+    type: String,
+    required: true,
+  },
 });
 
 const isMinimized = ref(false);
@@ -195,9 +199,8 @@ const sentIntro = ref(false);
 
 // Agent State
 const agentInput = ref('');
-// We need boardId. Assuming whiteboardRef exposes roomId or we can get it.
-// If whiteboardRef is null initially, we need to handle that.
-const boardId = computed(() => props.whiteboardRef?.roomId || '');
+// We need boardId.
+const boardId = computed(() => props.roomId || '');
 const { loading: agentLoading, lastReply: agentLastReply, askBoardAssistant } = useBoardAssistant();
 
 const toggleMinimize = () => {

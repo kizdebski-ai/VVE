@@ -178,16 +178,13 @@ export function toolPlotFunction(
 
     const plot: BoardObject = {
         id: `ai-fplot-${Date.now()}`,
-        type: 'functionPlot',
+        type: 'mathFunctionPlot',
         x: baseX,
         y: baseY,
         width: 400,
         height: 260,
-        style: {
-            expression: args.expression,
-            xMin: args.xMin ?? -10,
-            xMax: args.xMax ?? 10,
-        },
+        expression: args.expression,
+        xRange: [args.xMin ?? -10, args.xMax ?? 10],
     };
 
     const patch: BoardPatch = { creates: [plot] };

@@ -13,6 +13,8 @@ export interface BoardObject {
     rotation?: number;
     text?: string;
     latex?: string; // For LaTeX content
+    expression?: string; // For function plots
+    xRange?: number[]; // For function plots
     points?: BoardPoint[];
     selected?: boolean;
     style?: Record<string, unknown>; // For custom properties like function expression, colors, etc.

@@ -37,6 +37,7 @@
       <AIChatPanel
         v-if="roomId"
         :whiteboard-ref="whiteboard?.containerRef?.value || null"
+        :room-id="roomId"
       />
        <GridAlignPanel
          v-if="activeFeature === 'gridAlign'"

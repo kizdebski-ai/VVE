@@ -10,8 +10,8 @@ WhiteVue adopts a **Local-First** architecture. The application state lives prim
 
 ```mermaid
 graph TD
-    subgraph Client [Frontend (Vue 3 + Vite)]
-        State[Yjs Doc (CRDT)]
+    subgraph Client ["Frontend (Vue 3 + Vite)"]
+        State[Yjs Doc CRDT]
         Renderer[Hybrid Renderer]
         Input[Input Handler]
         
@@ -21,7 +21,7 @@ graph TD
         Renderer --> DOM[Interactive Overlay]
     end
 
-    subgraph Server [Backend (Node.js)]
+    subgraph Server ["Backend (Node.js)"]
         WSS[WebSocket Server]
         Persistence[In-Memory / DB]
     end
@@ -64,7 +64,7 @@ Building a whiteboard that feels "native" while supporting real-time multiplayer
 **The Solution:** We integrated a **Multimodal RAG (Retrieval-Augmented Generation)** pipeline.
 *   When a user asks a question, we capture a high-resolution viewport snapshot of the canvas.
 *   We combine this visual data with a serialized JSON representation of the selected elements.
-*   This context is sent to a Vision-Language Model (like GPT-4o or Claude 3.5 Sonnet), allowing the AI to reason about spatial relationships and visual content, not just text.
+*   This context is sent to a Vision-Language Model (primarily **xAI Grok 4.1 Vision**, with **DeepSeek R1** as a robust fallback), allowing the AI to reason about spatial relationships and visual content, not just text.
 
 ## Tech Stack
 

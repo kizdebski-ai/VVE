@@ -74,3 +74,7 @@ mailmap.txt
 README_DEPLOY.md
 temp_websocket_cat.txt
 {*}.png
+
+# === SERVER DATA ===
+server/data/*.json
+server/data/*.bin

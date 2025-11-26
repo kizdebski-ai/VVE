@@ -71,21 +71,22 @@
         </div>
         <div v-else-if="objectData.type === 'latex'"
              class="latex-content"
-             v-html="renderLatex(objectData.latex || '')"
+             v-html="latexHtml"
              :style="{
                width: '100%',
                height: '100%',
                display: 'flex',
                alignItems: 'center',
                justifyContent: 'center',
-               padding: '16px',
-               overflow: 'auto',
+               padding: `${16 * props.zoomLevel}px`,
+               overflow: 'hidden',
                userSelect: 'none',
                color: objectData.color || '#1e293b',
                backgroundColor: 'rgba(255, 255, 255, 0.95)',
-               borderRadius: '12px',
+               borderRadius: `${12 * props.zoomLevel}px`,
                boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
-               border: '1px solid rgba(0,0,0,0.05)'
+               border: '1px solid rgba(0,0,0,0.05)',
+               fontSize: `${(objectData.fontSize || 24) * props.zoomLevel}px`
              }"
         ></div>
         <PlotRenderer
@@ -179,7 +180,19 @@ const CONTENT_RENDER_TYPES = new Set([
 
 const renderLatex = (latexCode: string) => {
   try {
-    return katex.renderToString(latexCode, {
+    // Clean up common delimiters that LLMs might include
+    let cleanLatex = latexCode
+      .replace(/^\\\[/, '')
+      .replace(/\\\]$/, '')
+      .replace(/^\\\(/, '')
+      .replace(/\\\)$/, '')
+      .replace(/^\$\$/, '')
+      .replace(/\$\$$/, '')
+      .replace(/^\$/, '')
+      .replace(/\$$/, '')
+      .trim();
+
+    return katex.renderToString(cleanLatex, {
       displayMode: true,
       throwOnError: false
     });
@@ -389,8 +402,29 @@ const objectStyle = computed(() => {
   const scaledWidth = Math.max(1, ensureNumber(frame.width, 1) * props.zoomLevel);
   const scaledHeight = Math.max(1, ensureNumber(frame.height, 1) * props.zoomLevel);
 
-  return {
-    position: 'absolute' as const,
+  // Shape styling logic
+  const isShape = ['rectangle', 'circle', 'square', 'triangle', 'diamond'].includes(objectData.type);
+  const backgroundColor = objectData.color || 'transparent'; // Default to transparent if no color
+  // If it's a shape and has a color, use it. If it's selected, add the blue border.
+  // If it's a shape but no color is set, we might want a default stroke? 
+  // For now, let's assume if the AI sets a color, it means fill.
+  // If the user draws it, they usually pick a color.
+  
+  let borderRadius = '0px';
+  if (objectData.type === 'circle') {
+    borderRadius = '50%';
+  } else if (['rectangle', 'square'].includes(objectData.type)) {
+    borderRadius = '4px'; // Slight rounding for rectangles
+  }
+
+  // Border logic:
+  // 1. Selection border (blue) takes precedence or adds to it?
+  //    Usually selection is an outline *outside* or a ring.
+  // 2. Shape border: If it's a shape, we might want a border if fill is transparent?
+  //    Let's use the object's color as background.
+  
+  const style: Record<string, any> = {
+    position: 'absolute',
     left: `${screenX}px`,
     top: `${screenY}px`,
     width: `${scaledWidth}px`,
@@ -399,16 +433,39 @@ const objectStyle = computed(() => {
     cursor: props.interactionEnabled
       ? (isDragging.value ? 'grabbing' : (internalIsSelected.value ? 'grab' : 'pointer'))
       : 'default',
-    pointerEvents: (props.interactionEnabled ? 'auto' : 'none') as 'auto' | 'none',
-    border: internalIsSelected.value ? '2px solid dodgerblue' : '1px solid transparent',
-    transformOrigin: 'top left', 
-    userSelect: 'none' as const,
-    boxSizing: 'border-box' as const,
+    pointerEvents: props.interactionEnabled ? 'auto' : 'none',
+    transformOrigin: 'top left',
+    userSelect: 'none',
+    boxSizing: 'border-box',
     zIndex: internalIsSelected.value ? 10 : 1,
   };
+
+  if (isShape) {
+    style.backgroundColor = backgroundColor;
+    style.borderRadius = borderRadius;
+    // If color is present, maybe add a border of the same color to ensure visibility?
+    // Or if transparent, add a black border?
+    if (backgroundColor === 'transparent' || !objectData.color) {
+       style.border = '2px solid #000'; // Default border for empty shapes
+    } else {
+       // If it has a fill, maybe no border or same color border?
+       // Let's add a subtle border to define edges if color is light?
+       // For simplicity, just use the fill.
+    }
+  }
+
+  // Selection overlay (using box-shadow or outline to not mess with dimensions)
+  if (internalIsSelected.value) {
+    style.outline = '2px solid dodgerblue';
+    style.outlineOffset = '2px';
+  }
+
+  return style;
 });
 
 const shouldRenderContent = computed(() => CONTENT_RENDER_TYPES.has(objectData.type));
+const latexHtml = computed(() => renderLatex(objectData.latex || ''));
+
 const lineHandlePositions = computed(() => {
   if (!isLineType.value) {
     return { start: {}, end: {} };

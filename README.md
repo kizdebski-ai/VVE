@@ -46,9 +46,12 @@ Building a whiteboard that feels "native" while supporting real-time multiplayer
 **The Challenge:** HTML5 Canvas is performant for drawing thousands of strokes but poor for interaction (no DOM events for individual shapes). DOM elements are great for interaction but heavy to render in large numbers.
 
 **The Solution:** WhiteVue uses a **Dual-Layer Rendering Engine**:
-*   **The Bottom Layer (Canvas):** Uses **Rough.js** to render the actual visual content. This library generates "hand-drawn" SVG paths which we rasterize onto a single HTML5 Canvas. This provides the aesthetic appeal and high rendering performance (60fps even with complex scenes).
+*   **The Bottom Layer (Canvas):** Uses **Rough.js** to render the actual visual content. This library generates "hand-drawn" SVG paths which we rasterize onto a single HTML5 Canvas.
+    *   **Optimization - Path2D Caching:** Static pen strokes are baked into `Path2D` objects, eliminating the need to re-parse thousands of point coordinates on every render frame.
+    *   **Optimization - Geometry Simplification:** Freehand strokes are processed with the **Ramer-Douglas-Peucker** algorithm to remove redundant points while preserving the shape's visual fidelity.
 *   **The Top Layer (Vue Components):** We overlay lightweight Vue components (`MovableObject`) on top of the canvas. These components are invisible by default but handle hit-testing, selection boxes, and resize handles.
-*   **Synchronization:** A central `CoordinateSystem` utility maps the infinite pan/zoom canvas space to the viewport pixels, ensuring the DOM overlay always aligns perfectly with the canvas drawing, even during multi-touch pinch-to-zoom gestures.
+    *   **Optimization - Smart DOM Culling:** Heavy DOM elements (for text/LaTeX) are only mounted when necessary (e.g., for complex types or currently selected objects), keeping the DOM tree lightweight.
+*   **Synchronization:** A central `CoordinateSystem` utility maps the infinite pan/zoom canvas space to the viewport pixels, ensuring the DOM overlay always aligns perfectly with the canvas drawing.
 
 ### 3. Conflict-Free State Management
 **The Challenge:** In a naive implementation, if User A moves an object and User B deletes it simultaneously, the app crashes. Or if two users drag the same object, it "jitters" between positions.
@@ -56,15 +59,23 @@ Building a whiteboard that feels "native" while supporting real-time multiplayer
 **The Solution:** We use **Yjs** as our source of truth.
 *   **Data Structure:** The entire board state is a `Y.Array` of `Y.Map` objects.
 *   **Resolution:** Yjs automatically handles property conflicts using a "Last-Write-Wins" strategy for simple properties (like color) and sophisticated list merging for array data.
-*   **Awareness:** For ephemeral data that shouldn't be saved (like cursor positions or "who is selecting what"), we use the `y-protocols/awareness` protocol. This broadcasts tiny binary packets separate from the main document history, keeping the persistent storage clean and lightweight.
+*   **Awareness:** For ephemeral data that shouldn't be saved (like cursor positions or "who is selecting what"), we use the `y-protocols/awareness` protocol.
 
-### 4. AI Vision Context
-**The Challenge:** Text-only AI assistants are useless on a whiteboard. The AI needs to "see" the diagram to understand context (e.g., "Is this architecture diagram secure?").
+### 4. AI Assistant & Agentic Capabilities
+**The Challenge:** Standard chatbots are passive; they can talk but cannot *do*. A true whiteboard assistant needs to act—moving objects, fixing messy drawings, and generating content directly on the canvas.
 
-**The Solution:** We integrated a **Multimodal RAG (Retrieval-Augmented Generation)** pipeline.
-*   When a user asks a question, we capture a high-resolution viewport snapshot of the canvas.
-*   We combine this visual data with a serialized JSON representation of the selected elements.
-*   This context is sent to a Vision-Language Model (primarily **xAI Grok 4.1 Vision**, with **DeepSeek R1** as a robust fallback), allowing the AI to reason about spatial relationships and visual content, not just text.
+**The Solution:** We built a **Multimodal Agentic System** powered by RAG and Tool Use.
+*   **Vision & Context:** When a user asks a question, we capture a high-resolution viewport snapshot and combine it with a JSON representation of the board state. This allows the AI (xAI Grok Vision / DeepSeek) to "see" and "read" the diagram simultaneously.
+*   **Agentic Tool Use:** The AI isn't just a chatbot; it has direct access to board manipulation tools, prioritizing scientific and creative tasks:
+    *   **Math & Science Visualization**:
+        *   **`insert_latex_box`**: Generates complex mathematical formulas (LaTeX) rendered beautifully on the board.
+        *   **`plot_function`**: Instantly plots mathematical functions (e.g., `sin(x)/x`) and data visualizations directly on the canvas.
+    *   **Context-Aware Drawing**:
+        *   **`draw_board_patch`**: The agent can draw shapes, annotations, and visual explanations *in-place*, respecting the user's existing layout.
+    *   **Smart Refinement & Utilities**:
+        *   **`simplify_equation_block`**: Converts messy handwriting into clean, editable LaTeX equations via OCR.
+        *   **`align_selection_to_grid`** & **`generate_diagram_from_prompt`**: Helper tools for organizing layouts and generating flowcharts.
+*   **RAG (Retrieval-Augmented Generation):** To ensure the agent uses these tools correctly, we dynamically inject relevant documentation and schema definitions into its context window, allowing it to adapt to new capabilities without retraining.
 
 ## Tech Stack
 

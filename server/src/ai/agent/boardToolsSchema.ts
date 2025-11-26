@@ -63,20 +63,50 @@ export const boardToolsSchema: ChatCompletionTool[] = [
         type: 'function',
         function: {
             name: 'draw_board_patch',
-            description: 'Create or update board objects directly using a JSON patch. Use this for general drawing.',
+            description: 'Create or update board objects directly. Use this for general drawing.',
             parameters: {
                 type: 'object',
                 properties: {
-                    patch: {
-                        type: 'object',
-                        description: 'BoardPatch object with "creates" and/or "updates".',
-                        properties: {
-                            creates: { type: 'array', items: { type: 'object' } },
-                            updates: { type: 'array', items: { type: 'object' } }
+                    creates: {
+                        type: 'array',
+                        items: {
+                            type: 'object',
+                            description: 'A board object to create.',
+                            properties: {
+                                id: { type: 'string', description: 'Unique ID, e.g. "ai-rect-1"' },
+                                type: { type: 'string', enum: ['rectangle', 'circle', 'text', 'line', 'latex', 'image', 'triangle', 'diamond'] },
+                                x: { type: 'number' },
+                                y: { type: 'number' },
+                                width: { type: 'number' },
+                                height: { type: 'number' },
+                                text: { type: 'string' },
+                                latex: { type: 'string' },
+                                color: { type: 'string', description: 'Hex color code (e.g. #ff0000)' },
+                                rotation: { type: 'number', description: 'Rotation in degrees' },
+                                points: {
+                                    type: 'array',
+                                    items: {
+                                        type: 'object',
+                                        properties: { x: { type: 'number' }, y: { type: 'number' } }
+                                    }
+                                }
+                            },
+                            required: ['type', 'x', 'y', 'width', 'height']
                         }
                     },
+                    updates: {
+                        type: 'array',
+                        items: {
+                            type: 'object',
+                            properties: {
+                                id: { type: 'string' },
+                                props: { type: 'object', description: 'Properties to update (x, y, text, etc.)' }
+                            },
+                            required: ['id', 'props']
+                        }
+                    }
                 },
-                required: ['patch'],
+                // At least one of creates or updates should be present, but JSON schema doesn't easily enforce "one of", so we leave it optional.
             },
         },
     },
@@ -88,7 +118,7 @@ export const boardToolsSchema: ChatCompletionTool[] = [
             parameters: {
                 type: 'object',
                 properties: {
-                    latex: { type: 'string', description: 'The LaTeX code to render.' },
+                    latex: { type: 'string', description: 'The LaTeX code to render. Do NOT include delimiters like $ or \\(.' },
                     x: { type: 'number' },
                     y: { type: 'number' },
                     width: { type: 'number' },

@@ -9,8 +9,14 @@
   UndoManager: CanUndo={{canUndo}}, CanRedo={{canRedo}}
 </div>
     <canvas 
-      ref="canvas" 
-      class="whiteboard-canvas"
+      ref="staticCanvas" 
+      class="whiteboard-canvas static-layer"
+      style="position: absolute; top: 0; left: 0; pointer-events: none; z-index: 0;"
+    ></canvas>
+    <canvas 
+      ref="drawCanvas" 
+      class="whiteboard-canvas draw-layer"
+      style="position: absolute; top: 0; left: 0; z-index: 1;"
       @mousedown="handleMouseDown"
       @mousemove="handleMouseMove"
       @mouseup="handleMouseUp"
@@ -230,9 +236,12 @@ export default {
     const devicePixelRatio = ref(clampDevicePixelRatio());
     
     // Canvas refs
+    // Canvas refs
     const containerRef = ref(null);
-    const canvas = ref(null);
-    const context = ref(null);
+    const staticCanvas = ref(null);
+    const staticContext = ref(null);
+    const drawCanvas = ref(null);
+    const drawContext = ref(null);
     const canvasWidth = ref(0);
     const canvasHeight = ref(0);
 
@@ -382,8 +391,8 @@ export default {
 
     // Helper module instances
     const yjsConnection = shallowRef(null);
-    const ydoc = ref(null);
-    const yDrawings = ref(null);
+    const ydoc = shallowRef(null);
+    const yDrawings = shallowRef(null);
     const activeRoomId = ref(null);
     const latestUsername = ref(props.username);
     const undoManager = ref(null);
@@ -879,7 +888,7 @@ export default {
 
           // Wymuś redraw
           nextTick(() => {
-            redrawCanvas();
+            redrawCanvas(true);
             updateGlobalState();
           });
         } else {
@@ -903,7 +912,7 @@ export default {
 
           // Wymuś redraw
           nextTick(() => {
-            redrawCanvas();
+            redrawCanvas(true);
           });
         } else {
           // debugLog("[Canvas] Redo niemożliwe"); // Commented out
@@ -1016,7 +1025,7 @@ export default {
           if (undoManager.value) {
             updateGlobalState();
           }
-          redrawCanvas(); // Redraw to show the new element
+          redrawCanvas(true); // Redraw to show the new element
         });
 
       } catch (error) {
@@ -1045,7 +1054,7 @@ export default {
                 emit('update:recognition-status', '');
                 emit('update:latex-equation', '');
                 emit('update:solution', '');
-                redrawCanvas();
+                redrawCanvas(true);
             });
         } catch (error) {
             console.error("Error applying math answer:", error);
@@ -1054,18 +1063,96 @@ export default {
     };
 
 
-    const redrawCanvas = () => {
-      if (!context.value) return;
+    // Local scene cache to avoid expensive Yjs toJSON calls
+    let localScene = [];
 
-      const ctx = context.value;
+    const updateLocalScene = () => {
+        if (!yDrawings.value) {
+            localScene = [];
+            return;
+        }
+        // Map Yjs elements to local plain objects once
+        localScene = yDrawings.value.toArray().map(map => {
+            const json = map.toJSON();
+            
+            // --- OPTIMIZATION: Path2D Caching ---
+            // This pre-calculates the path for static pen strokes to avoid re-parsing points on every frame.
+            // To DISABLE this optimization: Comment out the 'if' block below.
+            if (json.type === 'pen' && json.points && json.points.length > 0) {
+                const path = new Path2D();
+                const points = json.points;
+                if (points.length > 0) {
+                    path.moveTo(points[0].x, points[0].y);
+                    // Use quadratic curves for smoother look if needed, or just lines for speed
+                    // For now, simple lines match the original drawElement logic unless smoothing is on
+                    // But drawElement handles smoothing dynamically. 
+                    // If we cache Path2D, we bake the geometry.
+                    // Let's bake the raw points for now.
+                    for (let i = 1; i < points.length; i++) {
+                        path.lineTo(points[i].x, points[i].y);
+                    }
+                }
+                json.cachedPath = path;
+            }
+            // --- END OPTIMIZATION ---
+            
+            return json;
+        });
+        
+        // Also sync with helper modules if needed
+        if (props.activeFeature === 'styleHandwriting' && handwritingStylerModule.value?.hasStylizedStrokes()) {
+             // If styler is active, we might need to merge or replace strokes. 
+             // For simplicity, let's assume styler handles its own data or we overlay it.
+             // But the original code replaced strokesToDraw.
+             // Let's keep the original logic but use localScene as base.
+        }
+    };
+
+    const isElementVisible = (element, viewRect) => {
+        // Simple bounding box check
+        // Assuming element has x, y, width, height or start/end
+        let minX, minY, maxX, maxY;
+
+        if (element.type === 'line' && element.start && element.end) {
+            minX = Math.min(element.start.x, element.end.x);
+            minY = Math.min(element.start.y, element.end.y);
+            maxX = Math.max(element.start.x, element.end.x);
+            maxY = Math.max(element.start.y, element.end.y);
+            // Add line width padding
+            const padding = (element.lineWidth || 2) / 2;
+            minX -= padding; minY -= padding; maxX += padding; maxY += padding;
+        } else if (typeof element.x === 'number' && typeof element.y === 'number') {
+            minX = element.x;
+            minY = element.y;
+            maxX = element.x + (element.width || 0);
+            maxY = element.y + (element.height || 0);
+        } else if (element.points && element.points.length > 0) {
+             // For freehand strokes
+             // This might be expensive to iterate points every time. 
+             // Ideally bounds should be stored on the element.
+             // If not present, we skip culling or calculate once.
+             // Let's assume for now we skip culling for complex paths without bounds
+             return true; 
+        } else {
+            return true; // Default to visible if bounds unknown
+        }
+
+        return !(maxX < viewRect.x || minX > viewRect.x + viewRect.width || 
+                 maxY < viewRect.y || minY > viewRect.y + viewRect.height);
+    };
+
+    const redrawStatic = () => {
+      if (!staticContext.value) return;
+      const ctx = staticContext.value;
       const ratio = devicePixelRatio.value || 1;
-      const gridMetrics = computeGridSteps(zoomLevel.value);
-
+      
       // Ensure base HiDPI transform before clearing
       ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
       ctx.clearRect(0, 0, canvasWidth.value, canvasHeight.value);
 
-      // Draw utility grid first
+      // Draw utility grid
+      // Optimization: Grid is drawn on every static redraw. 
+      // If grid is heavy, it should be on a separate canvas, but for now it's okay here as it's static.
       drawUtilGrid(ctx, zoomLevel.value, panOffset.value, canvasWidth.value, canvasHeight.value, darkMode.value);
 
       ctx.save();
@@ -1075,33 +1162,78 @@ export default {
         panOffset.value.x * ratio, panOffset.value.y * ratio
       );
 
-      // Determine strokes to draw (original or stylized)
-      let strokesToDraw = [];
-      if (yDrawings.value) {
-        strokesToDraw = yDrawings.value.toArray().map(map => map.toJSON()); // Convert Y.Array of Y.Map to JS Array of Objects
-        if (props.activeFeature === 'styleHandwriting' && handwritingStylerModule.value?.hasStylizedStrokes()) {
-          strokesToDraw = handwritingStylerModule.value.getStrokes(); // Get potentially modified strokes
-        }
+      // Determine strokes to draw
+      let strokesToDraw = localScene;
+      if (props.activeFeature === 'styleHandwriting' && handwritingStylerModule.value?.hasStylizedStrokes()) {
+          strokesToDraw = handwritingStylerModule.value.getStrokes();
       }
 
-      // Draw all elements; MovableObject overlays handle interactions but canvas still renders visuals
-      strokesToDraw.forEach((element, index) => {
+      // Calculate view rect in world coordinates for culling
+      const viewRect = {
+          x: -panOffset.value.x / zoomLevel.value,
+          y: -panOffset.value.y / zoomLevel.value,
+          width: canvasWidth.value / zoomLevel.value,
+          height: canvasHeight.value / zoomLevel.value
+      };
+
+      // Draw visible elements
+      strokesToDraw.forEach((element) => {
         if (DOM_RENDERED_TYPES.has(element.type)) {
-          return; // Avoid double-rendering plots/coordinate systems already handled by MovableObject/PlotRenderer
+          return;
         }
-        const isHighlighted = index === hoveredElementIndex.value && currentTool.value === 'eraser';
+        
+        if (!isElementVisible(element, viewRect)) {
+            return;
+        }
+
         drawElement(
           ctx,
           element,
-          isHighlighted,
+          false, // isHighlighted - handled in dynamic layer
           smoothingFactor.value,
           imageCache.value,
-          redrawCanvas,
+          () => invalidate(true), // callback for image load - triggers static redraw
           props.handwritingStylerOptions || {}
         );
       });
+      
+      ctx.restore();
+    };
 
-      // Connector handles on bindable shapes
+    const redrawDynamic = () => {
+      if (!drawContext.value) return;
+      const ctx = drawContext.value;
+      const ratio = devicePixelRatio.value || 1;
+      const gridMetrics = computeGridSteps(zoomLevel.value);
+
+      ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+      ctx.clearRect(0, 0, canvasWidth.value, canvasHeight.value);
+
+      ctx.save();
+      ctx.setTransform(
+        zoomLevel.value * ratio, 0,
+        0, zoomLevel.value * ratio,
+        panOffset.value.x * ratio, panOffset.value.y * ratio
+      );
+
+      // 1. Draw Highlighted Element (Eraser Hover)
+      if (hoveredElementIndex.value !== -1 && currentTool.value === 'eraser' && yDrawings.value) {
+         const elementMap = yDrawings.value.get(hoveredElementIndex.value);
+         if (elementMap) {
+             const element = elementMap.toJSON();
+             drawElement(
+                ctx,
+                element,
+                true, // isHighlighted
+                smoothingFactor.value,
+                imageCache.value,
+                undefined,
+                props.handwritingStylerOptions || {}
+             );
+         }
+      }
+
+      // 2. Connector handles
       const drawCircle = (x, y, r, fill = 'rgba(99,102,241,0.28)', stroke = 'rgba(99,102,241,0.9)') => {
         ctx.beginPath();
         ctx.arc(x, y, r, 0, Math.PI * 2);
@@ -1122,6 +1254,12 @@ export default {
           drawCircle(anchorWorld.x, anchorWorld.y, Math.max(4, 6 / zoomLevel.value));
         });
       };
+
+      // Need strokes for connectors
+      let strokesToDraw = [];
+      if (yDrawings.value) {
+          strokesToDraw = yDrawings.value.toArray().map(map => map.toJSON());
+      }
 
       if (connectorsVisible.value) {
         const connectorElementIds = new Set();
@@ -1155,7 +1293,7 @@ export default {
         }
       }
 
-      // Draw current preview if any
+      // 3. Draw current preview
       if (isDrawing.value && currentElementPreview.value) {
         drawElement(
           ctx,
@@ -1168,12 +1306,8 @@ export default {
         );
       }
 
-      // Draw helper overlays
-    // For now, keep them, but they might draw over or under MovableObjects depending on DOM order
-    // and their own drawing logic (e.g., if they directly draw on the main canvas context).
+      // 4. Helper overlays
       if (props.activeFeature === 'gridAlign' && gridAlignModule.value) {
-        // Draw grid (if needed, or rely on drawUtilGrid)
-        // drawGrid(); // This component's grid drawing method
         if (props.gridAlignOptions.showBaselines) {
           gridAlignModule.value.setOptions({ ...props.gridAlignOptions, gridSize: gridMetrics.worldGridStep });
           gridAlignModule.value.detectBaselines();
@@ -1185,9 +1319,9 @@ export default {
         mathRecognizerModule.value.drawGhostAnswer(ctx);
       }
 
+      // 5. Snap Indicator
       if (snapIndicator.value && props.activeFeature === 'gridAlign') {
         const indicator = snapIndicator.value;
-        const ratio = devicePixelRatio.value || 1;
         const scale = zoomLevel.value * ratio;
         const worldWidth = canvasWidth.value / zoomLevel.value;
         const worldStartX = -panOffset.value.x / zoomLevel.value;
@@ -1218,17 +1352,42 @@ export default {
         }
         ctx.restore();
       }
-
+      
+      ctx.restore();
     };
 
-    let redrawQueued = false;
-    const scheduleRedraw = () => {
-      if (redrawQueued) return;
-      redrawQueued = true;
-      requestAnimationFrame(() => {
-        redrawQueued = false;
-        redrawCanvas();
-      });
+    // --- Render Loop Optimization ---
+    let redrawStaticNeeded = false;
+    let redrawDynamicNeeded = false;
+    let rafId = null;
+
+    const invalidate = (full = false) => {
+        redrawDynamicNeeded = true;
+        if (full) redrawStaticNeeded = true;
+    };
+
+    const redrawCanvas = (full = true) => {
+        invalidate(full);
+    };
+
+    const scheduleRedraw = (full = false) => {
+        invalidate(full);
+    };
+
+    const renderLoop = () => {
+        rafId = requestAnimationFrame(renderLoop);
+        
+        if (!redrawStaticNeeded && !redrawDynamicNeeded) return;
+
+        if (redrawStaticNeeded) {
+            redrawStatic();
+            redrawStaticNeeded = false;
+        }
+        
+        if (redrawDynamicNeeded) {
+            redrawDynamic();
+            redrawDynamicNeeded = false;
+        }
     };
 
     // Helper to sync module state from Yjs
@@ -1240,15 +1399,35 @@ export default {
         if (mathRecognizerModule.value?.enabled) mathRecognizerModule.value.setStrokes(currentStrokes);
     };
 
+    // Types that MUST be rendered in DOM (complex interactive elements)
+    const ALWAYS_DOM_TYPES = new Set([
+        'text', 
+        'image', 
+        'latex', 
+        'functionPlot', 
+        'mathFunctionPlot', 
+        'physicsDataPlot', 
+        'coordinateSystem2D', 
+        'coordinateSystem3D'
+    ]);
+
     const refreshMovableElements = () => {
         const beforeCount = movableElements.value.length;
         if (!yDrawings.value) {
             movableElements.value = [];
             return;
         }
+        
+        // Optimization: Only render DOM elements for complex types or the currently selected object.
+        // Simple shapes (pen, rect, circle, line) are drawn on canvas and don't need a DOM element unless selected.
         const filtered = yDrawings.value
             .toArray()
-            .filter(map => movableElementTypes.has(map.get('type')))
+            .filter(map => {
+                const type = map.get('type');
+                const id = map.get('id');
+                // Include if it's a complex type OR if it's the currently selected object
+                return ALWAYS_DOM_TYPES.has(type) || id === selectedObjectId.value;
+            })
             .map(map => {
                 if (!map.get('id')) {
                     if (!map._tempKey) {
@@ -1260,6 +1439,7 @@ export default {
                 }
                 return map;
             });
+            
         movableElements.value = filtered;
         // debugLog(`[refreshMovableElements] Updated: before=${beforeCount}, after=${filtered.length}, yDrawings=${yDrawings.value.length}`);
     };
@@ -1313,7 +1493,7 @@ export default {
         awareness.on('change', (changes) => {
             debugLog('[WhiteboardCanvas] Awareness changed:', changes);
             // Trigger redraw to show updated cursors
-            redrawCanvas();
+            redrawCanvas(false); // Cursors are dynamic
         });
     };
 
@@ -1340,9 +1520,10 @@ export default {
 
     const handleYjsUpdate = (event) => {
         // debugLog('[WhiteboardCanvas] Yjs update received');
+        updateLocalScene(); // Sync local cache
         refreshMovableElements();
         syncModulesWithYjs();
-        redrawCanvas();
+        redrawCanvas(true); // Remote update -> static update
         
         nextTick(() => {
              if (undoManager.value) {
@@ -1364,6 +1545,11 @@ export default {
         teardownYjsConnection();
         selectedObjectId.value = null;
 
+        // Watch selection changes to update DOM elements
+        watch(selectedObjectId, () => {
+             refreshMovableElements();
+        });
+
         try {
             // Pass roomKey to connectToYjs for E2E encryption
             const connection = await connectToYjs(normalizedRoomId);
@@ -1378,13 +1564,14 @@ export default {
             yDrawings.value.observe(handleYjsUpdate);
             setupAwarenessListener(); // Enable cursor tracking and online count
             activeRoomId.value = normalizedRoomId;
+            updateLocalScene(); // Initial sync
             refreshMovableElements();
 
             // Ensure modules and undo manager sync with the new document
             syncModulesWithYjs();
             setTimeout(() => {
                 initializeUndoManager();
-                redrawCanvas();
+                redrawCanvas(true);
             }, 100);
 
             updateAwarenessUser(latestUsername.value);
@@ -1398,17 +1585,23 @@ export default {
 
 
     const initCanvas = () => {
-      if (!canvas.value) return;
-      context.value = canvas.value.getContext('2d');
-      context.value.lineCap = 'round';
-      context.value.lineJoin = 'round';
-      context.value.strokeStyle = currentColor.value;
-      context.value.lineWidth = currentLineWidth.value;
+      if (staticCanvas.value) {
+        staticContext.value = staticCanvas.value.getContext('2d', { willReadFrequently: true });
+        staticContext.value.lineCap = 'round';
+        staticContext.value.lineJoin = 'round';
+      }
+      if (drawCanvas.value) {
+        drawContext.value = drawCanvas.value.getContext('2d', { willReadFrequently: true });
+        drawContext.value.lineCap = 'round';
+        drawContext.value.lineJoin = 'round';
+        drawContext.value.strokeStyle = currentColor.value;
+        drawContext.value.lineWidth = currentLineWidth.value;
+      }
+      
       darkMode.value = document.body.classList.contains('dark-mode');
-      redrawCanvas();
+      redrawCanvas(true);
       updateCursor();
       nextTick(() => {
-        // Keep clipboard focus only when nothing else has focus to avoid stealing focus from inputs
         const activeEl = document.activeElement;
         if (
           clipboardInput.value &&
@@ -1440,7 +1633,6 @@ export default {
     };
 
     const applyHiDPIScaling = (ratio = devicePixelRatio.value) => {
-      if (!canvas.value || !context.value) return;
       const displayWidth = canvasWidth.value;
       const displayHeight = canvasHeight.value;
       if (!displayWidth || !displayHeight) return;
@@ -1448,26 +1640,34 @@ export default {
       const scaledWidth = Math.floor(displayWidth * ratio);
       const scaledHeight = Math.floor(displayHeight * ratio);
 
-      canvas.value.width = scaledWidth;
-      canvas.value.height = scaledHeight;
-      canvas.value.style.width = `${displayWidth}px`;
-      canvas.value.style.height = `${displayHeight}px`;
+      [staticCanvas.value, drawCanvas.value].forEach(cvs => {
+        if (!cvs) return;
+        cvs.width = scaledWidth;
+        cvs.height = scaledHeight;
+        cvs.style.width = `${displayWidth}px`;
+        cvs.style.height = `${displayHeight}px`;
+      });
 
-      if (typeof context.value.resetTransform === 'function') {
-        context.value.resetTransform();
-        context.value.scale(ratio, ratio);
-      } else {
-        context.value.setTransform(ratio, 0, 0, ratio, 0, 0);
+      [staticContext.value, drawContext.value].forEach(ctx => {
+        if (!ctx) return;
+        if (typeof ctx.resetTransform === 'function') {
+           ctx.resetTransform();
+           ctx.scale(ratio, ratio);
+        } else {
+           ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+        }
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+      });
+      
+      if (drawContext.value) {
+        drawContext.value.strokeStyle = currentColor.value;
+        drawContext.value.lineWidth = currentLineWidth.value;
       }
-
-      context.value.lineCap = 'round';
-      context.value.lineJoin = 'round';
-      context.value.strokeStyle = currentColor.value;
-      context.value.lineWidth = currentLineWidth.value;
     };
 
     const updateCanvasSize = (width, height) => {
-      if (!canvas.value || !context.value) return;
+      if (!staticCanvas.value || !drawCanvas.value) return;
       const logicalWidth = Math.floor(width);
       const logicalHeight = Math.floor(height);
       if (logicalWidth <= 0 || logicalHeight <= 0) return;
@@ -1490,7 +1690,7 @@ export default {
       }
 
       applyHiDPIScaling(nextRatio);
-      redrawCanvas();
+      redrawCanvas(true);
     };
 
     const handleResize = () => {
@@ -1518,7 +1718,7 @@ export default {
       currentElementPreview.value = null;
       pointsBuffer.value = [];
       snapIndicator.value = null;
-      redrawCanvas();
+      redrawCanvas(false); // Dynamic only
       return true;
     };
 
@@ -1528,14 +1728,14 @@ export default {
         isPanning.value = false;
         panStartedWithSpace.value = false;
         lastPanPoint.value = null;
-        if (shouldRedraw) redrawCanvas();
+        if (shouldRedraw) redrawCanvas(true);
       }
       updateCursor();
     };
 
     const startPinchGesture = (touches) => {
-      if (touches.length < 2 || !canvas.value) return;
-      const rect = canvas.value.getBoundingClientRect();
+      if (touches.length < 2 || !drawCanvas.value) return;
+      const rect = drawCanvas.value.getBoundingClientRect();
       const touchA = touches[0];
       const touchB = touches[1];
       if (!touchA || !touchB) return;
@@ -1553,8 +1753,8 @@ export default {
     };
 
     const updatePinchGesture = (touches) => {
-      if (!pinchGesture.value || touches.length < 2 || !canvas.value) return;
-      const rect = canvas.value.getBoundingClientRect();
+      if (!pinchGesture.value || touches.length < 2 || !drawCanvas.value) return;
+      const rect = drawCanvas.value.getBoundingClientRect();
       const touchA = touches[0];
       const touchB = touches[1];
       if (!touchA || !touchB) return;
@@ -1595,7 +1795,7 @@ export default {
        const newDarkMode = document.body.classList.contains('dark-mode');
        if (darkMode.value !== newDarkMode) {
          darkMode.value = newDarkMode;
-         redrawCanvas();
+         redrawCanvas(true);
        }
     };
 
@@ -1604,8 +1804,8 @@ export default {
     // --- Input Handlers ---
 
     const getCoordinates = (event) => {
-      if (!canvas.value) return { offsetX: 0, offsetY: 0 };
-      const rect = canvas.value.getBoundingClientRect();
+      if (!drawCanvas.value) return { offsetX: 0, offsetY: 0 };
+      const rect = drawCanvas.value.getBoundingClientRect();
       if (event.touches && event.touches[0]) {
         return {
           offsetX: event.touches[0].clientX - rect.left,
@@ -1761,7 +1961,7 @@ export default {
         panOffset.value.x += coords.offsetX - lastPanPoint.value.screenX;
         panOffset.value.y += coords.offsetY - lastPanPoint.value.screenY;
         lastPanPoint.value = { ...currentPanPoint, screenX: coords.offsetX, screenY: coords.offsetY };
-        redrawCanvas();
+        redrawCanvas(true); // Pan requires full redraw
         return;
       }
 
@@ -1791,7 +1991,7 @@ export default {
         }
         if (hoveredElementIndex.value !== foundIndex) {
             hoveredElementIndex.value = foundIndex;
-            redrawCanvas();
+            redrawCanvas(false); // Dynamic only (highlight)
         }
         if (isDrawing.value && foundIndex !== -1) {
            eraseElement(foundIndex);
@@ -1799,7 +1999,7 @@ export default {
       } else {
          if (hoveredElementIndex.value !== -1) {
              hoveredElementIndex.value = -1;
-             redrawCanvas();
+             redrawCanvas(false); // Dynamic only
          }
       }
     };
@@ -1820,7 +2020,15 @@ export default {
         const clickedObjectFoundId = findMovableElementIdAtPoint(transformedCoords);
         selectedObjectId.value = clickedObjectFoundId;
         debugLog('[WhiteboardCanvas] Right-click selected:', selectedObjectId.value);
-        redrawCanvas(); // To show selection changes on MovableObject
+        debugLog('[WhiteboardCanvas] Right-click selected:', selectedObjectId.value);
+        redrawCanvas(false); // Selection is dynamic (overlay/MovableObject) - wait, MovableObject is DOM.
+        // But if we have selection logic in canvas (e.g. highlight), we need redraw.
+        // MovableObject handles its own rendering.
+        // redrawCanvas() calls drawElement with isHighlighted=false for static.
+        // But wait, MovableObject is a component.
+        // Does redrawCanvas draw selection box? No.
+        // So redrawCanvas might not be needed for selection if it's purely DOM.
+        // But let's keep it safe.
         return;
       }
 
@@ -1842,14 +2050,14 @@ export default {
                     const map = findElementMapById(hitObjectId);
                     if (map && map.get('type') === 'line') {
                         detachLineBindings(hitObjectId);
-                        redrawCanvas();
+                        redrawCanvas(true); // Line binding change -> static update
                         return;
                     }
                 }
                 handleObjectSelectionRequest(hitObjectId);
             } else if (selectedObjectId.value) {
                 selectedObjectId.value = null;
-                redrawCanvas();
+                redrawCanvas(false);
             }
             return;
         }
@@ -1898,7 +2106,7 @@ export default {
          }
       }
       snapIndicator.value = null;
-      redrawCanvas();
+      redrawCanvas(true); // Mouse up -> finish drawing -> static update
     };
 
     const handleWindowMouseUp = (event) => {
@@ -1928,7 +2136,7 @@ export default {
            }
        }
        snapIndicator.value = null;
-       redrawCanvas();
+       redrawCanvas(false); // Mouse leave -> clear dynamic
     };
 
     const handleTouchStart = (event) => {
@@ -2017,11 +2225,11 @@ export default {
           yTextMap.set('rotation', 0);
           
           // Estimate size
-          if (context.value) {
-            context.value.save();
-            context.value.font = `${fontSize}px "Kalam", cursive`;
-            const metrics = context.value.measureText(text);
-            context.value.restore();
+          if (drawContext.value) {
+            drawContext.value.save();
+            drawContext.value.font = `${fontSize}px "Kalam", cursive`;
+            const metrics = drawContext.value.measureText(text);
+            drawContext.value.restore();
             yTextMap.set('width', metrics.width);
             yTextMap.set('height', fontSize * 1.2);
           } else {
@@ -2037,7 +2245,7 @@ export default {
             if (undoManager.value) {
                 updateGlobalState();
             }
-            redrawCanvas();
+            redrawCanvas(true);
         });
       } catch (error) {
         console.error("Error adding text element:", error);
@@ -2277,12 +2485,27 @@ export default {
               preview.rawPoints.push(stampedCoords);
               const smoothedPoint = addSmoothedPenPoint(stampedCoords);
               const snappedPoint = applySoftGridSnap(smoothedPoint, prevRaw);
-              preview.points.push({
-                  x: snappedPoint.x,
-                  y: snappedPoint.y,
-                  t: snappedPoint.t ?? smoothedPoint.t
-              });
-              preview.snappedPoints = preview.points;
+              
+              // Throttling: Check distance
+              const MIN_DIST_SQ = 2.25; // 1.5 * 1.5
+              let shouldAdd = true;
+              if (preview.points.length > 0) {
+                  const last = preview.points[preview.points.length - 1];
+                  const dx = snappedPoint.x - last.x;
+                  const dy = snappedPoint.y - last.y;
+                  if (dx * dx + dy * dy < MIN_DIST_SQ) {
+                      shouldAdd = false;
+                  }
+              }
+              
+              if (shouldAdd) {
+                  preview.points.push({
+                      x: snappedPoint.x,
+                      y: snappedPoint.y,
+                      t: snappedPoint.t ?? smoothedPoint.t
+                  });
+                  preview.snappedPoints = preview.points;
+              }
           }
       } else if (SHAPE_TOOLS.has(previewType) || LINE_TOOLS.has(previewType)) {
           // Update end coordinates for shapes and regular lines
@@ -2306,7 +2529,7 @@ export default {
           }
       }
       // Redraw after updating preview element
-      scheduleRedraw();
+      scheduleRedraw(false); // Dynamic only
     };
 
     const finishDrawing = () => {
@@ -2355,6 +2578,60 @@ export default {
               // Otherwise, use the preview element as is
               elementToAdd = { ...preview };
               delete elementToAdd.id; // Remove temporary ID
+
+              // --- OPTIMIZATION: Ramer-Douglas-Peucker Simplification ---
+              // This block reduces the number of points in freehand strokes to improve performance.
+              // To DISABLE this optimization: Comment out the entire 'if' block below.
+              // To ADJUST sensitivity: Change the epsilon value (currently 0.5). Higher = more simplified.
+              if (elementToAdd.type === 'pen' && elementToAdd.points && elementToAdd.points.length > 2) {
+                  // Ramer-Douglas-Peucker simplification
+                  const simplifyPoints = (points, epsilon) => {
+                      if (points.length <= 2) return points;
+                      const sqTolerance = epsilon * epsilon;
+                      
+                      let maxSqDist = 0;
+                      let index = 0;
+                      const end = points.length - 1;
+                      
+                      for (let i = 1; i < end; i++) {
+                          const sqDist = getSqSegDist(points[i], points[0], points[end]);
+                          if (sqDist > maxSqDist) {
+                              maxSqDist = sqDist;
+                              index = i;
+                          }
+                      }
+                      
+                      if (maxSqDist > sqTolerance) {
+                          const res1 = simplifyPoints(points.slice(0, index + 1), epsilon);
+                          const res2 = simplifyPoints(points.slice(index), epsilon);
+                          return [...res1.slice(0, res1.length - 1), ...res2];
+                      } else {
+                          return [points[0], points[end]];
+                      }
+                  };
+
+                  // Helper for point to segment distance squared
+                  const getSqSegDist = (p, p1, p2) => {
+                      let x = p1.x, y = p1.y, dx = p2.x - x, dy = p2.y - y;
+                      if (dx !== 0 || dy !== 0) {
+                          const t = ((p.x - x) * dx + (p.y - y) * dy) / (dx * dx + dy * dy);
+                          if (t > 1) {
+                              x = p2.x; y = p2.y;
+                          } else if (t > 0) {
+                              x += dx * t; y += dy * t;
+                          }
+                      }
+                      dx = p.x - x; dy = p.y - y;
+                      return dx * dx + dy * dy;
+                  };
+
+                  // Epsilon depends on zoom level, but we store in world coords.
+                  // A value of 0.5 to 1.0 is usually good for freehand.
+                  const simplified = simplifyPoints(elementToAdd.points, 0.5);
+                  // debugLog(`[finishDrawing] Simplified stroke: ${elementToAdd.points.length} -> ${simplified.length} points`);
+                  elementToAdd.points = simplified;
+              }
+              // --- END OPTIMIZATION ---
 
               // Ensure lineStyle is included if the original tool was 'lines'
               if (originalTool === 'lines' && elementToAdd.type === 'line') {
@@ -2635,20 +2912,20 @@ export default {
     const setEraserSize = (size) => { eraserSize.value = Number(size) || 30; };
 
     const updateCursor = () => {
-      if (!canvas.value) return;
+      if (!drawCanvas.value) return;
 
       if (activeConfigPanel.value) {
-        canvas.value.style.cursor = 'default';
+        drawCanvas.value.style.cursor = 'default';
         return;
       }
 
       if (spacePanActive.value) {
-        canvas.value.style.cursor = isPanning.value ? 'grabbing' : 'grab';
+        drawCanvas.value.style.cursor = isPanning.value ? 'grabbing' : 'grab';
         return;
       }
 
       if (isPanning.value) {
-        canvas.value.style.cursor = 'grabbing';
+        drawCanvas.value.style.cursor = 'grabbing';
         return;
       }
 
@@ -2658,14 +2935,14 @@ export default {
       } else if (toolForCursor === 'lines') {
           toolForCursor = 'line';
       }
-      canvas.value.style.cursor = getCursorStyle(toolForCursor, currentColor.value, eraserMode.value);
+      drawCanvas.value.style.cursor = getCursorStyle(toolForCursor, currentColor.value, eraserMode.value);
     };
 
     // --- Zoom/Pan ---
     const handleZoom = (event) => {
       event.preventDefault();
-      if (!canvas.value) return;
-      const rect = canvas.value.getBoundingClientRect();
+      if (!drawCanvas.value) return;
+      const rect = drawCanvas.value.getBoundingClientRect();
       const mouseX = event.clientX - rect.left;
       const mouseY = event.clientY - rect.top;
       const delta = event.deltaY < 0 ? 1.1 : 0.9;
@@ -3745,6 +4022,7 @@ export default {
 
     // --- Lifecycle Hooks ---
     onMounted(() => {
+      renderLoop();
       initCanvas();
       initClipboardHandler();
       initResizeObserver();
@@ -3758,8 +4036,8 @@ export default {
       handleResize(); // Initial resize call
 
       // Initialize helper modules after context is ready
-      if (context.value) {
-          gridAlignModule.value = new GridAlignModule(context.value, props.gridAlignOptions);
+      if (drawContext.value) {
+          gridAlignModule.value = new GridAlignModule(drawContext.value, props.gridAlignOptions);
           const stylerOpts = props.handwritingStylerOptions ? {
               angleNormalization: props.handwritingStylerOptions.angleNormalization,
               heightNormalization: props.handwritingStylerOptions.heightNormalization,
@@ -3768,8 +4046,8 @@ export default {
               groupingTimeThreshold: props.handwritingStylerOptions.groupingTimeThreshold,
               groupingDistanceThreshold: props.handwritingStylerOptions.groupingDistanceThreshold
           } : {};
-          handwritingStylerModule.value = new HandwritingStylerModule(context.value, stylerOpts);
-          mathRecognizerModule.value = new MathRecognizerModule(context.value, {
+          handwritingStylerModule.value = new HandwritingStylerModule(drawContext.value, stylerOpts);
+          mathRecognizerModule.value = new MathRecognizerModule(drawContext.value, {
               ...props.mathRecognizerOptions,
               renderLatexFn: renderLatex, // Pass the render function
               backendUrl: resolveBackendBaseUrl()
@@ -3792,6 +4070,7 @@ export default {
   });
 
     onBeforeUnmount(() => {
+      if (rafId) cancelAnimationFrame(rafId);
       window.removeEventListener('resize', handleResize);
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
@@ -3847,7 +4126,8 @@ export default {
     const publicApi = {
       // Refs
       containerRef,
-      canvas,
+      staticCanvas,
+      drawCanvas,
 
       // State
       roomId: props.roomId, // Expose roomId for AI Panel

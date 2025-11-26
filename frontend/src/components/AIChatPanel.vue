@@ -214,9 +214,28 @@ const toggleMinimize = () => {
 
 const renderMarkdown = (text) => {
   if (!text) return '';
-  const withLatex = text
-    .replace(/\$\$([\s\S]+?)\$\$/g, (_, expr) => katex.renderToString(expr, { displayMode: true, throwOnError: false }))
-    .replace(/\$([^$\n]+?)\$/g, (_, expr) => katex.renderToString(expr, { displayMode: false, throwOnError: false }));
+  
+  let withLatex = text;
+
+  // Handle \[ ... \] (Display mode)
+  withLatex = withLatex.replace(/\\\[([\s\S]+?)\\\]/g, (_, expr) => 
+    katex.renderToString(expr, { displayMode: true, throwOnError: false })
+  );
+
+  // Handle \( ... \) (Inline mode)
+  withLatex = withLatex.replace(/\\\(([\s\S]+?)\\\)/g, (_, expr) => 
+    katex.renderToString(expr, { displayMode: false, throwOnError: false })
+  );
+
+  // Handle $$ ... $$ (Display mode)
+  withLatex = withLatex.replace(/\$\$([\s\S]+?)\$\$/g, (_, expr) => 
+    katex.renderToString(expr, { displayMode: true, throwOnError: false })
+  );
+
+  // Handle $ ... $ (Inline mode)
+  withLatex = withLatex.replace(/\$([^$\n]+?)\$/g, (_, expr) => 
+    katex.renderToString(expr, { displayMode: false, throwOnError: false })
+  );
 
   const html = marked.parse(withLatex);
   return DOMPurify.sanitize(html);

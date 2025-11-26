@@ -31,4 +31,5 @@ export interface BoardPatch {
         props: Partial<BoardObject>;
     }>;
     creates?: BoardObject[];
+    deletes?: string[];
 }

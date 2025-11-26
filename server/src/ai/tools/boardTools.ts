@@ -104,31 +104,46 @@ type PlotFunctionArgs = { expression: string; xMin?: number; xMax?: number; x?: 
 export function toolDrawBoardPatch(
     doc: BoardDoc,
     _snapshot: BoardSnapshot,
-    args: DrawBoardPatchArgs | { creates?: BoardObject[], updates?: any[] },
+    args: any,
 ): BoardPatch {
-    // Handle both nested 'patch' (from schema) and flattened args (common LLM behavior)
-    let patch: BoardPatch;
+    const patch: BoardPatch = {
+        creates: [],
+        updates: [],
+        deletes: [],
+    };
 
-    if ('patch' in args && args.patch) {
-        patch = args.patch;
-    } else {
-        // Flattened arguments
-        patch = {
-            creates: (args as any).creates,
-            updates: (args as any).updates
-        };
+    // Handle nested 'patch' object if present (legacy/schema variation)
+    const source = args.patch || args;
+
+    if (Array.isArray(source.creates)) {
+        patch.creates = source.creates.map((raw: any) => ({
+            ...raw,
+            // Ensure type is preserved or mapped if necessary
+        }));
+    }
+
+    if (Array.isArray(source.updates)) {
+        patch.updates = source.updates.map((u: any) => ({
+            id: u.id,
+            props: u.props,
+        }));
+    }
+
+    if (Array.isArray(source.deletes)) {
+        patch.deletes = [...source.deletes];
     }
 
     // Basic validation
     const createsLen = patch.creates?.length ?? 0;
     const updatesLen = patch.updates?.length ?? 0;
-    if (createsLen + updatesLen > 200) {
+    const deletesLen = patch.deletes?.length ?? 0;
+
+    if (createsLen + updatesLen + deletesLen > 200) {
         throw new Error('Patch too large from AI');
     }
 
-    // Ensure we have something to apply
-    if (createsLen === 0 && updatesLen === 0) {
-        return { creates: [], updates: [] };
+    if (createsLen === 0 && updatesLen === 0 && deletesLen === 0) {
+        return { creates: [], updates: [], deletes: [] };
     }
 
     doc.applyPatch(patch);

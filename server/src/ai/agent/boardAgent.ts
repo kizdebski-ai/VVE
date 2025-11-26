@@ -16,6 +16,7 @@ import {
     toolPlotFunction,
 } from '../tools/boardTools';
 import { retrieveBoardDocs } from '../docs/boardCapabilities';
+import { buildAgentBoardContext } from './boardAgentContext';
 
 if (!llmClient) {
     console.warn('[AI] Board Assistant disabled – no LLM client configured');
@@ -28,14 +29,57 @@ type AgentResult = {
 
 const SYSTEM_PROMPT = `
 You are an "AI Board Assistant" for a collaborative math & diagram whiteboard.
-You receive:
-- a JSON snapshot of the board
-- optional viewport info
-- a user request
 
-Prefer using tools to modify the board (align to grid, generate diagrams, clean equations, plot functions).
-Return clear, short explanations for the user.
-When generating diagrams, create nodes as BoardObject[] with ids like "ai-node-<n>".
+You receive:
+- a LIGHTWEIGHT JSON boardContext:
+  {
+    "objects": [
+      {
+        "id": string,
+        "type": string,
+        "x": number,
+        "y": number,
+        "width": number,
+        "height": number,
+        "text"?: string,
+        "latex"?: string,
+        "kind": "shape" | "note" | "latex" | "handwriting" | "functionPlot" | "image" | "other"
+      }
+    ],
+    "viewport"?: { "x": number, "y": number, "width": number, "height": number },
+    "totalObjectCount": number
+  }
+- the user's natural language request.
+
+IMPORTANT BEHAVIOUR:
+
+1. IDs and coordinates
+- Treat "id" as STABLE identifiers. Reuse them when updating or deleting objects.
+- Use (x, y, width, height) to place new objects precisely on the board.
+- Prefer relative and structured layouts (aligned, neat, usable for students).
+
+2. Tools
+- Prefer using tools instead of only replying with text.
+- Main tool for drawing/editing is "draw_board_patch":
+  - create new objects through "creates";
+  - update existing objects through "updates";
+  - delete objects through "deletes".
+- Use "insert_latex_box" for standalone math formulas if it is simpler than a manual patch.
+- Use "plot_function" for graphs of functions.
+- Use "align_selection_to_grid" ONLY when user asks to tidy/align elements.
+- Use "simplify_equation_block" and "text_block_to_latex" ONLY when the user asks to simplify or convert to LaTeX. Do NOT run them on everything automatically.
+
+3. Performance & tool usage
+- Group ALL drawing/editing operations into a SINGLE "draw_board_patch" call per response.
+- Avoid long chains of tool calls. Usually you should:
+  - reason about the change,
+  - call "draw_board_patch" once,
+  - then answer with a short explanation for the user.
+- Do not request or expect the full raw board JSON; the provided boardContext is all you need.
+
+4. Style of responses
+- Always produce a short, clear explanation for the user (1–3 sentences).
+- When introducing math, keep LaTeX readable and standard.
 `;
 
 export async function runBoardAgent(params: {
@@ -51,9 +95,11 @@ export async function runBoardAgent(params: {
 
     const { doc, snapshot, userMessage, viewport, image } = params;
 
+    // 🔥 LEKKI kontekst zamiast pełnego snapshotu
+    const agentContext = buildAgentBoardContext(snapshot, viewport, 64);
+
     let userContent: any = JSON.stringify({
-        board: snapshot,
-        viewport,
+        boardContext: agentContext,
         request: userMessage,
     });
 
@@ -62,16 +108,15 @@ export async function runBoardAgent(params: {
             {
                 type: 'text',
                 text: JSON.stringify({
-                    board: snapshot,
-                    viewport,
+                    boardContext: agentContext,
                     request: userMessage,
-                    note: "The image shows the visual representation of the board. Use it to read handwriting or understand spatial context that might be missing in the JSON snapshot."
+                    note: 'The image shows the visual board. Use it mainly to read handwriting or check spatial relationships that are not obvious from the JSON context.',
                 }),
             },
             {
                 type: 'image_url',
-                image_url: { url: image }
-            }
+                image_url: { url: image },
+            },
         ];
     }
 

@@ -63,7 +63,8 @@ export const boardToolsSchema: ChatCompletionTool[] = [
         type: 'function',
         function: {
             name: 'draw_board_patch',
-            description: 'Create or update board objects directly. Use this for general drawing.',
+            description:
+                'Create, update or delete board objects directly. Use this as the main way to draw/edit on the board.',
             parameters: {
                 type: 'object',
                 properties: {
@@ -73,26 +74,70 @@ export const boardToolsSchema: ChatCompletionTool[] = [
                             type: 'object',
                             description: 'A board object to create.',
                             properties: {
-                                id: { type: 'string', description: 'Unique ID, e.g. "ai-rect-1"' },
-                                type: { type: 'string', enum: ['rectangle', 'circle', 'text', 'line', 'latex', 'image', 'triangle', 'diamond'] },
+                                id: {
+                                    type: 'string',
+                                    description:
+                                        'Stable unique ID, e.g. "ai-note-1". Reuse it later to edit the same object.',
+                                },
+                                type: {
+                                    type: 'string',
+                                    enum: [
+                                        'rectangle',
+                                        'circle',
+                                        'line',
+                                        'text',
+                                        'latex',
+                                        'functionPlot',
+                                        'path',
+                                        'image',
+                                        'triangle',
+                                        'diamond',
+                                        'coordinateSystem2D',
+                                        'mathFunctionPlot',
+                                        'physicsDataPlot',
+                                        'coordinateSystem3D',
+                                        'cube',
+                                        'cuboid',
+                                        'sphere',
+                                        'cylinder',
+                                        'cone',
+                                        'pyramid',
+                                        'tetrahedron',
+                                    ],
+                                },
                                 x: { type: 'number' },
                                 y: { type: 'number' },
                                 width: { type: 'number' },
                                 height: { type: 'number' },
                                 text: { type: 'string' },
                                 latex: { type: 'string' },
-                                color: { type: 'string', description: 'Hex color code (e.g. #ff0000)' },
-                                rotation: { type: 'number', description: 'Rotation in degrees' },
+                                color: {
+                                    type: 'string',
+                                    description: 'Hex color code (e.g. "#ff0000").',
+                                },
+                                rotation: {
+                                    type: 'number',
+                                    description: 'Rotation in degrees.',
+                                },
                                 points: {
                                     type: 'array',
                                     items: {
                                         type: 'object',
-                                        properties: { x: { type: 'number' }, y: { type: 'number' } }
-                                    }
-                                }
+                                        properties: {
+                                            x: { type: 'number' },
+                                            y: { type: 'number' },
+                                        },
+                                    },
+                                },
+                                // dodatkowe pole na „rodzaj” obiektu jeżeli chcesz
+                                kind: {
+                                    type: 'string',
+                                    description:
+                                        'Optional semantic kind: "note", "heading", "example", etc.',
+                                },
                             },
-                            required: ['type', 'x', 'y', 'width', 'height']
-                        }
+                            required: ['id', 'type', 'x', 'y'],
+                        },
                     },
                     updates: {
                         type: 'array',
@@ -100,13 +145,21 @@ export const boardToolsSchema: ChatCompletionTool[] = [
                             type: 'object',
                             properties: {
                                 id: { type: 'string' },
-                                props: { type: 'object', description: 'Properties to update (x, y, text, etc.)' }
+                                props: {
+                                    type: 'object',
+                                    description:
+                                        'Properties to update (x, y, width, height, text, latex, color, etc.)',
+                                },
                             },
-                            required: ['id', 'props']
-                        }
-                    }
+                            required: ['id', 'props'],
+                        },
+                    },
+                    deletes: {
+                        type: 'array',
+                        items: { type: 'string' },
+                        description: 'IDs of objects to delete from the board.',
+                    },
                 },
-                // At least one of creates or updates should be present, but JSON schema doesn't easily enforce "one of", so we leave it optional.
             },
         },
     },

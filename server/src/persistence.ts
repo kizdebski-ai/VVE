@@ -86,7 +86,11 @@ export class FilePersistence implements PersistenceLayer {
                     const meta = JSON.parse(content) as RoomMetadata;
                     rooms.push(meta);
                 } catch (err) {
-                    logger.warn('Failed to parse room metadata', { file, error: err });
+                    logger.warn('Failed to parse room metadata', {
+                        file,
+                        message: (err as Error).message,
+                        error: err
+                    });
                 }
             }
 

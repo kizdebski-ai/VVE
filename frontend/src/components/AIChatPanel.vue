@@ -13,65 +13,138 @@
     </div>
 
     <div v-if="!isMinimized" class="chat-body">
-      <div class="messages-container" ref="messagesContainer">
-        <div v-if="messages.length === 0 && !isLoading" class="empty-state">
-          <p>Otwórz panel i zapytaj o to, co widzisz na tablicy.</p>
-          <p class="sub-text">Pierwsza wiadomość użyje screena tablicy.</p>
-        </div>
+      <!-- Tabs -->
+      <div class="tabs">
+        <button 
+          class="tab-btn" 
+          :class="{ active: activeTab === 'chat' }"
+          @click="activeTab = 'chat'"
+        >
+          Chat
+        </button>
+        <button 
+          class="tab-btn" 
+          :class="{ active: activeTab === 'agent' }"
+          @click="activeTab = 'agent'"
+        >
+          Board Agent
+        </button>
+      </div>
 
-        <div v-for="(msg, index) in messages" :key="index" class="message" :class="msg.role">
-          <div class="message-content">
-            <div v-if="msg.image" class="message-image">
-              <img :src="msg.image" alt="Snapshot" />
+      <!-- Chat Tab -->
+      <div v-if="activeTab === 'chat'" class="tab-content chat-tab">
+        <div class="messages-container" ref="messagesContainer">
+          <div v-if="messages.length === 0 && !isLoading" class="empty-state">
+            <p>Otwórz panel i zapytaj o to, co widzisz na tablicy.</p>
+            <p class="sub-text">Pierwsza wiadomość użyje screena tablicy.</p>
+          </div>
+
+          <div v-for="(msg, index) in messages" :key="index" class="message" :class="msg.role">
+            <div class="message-content">
+              <div v-if="msg.image" class="message-image">
+                <img :src="msg.image" alt="Snapshot" />
+              </div>
+              <div class="message-text" v-html="renderMarkdown(msg.content)"></div>
             </div>
-            <div class="message-text" v-html="renderMarkdown(msg.content)"></div>
+          </div>
+
+          <div v-if="isLoading" class="message assistant loading">
+            <div class="typing-indicator">
+              <span></span><span></span><span></span>
+            </div>
           </div>
         </div>
 
-        <div v-if="isLoading" class="message assistant loading">
-          <div class="typing-indicator">
-            <span></span><span></span><span></span>
+        <div class="chat-input-area">
+          <label class="screenshot-toggle">
+            <input type="checkbox" v-model="includeScreenshot" /> Dołącz screenshot tablicy
+          </label>
+
+          <div v-if="pendingSnapshot" class="snapshot-preview">
+            <img :src="pendingSnapshot" alt="Preview" />
+            <button class="remove-snapshot" @click="pendingSnapshot = null">×</button>
+          </div>
+
+          <div class="input-row">
+            <button class="snap-btn" @click="captureSnapshot" :disabled="isLoading" title="Zrób screenshot">
+              <component :is="CameraIcon" class="icon" />
+            </button>
+
+            <div class="input-wrapper">
+              <textarea
+                v-model="userInput"
+                @keydown="onKeyDown"
+                placeholder="Napisz wiadomość..."
+                rows="2"
+                ref="inputRef"
+              ></textarea>
+              <div v-if="suggestionTail" class="ghost" aria-hidden="true">
+                <span>{{ userInput }}</span><span class="ghost-tail">{{ suggestionTail }}</span>
+              </div>
+            </div>
+
+            <button
+              class="send-btn"
+              @click="sendMessage('normal_chat')"
+              :disabled="isLoading || (!userInput.trim() && !pendingSnapshot)"
+            >
+              <component :is="SendIcon" class="icon" />
+            </button>
           </div>
         </div>
       </div>
 
-      <div class="chat-input-area">
-        <label class="screenshot-toggle">
-          <input type="checkbox" v-model="includeScreenshot" /> Dołącz screenshot tablicy
-        </label>
-
-        <div v-if="pendingSnapshot" class="snapshot-preview">
-          <img :src="pendingSnapshot" alt="Preview" />
-          <button class="remove-snapshot" @click="pendingSnapshot = null">×</button>
-        </div>
-
-        <div class="input-row">
-          <button class="snap-btn" @click="captureSnapshot" :disabled="isLoading" title="Zrób screenshot">
-            <component :is="CameraIcon" class="icon" />
-          </button>
-
-          <div class="input-wrapper">
-            <textarea
-              v-model="userInput"
-              @keydown="onKeyDown"
-              placeholder="Napisz wiadomość..."
-              rows="2"
-              ref="inputRef"
-            ></textarea>
-            <div v-if="suggestionTail" class="ghost" aria-hidden="true">
-              <span>{{ userInput }}</span><span class="ghost-tail">{{ suggestionTail }}</span>
+      <!-- Board Agent Tab -->
+      <div v-if="activeTab === 'agent'" class="tab-content agent-tab">
+        <div class="agent-content">
+          <div v-if="agentLastReply" class="agent-reply">
+            <div class="reply-bubble" v-html="renderMarkdown(agentLastReply)"></div>
+          </div>
+          
+          <div v-if="agentLoading" class="message assistant loading">
+            <div class="typing-indicator">
+              <span></span><span></span><span></span>
             </div>
           </div>
 
-          <button
-            class="send-btn"
-            @click="sendMessage('normal_chat')"
-            :disabled="isLoading || (!userInput.trim() && !pendingSnapshot)"
-          >
-            <component :is="SendIcon" class="icon" />
-          </button>
+          <div v-else-if="!agentLastReply" class="empty-state">
+            <p>Wybierz akcję lub wpisz polecenie dla agenta.</p>
+          </div>
+
+          <div class="quick-actions">
+            <button @click="triggerAgentAction('Align selected elements to grid')" :disabled="agentLoading">
+              Align to Grid
+            </button>
+            <button @click="triggerAgentAction('Clean up handwriting')" :disabled="agentLoading">
+              Clean Handwriting
+            </button>
+            <button @click="triggerAgentAction('Simplify selected equation')" :disabled="agentLoading">
+              Simplify Equation
+            </button>
+          </div>
+        </div>
+
+        <div class="chat-input-area">
+          <div class="input-row">
+            <div class="input-wrapper">
+              <textarea
+                v-model="agentInput"
+                @keydown.enter.prevent="submitAgent"
+                placeholder="Np. 'Wyrównaj te klocki'..."
+                rows="2"
+              ></textarea>
+            </div>
+            <button
+              class="send-btn"
+              @click="submitAgent"
+              :disabled="agentLoading || !agentInput.trim()"
+            >
+              <component :is="SendIcon" class="icon" />
+            </button>
+          </div>
         </div>
       </div>
+
     </div>
   </div>
 </template>
@@ -79,13 +152,14 @@
 <!-- ... script section remains same ... -->
 <script setup>
 // ... (script content same as original, omitted for brevity as replace tool handles context) ...
-import { ref, nextTick, onMounted } from 'vue';
+import { ref, nextTick, onMounted, computed } from 'vue';
 import { Sparkles, Minus, Maximize2, Camera, Send } from 'lucide-vue-next';
 import html2canvas from 'html2canvas';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import katex from 'katex';
 import { resolveBackendBaseUrl } from '../services/backendUrl';
+import { useBoardAssistant } from '../features/boardAssistant/useBoardAssistant';
 
 const API_BASE = resolveBackendBaseUrl();
 const REQUEST_TIMEOUT_MS = Number(import.meta?.env?.VITE_AI_CHAT_TIMEOUT_MS) || 60000;
@@ -102,9 +176,16 @@ const props = defineProps({
     type: [Object, null],
     default: null,
   },
+  roomId: {
+    type: String,
+    required: true,
+  },
 });
 
 const isMinimized = ref(false);
+const activeTab = ref('chat'); // 'chat' | 'agent'
+
+// Chat State
 const isLoading = ref(false);
 const includeScreenshot = ref(true);
 const messages = ref([]);
@@ -116,12 +197,20 @@ const messagesContainer = ref(null);
 const inputRef = ref(null);
 const sentIntro = ref(false);
 
+// Agent State
+const agentInput = ref('');
+// We need boardId.
+const boardId = computed(() => props.roomId || '');
+const { loading: agentLoading, lastReply: agentLastReply, askBoardAssistant } = useBoardAssistant();
+
 const toggleMinimize = () => {
   isMinimized.value = !isMinimized.value;
-  if (!isMinimized.value && !sentIntro.value) {
+  if (!isMinimized.value && !sentIntro.value && activeTab.value === 'chat') {
     sendMessage('screenshot_intro');
   }
 };
+
+// --- Chat Logic ---
 
 const renderMarkdown = (text) => {
   if (!text) return '';
@@ -142,7 +231,7 @@ const scrollToBottom = () => {
 };
 
 const captureSnapshot = async () => {
-  const targetEl = props.whiteboardRef || document.querySelector('.whiteboard-container');
+  const targetEl = props.whiteboardRef?.containerRef || document.querySelector('.whiteboard-container');
   if (!targetEl) return null;
   try {
     const panel = document.querySelector('.ai-chat-panel');
@@ -244,8 +333,8 @@ const sendMessage = async (mode = 'normal_chat') => {
   } catch (error) {
     console.error('AI Chat Error:', error);
     const fallbackMessage = (error && error.name === 'AbortError')
-      ? 'AI nie odpowiedzia?o na czas. Spr?buj ponownie.'
-      : 'Wyst?pi? b??d po stronie AI.';
+      ? 'AI nie odpowiedziało na czas. Spróbuj ponownie.'
+      : 'Wystąpił błąd po stronie AI.';
     messages.value.push({ role: 'assistant', content: fallbackMessage });
     assistantSuggestion.value = '';
     suggestionTail.value = '';
@@ -270,6 +359,46 @@ const onKeyDown = (e) => {
   }
 };
 
+// --- Agent Logic ---
+
+const getViewport = () => {
+  if (!props.whiteboardRef) return undefined;
+  const { panOffset, zoomLevel, canvasWidth, canvasHeight } = props.whiteboardRef;
+  if (!panOffset || !zoomLevel) return undefined;
+  
+  return {
+    x: panOffset.x,
+    y: panOffset.y,
+    width: canvasWidth,
+    height: canvasHeight,
+    zoom: zoomLevel
+  };
+};
+
+const submitAgent = async () => {
+  if (!agentInput.value.trim()) return;
+  const msg = agentInput.value;
+  agentInput.value = '';
+  
+  try {
+    // Capture snapshot for context (so agent can see handwriting)
+    const snapshot = await captureSnapshot();
+    await askBoardAssistant(boardId.value, msg, getViewport(), snapshot);
+  } catch (e) {
+    console.error(e);
+  }
+};
+
+const triggerAgentAction = async (prompt) => {
+  try {
+    // Capture snapshot for context
+    const snapshot = await captureSnapshot();
+    await askBoardAssistant(boardId.value, prompt, getViewport(), snapshot);
+  } catch (e) {
+    console.error(e);
+  }
+};
+
 onMounted(() => {
   sendMessage('screenshot_intro');
 });
@@ -283,7 +412,6 @@ onMounted(() => {
   width: 380px;
   height: 600px;
   max-height: 80vh;
-  /* Glass style handled by global .glass-panel, but we refine it */
   background: rgba(255, 255, 255, 0.85);
   backdrop-filter: blur(16px);
   border: 1px solid rgba(255, 255, 255, 0.5);
@@ -374,6 +502,35 @@ onMounted(() => {
   background: rgba(255, 255, 255, 0.1);
 }
 
+.tabs {
+  display: flex;
+  padding: 8px 16px 0;
+  gap: 16px;
+  border-bottom: 1px solid rgba(0,0,0,0.05);
+}
+
+.tab-btn {
+  background: none;
+  border: none;
+  padding: 8px 4px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: all 0.2s;
+}
+
+.tab-btn.active {
+  color: #6366f1;
+  border-bottom-color: #6366f1;
+}
+
+.dark-mode .tab-btn.active {
+  color: #818cf8;
+  border-bottom-color: #818cf8;
+}
+
 .chat-body {
   flex: 1;
   display: flex;
@@ -386,6 +543,13 @@ onMounted(() => {
   background: rgba(15, 23, 42, 0.3);
 }
 
+.tab-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
 .messages-container {
   flex: 1;
   overflow-y: auto;
@@ -394,6 +558,15 @@ onMounted(() => {
   flex-direction: column;
   gap: 16px;
   scroll-behavior: smooth;
+}
+
+.agent-content {
+  flex: 1;
+  padding: 20px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
 }
 
 .empty-state {
@@ -661,5 +834,52 @@ textarea {
   0%, 80%, 100% { transform: scale(0); }
   40% { transform: scale(1); }
 }
-</style>
 
+/* Agent Styles */
+.agent-reply {
+  margin-bottom: 8px;
+}
+
+.reply-bubble {
+  background: #f0f7ff;
+  padding: 10px;
+  border-radius: 8px;
+  font-size: 14px;
+  color: #333;
+  border-left: 3px solid #6366f1;
+}
+
+.dark-mode .reply-bubble {
+  background: #1e293b;
+  color: #ddd;
+}
+
+.quick-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.quick-actions button {
+  font-size: 12px;
+  padding: 6px 12px;
+  background: rgba(0,0,0,0.05);
+  border: none;
+  border-radius: 16px;
+  cursor: pointer;
+  transition: background 0.2s;
+  color: var(--text-primary);
+}
+
+.quick-actions button:hover:not(:disabled) {
+  background: rgba(99, 102, 241, 0.1);
+  color: #6366f1;
+}
+
+.dark-mode .quick-actions button {
+  background: rgba(255,255,255,0.05);
+}
+.dark-mode .quick-actions button:hover:not(:disabled) {
+  background: rgba(99, 102, 241, 0.2);
+}
+</style>

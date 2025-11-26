@@ -38,12 +38,13 @@ export const drawElement = (
   smoothingFactor = 0.65,
   imageCache,
   requestRedraw,
-  penStyleOptions = {}
+  penStyleOptions = {},
+  rcOverride = null
 ) => {
   if (!context || !element || !element.type) return;
 
   const type = element.type;
-  const rc = rough.canvas(context.canvas);
+  const rc = rcOverride || rough.canvas(context.canvas);
 
   // Base style
   const baseColor = element.strokeColor || element.color || '#000000';

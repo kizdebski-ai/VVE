@@ -17,6 +17,10 @@
     <!-- Actual Menu (Visible on gear click) -->
     <transition name="slide-fade">
       <div v-if="showMenu" class="top-menu glass-panel" @mouseenter="cancelHide" @mouseleave="handleMouseLeave">
+        <button class="menu-btn" @click="toggleFullscreen" :title="isFullscreen ? 'Exit Fullscreen' : 'Enter Fullscreen'">
+          <component :is="isFullscreen ? Minimize : Maximize" :size="18" />
+          <span>{{ isFullscreen ? 'Exit Full' : 'Fullscreen' }}</span>
+        </button>
         <button class="menu-btn" @click="emitClear" title="Clear Board">
           <Trash2 :size="18" />
           <span>Clear</span>
@@ -135,7 +139,7 @@
 </template>
 
 <script setup>
-import { ref, defineProps, defineEmits } from 'vue';
+import { ref, defineProps, defineEmits, onMounted, onBeforeUnmount } from 'vue';
 import { 
   Settings, 
   Trash2, 
@@ -146,7 +150,9 @@ import {
   Wand2, 
   Grid3X3, 
   FileDown,
-  X
+  X,
+  Maximize,
+  Minimize
 } from 'lucide-vue-next';
 
 // Define props
@@ -165,6 +171,7 @@ const showMenu = ref(false); // Controls menu visibility
 const showShortcutsInfo = ref(false);
 let hideTimeout = null; // Timeout for hiding gear/menu
 const showPdfMenu = ref(false);
+const isFullscreen = ref(false);
 
 const emitPdfExport = (mode) => {
   if (mode === 'single') {
@@ -175,6 +182,29 @@ const emitPdfExport = (mode) => {
   showPdfMenu.value = false;
 };
 
+const toggleFullscreen = async () => {
+  try {
+    if (!document.fullscreenElement) {
+      await document.documentElement.requestFullscreen();
+    } else {
+      await document.exitFullscreen();
+    }
+  } catch (err) {
+    console.error(`Error attempting to enable fullscreen mode: ${err.message} (${err.name})`);
+  }
+};
+
+const updateFullscreenState = () => {
+  isFullscreen.value = !!document.fullscreenElement;
+};
+
+onMounted(() => {
+  document.addEventListener('fullscreenchange', updateFullscreenState);
+});
+
+onBeforeUnmount(() => {
+  document.removeEventListener('fullscreenchange', updateFullscreenState);
+});
 
 // Show gear on hover, clear any pending hide actions
 const handleMouseEnter = () => {

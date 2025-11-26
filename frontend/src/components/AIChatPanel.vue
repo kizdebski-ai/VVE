@@ -120,6 +120,7 @@
             </button>
             <button @click="triggerAgentAction('Simplify selected equation')" :disabled="agentLoading">
               Simplify Equation
+            
             </button>
           </div>
         </div>
@@ -159,7 +160,7 @@ import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import katex from 'katex';
 import { resolveBackendBaseUrl } from '../services/backendUrl';
-import { useBoardAssistant } from '../features/boardAssistant/useBoardAssistant';
+import { useAiStore } from '../composables/useAiStore';
 
 const API_BASE = resolveBackendBaseUrl();
 const REQUEST_TIMEOUT_MS = Number(import.meta?.env?.VITE_AI_CHAT_TIMEOUT_MS) || 60000;
@@ -201,7 +202,9 @@ const sentIntro = ref(false);
 const agentInput = ref('');
 // We need boardId.
 const boardId = computed(() => props.roomId || '');
-const { loading: agentLoading, lastReply: agentLastReply, askBoardAssistant } = useBoardAssistant();
+const { state: aiState, runBoardAssistant } = useAiStore();
+const agentLoading = computed(() => aiState.isRunning);
+const agentLastReply = computed(() => aiState.lastReply);
 
 const toggleMinimize = () => {
   isMinimized.value = !isMinimized.value;
@@ -401,8 +404,9 @@ const submitAgent = async () => {
   
   try {
     // Capture snapshot for context (so agent can see handwriting)
+    // Capture snapshot for context (so agent can see handwriting)
     const snapshot = await captureSnapshot();
-    await askBoardAssistant(boardId.value, msg, getViewport(), snapshot);
+    runBoardAssistant(boardId.value, msg, getViewport(), snapshot);
   } catch (e) {
     console.error(e);
   }
@@ -411,8 +415,9 @@ const submitAgent = async () => {
 const triggerAgentAction = async (prompt) => {
   try {
     // Capture snapshot for context
+    // Capture snapshot for context
     const snapshot = await captureSnapshot();
-    await askBoardAssistant(boardId.value, prompt, getViewport(), snapshot);
+    runBoardAssistant(boardId.value, prompt, getViewport(), snapshot);
   } catch (e) {
     console.error(e);
   }

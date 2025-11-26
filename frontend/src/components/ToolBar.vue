@@ -401,7 +401,8 @@ const currentLineStyle = ref(props.lineStyle);
 const currentArrowStyle = ref(props.arrowStyle);
 const currentRoughness = ref(props.roughness);
 const currentEraserSize = ref(30);
-const isToolbarHovered = ref(false);
+const propertiesVisible = ref(false);
+let hideTimer = null;
 
 const showShapesMenu = ref(false);
 const showCoordinateMenu = ref(false);
@@ -428,8 +429,27 @@ const showProperties = computed(() =>
 
 // Keep the properties bar visible for pen to allow changing width without hover
 const shouldShowProperties = computed(() =>
-  showProperties.value && (currentTool.value === 'pen' || isToolbarHovered.value)
+  showProperties.value && propertiesVisible.value
 );
+
+const startHideTimer = () => {
+  clearTimeout(hideTimer);
+  hideTimer = setTimeout(() => {
+    propertiesVisible.value = false;
+  }, 2000);
+};
+
+const showPropertiesBar = () => {
+  clearTimeout(hideTimer);
+  propertiesVisible.value = true;
+};
+
+watch(currentTool, () => {
+  if (showProperties.value) {
+    showPropertiesBar();
+    startHideTimer();
+  }
+});
 
 const currentShapeIcon = computed(() => {
   if (currentTool.value === 'lines') {
@@ -555,7 +575,7 @@ const updateEraserSize = () => {
 };
 
 const handleHoverEnter = () => {
-  isToolbarHovered.value = true;
+  showPropertiesBar();
 };
 
 const handleHoverLeave = (event) => {
@@ -563,7 +583,7 @@ const handleHoverLeave = (event) => {
   const movedIntoShapesMenu = related && shapesMenuRef.value?.contains(related);
   const movedIntoCoordinateMenu = related && coordinateMenuRef.value?.contains(related);
   if (movedIntoShapesMenu || movedIntoCoordinateMenu) return;
-  isToolbarHovered.value = false;
+  startHideTimer();
 };
 
 const handleClickOutside = (event) => {

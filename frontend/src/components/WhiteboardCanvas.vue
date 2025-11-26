@@ -129,6 +129,7 @@
 
 <script>
 import { ref, onMounted, onBeforeUnmount, watch, nextTick, shallowRef, reactive, computed, toRaw } from 'vue';
+import rough from 'roughjs';
 import * as Y from 'yjs';
 import { v4 as uuidv4 } from 'uuid';
 import katex from 'katex';
@@ -1152,6 +1153,8 @@ export default {
       // Ensure base HiDPI transform before clearing
       ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
       ctx.clearRect(0, 0, canvasWidth.value, canvasHeight.value);
+      
+      const rc = rough.canvas(ctx.canvas);
 
       // Draw utility grid
       // Optimization: Grid is drawn on every static redraw. 
@@ -1196,7 +1199,8 @@ export default {
           smoothingFactor.value,
           imageCache.value,
           () => invalidate(true), // callback for image load - triggers static redraw
-          props.handwritingStylerOptions || {}
+          props.handwritingStylerOptions || {},
+          rc
         );
       });
       

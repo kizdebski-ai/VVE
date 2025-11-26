@@ -438,19 +438,21 @@ const objectStyle = computed(() => {
     userSelect: 'none',
     boxSizing: 'border-box',
     zIndex: internalIsSelected.value ? 10 : 1,
+    // Restore default border for consistency, though outline handles selection
+    border: '1px solid transparent', 
   };
 
   if (isShape) {
     style.backgroundColor = backgroundColor;
     style.borderRadius = borderRadius;
-    // If color is present, maybe add a border of the same color to ensure visibility?
-    // Or if transparent, add a black border?
+    
+    // Always add a border to shapes to ensure visibility
+    // If transparent/no color, use 2px black.
+    // If filled, use 1px black to define edges.
     if (backgroundColor === 'transparent' || !objectData.color) {
-       style.border = '2px solid #000'; // Default border for empty shapes
+       style.border = '2px solid #000'; 
     } else {
-       // If it has a fill, maybe no border or same color border?
-       // Let's add a subtle border to define edges if color is light?
-       // For simplicity, just use the fill.
+       style.border = '1px solid #000';
     }
   }
 

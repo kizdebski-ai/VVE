@@ -1078,6 +1078,8 @@ export default {
             // --- OPTIMIZATION: Path2D Caching ---
             // This pre-calculates the path for static pen strokes to avoid re-parsing points on every frame.
             // To DISABLE this optimization: Comment out the 'if' block below.
+            // DISABLED: Caching breaks complex pen styles (calligraphy, etc.) which are not simple lines.
+            /*
             if (json.type === 'pen' && json.points && json.points.length > 0) {
                 const path = new Path2D();
                 const points = json.points;
@@ -1094,6 +1096,7 @@ export default {
                 }
                 json.cachedPath = path;
             }
+            */
             // --- END OPTIMIZATION ---
             
             return json;
@@ -1408,7 +1411,14 @@ export default {
         'mathFunctionPlot', 
         'physicsDataPlot', 
         'coordinateSystem2D', 
-        'coordinateSystem3D'
+        'coordinateSystem3D',
+        // Basic shapes must also be DOM elements to be visible/interactive
+        'rectangle',
+        'circle',
+        'square',
+        'triangle',
+        'diamond',
+        'line' 
     ]);
 
     const refreshMovableElements = () => {
@@ -2627,7 +2637,8 @@ export default {
 
                   // Epsilon depends on zoom level, but we store in world coords.
                   // A value of 0.5 to 1.0 is usually good for freehand.
-                  const simplified = simplifyPoints(elementToAdd.points, 0.5);
+                  // REDUCED to 0.15 for smoother curves and less angularity.
+                  const simplified = simplifyPoints(elementToAdd.points, 0.15);
                   // debugLog(`[finishDrawing] Simplified stroke: ${elementToAdd.points.length} -> ${simplified.length} points`);
                   elementToAdd.points = simplified;
               }

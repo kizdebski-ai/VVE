@@ -100,18 +100,37 @@ type TextToLatexArgs = { objectId: string };
 type PlotFunctionArgs = { expression: string; xMin?: number; xMax?: number; x?: number; y?: number };
 
 // 4) Draw Board Patch (Low-level)
+// 4) Draw Board Patch (Low-level)
 export function toolDrawBoardPatch(
     doc: BoardDoc,
     _snapshot: BoardSnapshot,
-    args: DrawBoardPatchArgs,
+    args: DrawBoardPatchArgs | { creates?: BoardObject[], updates?: any[] },
 ): BoardPatch {
-    const patch = args.patch;
+    // Handle both nested 'patch' (from schema) and flattened args (common LLM behavior)
+    let patch: BoardPatch;
+
+    if ('patch' in args && args.patch) {
+        patch = args.patch;
+    } else {
+        // Flattened arguments
+        patch = {
+            creates: (args as any).creates,
+            updates: (args as any).updates
+        };
+    }
+
     // Basic validation
     const createsLen = patch.creates?.length ?? 0;
     const updatesLen = patch.updates?.length ?? 0;
     if (createsLen + updatesLen > 200) {
         throw new Error('Patch too large from AI');
     }
+
+    // Ensure we have something to apply
+    if (createsLen === 0 && updatesLen === 0) {
+        return { creates: [], updates: [] };
+    }
+
     doc.applyPatch(patch);
     return patch;
 }

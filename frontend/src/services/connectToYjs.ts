@@ -25,6 +25,7 @@ const buildWebSocketUrl = (roomId: string) => {
 
 export function connectToYjs(roomId: string): YjsConnection {
   const ydoc = new Y.Doc();
+  ydoc.gc = true;
   const awareness = new Awareness(ydoc);
   const yDrawings: Y.Array<any> = ydoc.getArray('drawings');
 

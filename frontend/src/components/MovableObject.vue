@@ -71,21 +71,22 @@
         </div>
         <div v-else-if="objectData.type === 'latex'"
              class="latex-content"
-             v-html="renderLatex(objectData.latex || '')"
+             v-html="renderedLatex"
              :style="{
                width: '100%',
                height: '100%',
                display: 'flex',
                alignItems: 'center',
                justifyContent: 'center',
-               padding: '16px',
-               overflow: 'auto',
+               padding: `${16 * props.zoomLevel}px`,
+               overflow: 'hidden',
                userSelect: 'none',
                color: objectData.color || '#1e293b',
                backgroundColor: 'rgba(255, 255, 255, 0.95)',
-               borderRadius: '12px',
+               borderRadius: `${12 * props.zoomLevel}px`,
                boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
-               border: '1px solid rgba(0,0,0,0.05)'
+               border: '1px solid rgba(0,0,0,0.05)',
+               fontSize: `${(objectData.fontSize || 24) * props.zoomLevel}px`
              }"
         ></div>
         <PlotRenderer
@@ -463,6 +464,8 @@ const objectStyle = computed(() => {
 });
 
 const shouldRenderContent = computed(() => CONTENT_RENDER_TYPES.has(objectData.type));
+const renderedLatex = computed(() => renderLatex(objectData.latex || ''));
+
 const lineHandlePositions = computed(() => {
   if (!isLineType.value) {
     return { start: {}, end: {} };

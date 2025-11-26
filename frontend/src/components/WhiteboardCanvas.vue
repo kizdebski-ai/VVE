@@ -1379,15 +1379,35 @@ export default {
         if (mathRecognizerModule.value?.enabled) mathRecognizerModule.value.setStrokes(currentStrokes);
     };
 
+    // Types that MUST be rendered in DOM (complex interactive elements)
+    const ALWAYS_DOM_TYPES = new Set([
+        'text', 
+        'image', 
+        'latex', 
+        'functionPlot', 
+        'mathFunctionPlot', 
+        'physicsDataPlot', 
+        'coordinateSystem2D', 
+        'coordinateSystem3D'
+    ]);
+
     const refreshMovableElements = () => {
         const beforeCount = movableElements.value.length;
         if (!yDrawings.value) {
             movableElements.value = [];
             return;
         }
+        
+        // Optimization: Only render DOM elements for complex types or the currently selected object.
+        // Simple shapes (pen, rect, circle, line) are drawn on canvas and don't need a DOM element unless selected.
         const filtered = yDrawings.value
             .toArray()
-            .filter(map => movableElementTypes.has(map.get('type')))
+            .filter(map => {
+                const type = map.get('type');
+                const id = map.get('id');
+                // Include if it's a complex type OR if it's the currently selected object
+                return ALWAYS_DOM_TYPES.has(type) || id === selectedObjectId.value;
+            })
             .map(map => {
                 if (!map.get('id')) {
                     if (!map._tempKey) {
@@ -1399,6 +1419,7 @@ export default {
                 }
                 return map;
             });
+            
         movableElements.value = filtered;
         // debugLog(`[refreshMovableElements] Updated: before=${beforeCount}, after=${filtered.length}, yDrawings=${yDrawings.value.length}`);
     };
@@ -1503,6 +1524,11 @@ export default {
 
         teardownYjsConnection();
         selectedObjectId.value = null;
+
+        // Watch selection changes to update DOM elements
+        watch(selectedObjectId, () => {
+             refreshMovableElements();
+        });
 
         try {
             // Pass roomKey to connectToYjs for E2E encryption

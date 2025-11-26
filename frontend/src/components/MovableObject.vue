@@ -404,11 +404,6 @@ const objectStyle = computed(() => {
 
   // Shape styling logic
   const isShape = ['rectangle', 'circle', 'square', 'triangle', 'diamond'].includes(objectData.type);
-  const backgroundColor = objectData.color || 'transparent'; // Default to transparent if no color
-  // If it's a shape and has a color, use it. If it's selected, add the blue border.
-  // If it's a shape but no color is set, we might want a default stroke? 
-  // For now, let's assume if the AI sets a color, it means fill.
-  // If the user draws it, they usually pick a color.
   
   let borderRadius = '0px';
   if (objectData.type === 'circle') {
@@ -417,12 +412,6 @@ const objectStyle = computed(() => {
     borderRadius = '4px'; // Slight rounding for rectangles
   }
 
-  // Border logic:
-  // 1. Selection border (blue) takes precedence or adds to it?
-  //    Usually selection is an outline *outside* or a ring.
-  // 2. Shape border: If it's a shape, we might want a border if fill is transparent?
-  //    Let's use the object's color as background.
-  
   const style: Record<string, any> = {
     position: 'absolute',
     left: `${screenX}px`,
@@ -438,22 +427,14 @@ const objectStyle = computed(() => {
     userSelect: 'none',
     boxSizing: 'border-box',
     zIndex: internalIsSelected.value ? 10 : 1,
-    // Restore default border for consistency, though outline handles selection
-    border: '1px solid transparent', 
   };
 
   if (isShape) {
-    style.backgroundColor = backgroundColor;
+    // Shapes are hollow by default (transparent fill with colored border)
+    // The 'color' property applies to the border, not the fill
+    style.backgroundColor = 'transparent';
     style.borderRadius = borderRadius;
-    
-    // Always add a border to shapes to ensure visibility
-    // If transparent/no color, use 2px black.
-    // If filled, use 1px black to define edges.
-    if (backgroundColor === 'transparent' || !objectData.color) {
-       style.border = '2px solid #000'; 
-    } else {
-       style.border = '1px solid #000';
-    }
+    style.border = `2px solid ${objectData.color || '#000'}`;
   }
 
   // Selection overlay (using box-shadow or outline to not mess with dimensions)

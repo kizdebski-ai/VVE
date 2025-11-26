@@ -71,7 +71,7 @@
         </div>
         <div v-else-if="objectData.type === 'latex'"
              class="latex-content"
-             v-html="renderedLatex"
+             v-html="latexHtml"
              :style="{
                width: '100%',
                height: '100%',
@@ -464,7 +464,7 @@ const objectStyle = computed(() => {
 });
 
 const shouldRenderContent = computed(() => CONTENT_RENDER_TYPES.has(objectData.type));
-const renderedLatex = computed(() => renderLatex(objectData.latex || ''));
+const latexHtml = computed(() => renderLatex(objectData.latex || ''));
 
 const lineHandlePositions = computed(() => {
   if (!isLineType.value) {

@@ -1074,8 +1074,28 @@ export default {
         // Map Yjs elements to local plain objects once
         localScene = yDrawings.value.toArray().map(map => {
             const json = map.toJSON();
-            // Pre-calculate bounds if possible, or do it on the fly if cheap
-            // For now, we'll just store the JSON
+            
+            // --- OPTIMIZATION: Path2D Caching ---
+            // This pre-calculates the path for static pen strokes to avoid re-parsing points on every frame.
+            // To DISABLE this optimization: Comment out the 'if' block below.
+            if (json.type === 'pen' && json.points && json.points.length > 0) {
+                const path = new Path2D();
+                const points = json.points;
+                if (points.length > 0) {
+                    path.moveTo(points[0].x, points[0].y);
+                    // Use quadratic curves for smoother look if needed, or just lines for speed
+                    // For now, simple lines match the original drawElement logic unless smoothing is on
+                    // But drawElement handles smoothing dynamically. 
+                    // If we cache Path2D, we bake the geometry.
+                    // Let's bake the raw points for now.
+                    for (let i = 1; i < points.length; i++) {
+                        path.lineTo(points[i].x, points[i].y);
+                    }
+                }
+                json.cachedPath = path;
+            }
+            // --- END OPTIMIZATION ---
+            
             return json;
         });
         
@@ -2558,6 +2578,60 @@ export default {
               // Otherwise, use the preview element as is
               elementToAdd = { ...preview };
               delete elementToAdd.id; // Remove temporary ID
+
+              // --- OPTIMIZATION: Ramer-Douglas-Peucker Simplification ---
+              // This block reduces the number of points in freehand strokes to improve performance.
+              // To DISABLE this optimization: Comment out the entire 'if' block below.
+              // To ADJUST sensitivity: Change the epsilon value (currently 0.5). Higher = more simplified.
+              if (elementToAdd.type === 'pen' && elementToAdd.points && elementToAdd.points.length > 2) {
+                  // Ramer-Douglas-Peucker simplification
+                  const simplifyPoints = (points, epsilon) => {
+                      if (points.length <= 2) return points;
+                      const sqTolerance = epsilon * epsilon;
+                      
+                      let maxSqDist = 0;
+                      let index = 0;
+                      const end = points.length - 1;
+                      
+                      for (let i = 1; i < end; i++) {
+                          const sqDist = getSqSegDist(points[i], points[0], points[end]);
+                          if (sqDist > maxSqDist) {
+                              maxSqDist = sqDist;
+                              index = i;
+                          }
+                      }
+                      
+                      if (maxSqDist > sqTolerance) {
+                          const res1 = simplifyPoints(points.slice(0, index + 1), epsilon);
+                          const res2 = simplifyPoints(points.slice(index), epsilon);
+                          return [...res1.slice(0, res1.length - 1), ...res2];
+                      } else {
+                          return [points[0], points[end]];
+                      }
+                  };
+
+                  // Helper for point to segment distance squared
+                  const getSqSegDist = (p, p1, p2) => {
+                      let x = p1.x, y = p1.y, dx = p2.x - x, dy = p2.y - y;
+                      if (dx !== 0 || dy !== 0) {
+                          const t = ((p.x - x) * dx + (p.y - y) * dy) / (dx * dx + dy * dy);
+                          if (t > 1) {
+                              x = p2.x; y = p2.y;
+                          } else if (t > 0) {
+                              x += dx * t; y += dy * t;
+                          }
+                      }
+                      dx = p.x - x; dy = p.y - y;
+                      return dx * dx + dy * dy;
+                  };
+
+                  // Epsilon depends on zoom level, but we store in world coords.
+                  // A value of 0.5 to 1.0 is usually good for freehand.
+                  const simplified = simplifyPoints(elementToAdd.points, 0.5);
+                  // debugLog(`[finishDrawing] Simplified stroke: ${elementToAdd.points.length} -> ${simplified.length} points`);
+                  elementToAdd.points = simplified;
+              }
+              // --- END OPTIMIZATION ---
 
               // Ensure lineStyle is included if the original tool was 'lines'
               if (originalTool === 'lines' && elementToAdd.type === 'line') {

@@ -91,6 +91,21 @@ export const drawElement = (
 
   switch (type) {
     case 'pen': {
+      // --- OPTIMIZATION: Use Cached Path2D ---
+      // Uses the pre-calculated Path2D from the local scene cache if available.
+      // To DISABLE: Comment out this 'if' block to force re-rendering from points.
+      if (element.cachedPath) {
+        context.save();
+        context.strokeStyle = element.strokeColor || element.color || color;
+        context.lineWidth = lw;
+        context.lineCap = 'round';
+        context.lineJoin = 'round';
+        context.stroke(element.cachedPath);
+        context.restore();
+        break;
+      }
+      // --- END OPTIMIZATION ---
+
       const points = element.points || [];
       if (points.length < 2) break;
       const penStyle = element.penStyle || 'technical';
@@ -518,7 +533,7 @@ const drawText = (context, element) => {
   context.textAlign = element.align || 'left';
   context.textBaseline = element.baseline || 'top';
   context.fillStyle = element.color || '#000000';
-  
+
   // Fallback to top-level x/y if position object is missing
   const posX = element.position ? element.position.x : element.x;
   const posY = element.position ? element.position.y : element.y;

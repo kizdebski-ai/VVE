@@ -52,6 +52,8 @@
       @request-select="handleObjectSelectionRequest"
       @clone-object="handleCloneObject"
       @update:snap-guides="handleSnapGuidesUpdate"
+      @interaction-start="handleInteractionStart"
+      @interaction-end="handleInteractionEnd"
       :snap-targets="snapTargets"
     ></movable-object>
     
@@ -380,15 +382,57 @@ export default {
         'physicsDataPlot',
         'latex'
     ]);
+
+    const CONTENT_RENDER_TYPES = new Set([
+        'text', 
+        'image', 
+        'latex', 
+        'functionPlot', 
+        'mathFunctionPlot', 
+        'physicsDataPlot', 
+        'coordinateSystem2D', 
+        'coordinateSystem3D'
+    ]);
+
+    const SHAPE_TOOLS = new Set([
+        'rectangle',
+        'diamond',
+        'circle',
+        'square',
+        'triangle',
+        'trapezoid',
+        'parallelogram',
+        'deltoid',
+        'cube',
+        'cuboid',
+        'sphere',
+        'cylinder',
+        'cone',
+        'pyramid',
+        'tetrahedron'
+    ]);
     const movableElements = shallowRef([]);
     const hoveredElementIndex = ref(-1);
     const selectedObjectId = ref(null); // Added for selection state
+    const interactingElementId = ref(null); // Track which element is being interacted with (drag/resize/rotate)
     const spacePanActive = ref(false);
     const connectorsVisible = computed(() => currentTool.value === 'lines' || (isDrawing.value && currentElementPreview.value?.type === 'line'));
     const panStartedWithSpace = ref(false);
     const pinchGesture = ref(null);
     let resizeObserver = null;
     let clipboardFocusHandler = null;
+
+    const handleInteractionStart = (id) => {
+        interactingElementId.value = id;
+        redrawCanvas(); // Force redraw to show ghost
+    };
+
+    const handleInteractionEnd = (id) => {
+        if (interactingElementId.value === id) {
+            interactingElementId.value = null;
+            redrawCanvas(); // Force redraw to hide ghost (if selected) or show normal
+        }
+    };
 
     // Helper module instances
     const yjsConnection = shallowRef(null);
@@ -1067,7 +1111,7 @@ export default {
     // Local scene cache to avoid expensive Yjs toJSON calls
     let localScene = [];
 
-    const updateLocalScene = () => {
+    const updateLocalScene = (overrideObject = null) => {
         if (!yDrawings.value) {
             localScene = [];
             return;
@@ -1075,31 +1119,9 @@ export default {
         // Map Yjs elements to local plain objects once
         localScene = yDrawings.value.toArray().map(map => {
             const json = map.toJSON();
-            
-            // --- OPTIMIZATION: Path2D Caching ---
-            // This pre-calculates the path for static pen strokes to avoid re-parsing points on every frame.
-            // To DISABLE this optimization: Comment out the 'if' block below.
-            // DISABLED: Caching breaks complex pen styles (calligraphy, etc.) which are not simple lines.
-            /*
-            if (json.type === 'pen' && json.points && json.points.length > 0) {
-                const path = new Path2D();
-                const points = json.points;
-                if (points.length > 0) {
-                    path.moveTo(points[0].x, points[0].y);
-                    // Use quadratic curves for smoother look if needed, or just lines for speed
-                    // For now, simple lines match the original drawElement logic unless smoothing is on
-                    // But drawElement handles smoothing dynamically. 
-                    // If we cache Path2D, we bake the geometry.
-                    // Let's bake the raw points for now.
-                    for (let i = 1; i < points.length; i++) {
-                        path.lineTo(points[i].x, points[i].y);
-                    }
-                }
-                json.cachedPath = path;
+            if (overrideObject && json.id === overrideObject.id) {
+                return { ...json, ...overrideObject };
             }
-            */
-            // --- END OPTIMIZATION ---
-            
             return json;
         });
         
@@ -1412,9 +1434,9 @@ export default {
     // Types that MUST be rendered in DOM (interactive elements with MovableObject overlays)
     // Matching commit 60e77346 - ALL shapes need overlays for interaction
     const ALWAYS_DOM_TYPES = new Set([
-        'text', 
-        'image', 
-        'latex', 
+        // 'text', // Removed to avoid double rendering (Canvas + DOM)
+        // 'image', // Removed to avoid double rendering
+        'latex', // Kept because Canvas does not render latex
         'functionPlot', 
         'mathFunctionPlot', 
         'physicsDataPlot', 
@@ -1527,7 +1549,7 @@ export default {
 
     const teardownYjsConnection = () => {
         if (yDrawings.value) {
-            yDrawings.value.unobserve(handleYjsUpdate);
+            yDrawings.value.unobserveDeep(handleYjsUpdate);
         }
         if (undoManager.value) {
             undoManager.value.off('stack-item-added', updateGlobalState);
@@ -1589,7 +1611,7 @@ export default {
                 throw new Error('Yjs shared drawings array is unavailable.');
             }
 
-            yDrawings.value.observe(handleYjsUpdate);
+            yDrawings.value.observeDeep(handleYjsUpdate);
             setupAwarenessListener(); // Enable cursor tracking and online count
             activeRoomId.value = normalizedRoomId;
             updateLocalScene(); // Initial sync
@@ -2447,33 +2469,14 @@ export default {
     };
 
     // Tools that behave like shapes (use start/end points)
-    const SHAPE_TOOLS = new Set([
-      'rectangle',
-      'circle',
-      'square',
-      'triangle',
-      'trapezoid',
-      'parallelogram',
-      'deltoid',
-      'cube',
-      'cuboid',
-      'sphere',
-      'cylinder',
-      'cone',
-      'pyramid',
-      'tetrahedron',
-    ]);
+    // SHAPE_TOOLS moved to top of setup
+
 
     const LINE_TOOLS = new Set(['line']);
 
     // Elements that render via DOM overlays (MovableObject/PlotRenderer) and should not be drawn twice on the canvas
-    const DOM_RENDERED_TYPES = new Set([
-      'mathFunctionPlot',
-      'physicsDataPlot',
-      'coordinateSystem2D',
-      'coordinateSystem3D',
-      'text' // Render text via MovableObject only to avoid double-drawing
-    ]);
+    // DOM_RENDERED_TYPES removed (unused)
+
 
     const draw = (coords, isShiftPressed, inputTime) => { // Accept shift key state
       if (!isDrawing.value || !currentElementPreview.value) return;
@@ -2828,14 +2831,27 @@ export default {
 
     const handleObjectUpdate = (updatedYMap) => {
       if (!updatedYMap) return;
-      const type = updatedYMap.get('type');
-      const id = updatedYMap.get('id');
-      if (type === 'line') {
-        refreshLineBindings(updatedYMap);
-      } else if (BINDABLE_ELEMENT_TYPES.has(type) && id) {
-        updateBindingsForTarget(id);
+
+      // Check if it's a Y.Map (committed update) or plain object (local drag override)
+      const isYMap = updatedYMap instanceof Y.Map;
+      
+      if (isYMap) {
+          const type = updatedYMap.get('type');
+          const id = updatedYMap.get('id');
+          if (type === 'line') {
+            refreshLineBindings(updatedYMap);
+          } else if (BINDABLE_ELEMENT_TYPES.has(type) && id) {
+            updateBindingsForTarget(id);
+          }
+          debugLog('[WhiteboardCanvas] MovableObject updated (Yjs):', updatedYMap.toJSON());
+          updateLocalScene(); // Standard sync
+      } else {
+          // It's a plain object override from dragging
+          // We skip binding updates here for performance/correctness during drag
+          // debugLog('[WhiteboardCanvas] MovableObject updated (Local Override):', updatedYMap);
+          updateLocalScene(updatedYMap); // Update with override
       }
-      debugLog('[WhiteboardCanvas] MovableObject updated:', updatedYMap.toJSON());
+
       redrawCanvas();
     };
 
@@ -4224,6 +4240,8 @@ export default {
 
       // MovableObject handlers & selection state
       handleObjectUpdate,
+      handleInteractionStart,
+      handleInteractionEnd,
       selectObject, 
 
       // Inline Text Editor

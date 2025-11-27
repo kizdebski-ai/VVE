@@ -100,6 +100,12 @@
           Unknown Type: {{ objectData.type }}
         </div>
       </template>
+      <canvas
+        v-else-if="objectData.width > 0 && objectData.height > 0"
+        ref="localCanvas"
+        class="local-canvas"
+        style="width: 100%; height: 100%; pointer-events: none;"
+      ></canvas>
 
       <!-- Text Overlay for Shapes -->
       <div v-if="objectData.text && objectData.type !== 'text'"
@@ -120,6 +126,8 @@
 import { ref, computed, onMounted, onUnmounted, reactive, watch } from 'vue';
 import * as Y from 'yjs'; 
 import PlotRenderer from './PlotRenderer.vue';
+import rough from 'roughjs';
+import { drawElement } from '../utils/canvasDrawing';
 import katex from 'katex'; 
 
 interface MovableObjectData {
@@ -161,10 +169,13 @@ const props = withDefaults(defineProps<{
 
 const emit = defineEmits<{
   (e: 'request-select', id: string | number): void;
-  (e: 'update:object', object: Y.Map<any>): void;
+  (e: 'update:object', object: Y.Map<any> | any): void;
   (e: 'clone-object', data: any): void;
   (e: 'update:snap-guides', guides: any[]): void;
+  (e: 'update:snap-guides', guides: any[]): void;
   (e: 'double-click', id: string | number): void;
+  (e: 'interaction-start', id: string | number): void;
+  (e: 'interaction-end', id: string | number): void;
 }>();
 
 const CONTENT_RENDER_TYPES = new Set([
@@ -278,6 +289,7 @@ const isRotating = ref(false);
 const isResizing = ref(false);
 const currentResizeHandle = ref<string | null>(null);
 const currentLineHandle = ref<'start' | 'end' | null>(null);
+const localCanvas = ref<HTMLCanvasElement | null>(null);
 
 const initialObjectState = reactive({ x: 0, y: 0, width: 0, height: 0, rotation: 0 });
 const initialMousePos = reactive({ x: 0, y: 0 });
@@ -422,10 +434,11 @@ const objectStyle = computed(() => {
     cursor: props.interactionEnabled
       ? (isDragging.value ? 'grabbing' : (internalIsSelected.value ? 'grab' : 'pointer'))
       : 'default',
-    pointerEvents: props.interactionEnabled ? 'auto' : 'none',
-    transformOrigin: 'top left',
-    userSelect: 'none',
-    boxSizing: 'border-box',
+    pointerEvents: (props.interactionEnabled ? 'auto' : 'none') as 'auto' | 'none',
+    border: internalIsSelected.value ? '2px solid dodgerblue' : '1px solid transparent',
+    transformOrigin: 'top left', 
+    userSelect: 'none' as const,
+    boxSizing: 'border-box' as const,
     zIndex: internalIsSelected.value ? 10 : 1,
   };
 
@@ -549,7 +562,11 @@ const startAngle = ref(0);
 
 const handleLeftClickOnObject = (event: MouseEvent) => {
   if (event.button === 0) { 
-    emit('request-select', objectData.id);
+    if (internalIsSelected.value) {
+        startDrag(event);
+    } else {
+        emit('request-select', objectData.id);
+    }
   }
 };
 
@@ -578,6 +595,7 @@ const startDrag = (event: MouseEvent) => {
   }
 
   isDragging.value = true;
+  emit('interaction-start', objectData.id); // Notify start of interaction
   initialMousePos.x = event.clientX;
   initialMousePos.y = event.clientY;
   initialObjectState.x = objectData.x;
@@ -646,25 +664,33 @@ const handleDrag = (event: MouseEvent) => {
   const deltaX = newX - objectData.x;
   const deltaY = newY - objectData.y;
   
-  props.object.doc?.transact(() => {
-    props.object.set('x', newX);
-    props.object.set('y', newY);
-    shiftStartEndMaps(deltaX, deltaY);
-    shiftPositionMap(deltaX, deltaY);
-    shiftPointsInYMap(deltaX, deltaY);
-  }, 'local-movable-drag');
-
+  // Update local data only - defer Yjs update to stopDrag
   objectData.x = newX; 
   objectData.y = newY;
-  emit('update:object', props.object);
+  emit('update:object', { ...props.object.toJSON(), ...objectData });
 };
 
 const stopDrag = () => {
   if (isDragging.value) {
     isDragging.value = false;
+    emit('interaction-end', objectData.id); // Notify end of interaction
     emit('update:snap-guides', []); // Clear guides
     document.removeEventListener('mousemove', handleDrag);
     document.removeEventListener('mouseup', stopDrag);
+
+    // Commit changes to Yjs
+    const totalDeltaX = objectData.x - initialObjectState.x;
+    const totalDeltaY = objectData.y - initialObjectState.y;
+
+    props.object.doc?.transact(() => {
+        props.object.set('x', objectData.x);
+        props.object.set('y', objectData.y);
+        shiftStartEndMaps(totalDeltaX, totalDeltaY);
+        shiftPositionMap(totalDeltaX, totalDeltaY);
+        shiftPointsInYMap(totalDeltaX, totalDeltaY);
+    }, 'local-movable-drag');
+    
+    emit('update:object', props.object);
   }
 };
 
@@ -682,6 +708,7 @@ const startRotate = (event: MouseEvent) => {
 
     startAngle.value = Math.atan2(event.clientY - objectCenter.y, event.clientX - objectCenter.x);
     initialObjectState.rotation = objectData.rotation;
+    emit('interaction-start', objectData.id);
     document.addEventListener('mousemove', handleRotate);
     document.addEventListener('mouseup', stopRotate);
 };
@@ -693,10 +720,7 @@ const handleRotate = (event: MouseEvent) => {
     let angleDiffDegrees = angleDiff * (180 / Math.PI);
     let newRotation = initialObjectState.rotation + angleDiffDegrees;
 
-    props.object.doc?.transact(() => {
-      props.object.set('rotation', newRotation);
-    }, 'local-movable-rotate');
-    
+    // Update local data only
     objectData.rotation = newRotation; 
     emit('update:object', props.object);
 };
@@ -704,8 +728,14 @@ const handleRotate = (event: MouseEvent) => {
 const stopRotate = () => {
   if (isRotating.value) {
     isRotating.value = false;
+    emit('interaction-end', objectData.id);
     document.removeEventListener('mousemove', handleRotate);
     document.removeEventListener('mouseup', stopRotate);
+
+    props.object.doc?.transact(() => {
+      props.object.set('rotation', objectData.rotation);
+    }, 'local-movable-rotate');
+    emit('update:object', { ...props.object.toJSON(), ...objectData });
   }
 };
 
@@ -745,6 +775,7 @@ const startResize = (event: MouseEvent, handle: string) => {
     : null;
   initialGeometrySnapshot.points = clonePointsArray(props.object.get('points'));
 
+  emit('interaction-start', objectData.id);
   document.addEventListener('mousemove', handleResize);
   document.addEventListener('mouseup', stopResize);
 };
@@ -762,6 +793,7 @@ const startLineEndpointDrag = (event: MouseEvent, handle: 'start' | 'end') => {
   initialLineSnapshot.startY = Number.isFinite(objectData.startY) ? objectData.startY! : objectData.y;
   initialLineSnapshot.endX = Number.isFinite(objectData.endX) ? objectData.endX! : objectData.x + objectData.width;
   initialLineSnapshot.endY = Number.isFinite(objectData.endY) ? objectData.endY! : objectData.y + objectData.height;
+  emit('interaction-start', objectData.id);
   document.addEventListener('mousemove', handleResize);
   document.addEventListener('mouseup', stopResize);
 };
@@ -798,15 +830,71 @@ const handleLineResize = (event: MouseEvent) => {
   objectData.width = newWidth;
   objectData.height = newHeight;
 
-  props.object.doc?.transact(() => {
-    updateStartEndMaps(newStartX, newStartY, newEndX, newEndY);
-    props.object.set('x', newX);
-    props.object.set('y', newY);
-    props.object.set('width', newWidth);
-    props.object.set('height', newHeight);
-    updatePositionMap(newX, newY);
-  }, 'local-line-resize');
+  // Defer Yjs update to stopResize
+  emit('update:object', { ...props.object.toJSON(), ...objectData });
 };
+
+const renderLocalCanvas = () => {
+  if (!localCanvas.value || shouldRenderContent.value) return;
+  
+  const canvas = localCanvas.value;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+
+  const frame = displayFrame.value;
+  
+  // Don't render if frame has zero dimensions (prevents html2canvas errors)
+  if (frame.width <= 0 || frame.height <= 0) return;
+  
+  const pixelRatio = window.devicePixelRatio || 1;
+  const width = frame.width * props.zoomLevel;
+  const height = frame.height * props.zoomLevel;
+
+  // Resize canvas if needed (handling DPI)
+  if (canvas.width !== width * pixelRatio || canvas.height !== height * pixelRatio) {
+    canvas.width = width * pixelRatio;
+    canvas.height = height * pixelRatio;
+  }
+
+  ctx.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+  ctx.clearRect(0, 0, width, height);
+  
+  // Scale for zoom
+  ctx.scale(props.zoomLevel, props.zoomLevel);
+  
+  // Handle padding for lines
+  const padding = frame.padding || 0;
+  ctx.translate(padding, padding);
+
+  // Construct local element relative to (0,0)
+  const localElement = {
+    ...objectData,
+    x: 0,
+    y: 0,
+    start: isLineType.value 
+      ? { x: (objectData.startX || 0) - objectData.x, y: (objectData.startY || 0) - objectData.y }
+      : { x: 0, y: 0 },
+    end: isLineType.value
+      ? { x: (objectData.endX || 0) - objectData.x, y: (objectData.endY || 0) - objectData.y }
+      : { x: objectData.width, y: objectData.height }
+  };
+
+  // Draw
+  drawElement(ctx, localElement, false, 1, undefined, undefined, {}, rough.canvas(canvas) as any);
+};
+
+watch(
+  [() => objectData, () => props.zoomLevel, () => displayFrame.value],
+  () => {
+    // Use requestAnimationFrame to avoid layout thrashing
+    requestAnimationFrame(renderLocalCanvas);
+  },
+  { deep: true, immediate: true }
+);
+
+onMounted(() => {
+  renderLocalCanvas();
+});
 
 const handleResize = (event: MouseEvent) => {
   if (!isResizing.value) return;
@@ -870,14 +958,8 @@ const handleResize = (event: MouseEvent) => {
   objectData.width = newWidth;
   objectData.height = newHeight;
 
-  props.object.doc?.transact(() => {
-    props.object.set('x', newX);
-    props.object.set('y', newY);
-    props.object.set('width', newWidth);
-    props.object.set('height', newHeight);
-    updatePositionMap(newX, newY);
-
-    if (initialGeometrySnapshot.startRatioX !== null || initialGeometrySnapshot.endRatioX !== null) {
+  // Update derived properties locally
+  if (initialGeometrySnapshot.startRatioX !== null || initialGeometrySnapshot.endRatioX !== null) {
       const ratioStartX = initialGeometrySnapshot.startRatioX ?? 0;
       const ratioEndX = initialGeometrySnapshot.endRatioX ?? 1;
       const ratioStartY = initialGeometrySnapshot.startRatioY ?? 0;
@@ -886,29 +968,30 @@ const handleResize = (event: MouseEvent) => {
       const newEndX = newX + ratioEndX * newWidth;
       const newStartY = newY + ratioStartY * newHeight;
       const newEndY = newY + ratioEndY * newHeight;
-      updateStartEndMaps(newStartX, newStartY, newEndX, newEndY);
-    }
+      
+      objectData.startX = newStartX;
+      objectData.startY = newStartY;
+      objectData.endX = newEndX;
+      objectData.endY = newEndY;
+  }
 
-    const scaledPoints = scalePointsFromSnapshot(initialGeometrySnapshot.points, initialObjectState, {
+  const scaledPoints = scalePointsFromSnapshot(initialGeometrySnapshot.points, initialObjectState, {
       x: newX,
       y: newY,
       width: newWidth,
       height: newHeight,
-    });
-    if (scaledPoints) {
-      props.object.set('points', scaledPoints);
-    }
-
-    if (typeof props.object.get('size') === 'number') {
-      props.object.set('size', Math.max(newWidth, newHeight));
-    }
-  }, 'local-movable-resize');
+  });
+  if (scaledPoints) {
+      objectData.points = scaledPoints;
+  }
+  emit('update:object', { ...props.object.toJSON(), ...objectData });
 };
 
 
 const stopResize = () => {
   if (!isResizing.value) return;
   isResizing.value = false;
+  emit('interaction-end', objectData.id);
   currentResizeHandle.value = null;
   currentLineHandle.value = null;
 
@@ -920,7 +1003,21 @@ const stopResize = () => {
     props.object.set('y', objectData.y);
     props.object.set('width', objectData.width);
     props.object.set('height', objectData.height);
+    updatePositionMap(objectData.x, objectData.y);
+
+    if (objectData.startX !== undefined) {
+        updateStartEndMaps(objectData.startX, objectData.startY!, objectData.endX!, objectData.endY!);
+    }
+
+    if (objectData.points) {
+        props.object.set('points', objectData.points);
+    }
+
+    if (typeof props.object.get('size') === 'number') {
+        props.object.set('size', Math.max(objectData.width, objectData.height));
+    }
   }, 'local-movable-resize');
+  
   emit('update:object', props.object);
 };
 

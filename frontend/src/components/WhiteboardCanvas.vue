@@ -124,6 +124,12 @@
       @click="testUndoManager">
       Test UndoManager
     </button>
+    <AIStatusOverlay />
+    <AICommandPalette
+      ref="aiCommandPaletteRef"
+      :roomId="roomId"
+      :getContext="getAiContext"
+    />
   </div>
 </template>
 
@@ -140,6 +146,8 @@ import Collaborators from './Collaborators.vue';
 import ZoomPanControls from './ZoomPanControls.vue';
 import EraserModeControls from './EraserModeControls.vue';
 import StatusMessage from './StatusMessage.vue';
+import AIStatusOverlay from './AIStatusOverlay.vue';
+import AICommandPalette from './AICommandPalette.vue';
 // Helper modules
 import GridAlignModule from '../modules/GridAlignModule.js';
 import HandwritingStylerModule from '../modules/HandwritingStylerModule.js';
@@ -208,6 +216,8 @@ export default {
     EraserModeControls,
     StatusMessage,
     MovableObject, // Register MovableObject
+    AIStatusOverlay,
+    AICommandPalette,
   },
   props: {
     debugMode: { type: Boolean, default: false },
@@ -3015,9 +3025,30 @@ export default {
     };
 
     // --- Keyboard handling ---
+    const aiCommandPaletteRef = ref(null);
+
+    const getAiContext = async () => {
+      // Basic context provider for AI Command Palette
+      const viewport = {
+         x: panOffset.value.x,
+         y: panOffset.value.y,
+         width: canvasWidth.value,
+         height: canvasHeight.value,
+         zoom: zoomLevel.value
+      };
+
+      return { viewport };
+    };
+
     const handleKeyDown = (event) => {
       const tagName = event.target.tagName.toUpperCase();
-      if (tagName === 'INPUT' || tagName === 'TEXTAREA' || event.target.isContentEditable) return;
+
+      // Allow Ctrl+Space even if focusing input
+      if (event.ctrlKey && event.code === 'Space') {
+          // It's handled by AICommandPalette's own listener
+      } else if (tagName === 'INPUT' || tagName === 'TEXTAREA' || event.target.isContentEditable) {
+          return;
+      }
 
       // Double check if we are in the middle of editing text (e.g. focus lost momentarily)
       if (currentTool.value === 'text' && inlineTextEditor.visible) return;

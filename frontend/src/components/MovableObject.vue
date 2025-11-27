@@ -2,7 +2,7 @@
   <div
     ref="movableObjectRef"
     class="movable-object"
-    :class="{ 'is-selected': isSelected }"
+    :class="{ 'is-selected': isSelected, 'is-pulsing': isPulsing }"
     :style="objectStyle"
     @mousedown.stop="handleLeftClickOnObject" 
     @dblclick.stop="handleDoubleClick"
@@ -121,6 +121,7 @@ import { ref, computed, onMounted, onUnmounted, reactive, watch } from 'vue';
 import * as Y from 'yjs'; 
 import PlotRenderer from './PlotRenderer.vue';
 import katex from 'katex'; 
+import { useAiStore } from '../composables/useAiStore';
 
 interface MovableObjectData {
   id: string | number;
@@ -448,6 +449,9 @@ const objectStyle = computed(() => {
 
 const shouldRenderContent = computed(() => CONTENT_RENDER_TYPES.has(objectData.type));
 const latexHtml = computed(() => renderLatex(objectData.latex || ''));
+
+const { state: aiState } = useAiStore();
+const isPulsing = computed(() => aiState.pulsingObjects.has(objectData.id));
 
 const lineHandlePositions = computed(() => {
   if (!isLineType.value) {
@@ -968,6 +972,18 @@ onUnmounted(() => {
   background-color: rgba(148, 163, 184, 0.06);
   box-shadow: 0 0 0 6px rgba(148, 163, 184, 0.22);
   border-radius: 12px;
+}
+
+.movable-object.is-pulsing {
+  animation: pulse-glow 2s ease-in-out infinite;
+  box-shadow: 0 0 15px rgba(99, 102, 241, 0.6);
+  border-color: #6366f1;
+}
+
+@keyframes pulse-glow {
+  0% { box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.4); }
+  70% { box-shadow: 0 0 0 10px rgba(99, 102, 241, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(99, 102, 241, 0); }
 }
 
 .object-content {

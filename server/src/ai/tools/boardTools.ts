@@ -116,10 +116,29 @@ export function toolDrawBoardPatch(
     const source = args.patch || args;
 
     if (Array.isArray(source.creates)) {
-        patch.creates = source.creates.map((raw: any) => ({
-            ...raw,
-            id: raw.id || `ai-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        }));
+        patch.creates = source.creates.map((raw: any) => {
+            const obj = {
+                ...raw,
+                id: raw.id || `ai-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            };
+
+            // Normalize LINE objects: ensure start/end exist
+            if (obj.type === 'line' && (!obj.start || !obj.end)) {
+                const x = obj.x || 0;
+                const y = obj.y || 0;
+                const w = obj.width || 0;
+                const h = obj.height || 0;
+                obj.start = { x, y };
+                obj.end = { x: x + w, y: y + h };
+            }
+
+            // Ensure default color
+            if (!obj.color && !obj.strokeColor) {
+                obj.color = '#000000';
+            }
+
+            return obj;
+        });
     }
 
     if (Array.isArray(source.updates)) {

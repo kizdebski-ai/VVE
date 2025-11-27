@@ -102,7 +102,19 @@ export async function runBoardAgent(params: {
         request: userMessage,
     });
 
-    if (image) {
+    // List of models known to be text-only or having issues with images on the free tier
+    const textOnlyModels = [
+        'qwen/qwen3-coder:free',
+        'moonshotai/kimi-k2:free',
+        'kwaipilot/kat-coder-pro:free',
+        'z-ai/glm-4.5-air:free',
+        'x-ai/grok-4.1-fast:free'
+    ];
+
+    // Only send image if model is NOT in the text-only list
+    const shouldSendImage = image && !textOnlyModels.includes(effectiveModel);
+
+    if (shouldSendImage) {
         userContent = [
             {
                 type: 'text',
@@ -117,6 +129,8 @@ export async function runBoardAgent(params: {
                 image_url: { url: image },
             },
         ];
+    } else if (image) {
+        console.log(`[AI Agent] Skipping image for text-only model: ${effectiveModel}`);
     }
 
     // RAG: Retrieve relevant docs

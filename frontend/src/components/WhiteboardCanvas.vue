@@ -1111,7 +1111,7 @@ export default {
     // Local scene cache to avoid expensive Yjs toJSON calls
     let localScene = [];
 
-    const updateLocalScene = () => {
+    const updateLocalScene = (overrideObject = null) => {
         if (!yDrawings.value) {
             localScene = [];
             return;
@@ -1119,6 +1119,11 @@ export default {
         // Map Yjs elements to local plain objects once
         localScene = yDrawings.value.toArray().map(map => {
             const json = map.toJSON();
+            if (overrideObject && json.id === overrideObject.id) {
+                return { ...json, ...overrideObject };
+            }
+            return json;
+        });
             
             // --- OPTIMIZATION: Path2D Caching ---
             // This pre-calculates the path for static pen strokes to avoid re-parsing points on every frame.
@@ -1234,9 +1239,10 @@ export default {
         const hasDomOverlay = ALWAYS_DOM_TYPES.has(element.type) || element.id === selectedObjectId.value;
         const isInteracting = element.id === interactingElementId.value;
         
-        // Skip canvas drawing ONLY if it has a DOM overlay AND we are NOT interacting with it.
-        // If we ARE interacting, we want the canvas to draw the "ghost" (original position) while the DOM moves.
-        if (isContentRenderedInDom && hasDomOverlay && !isInteracting) {
+        // Skip canvas drawing if it has a DOM overlay (selected/interacting) AND is a content type rendered in DOM.
+        // This prevents double rendering (bold effect) for Text/Image/Latex.
+        // For Shapes, isContentRenderedInDom is false, so they are always drawn on canvas.
+        if (isContentRenderedInDom && hasDomOverlay) {
             return;
         }
         
@@ -2858,15 +2864,27 @@ export default {
 
     const handleObjectUpdate = (updatedYMap) => {
       if (!updatedYMap) return;
-      const type = updatedYMap.get('type');
-      const id = updatedYMap.get('id');
-      if (type === 'line') {
-        refreshLineBindings(updatedYMap);
-      } else if (BINDABLE_ELEMENT_TYPES.has(type) && id) {
-        updateBindingsForTarget(id);
+
+      // Check if it's a Y.Map (committed update) or plain object (local drag override)
+      const isYMap = updatedYMap instanceof Y.Map;
+      
+      if (isYMap) {
+          const type = updatedYMap.get('type');
+          const id = updatedYMap.get('id');
+          if (type === 'line') {
+            refreshLineBindings(updatedYMap);
+          } else if (BINDABLE_ELEMENT_TYPES.has(type) && id) {
+            updateBindingsForTarget(id);
+          }
+          debugLog('[WhiteboardCanvas] MovableObject updated (Yjs):', updatedYMap.toJSON());
+          updateLocalScene(); // Standard sync
+      } else {
+          // It's a plain object override from dragging
+          // We skip binding updates here for performance/correctness during drag
+          // debugLog('[WhiteboardCanvas] MovableObject updated (Local Override):', updatedYMap);
+          updateLocalScene(updatedYMap); // Update with override
       }
-      debugLog('[WhiteboardCanvas] MovableObject updated:', updatedYMap.toJSON());
-      updateLocalScene(); // Ensure local cache is updated immediately
+
       redrawCanvas();
     };
 

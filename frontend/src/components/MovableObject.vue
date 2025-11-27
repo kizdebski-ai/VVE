@@ -161,7 +161,7 @@ const props = withDefaults(defineProps<{
 
 const emit = defineEmits<{
   (e: 'request-select', id: string | number): void;
-  (e: 'update:object', object: Y.Map<any>): void;
+  (e: 'update:object', object: Y.Map<any> | any): void;
   (e: 'clone-object', data: any): void;
   (e: 'update:snap-guides', guides: any[]): void;
   (e: 'update:snap-guides', guides: any[]): void;
@@ -632,7 +632,7 @@ const handleDrag = (event: MouseEvent) => {
   // Update local data only - defer Yjs update to stopDrag
   objectData.x = newX; 
   objectData.y = newY;
-  emit('update:object', props.object);
+  emit('update:object', { ...props.object.toJSON(), ...objectData });
 };
 
 const stopDrag = () => {
@@ -697,11 +697,10 @@ const stopRotate = () => {
     document.removeEventListener('mousemove', handleRotate);
     document.removeEventListener('mouseup', stopRotate);
 
-    // Commit rotation to Yjs
     props.object.doc?.transact(() => {
       props.object.set('rotation', objectData.rotation);
     }, 'local-movable-rotate');
-    emit('update:object', props.object);
+    emit('update:object', { ...props.object.toJSON(), ...objectData });
   }
 };
 
@@ -797,6 +796,7 @@ const handleLineResize = (event: MouseEvent) => {
   objectData.height = newHeight;
 
   // Defer Yjs update to stopResize
+  emit('update:object', { ...props.object.toJSON(), ...objectData });
 };
 
 const handleResize = (event: MouseEvent) => {
@@ -887,6 +887,7 @@ const handleResize = (event: MouseEvent) => {
   if (scaledPoints) {
       objectData.points = scaledPoints;
   }
+  emit('update:object', { ...props.object.toJSON(), ...objectData });
 };
 
 

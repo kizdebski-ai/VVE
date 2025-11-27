@@ -319,6 +319,8 @@ export default {
     const zoomLevel = ref(1);
     const panOffset = ref({ x: 0, y: 0 });
     const isPanning = ref(false);
+    const panVelocity = ref({ x: 0, y: 0 });
+    const lastPanTime = ref(0);
     const lastPanPoint = ref(null);
     const statusMessage = ref('');
     const statusTimeout = ref(null);
@@ -1985,9 +1987,19 @@ export default {
       if (activeConfigPanel.value) return;
 
       if (isPanning.value && lastPanPoint.value) {
+        const now = performance.now();
+        const dx = coords.offsetX - lastPanPoint.value.screenX;
+        const dy = coords.offsetY - lastPanPoint.value.screenY;
+        const dt = now - lastPanTime.value;
+
+        if (dt > 0) {
+          panVelocity.value = { x: dx / dt, y: dy / dt };
+        }
+        lastPanTime.value = now;
+
         const currentPanPoint = transformCoordinates(coords.offsetX, coords.offsetY);
-        panOffset.value.x += coords.offsetX - lastPanPoint.value.screenX;
-        panOffset.value.y += coords.offsetY - lastPanPoint.value.screenY;
+        panOffset.value.x += dx;
+        panOffset.value.y += dy;
         lastPanPoint.value = { ...currentPanPoint, screenX: coords.offsetX, screenY: coords.offsetY };
         redrawCanvas(true); // Pan requires full redraw
         return;
@@ -2064,7 +2076,13 @@ export default {
       if (event.button === 1 || (event.button === 0 && event.altKey) || shouldSpacePan) { // Middle mouse, Alt+Left, or Space+Left
         isPanning.value = true;
         lastPanPoint.value = { ...transformedCoords, screenX: coords.offsetX, screenY: coords.offsetY };
+        lastPanTime.value = performance.now();
+        panVelocity.value = { x: 0, y: 0 };
         panStartedWithSpace.value = shouldSpacePan;
+        if (inertiaRafId) {
+          cancelAnimationFrame(inertiaRafId);
+          inertiaRafId = null;
+        }
         event.preventDefault();
         updateCursor();
         return;
@@ -2115,6 +2133,37 @@ export default {
     };
 
 
+    let inertiaRafId = null;
+
+    const startInertia = () => {
+      const friction = 0.95;
+      const stopThreshold = 0.1;
+      let lastTime = performance.now();
+
+      const loop = () => {
+        const now = performance.now();
+        const dt = now - lastTime;
+        lastTime = now;
+
+        // Decay velocity
+        panVelocity.value.x *= friction;
+        panVelocity.value.y *= friction;
+
+        if (Math.abs(panVelocity.value.x) < stopThreshold && Math.abs(panVelocity.value.y) < stopThreshold) {
+          inertiaRafId = null;
+          return;
+        }
+
+        panOffset.value.x += panVelocity.value.x * dt;
+        panOffset.value.y += panVelocity.value.y * dt;
+
+        redrawCanvas(true);
+        inertiaRafId = requestAnimationFrame(loop);
+      };
+
+      loop();
+    };
+
     const handleMouseUp = (event) => {
       // Don't handle mouse up if a config panel is active
       if (activeConfigPanel.value) return;
@@ -2123,6 +2172,16 @@ export default {
         isPanning.value = false;
         lastPanPoint.value = null;
         panStartedWithSpace.value = false;
+
+        // Check if we should start inertia
+        // Only if we have some velocity AND the last move was recent (e.g. < 50ms)
+        const timeSinceLastMove = performance.now() - lastPanTime.value;
+        if (timeSinceLastMove < 50 && (Math.abs(panVelocity.value.x) > 0.5 || Math.abs(panVelocity.value.y) > 0.5)) {
+           startInertia();
+        } else {
+           panVelocity.value = { x: 0, y: 0 };
+        }
+
         updateCursor();
         return;
       }

@@ -126,6 +126,15 @@
         </div>
 
         <div class="chat-input-area">
+          <div class="model-selector">
+            <select v-model="selectedModel">
+              <option value="x-ai/grok-4.1-fast:free">Grok 4.1 Fast (Free)</option>
+              <option value="kwaipilot/kat-coder-pro:free">Kat Coder Pro (Free)</option>
+              <option value="moonshotai/kimi-k2:free">Kimi K2 (Free)</option>
+              <option value="qwen/qwen3-coder:free">Qwen 3 Coder (Free)</option>
+              <option value="z-ai/glm-4.5-air:free">GLM 4.5 Air (Free)</option>
+            </select>
+          </div>
           <div class="input-row">
             <div class="input-wrapper">
               <textarea
@@ -200,6 +209,7 @@ const sentIntro = ref(false);
 
 // Agent State
 const agentInput = ref('');
+const selectedModel = ref('x-ai/grok-4.1-fast:free');
 // We need boardId.
 const boardId = computed(() => props.roomId || '');
 const { state: aiState, runBoardAssistant } = useAiStore();
@@ -403,10 +413,8 @@ const submitAgent = async () => {
   agentInput.value = '';
   
   try {
-    // Capture snapshot for context (so agent can see handwriting)
-    // Capture snapshot for context (so agent can see handwriting)
     const snapshot = await captureSnapshot();
-    runBoardAssistant(boardId.value, msg, getViewport(), snapshot);
+    runBoardAssistant(boardId.value, msg, getViewport(), snapshot, selectedModel.value);
   } catch (e) {
     console.error(e);
   }
@@ -414,10 +422,8 @@ const submitAgent = async () => {
 
 const triggerAgentAction = async (prompt) => {
   try {
-    // Capture snapshot for context
-    // Capture snapshot for context
     const snapshot = await captureSnapshot();
-    runBoardAssistant(boardId.value, prompt, getViewport(), snapshot);
+    runBoardAssistant(boardId.value, prompt, getViewport(), snapshot, selectedModel.value);
   } catch (e) {
     console.error(e);
   }
@@ -704,6 +710,28 @@ onMounted(() => {
   background: rgba(255, 255, 255, 0.8);
   backdrop-filter: blur(10px);
   border-top: 1px solid rgba(0, 0, 0, 0.05);
+}
+
+.model-selector {
+  margin-bottom: 8px;
+}
+
+.model-selector select {
+  width: 100%;
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(0,0,0,0.1);
+  background: rgba(255,255,255,0.5);
+  font-size: 12px;
+  color: var(--text-secondary);
+  outline: none;
+  cursor: pointer;
+}
+
+.dark-mode .model-selector select {
+  background: rgba(0,0,0,0.2);
+  border-color: rgba(255,255,255,0.1);
+  color: var(--text-secondary);
 }
 
 .dark-mode .chat-input-area {

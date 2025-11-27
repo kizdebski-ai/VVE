@@ -14,12 +14,14 @@ export const createAiBoardAssistantRouter = (roomManager: RoomManager) => {
         }
 
         try {
-            const { boardId, message, viewport, image } = req.body as {
+            const { boardId, message, viewport, image, model } = req.body as {
                 boardId: string;
                 message: string;
                 viewport?: { x: number; y: number; width: number; height: number };
                 image?: string;
+                model?: string;
             };
+            console.log(`[AI Route] Received request. Message length: ${message?.length}, Image present: ${!!image}, Viewport: ${!!viewport}, Model: ${model}`);
 
             // Get the room/doc from RoomManager
             // We use get() which lazily loads or creates. 
@@ -45,10 +47,17 @@ export const createAiBoardAssistantRouter = (roomManager: RoomManager) => {
                 userMessage: message,
                 ...(viewport && { viewport }),
                 ...(image && { image }),
+                ...(model && { model })
             });
 
             const snapshotAfter = doc.getSnapshot();
             console.log(`[AI Route] Snapshot after: ${snapshotAfter.objects.length} objects`);
+            console.log(`[AI Route] Patch result:`, JSON.stringify({
+                creates: result.patch?.creates?.length ?? 0,
+                updates: result.patch?.updates?.length ?? 0,
+                deletes: result.patch?.deletes?.length ?? 0,
+                reply: result.reply?.substring(0, 100)
+            }));
 
             res.json(result);
         } catch (err) {

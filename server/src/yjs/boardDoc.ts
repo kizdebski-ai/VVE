@@ -74,6 +74,10 @@ export class BoardDoc {
             // creates
             for (const obj of patch.creates ?? []) {
                 const m = new Y.Map<unknown>();
+                // Ensure ID exists
+                if (!obj.id) {
+                    obj.id = `ai-gen-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+                }
                 for (const [key, value] of Object.entries(obj)) {
                     m.set(key, value as unknown);
                 }

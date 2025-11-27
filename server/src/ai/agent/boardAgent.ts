@@ -14,6 +14,11 @@ import {
     toolInsertLatexBox,
     toolTextBlockToLatexUpdate,
     toolPlotFunction,
+    toolConnectObjects,
+    toolLabelObject,
+    toolSetStyle,
+    toolDeleteObjects,
+    toolDrawHandstroke,
 } from '../tools/boardTools';
 import { retrieveBoardDocs } from '../docs/boardCapabilities';
 import { buildAgentBoardContext } from './boardAgentContext';
@@ -28,58 +33,49 @@ type AgentResult = {
 };
 
 const SYSTEM_PROMPT = `
-You are an "AI Board Assistant" for a collaborative math & diagram whiteboard.
+You are an AI Board Assistant for a math & diagram whiteboard.
 
 You receive:
-- a LIGHTWEIGHT JSON boardContext:
-  {
-    "objects": [
-      {
-        "id": string,
-        "type": string,
-        "x": number,
-        "y": number,
-        "width": number,
-        "height": number,
-        "text"?: string,
-        "latex"?: string,
-        "kind": "shape" | "note" | "latex" | "handwriting" | "functionPlot" | "image" | "other"
-      }
-    ],
-    "viewport"?: { "x": number, "y": number, "width": number, "height": number },
-    "totalObjectCount": number
-  }
-- the user's natural language request.
+- a JSON snapshot of the board (objects with id, type, x, y, width, height, text/latex),
+- optional viewport info,
+- a user request.
 
-IMPORTANT BEHAVIOUR:
+GENERAL RULES
+- Prefer using TOOLS instead of describing what you did.
+- Prefer HIGH-LEVEL tools that operate on object ids and relations:
+  * connect_objects  – to draw arrows/vectors between existing objects,
+  * label_object     – to add text/LaTeX labels to objects,
+  * set_style        – to change stroke width / dash / color / arrowStyle,
+  * align_selection_to_grid – to clean up spacing,
+  * plot_function, insert_latex_box etc. for math.
 
-1. IDs and coordinates
-- Treat "id" as STABLE identifiers. Reuse them when updating or deleting objects.
-- Use (x, y, width, height) to place new objects precisely on the board.
-- Prefer relative and structured layouts (aligned, neat, usable for students).
+GEOMETRY
+- Do NOT approximate straight lines with many small points; use line objects.
+- For axes, vectors and connections always prefer connect_objects or line with arrowStyle.
+- Assume grid size is 8px. When giving coordinates in draw_board_patch, keep them multiples of 8.
+- When creating several similar shapes (e.g. wheels, snowman circles), align their centers or edges and then call align_selection_to_grid.
 
-2. Tools
-- Prefer using tools instead of only replying with text.
-- Main tool for drawing/editing is "draw_board_patch":
-  - create new objects through "creates";
-  - update existing objects through "updates";
-  - delete objects through "deletes".
-- Use "insert_latex_box" for standalone math formulas if it is simpler than a manual patch.
-- Use "plot_function" for graphs of functions.
-- Use "align_selection_to_grid" ONLY when user asks to tidy/align elements.
-- Use "simplify_equation_block" and "text_block_to_latex" ONLY when the user asks to simplify or convert to LaTeX. Do NOT run them on everything automatically.
+STATE
+- Trust the JSON snapshot: if an id is not present there, it does not exist on the board.
+- If you want to change an object, prefer updates via draw_board_patch or set_style instead of creating a new object in the same place.
 
-3. Performance & tool usage
-- Group ALL drawing/editing operations into a SINGLE "draw_board_patch" call per response.
-- Avoid long chains of tool calls. Usually you should:
-  - reason about the change,
-  - call "draw_board_patch" once,
-  - then answer with a short explanation for the user.
-- Do not request or expect the full raw board JSON; the provided boardContext is all you need.
+MATH & LATEX
+- For formulas, vector labels etc. use label_object with mode="latex" when attaching to existing objects.
+- Use insert_latex_box only when you need a standalone equation block, not a small label.
 
-4. Style of responses
-- Always produce a short, clear explanation for the user (1–3 sentences).
-- When introducing math, keep LaTeX readable and standard.
+HANDWRITING vs SHAPES
+- Use draw_handstroke when:
+  * the user explicitly asks for "odręczne" writing, underlines, curly braces etc.,
+  * you add emphasis (underlining, circling, crossing out),
+  * you draw quick sketch marks (ticks, corrections, small brackets).
+- Use line / arrows / connect_objects when:
+  * drawing axes, vectors, connectors between blocks,
+  * suggesting precise geometric constructions,
+  * any line that should be perfectly straight or symmetric.
+- Use rectangles / circles / triangles etc. for geometric and diagram shapes, not pen strokes.
+
+Respond to the user with a short explanation (1–3 sentences) and rely on tools for actual modifications.
+CRITICAL: If you do not call a tool, NO changes will be made to the board. You MUST call a tool (like draw_board_patch) to draw or modify anything. Describing it in text is NOT enough.
 `;
 
 export async function runBoardAgent(params: {
@@ -88,12 +84,15 @@ export async function runBoardAgent(params: {
     userMessage: string;
     viewport?: { x: number; y: number; width: number; height: number };
     image?: string;
+    model?: string;
 }): Promise<AgentResult> {
     if (!llmClient) {
         return { reply: 'Board assistant is not configured on the server.' };
     }
 
-    const { doc, snapshot, userMessage, viewport, image } = params;
+    const { doc, snapshot, userMessage, viewport, image, model } = params;
+    const effectiveModel = model || BOARD_AI_MODEL;
+    console.log(`[AI Agent] Using model: ${effectiveModel}`);
 
     // 🔥 LEKKI kontekst zamiast pełnego snapshotu
     const agentContext = buildAgentBoardContext(snapshot, viewport, 64);
@@ -144,7 +143,7 @@ export async function runBoardAgent(params: {
     let first;
     try {
         first = await llmClient.chat.completions.create({
-            model: BOARD_AI_MODEL,
+            model: effectiveModel,
             temperature: 0.1,
             messages: baseMessages,
             tools: boardToolsSchema as ChatCompletionTool[],
@@ -203,6 +202,7 @@ export async function runBoardAgent(params: {
         let args;
         try {
             args = JSON.parse(rawArgs || '{}');
+            console.log(`[AI Agent] Tool Call: ${name}`, JSON.stringify(args).substring(0, 200));
         } catch (e) {
             console.error('[AI] Failed to parse tool arguments:', e);
             toolMessages.push({
@@ -230,7 +230,7 @@ export async function runBoardAgent(params: {
                 try {
                     // Second "mini" call just to turn prompt into BoardObject[]
                     const gen = await llmClient.chat.completions.create({
-                        model: BOARD_AI_MODEL,
+                        model: effectiveModel,
                         temperature: 0.3,
                         messages: [
                             {
@@ -282,7 +282,7 @@ export async function runBoardAgent(params: {
 
                 try {
                     const simp = await llmClient.chat.completions.create({
-                        model: BOARD_AI_MODEL,
+                        model: effectiveModel,
                         temperature: 0.0,
                         messages: [
                             {
@@ -346,7 +346,7 @@ export async function runBoardAgent(params: {
 
                 try {
                     const simp = await llmClient.chat.completions.create({
-                        model: BOARD_AI_MODEL,
+                        model: effectiveModel,
                         temperature: 0.0,
                         messages: [
                             {
@@ -390,6 +390,61 @@ export async function runBoardAgent(params: {
                 break;
             }
 
+            case 'connect_objects': {
+                const patch = toolConnectObjects(doc, snapshot, args);
+                lastPatch = patch;
+                toolMessages.push({
+                    role: 'tool',
+                    tool_call_id: toolCall.id,
+                    content: JSON.stringify({ status: 'ok', patch }),
+                });
+                break;
+            }
+
+            case 'label_object': {
+                const patch = toolLabelObject(doc, snapshot, args);
+                lastPatch = patch;
+                toolMessages.push({
+                    role: 'tool',
+                    tool_call_id: toolCall.id,
+                    content: JSON.stringify({ status: 'ok', patch }),
+                });
+                break;
+            }
+
+            case 'set_style': {
+                const patch = toolSetStyle(doc, snapshot, args);
+                lastPatch = patch;
+                toolMessages.push({
+                    role: 'tool',
+                    tool_call_id: toolCall.id,
+                    content: JSON.stringify({ status: 'ok', patch }),
+                });
+                break;
+            }
+
+            case 'delete_objects': {
+                const patch = toolDeleteObjects(doc, snapshot, args);
+                lastPatch = patch;
+                toolMessages.push({
+                    role: 'tool',
+                    tool_call_id: toolCall.id,
+                    content: JSON.stringify({ status: 'ok', patch }),
+                });
+                break;
+            }
+
+            case 'draw_handstroke': {
+                const patch = toolDrawHandstroke(doc, snapshot, args);
+                lastPatch = patch;
+                toolMessages.push({
+                    role: 'tool',
+                    tool_call_id: toolCall.id,
+                    content: JSON.stringify({ status: 'ok', patch }),
+                });
+                break;
+            }
+
             default:
                 toolMessages.push({
                     role: 'tool',
@@ -403,7 +458,7 @@ export async function runBoardAgent(params: {
     let second;
     try {
         second = await llmClient.chat.completions.create({
-            model: BOARD_AI_MODEL,
+            model: effectiveModel,
             temperature: 0.2,
             messages: [
                 ...baseMessages,

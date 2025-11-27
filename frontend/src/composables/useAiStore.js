@@ -9,7 +9,7 @@ const state = reactive({
 });
 
 export function useAiStore() {
-    const runBoardAssistant = async (boardId, message, viewport, screenshotDataUrl) => {
+    const runBoardAssistant = async (boardId, message, viewport, screenshotDataUrl, model) => {
         if (state.isRunning) return;
         state.isRunning = true;
         state.error = null;
@@ -19,7 +19,7 @@ export function useAiStore() {
             const res = await fetch(`${baseUrl}/api/ai/board-assistant`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ boardId, message, viewport, image: screenshotDataUrl }),
+                body: JSON.stringify({ boardId, message, viewport, image: screenshotDataUrl, model }),
             });
 
             if (!res.ok) {

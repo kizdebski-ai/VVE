@@ -810,6 +810,7 @@ const handleLineResize = (event: MouseEvent) => {
 
 const renderLocalCanvas = () => {
   if (!localCanvas.value || shouldRenderContent.value) return;
+  console.log(`[MovableObject] Rendering local canvas for ${objectData.id} (${objectData.type})`);
   
   const canvas = localCanvas.value;
   const ctx = canvas.getContext('2d');

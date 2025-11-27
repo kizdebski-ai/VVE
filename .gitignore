@@ -75,6 +75,13 @@ README_DEPLOY.md
 temp_websocket_cat.txt
 {*}.png
 
+# === PATCHES ===
+whiteboard_diff_61b38e73_to_HEAD.patch
+smooth_transform_backup.patch
+movableobject_diff_61b38e73_to_HEAD.patch
+
 # === SERVER DATA ===
 server/data/*.json
 server/data/*.bin
+
+update.md

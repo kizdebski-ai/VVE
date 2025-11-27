@@ -101,7 +101,7 @@
         </div>
       </template>
       <canvas
-        v-else
+        v-else-if="objectData.width > 0 && objectData.height > 0"
         ref="localCanvas"
         class="local-canvas"
         style="width: 100%; height: 100%; pointer-events: none;"
@@ -816,6 +816,10 @@ const renderLocalCanvas = () => {
   if (!ctx) return;
 
   const frame = displayFrame.value;
+  
+  // Don't render if frame has zero dimensions (prevents html2canvas errors)
+  if (frame.width <= 0 || frame.height <= 0) return;
+  
   const pixelRatio = window.devicePixelRatio || 1;
   const width = frame.width * props.zoomLevel;
   const height = frame.height * props.zoomLevel;

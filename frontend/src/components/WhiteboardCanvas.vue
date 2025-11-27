@@ -52,6 +52,8 @@
       @request-select="handleObjectSelectionRequest"
       @clone-object="handleCloneObject"
       @update:snap-guides="handleSnapGuidesUpdate"
+      @interaction-start="handleInteractionStart"
+      @interaction-end="handleInteractionEnd"
       :snap-targets="snapTargets"
     ></movable-object>
     
@@ -380,15 +382,57 @@ export default {
         'physicsDataPlot',
         'latex'
     ]);
+
+    const CONTENT_RENDER_TYPES = new Set([
+        'text', 
+        'image', 
+        'latex', 
+        'functionPlot', 
+        'mathFunctionPlot', 
+        'physicsDataPlot', 
+        'coordinateSystem2D', 
+        'coordinateSystem3D'
+    ]);
+
+    const SHAPE_TOOLS = new Set([
+        'rectangle',
+        'diamond',
+        'circle',
+        'square',
+        'triangle',
+        'trapezoid',
+        'parallelogram',
+        'deltoid',
+        'cube',
+        'cuboid',
+        'sphere',
+        'cylinder',
+        'cone',
+        'pyramid',
+        'tetrahedron'
+    ]);
     const movableElements = shallowRef([]);
     const hoveredElementIndex = ref(-1);
     const selectedObjectId = ref(null); // Added for selection state
+    const interactingElementId = ref(null); // Track which element is being interacted with (drag/resize/rotate)
     const spacePanActive = ref(false);
     const connectorsVisible = computed(() => currentTool.value === 'lines' || (isDrawing.value && currentElementPreview.value?.type === 'line'));
     const panStartedWithSpace = ref(false);
     const pinchGesture = ref(null);
     let resizeObserver = null;
     let clipboardFocusHandler = null;
+
+    const handleInteractionStart = (id) => {
+        interactingElementId.value = id;
+        redrawCanvas(); // Force redraw to show ghost
+    };
+
+    const handleInteractionEnd = (id) => {
+        if (interactingElementId.value === id) {
+            interactingElementId.value = null;
+            redrawCanvas(); // Force redraw to hide ghost (if selected) or show normal
+        }
+    };
 
     // Helper module instances
     const yjsConnection = shallowRef(null);
@@ -1184,11 +1228,16 @@ export default {
 
       // Draw visible elements
       strokesToDraw.forEach((element) => {
-        // Skip ONLY complex plot elements that are fully rendered by PlotRenderer
-        // Shapes MUST be drawn on canvas (they have transparent DOM overlays for interaction only)
-        const PLOT_TYPES = new Set(['mathFunctionPlot', 'physicsDataPlot', 'coordinateSystem2D', 'coordinateSystem3D']);
-        if (PLOT_TYPES.has(element.type)) {
-          return;
+        // Skip elements that are currently rendered by the DOM layer (MovableObject)
+        // This prevents double-rendering (e.g. bold text) and ensures complex plots are only in DOM
+        const isContentRenderedInDom = CONTENT_RENDER_TYPES.has(element.type);
+        const hasDomOverlay = ALWAYS_DOM_TYPES.has(element.type) || element.id === selectedObjectId.value;
+        const isInteracting = element.id === interactingElementId.value;
+        
+        // Skip canvas drawing ONLY if it has a DOM overlay AND we are NOT interacting with it.
+        // If we ARE interacting, we want the canvas to draw the "ghost" (original position) while the DOM moves.
+        if (isContentRenderedInDom && hasDomOverlay && !isInteracting) {
+            return;
         }
         
         if (!isElementVisible(element, viewRect)) {
@@ -1412,9 +1461,9 @@ export default {
     // Types that MUST be rendered in DOM (interactive elements with MovableObject overlays)
     // Matching commit 60e77346 - ALL shapes need overlays for interaction
     const ALWAYS_DOM_TYPES = new Set([
-        'text', 
-        'image', 
-        'latex', 
+        // 'text', // Removed to avoid double rendering (Canvas + DOM)
+        // 'image', // Removed to avoid double rendering
+        'latex', // Kept because Canvas does not render latex
         'functionPlot', 
         'mathFunctionPlot', 
         'physicsDataPlot', 
@@ -1527,7 +1576,7 @@ export default {
 
     const teardownYjsConnection = () => {
         if (yDrawings.value) {
-            yDrawings.value.unobserve(handleYjsUpdate);
+            yDrawings.value.unobserveDeep(handleYjsUpdate);
         }
         if (undoManager.value) {
             undoManager.value.off('stack-item-added', updateGlobalState);
@@ -1589,7 +1638,7 @@ export default {
                 throw new Error('Yjs shared drawings array is unavailable.');
             }
 
-            yDrawings.value.observe(handleYjsUpdate);
+            yDrawings.value.observeDeep(handleYjsUpdate);
             setupAwarenessListener(); // Enable cursor tracking and online count
             activeRoomId.value = normalizedRoomId;
             updateLocalScene(); // Initial sync
@@ -2447,33 +2496,14 @@ export default {
     };
 
     // Tools that behave like shapes (use start/end points)
-    const SHAPE_TOOLS = new Set([
-      'rectangle',
-      'circle',
-      'square',
-      'triangle',
-      'trapezoid',
-      'parallelogram',
-      'deltoid',
-      'cube',
-      'cuboid',
-      'sphere',
-      'cylinder',
-      'cone',
-      'pyramid',
-      'tetrahedron',
-    ]);
+    // SHAPE_TOOLS moved to top of setup
+
 
     const LINE_TOOLS = new Set(['line']);
 
     // Elements that render via DOM overlays (MovableObject/PlotRenderer) and should not be drawn twice on the canvas
-    const DOM_RENDERED_TYPES = new Set([
-      'mathFunctionPlot',
-      'physicsDataPlot',
-      'coordinateSystem2D',
-      'coordinateSystem3D',
-      'text' // Render text via MovableObject only to avoid double-drawing
-    ]);
+    // DOM_RENDERED_TYPES removed (unused)
+
 
     const draw = (coords, isShiftPressed, inputTime) => { // Accept shift key state
       if (!isDrawing.value || !currentElementPreview.value) return;
@@ -2836,6 +2866,7 @@ export default {
         updateBindingsForTarget(id);
       }
       debugLog('[WhiteboardCanvas] MovableObject updated:', updatedYMap.toJSON());
+      updateLocalScene(); // Ensure local cache is updated immediately
       redrawCanvas();
     };
 
@@ -4224,6 +4255,8 @@ export default {
 
       // MovableObject handlers & selection state
       handleObjectUpdate,
+      handleInteractionStart,
+      handleInteractionEnd,
       selectObject, 
 
       // Inline Text Editor

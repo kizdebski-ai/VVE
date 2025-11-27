@@ -164,7 +164,10 @@ const emit = defineEmits<{
   (e: 'update:object', object: Y.Map<any>): void;
   (e: 'clone-object', data: any): void;
   (e: 'update:snap-guides', guides: any[]): void;
+  (e: 'update:snap-guides', guides: any[]): void;
   (e: 'double-click', id: string | number): void;
+  (e: 'interaction-start', id: string | number): void;
+  (e: 'interaction-end', id: string | number): void;
 }>();
 
 const CONTENT_RENDER_TYPES = new Set([
@@ -402,18 +405,8 @@ const objectStyle = computed(() => {
   const scaledWidth = Math.max(1, ensureNumber(frame.width, 1) * props.zoomLevel);
   const scaledHeight = Math.max(1, ensureNumber(frame.height, 1) * props.zoomLevel);
 
-  // Shape styling logic
-  const isShape = ['rectangle', 'circle', 'square', 'triangle', 'diamond'].includes(objectData.type);
-  
-  let borderRadius = '0px';
-  if (objectData.type === 'circle') {
-    borderRadius = '50%';
-  } else if (['rectangle', 'square'].includes(objectData.type)) {
-    borderRadius = '4px'; // Slight rounding for rectangles
-  }
-
-  const style: Record<string, any> = {
-    position: 'absolute',
+  return {
+    position: 'absolute' as const,
     left: `${screenX}px`,
     top: `${screenY}px`,
     width: `${scaledWidth}px`,
@@ -422,28 +415,13 @@ const objectStyle = computed(() => {
     cursor: props.interactionEnabled
       ? (isDragging.value ? 'grabbing' : (internalIsSelected.value ? 'grab' : 'pointer'))
       : 'default',
-    pointerEvents: props.interactionEnabled ? 'auto' : 'none',
-    transformOrigin: 'top left',
-    userSelect: 'none',
-    boxSizing: 'border-box',
+    pointerEvents: (props.interactionEnabled ? 'auto' : 'none') as 'auto' | 'none',
+    border: internalIsSelected.value ? '2px solid dodgerblue' : '1px solid transparent',
+    transformOrigin: 'top left', 
+    userSelect: 'none' as const,
+    boxSizing: 'border-box' as const,
     zIndex: internalIsSelected.value ? 10 : 1,
   };
-
-  if (isShape) {
-    // Shapes are hollow by default (transparent fill with colored border)
-    // The 'color' property applies to the border, not the fill
-    style.backgroundColor = 'transparent';
-    style.borderRadius = borderRadius;
-    style.border = `2px solid ${objectData.color || '#000'}`;
-  }
-
-  // Selection overlay (using box-shadow or outline to not mess with dimensions)
-  if (internalIsSelected.value) {
-    style.outline = '2px solid dodgerblue';
-    style.outlineOffset = '2px';
-  }
-
-  return style;
 });
 
 const shouldRenderContent = computed(() => CONTENT_RENDER_TYPES.has(objectData.type));
@@ -549,7 +527,11 @@ const startAngle = ref(0);
 
 const handleLeftClickOnObject = (event: MouseEvent) => {
   if (event.button === 0) { 
-    emit('request-select', objectData.id);
+    if (internalIsSelected.value) {
+        startDrag(event);
+    } else {
+        emit('request-select', objectData.id);
+    }
   }
 };
 
@@ -578,6 +560,7 @@ const startDrag = (event: MouseEvent) => {
   }
 
   isDragging.value = true;
+  emit('interaction-start', objectData.id); // Notify start of interaction
   initialMousePos.x = event.clientX;
   initialMousePos.y = event.clientY;
   initialObjectState.x = objectData.x;
@@ -646,14 +629,7 @@ const handleDrag = (event: MouseEvent) => {
   const deltaX = newX - objectData.x;
   const deltaY = newY - objectData.y;
   
-  props.object.doc?.transact(() => {
-    props.object.set('x', newX);
-    props.object.set('y', newY);
-    shiftStartEndMaps(deltaX, deltaY);
-    shiftPositionMap(deltaX, deltaY);
-    shiftPointsInYMap(deltaX, deltaY);
-  }, 'local-movable-drag');
-
+  // Update local data only - defer Yjs update to stopDrag
   objectData.x = newX; 
   objectData.y = newY;
   emit('update:object', props.object);
@@ -662,9 +638,24 @@ const handleDrag = (event: MouseEvent) => {
 const stopDrag = () => {
   if (isDragging.value) {
     isDragging.value = false;
+    emit('interaction-end', objectData.id); // Notify end of interaction
     emit('update:snap-guides', []); // Clear guides
     document.removeEventListener('mousemove', handleDrag);
     document.removeEventListener('mouseup', stopDrag);
+
+    // Commit changes to Yjs
+    const totalDeltaX = objectData.x - initialObjectState.x;
+    const totalDeltaY = objectData.y - initialObjectState.y;
+
+    props.object.doc?.transact(() => {
+        props.object.set('x', objectData.x);
+        props.object.set('y', objectData.y);
+        shiftStartEndMaps(totalDeltaX, totalDeltaY);
+        shiftPositionMap(totalDeltaX, totalDeltaY);
+        shiftPointsInYMap(totalDeltaX, totalDeltaY);
+    }, 'local-movable-drag');
+    
+    emit('update:object', props.object);
   }
 };
 
@@ -682,6 +673,7 @@ const startRotate = (event: MouseEvent) => {
 
     startAngle.value = Math.atan2(event.clientY - objectCenter.y, event.clientX - objectCenter.x);
     initialObjectState.rotation = objectData.rotation;
+    emit('interaction-start', objectData.id);
     document.addEventListener('mousemove', handleRotate);
     document.addEventListener('mouseup', stopRotate);
 };
@@ -693,10 +685,7 @@ const handleRotate = (event: MouseEvent) => {
     let angleDiffDegrees = angleDiff * (180 / Math.PI);
     let newRotation = initialObjectState.rotation + angleDiffDegrees;
 
-    props.object.doc?.transact(() => {
-      props.object.set('rotation', newRotation);
-    }, 'local-movable-rotate');
-    
+    // Update local data only
     objectData.rotation = newRotation; 
     emit('update:object', props.object);
 };
@@ -704,8 +693,15 @@ const handleRotate = (event: MouseEvent) => {
 const stopRotate = () => {
   if (isRotating.value) {
     isRotating.value = false;
+    emit('interaction-end', objectData.id);
     document.removeEventListener('mousemove', handleRotate);
     document.removeEventListener('mouseup', stopRotate);
+
+    // Commit rotation to Yjs
+    props.object.doc?.transact(() => {
+      props.object.set('rotation', objectData.rotation);
+    }, 'local-movable-rotate');
+    emit('update:object', props.object);
   }
 };
 
@@ -745,6 +741,7 @@ const startResize = (event: MouseEvent, handle: string) => {
     : null;
   initialGeometrySnapshot.points = clonePointsArray(props.object.get('points'));
 
+  emit('interaction-start', objectData.id);
   document.addEventListener('mousemove', handleResize);
   document.addEventListener('mouseup', stopResize);
 };
@@ -762,6 +759,7 @@ const startLineEndpointDrag = (event: MouseEvent, handle: 'start' | 'end') => {
   initialLineSnapshot.startY = Number.isFinite(objectData.startY) ? objectData.startY! : objectData.y;
   initialLineSnapshot.endX = Number.isFinite(objectData.endX) ? objectData.endX! : objectData.x + objectData.width;
   initialLineSnapshot.endY = Number.isFinite(objectData.endY) ? objectData.endY! : objectData.y + objectData.height;
+  emit('interaction-start', objectData.id);
   document.addEventListener('mousemove', handleResize);
   document.addEventListener('mouseup', stopResize);
 };
@@ -798,14 +796,7 @@ const handleLineResize = (event: MouseEvent) => {
   objectData.width = newWidth;
   objectData.height = newHeight;
 
-  props.object.doc?.transact(() => {
-    updateStartEndMaps(newStartX, newStartY, newEndX, newEndY);
-    props.object.set('x', newX);
-    props.object.set('y', newY);
-    props.object.set('width', newWidth);
-    props.object.set('height', newHeight);
-    updatePositionMap(newX, newY);
-  }, 'local-line-resize');
+  // Defer Yjs update to stopResize
 };
 
 const handleResize = (event: MouseEvent) => {
@@ -870,14 +861,8 @@ const handleResize = (event: MouseEvent) => {
   objectData.width = newWidth;
   objectData.height = newHeight;
 
-  props.object.doc?.transact(() => {
-    props.object.set('x', newX);
-    props.object.set('y', newY);
-    props.object.set('width', newWidth);
-    props.object.set('height', newHeight);
-    updatePositionMap(newX, newY);
-
-    if (initialGeometrySnapshot.startRatioX !== null || initialGeometrySnapshot.endRatioX !== null) {
+  // Update derived properties locally
+  if (initialGeometrySnapshot.startRatioX !== null || initialGeometrySnapshot.endRatioX !== null) {
       const ratioStartX = initialGeometrySnapshot.startRatioX ?? 0;
       const ratioEndX = initialGeometrySnapshot.endRatioX ?? 1;
       const ratioStartY = initialGeometrySnapshot.startRatioY ?? 0;
@@ -886,29 +871,29 @@ const handleResize = (event: MouseEvent) => {
       const newEndX = newX + ratioEndX * newWidth;
       const newStartY = newY + ratioStartY * newHeight;
       const newEndY = newY + ratioEndY * newHeight;
-      updateStartEndMaps(newStartX, newStartY, newEndX, newEndY);
-    }
+      
+      objectData.startX = newStartX;
+      objectData.startY = newStartY;
+      objectData.endX = newEndX;
+      objectData.endY = newEndY;
+  }
 
-    const scaledPoints = scalePointsFromSnapshot(initialGeometrySnapshot.points, initialObjectState, {
+  const scaledPoints = scalePointsFromSnapshot(initialGeometrySnapshot.points, initialObjectState, {
       x: newX,
       y: newY,
       width: newWidth,
       height: newHeight,
-    });
-    if (scaledPoints) {
-      props.object.set('points', scaledPoints);
-    }
-
-    if (typeof props.object.get('size') === 'number') {
-      props.object.set('size', Math.max(newWidth, newHeight));
-    }
-  }, 'local-movable-resize');
+  });
+  if (scaledPoints) {
+      objectData.points = scaledPoints;
+  }
 };
 
 
 const stopResize = () => {
   if (!isResizing.value) return;
   isResizing.value = false;
+  emit('interaction-end', objectData.id);
   currentResizeHandle.value = null;
   currentLineHandle.value = null;
 
@@ -920,7 +905,21 @@ const stopResize = () => {
     props.object.set('y', objectData.y);
     props.object.set('width', objectData.width);
     props.object.set('height', objectData.height);
+    updatePositionMap(objectData.x, objectData.y);
+
+    if (objectData.startX !== undefined) {
+        updateStartEndMaps(objectData.startX, objectData.startY!, objectData.endX!, objectData.endY!);
+    }
+
+    if (objectData.points) {
+        props.object.set('points', objectData.points);
+    }
+
+    if (typeof props.object.get('size') === 'number') {
+        props.object.set('size', Math.max(objectData.width, objectData.height));
+    }
   }, 'local-movable-resize');
+  
   emit('update:object', props.object);
 };
 

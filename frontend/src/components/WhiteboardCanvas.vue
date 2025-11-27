@@ -1206,22 +1206,11 @@ export default {
 
       // Draw visible elements
       strokesToDraw.forEach((element) => {
-        // Skip elements that are currently rendered by the DOM layer (MovableObject)
-        // This prevents double-rendering (e.g. bold text) and ensures complex plots are only in DOM
-        const isContentRenderedInDom = CONTENT_RENDER_TYPES.has(element.type);
-        const hasDomOverlay = ALWAYS_DOM_TYPES.has(element.type) || element.id === selectedObjectId.value;
-        const isInteracting = element.id === interactingElementId.value;
-        
-        // Skip canvas drawing if it has a DOM overlay (selected/interacting) AND is a content type rendered in DOM.
-        // This prevents double rendering (bold effect) for Text/Image/Latex.
-        if (isContentRenderedInDom && hasDomOverlay) {
-            return;
-        }
-        
-        // Also skip ALL objects (including shapes) that are selected or being interacted with
-        // because MovableObject now renders them locally during interaction for smooth manipulation
-        if (isInteracting || element.id === selectedObjectId.value) {
-            return;
+        // Skip ONLY complex plot elements that are fully rendered by PlotRenderer
+        // Shapes MUST be drawn on canvas (they have transparent DOM overlays for interaction only)
+        const PLOT_TYPES = new Set(['mathFunctionPlot', 'physicsDataPlot', 'coordinateSystem2D', 'coordinateSystem3D']);
+        if (PLOT_TYPES.has(element.type)) {
+          return;
         }
         
         if (!isElementVisible(element, viewRect)) {

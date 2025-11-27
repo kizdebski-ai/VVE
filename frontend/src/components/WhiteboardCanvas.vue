@@ -1124,33 +1124,6 @@ export default {
             }
             return json;
         });
-            
-            // --- OPTIMIZATION: Path2D Caching ---
-            // This pre-calculates the path for static pen strokes to avoid re-parsing points on every frame.
-            // To DISABLE this optimization: Comment out the 'if' block below.
-            // DISABLED: Caching breaks complex pen styles (calligraphy, etc.) which are not simple lines.
-            /*
-            if (json.type === 'pen' && json.points && json.points.length > 0) {
-                const path = new Path2D();
-                const points = json.points;
-                if (points.length > 0) {
-                    path.moveTo(points[0].x, points[0].y);
-                    // Use quadratic curves for smoother look if needed, or just lines for speed
-                    // For now, simple lines match the original drawElement logic unless smoothing is on
-                    // But drawElement handles smoothing dynamically. 
-                    // If we cache Path2D, we bake the geometry.
-                    // Let's bake the raw points for now.
-                    for (let i = 1; i < points.length; i++) {
-                        path.lineTo(points[i].x, points[i].y);
-                    }
-                }
-                json.cachedPath = path;
-            }
-            */
-            // --- END OPTIMIZATION ---
-            
-            return json;
-        });
         
         // Also sync with helper modules if needed
         if (props.activeFeature === 'styleHandwriting' && handwritingStylerModule.value?.hasStylizedStrokes()) {
@@ -1241,8 +1214,13 @@ export default {
         
         // Skip canvas drawing if it has a DOM overlay (selected/interacting) AND is a content type rendered in DOM.
         // This prevents double rendering (bold effect) for Text/Image/Latex.
-        // For Shapes, isContentRenderedInDom is false, so they are always drawn on canvas.
         if (isContentRenderedInDom && hasDomOverlay) {
+            return;
+        }
+        
+        // Also skip ALL objects (including shapes) that are selected or being interacted with
+        // because MovableObject now renders them locally during interaction for smooth manipulation
+        if (isInteracting || element.id === selectedObjectId.value) {
             return;
         }
         

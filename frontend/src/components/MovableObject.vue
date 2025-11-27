@@ -100,6 +100,12 @@
           Unknown Type: {{ objectData.type }}
         </div>
       </template>
+      <canvas
+        v-else
+        ref="localCanvas"
+        class="local-canvas"
+        style="width: 100%; height: 100%; pointer-events: none;"
+      ></canvas>
 
       <!-- Text Overlay for Shapes -->
       <div v-if="objectData.text && objectData.type !== 'text'"
@@ -120,6 +126,8 @@
 import { ref, computed, onMounted, onUnmounted, reactive, watch } from 'vue';
 import * as Y from 'yjs'; 
 import PlotRenderer from './PlotRenderer.vue';
+import rough from 'roughjs';
+import { drawElement } from '../utils/canvasDrawing';
 import katex from 'katex'; 
 
 interface MovableObjectData {
@@ -281,6 +289,7 @@ const isRotating = ref(false);
 const isResizing = ref(false);
 const currentResizeHandle = ref<string | null>(null);
 const currentLineHandle = ref<'start' | 'end' | null>(null);
+const localCanvas = ref<HTMLCanvasElement | null>(null);
 
 const initialObjectState = reactive({ x: 0, y: 0, width: 0, height: 0, rotation: 0 });
 const initialMousePos = reactive({ x: 0, y: 0 });
@@ -798,6 +807,64 @@ const handleLineResize = (event: MouseEvent) => {
   // Defer Yjs update to stopResize
   emit('update:object', { ...props.object.toJSON(), ...objectData });
 };
+
+const renderLocalCanvas = () => {
+  if (!localCanvas.value || shouldRenderContent.value) return;
+  
+  const canvas = localCanvas.value;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+
+  const frame = displayFrame.value;
+  const pixelRatio = window.devicePixelRatio || 1;
+  const width = frame.width * props.zoomLevel;
+  const height = frame.height * props.zoomLevel;
+
+  // Resize canvas if needed (handling DPI)
+  if (canvas.width !== width * pixelRatio || canvas.height !== height * pixelRatio) {
+    canvas.width = width * pixelRatio;
+    canvas.height = height * pixelRatio;
+  }
+
+  ctx.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+  ctx.clearRect(0, 0, width, height);
+  
+  // Scale for zoom
+  ctx.scale(props.zoomLevel, props.zoomLevel);
+  
+  // Handle padding for lines
+  const padding = frame.padding || 0;
+  ctx.translate(padding, padding);
+
+  // Construct local element relative to (0,0)
+  const localElement = {
+    ...objectData,
+    x: 0,
+    y: 0,
+    start: isLineType.value 
+      ? { x: (objectData.startX || 0) - objectData.x, y: (objectData.startY || 0) - objectData.y }
+      : { x: 0, y: 0 },
+    end: isLineType.value
+      ? { x: (objectData.endX || 0) - objectData.x, y: (objectData.endY || 0) - objectData.y }
+      : { x: objectData.width, y: objectData.height }
+  };
+
+  // Draw
+  drawElement(ctx, localElement, false, 1, undefined, undefined, {}, rough.canvas(canvas) as any);
+};
+
+watch(
+  [() => objectData, () => props.zoomLevel, () => displayFrame.value],
+  () => {
+    // Use requestAnimationFrame to avoid layout thrashing
+    requestAnimationFrame(renderLocalCanvas);
+  },
+  { deep: true, immediate: true }
+);
+
+onMounted(() => {
+  renderLocalCanvas();
+});
 
 const handleResize = (event: MouseEvent) => {
   if (!isResizing.value) return;

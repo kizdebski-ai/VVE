@@ -1184,7 +1184,10 @@ export default {
 
       // Draw visible elements
       strokesToDraw.forEach((element) => {
-        if (DOM_RENDERED_TYPES.has(element.type)) {
+        // Skip ONLY complex plot elements that are fully rendered by PlotRenderer
+        // Shapes MUST be drawn on canvas (they have transparent DOM overlays for interaction only)
+        const PLOT_TYPES = new Set(['mathFunctionPlot', 'physicsDataPlot', 'coordinateSystem2D', 'coordinateSystem3D']);
+        if (PLOT_TYPES.has(element.type)) {
           return;
         }
         
@@ -1406,7 +1409,8 @@ export default {
         if (mathRecognizerModule.value?.enabled) mathRecognizerModule.value.setStrokes(currentStrokes);
     };
 
-    // Types that MUST be rendered in DOM (complex interactive elements)
+    // Types that MUST be rendered in DOM (interactive elements with MovableObject overlays)
+    // Matching commit 60e77346 - ALL shapes need overlays for interaction
     const ALWAYS_DOM_TYPES = new Set([
         'text', 
         'image', 
@@ -1416,13 +1420,23 @@ export default {
         'physicsDataPlot', 
         'coordinateSystem2D', 
         'coordinateSystem3D',
-        // Basic shapes must also be DOM elements to be visible/interactive
+        // ALL shapes - they are drawn on canvas but need DOM overlays for interaction
         'rectangle',
         'circle',
         'square',
         'triangle',
         'diamond',
-        'line' 
+        'trapezoid',
+        'parallelogram',
+        'deltoid',
+        'cube',
+        'cuboid',
+        'sphere',
+        'cylinder',
+        'cone',
+        'pyramid',
+        'tetrahedron',
+        'line'
     ]);
 
     const refreshMovableElements = () => {

@@ -65,17 +65,63 @@ Building a whiteboard that feels "native" while supporting real-time multiplayer
 **The Challenge:** Standard chatbots are passive; they can talk but cannot *do*. A true whiteboard assistant needs to act—moving objects, fixing messy drawings, and generating content directly on the canvas.
 
 **The Solution:** We built a **Multimodal Agentic System** powered by RAG and Tool Use.
+
+![AI Agent Drawing Capability](assets/ai-snowman-example.png)
+*Figure: The AI Agent autonomously drawing a snowman using primitive shapes and the `draw_handstroke` tool, demonstrating spatial awareness and creativity.*
+
 *   **Vision & Context:** When a user asks a question, we capture a high-resolution viewport snapshot and combine it with a JSON representation of the board state. This allows the AI (xAI Grok Vision / DeepSeek) to "see" and "read" the diagram simultaneously.
-*   **Agentic Tool Use:** The AI isn't just a chatbot; it has direct access to board manipulation tools, prioritizing scientific and creative tasks:
-    *   **Math & Science Visualization**:
-        *   **`insert_latex_box`**: Generates complex mathematical formulas (LaTeX) rendered beautifully on the board.
-        *   **`plot_function`**: Instantly plots mathematical functions (e.g., `sin(x)/x`) and data visualizations directly on the canvas.
-    *   **Context-Aware Drawing**:
-        *   **`draw_board_patch`**: The agent can draw shapes, annotations, and visual explanations *in-place*, respecting the user's existing layout.
-    *   **Smart Refinement & Utilities**:
-        *   **`simplify_equation_block`**: Converts messy handwriting into clean, editable LaTeX equations via OCR.
-        *   **`align_selection_to_grid`** & **`generate_diagram_from_prompt`**: Helper tools for organizing layouts and generating flowcharts.
-*   **RAG (Retrieval-Augmented Generation):** To ensure the agent uses these tools correctly, we dynamically inject relevant documentation and schema definitions into its context window, allowing it to adapt to new capabilities without retraining.
+*   **Agentic Tool Use:** The AI isn't just a chatbot; it has direct access to board manipulation tools:
+    *   **Creative & Freehand**:
+        *   **`draw_handstroke`**: Allows the agent to draw natural, hand-written strokes (as seen in the snowman example).
+        *   **`draw_board_patch`**: General-purpose tool for creating shapes and annotations.
+    *   **Structure & Logic**:
+        *   **`connect_objects`**: Intelligently connects shapes with arrows, understanding anchors and layout.
+        *   **`label_object`**: Adds semantic labels (Text or LaTeX) to existing objects.
+    *   **Math & Science**:
+        *   **`insert_latex_box`** & **`plot_function`**: For rendering complex formulas and data plots.
+    *   **Editing & Refinement**:
+        *   **`set_style`**: Batch updates styles (color, stroke, etc.).
+        *   **`delete_objects`**: Removes unwanted elements.
+        *   **`align_selection_to_grid`**: Organizes messy layouts.
+
+*   **RAG (Retrieval-Augmented Generation):** To ensure the agent uses these tools correctly, we dynamically inject relevant documentation and schema definitions into its context window.
+
+#### Agentic RAG Architecture
+
+```mermaid
+graph TD
+    subgraph Client ["Frontend"]
+        User[User Input]
+        Snapshot[Viewport Snapshot]
+    end
+
+    subgraph Server ["Backend"]
+        Orchestrator[Agent Orchestrator]
+        Tools[Tool Executor]
+    end
+
+    subgraph AI ["AI Brain"]
+        LLM[LLM (Grok/DeepSeek)]
+        Context[Context Window]
+    end
+
+    subgraph Knowledge ["RAG Knowledge Base"]
+        Docs[Tool Definitions]
+        Schemas[Board Schema]
+        Examples[Few-Shot Examples]
+    end
+
+    User --> Orchestrator
+    Snapshot --> Orchestrator
+    
+    Orchestrator --> Context
+    Knowledge -->|Injects| Context
+    
+    Context --> LLM
+    LLM -->|Tool Calls| Orchestrator
+    Orchestrator -->|Execute| Tools
+    Tools -->|Update Board| ServerState[Yjs Doc]
+```
 
 ## Tech Stack
 

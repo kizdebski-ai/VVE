@@ -1117,7 +1117,9 @@ export default {
             return;
         }
         // Map Yjs elements to local plain objects once
-        localScene = yDrawings.value.toArray().map(map => {
+        const rawArray = yDrawings.value.toArray();
+        console.log(`[WhiteboardCanvas] updateLocalScene: processing ${rawArray.length} elements`);
+        localScene = rawArray.map(map => {
             const json = map.toJSON();
             if (overrideObject && json.id === overrideObject.id) {
                 return { ...json, ...overrideObject };
@@ -1192,6 +1194,7 @@ export default {
 
       // Determine strokes to draw
       let strokesToDraw = localScene;
+      console.log(`[WhiteboardCanvas] redrawStatic: drawing ${strokesToDraw.length} strokes`);
       if (props.activeFeature === 'styleHandwriting' && handwritingStylerModule.value?.hasStylizedStrokes()) {
           strokesToDraw = handwritingStylerModule.value.getStrokes();
       }
@@ -1206,11 +1209,22 @@ export default {
 
       // Draw visible elements
       strokesToDraw.forEach((element) => {
-        // Skip ONLY complex plot elements that are fully rendered by PlotRenderer
-        // Shapes MUST be drawn on canvas (they have transparent DOM overlays for interaction only)
-        const PLOT_TYPES = new Set(['mathFunctionPlot', 'physicsDataPlot', 'coordinateSystem2D', 'coordinateSystem3D']);
-        if (PLOT_TYPES.has(element.type)) {
-          return;
+        // Skip elements that are currently rendered by the DOM layer (MovableObject)
+        // This prevents double-rendering (e.g. bold text) and ensures complex plots are only in DOM
+        const isContentRenderedInDom = CONTENT_RENDER_TYPES.has(element.type);
+        const hasDomOverlay = ALWAYS_DOM_TYPES.has(element.type) || element.id === selectedObjectId.value;
+        const isInteracting = element.id === interactingElementId.value;
+        
+        // Skip canvas drawing if it has a DOM overlay (MovableObject)
+        // This prevents double rendering since MovableObject renders it (either via content or local canvas)
+        if (hasDomOverlay) {
+            return;
+        }
+        
+        // Also skip ALL objects (including shapes) that are selected or being interacted with
+        // because MovableObject now renders them locally during interaction for smooth manipulation
+        if (isInteracting || element.id === selectedObjectId.value) {
+            return;
         }
         
         if (!isElementVisible(element, viewRect)) {
@@ -1569,7 +1583,7 @@ export default {
     };
 
     const handleYjsUpdate = (event) => {
-        // debugLog('[WhiteboardCanvas] Yjs update received');
+        console.log('[WhiteboardCanvas] Yjs update received', event);
         updateLocalScene(); // Sync local cache
         refreshMovableElements();
         syncModulesWithYjs();

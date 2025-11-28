@@ -414,18 +414,8 @@ const objectStyle = computed(() => {
   const scaledWidth = Math.max(1, ensureNumber(frame.width, 1) * props.zoomLevel);
   const scaledHeight = Math.max(1, ensureNumber(frame.height, 1) * props.zoomLevel);
 
-  // Shape styling logic
-  const isShape = ['rectangle', 'circle', 'square', 'triangle', 'diamond'].includes(objectData.type);
-  
-  let borderRadius = '0px';
-  if (objectData.type === 'circle') {
-    borderRadius = '50%';
-  } else if (['rectangle', 'square'].includes(objectData.type)) {
-    borderRadius = '4px'; // Slight rounding for rectangles
-  }
-
-  const style: Record<string, any> = {
-    position: 'absolute',
+  return {
+    position: 'absolute' as const,
     left: `${screenX}px`,
     top: `${screenY}px`,
     width: `${scaledWidth}px`,
@@ -441,22 +431,6 @@ const objectStyle = computed(() => {
     boxSizing: 'border-box' as const,
     zIndex: internalIsSelected.value ? 10 : 1,
   };
-
-  if (isShape) {
-    // Shapes are hollow by default (transparent fill with colored border)
-    // The 'color' property applies to the border, not the fill
-    style.backgroundColor = 'transparent';
-    style.borderRadius = borderRadius;
-    style.border = `2px solid ${objectData.color || '#000'}`;
-  }
-
-  // Selection overlay (using box-shadow or outline to not mess with dimensions)
-  if (internalIsSelected.value) {
-    style.outline = '2px solid dodgerblue';
-    style.outlineOffset = '2px';
-  }
-
-  return style;
 });
 
 const shouldRenderContent = computed(() => CONTENT_RENDER_TYPES.has(objectData.type));
@@ -836,6 +810,7 @@ const handleLineResize = (event: MouseEvent) => {
 
 const renderLocalCanvas = () => {
   if (!localCanvas.value || shouldRenderContent.value) return;
+  console.log(`[MovableObject] Rendering local canvas for ${objectData.id} (${objectData.type})`);
   
   const canvas = localCanvas.value;
   const ctx = canvas.getContext('2d');

@@ -49,7 +49,7 @@ export const config = {
   ocrModel: process.env.OCR_MODEL || 'nvidia/nemotron-nano-12b-v2-vl:free',
   solverModel: process.env.SOLVER_MODEL || 'deepseek/deepseek-r1:free',
   // AI Board Assistant
-  aiModel: process.env.BOARD_AI_MODEL || 'x-ai/grok-4.1-fast:free', // Default to free Grok model
+  aiModel: process.env.BOARD_AI_MODEL || 'openai/gpt-oss-120b:exacto', // Default to free Grok model
   aiBaseUrl: 'https://openrouter.ai/api/v1',
   aiBoardAssistantEnabled: !!process.env.OPENROUTER_API_KEY && process.env.AI_BOARD_ASSISTANT_ENABLED !== 'false'
 };

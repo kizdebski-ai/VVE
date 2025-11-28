@@ -25,28 +25,16 @@ export const boardToolsSchema: ChatCompletionTool[] = [
             },
         },
     },
-    {
-        type: 'function',
-        function: {
-            name: 'generate_diagram_from_prompt',
-            description:
-                'Generate simple block diagram / flowchart for the given prompt. Returns new nodes in board format.',
-            parameters: {
-                type: 'object',
-                properties: {
-                    prompt: { type: 'string' },
-                    centerX: { type: 'number', description: 'Center X of generated diagram.' },
-                    centerY: { type: 'number', description: 'Center Y of generated diagram.' },
-                },
-                required: ['prompt'],
-            },
-        },
-    },
+
+    // UWAGA: generate_diagram_from_prompt celowo usunięte z listy tools,
+    // żeby nie odpalać drugiego calla do LLM.
+
     {
         type: 'function',
         function: {
             name: 'simplify_equation_block',
-            description: 'Take a raw text block (e.g. handwriting OCR) and replace it with a simplified LaTeX version.',
+            description:
+                'Take a raw text block (e.g. handwriting OCR) and replace it with a simplified LaTeX version.',
             parameters: {
                 type: 'object',
                 properties: {
@@ -59,12 +47,13 @@ export const boardToolsSchema: ChatCompletionTool[] = [
             },
         },
     },
+
     {
         type: 'function',
         function: {
             name: 'draw_board_patch',
             description:
-                'Create, update or delete board objects directly. Use this as the main way to draw/edit on the board.',
+                'Create or update board objects directly. Use ONLY when higher-level tools (connect_objects, label_object, set_style, draw_handstroke, etc.) are not sufficient.',
             parameters: {
                 type: 'object',
                 properties: {
@@ -77,7 +66,7 @@ export const boardToolsSchema: ChatCompletionTool[] = [
                                 id: {
                                     type: 'string',
                                     description:
-                                        'Stable unique ID, e.g. "ai-note-1". Reuse it later to edit the same object.',
+                                        'Unique ID, e.g. "ai-rect-1". If omitted, server will generate one.',
                                 },
                                 type: {
                                     type: 'string',
@@ -87,38 +76,60 @@ export const boardToolsSchema: ChatCompletionTool[] = [
                                         'line',
                                         'text',
                                         'latex',
-                                        'functionPlot',
-                                        'path',
                                         'image',
                                         'triangle',
                                         'diamond',
-                                        'coordinateSystem2D',
-                                        'mathFunctionPlot',
-                                        'physicsDataPlot',
-                                        'coordinateSystem3D',
-                                        'cube',
-                                        'cuboid',
-                                        'sphere',
-                                        'cylinder',
-                                        'cone',
-                                        'pyramid',
-                                        'tetrahedron',
+                                        'pen',
                                     ],
                                 },
                                 x: { type: 'number' },
                                 y: { type: 'number' },
                                 width: { type: 'number' },
                                 height: { type: 'number' },
+                                rotation: { type: 'number' },
+
                                 text: { type: 'string' },
                                 latex: { type: 'string' },
+
+                                // Kolor / styl
                                 color: {
                                     type: 'string',
-                                    description: 'Hex color code (e.g. "#ff0000").',
+                                    description: 'Stroke color (hex), e.g. "#000000".',
                                 },
-                                rotation: {
+                                fillColor: {
+                                    type: 'string',
+                                    description: 'Fill color (hex).',
+                                },
+                                lineWidth: {
                                     type: 'number',
-                                    description: 'Rotation in degrees.',
+                                    description: 'Stroke width in px.',
                                 },
+                                lineStyle: {
+                                    type: 'string',
+                                    enum: ['solid', 'dashed', 'dotted'],
+                                },
+                                arrowStyle: {
+                                    type: 'string',
+                                    enum: ['none', 'start', 'end', 'both'],
+                                },
+
+                                // Dla linii / strzałek
+                                start: {
+                                    type: 'object',
+                                    properties: {
+                                        x: { type: 'number' },
+                                        y: { type: 'number' },
+                                    },
+                                },
+                                end: {
+                                    type: 'object',
+                                    properties: {
+                                        x: { type: 'number' },
+                                        y: { type: 'number' },
+                                    },
+                                },
+
+                                // Dla pióra / ścieżek
                                 points: {
                                     type: 'array',
                                     items: {
@@ -129,14 +140,10 @@ export const boardToolsSchema: ChatCompletionTool[] = [
                                         },
                                     },
                                 },
-                                // dodatkowe pole na „rodzaj” obiektu jeżeli chcesz
-                                kind: {
-                                    type: 'string',
-                                    description:
-                                        'Optional semantic kind: "note", "heading", "example", etc.',
-                                },
                             },
-                            required: ['id', 'type', 'x', 'y'],
+                            // ID nie jest już wymagane – serwer potrafi je wygenerować.
+                            required: ['type', 'x', 'y'],
+                            additionalProperties: true,
                         },
                     },
                     updates: {
@@ -148,7 +155,8 @@ export const boardToolsSchema: ChatCompletionTool[] = [
                                 props: {
                                     type: 'object',
                                     description:
-                                        'Properties to update (x, y, width, height, text, latex, color, etc.)',
+                                        'Properties to update (x, y, width, height, style, text, latex, ...).',
+                                    additionalProperties: true,
                                 },
                             },
                             required: ['id', 'props'],
@@ -157,44 +165,237 @@ export const boardToolsSchema: ChatCompletionTool[] = [
                     deletes: {
                         type: 'array',
                         items: { type: 'string' },
-                        description: 'IDs of objects to delete from the board.',
+                        description: 'Ids of objects to delete as part of this patch.',
                     },
                 },
+                additionalProperties: false,
             },
         },
     },
+
+    {
+        type: 'function',
+        function: {
+            name: 'connect_objects',
+            description:
+                'Draw an arrow (vector) from one existing object to another using their bounding-box centers.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    fromId: { type: 'string', description: 'Source object id.' },
+                    toId: { type: 'string', description: 'Target object id.' },
+                    style: {
+                        type: 'object',
+                        description: 'Optional style overrides.',
+                        properties: {
+                            lineWidth: {
+                                type: 'number',
+                                description: 'Stroke width in px (1–8).',
+                            },
+                            lineStyle: {
+                                type: 'string',
+                                enum: ['solid', 'dashed', 'dotted'],
+                            },
+                            arrowHead: {
+                                type: 'string',
+                                enum: ['end', 'both'],
+                                description: 'Arrowhead direction (default "end").',
+                            },
+                            color: {
+                                type: 'string',
+                                description: 'Stroke color hex, e.g. "#000000".',
+                            },
+                        },
+                        additionalProperties: false,
+                    },
+                },
+                required: ['fromId', 'toId'],
+                additionalProperties: false,
+            },
+        },
+    },
+
+    {
+        type: 'function',
+        function: {
+            name: 'label_object',
+            description:
+                'Create a short label (plain text or LaTeX) attached to an existing object (top/bottom/left/right/center).',
+            parameters: {
+                type: 'object',
+                properties: {
+                    objectId: { type: 'string' },
+                    text: {
+                        type: 'string',
+                        description:
+                            'Label content. For LaTeX do NOT add $ or \\( \\).',
+                    },
+                    mode: {
+                        type: 'string',
+                        enum: ['plain', 'latex'],
+                        description: 'Render as normal text or LaTeX block.',
+                        default: 'plain',
+                    },
+                    position: {
+                        type: 'string',
+                        enum: ['top', 'bottom', 'left', 'right', 'center'],
+                        default: 'top',
+                    },
+                },
+                required: ['objectId', 'text'],
+                additionalProperties: false,
+            },
+        },
+    },
+
+    {
+        type: 'function',
+        function: {
+            name: 'set_style',
+            description:
+                'Update visual style of one or more objects: stroke width, dash, color, arrowStyle etc.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    ids: {
+                        type: 'array',
+                        items: { type: 'string' },
+                        description: 'Object ids to update.',
+                    },
+                    props: {
+                        type: 'object',
+                        description:
+                            'Style props to apply to all given ids. Non-style fields are allowed but discouraged.',
+                        properties: {
+                            lineWidth: { type: 'number' },
+                            lineStyle: {
+                                type: 'string',
+                                enum: ['solid', 'dashed', 'dotted'],
+                            },
+                            color: { type: 'string' },
+                            fillColor: { type: 'string' },
+                            arrowStyle: {
+                                type: 'string',
+                                enum: ['none', 'start', 'end', 'both'],
+                            },
+                        },
+                        additionalProperties: true,
+                    },
+                },
+                required: ['ids', 'props'],
+                additionalProperties: false,
+            },
+        },
+    },
+
+    {
+        type: 'function',
+        function: {
+            name: 'delete_objects',
+            description:
+                'Delete one or more objects from the board by their ids.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    ids: {
+                        type: 'array',
+                        items: { type: 'string' },
+                    },
+                },
+                required: ['ids'],
+                additionalProperties: false,
+            },
+        },
+    },
+
+    {
+        type: 'function',
+        function: {
+            name: 'draw_handstroke',
+            description:
+                'Draw a freehand pen stroke (handwriting style). The model gives only key points, server generates smooth stroke.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    points: {
+                        type: 'array',
+                        description:
+                            '2–8 key points of the stroke in board coordinates. Server will interpolate and smooth.',
+                        items: {
+                            type: 'object',
+                            properties: {
+                                x: { type: 'number' },
+                                y: { type: 'number' },
+                            },
+                            required: ['x', 'y'],
+                            additionalProperties: false,
+                        },
+                        minItems: 2,
+                        maxItems: 8,
+                    },
+                    style: {
+                        type: 'string',
+                        enum: ['teacher_marker', 'student_pen', 'sketch'],
+                        description:
+                            'Preset of pen style / smoothing / width jitter. Default "teacher_marker".',
+                    },
+                    color: {
+                        type: 'string',
+                        description:
+                            'Stroke color (hex). Default: current board color.',
+                    },
+                },
+                required: ['points'],
+                additionalProperties: false,
+            },
+        },
+    },
+
     {
         type: 'function',
         function: {
             name: 'insert_latex_box',
-            description: 'Insert a new LaTeX equation block at a specific position.',
+            description:
+                'Insert a new LaTeX equation block at a specific position.',
             parameters: {
                 type: 'object',
                 properties: {
-                    latex: { type: 'string', description: 'The LaTeX code to render. Do NOT include delimiters like $ or \\(.' },
+                    latex: {
+                        type: 'string',
+                        description:
+                            'The LaTeX code to render. Do NOT include delimiters like $ or \\(.',
+                    },
                     x: { type: 'number' },
                     y: { type: 'number' },
                     width: { type: 'number' },
                     height: { type: 'number' },
                 },
                 required: ['latex'],
+                additionalProperties: false,
             },
         },
     },
+
     {
         type: 'function',
         function: {
             name: 'text_block_to_latex',
-            description: 'Convert an existing text object into a rendered LaTeX block.',
+            description:
+                'Convert an existing text object into a rendered LaTeX block.',
             parameters: {
                 type: 'object',
                 properties: {
-                    objectId: { type: 'string', description: 'ID of the text object to convert.' },
+                    objectId: {
+                        type: 'string',
+                        description: 'ID of the text object to convert.',
+                    },
                 },
                 required: ['objectId'],
+                additionalProperties: false,
             },
         },
     },
+
     {
         type: 'function',
         function: {
@@ -203,13 +404,30 @@ export const boardToolsSchema: ChatCompletionTool[] = [
             parameters: {
                 type: 'object',
                 properties: {
-                    expression: { type: 'string', description: 'Math expression of x, e.g. "sin(x)" or "x^2".' },
-                    xMin: { type: 'number', description: 'Domain start (default -10).' },
-                    xMax: { type: 'number', description: 'Domain end (default 10).' },
-                    x: { type: 'number', description: 'Position X.' },
-                    y: { type: 'number', description: 'Position Y.' },
+                    expression: {
+                        type: 'string',
+                        description:
+                            'Math expression of x, e.g. "sin(x)" or "x^2".',
+                    },
+                    xMin: {
+                        type: 'number',
+                        description: 'Domain start (default -10).',
+                    },
+                    xMax: {
+                        type: 'number',
+                        description: 'Domain end (default 10).',
+                    },
+                    x: {
+                        type: 'number',
+                        description: 'Position X of the plot (optional).',
+                    },
+                    y: {
+                        type: 'number',
+                        description: 'Position Y of the plot (optional).',
+                    },
                 },
                 required: ['expression'],
+                additionalProperties: false,
             },
         },
     },

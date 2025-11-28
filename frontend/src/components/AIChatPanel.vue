@@ -15,15 +15,15 @@
     <div v-if="!isMinimized" class="chat-body">
       <!-- Tabs -->
       <div class="tabs">
-        <button 
-          class="tab-btn" 
+        <button
+          class="tab-btn"
           :class="{ active: activeTab === 'chat' }"
           @click="activeTab = 'chat'"
         >
           Chat
         </button>
-        <button 
-          class="tab-btn" 
+        <button
+          class="tab-btn"
           :class="{ active: activeTab === 'agent' }"
           @click="activeTab = 'agent'"
         >
@@ -39,7 +39,12 @@
             <p class="sub-text">Pierwsza wiadomość użyje screena tablicy.</p>
           </div>
 
-          <div v-for="(msg, index) in messages" :key="index" class="message" :class="msg.role">
+          <div
+            v-for="(msg, index) in messages"
+            :key="index"
+            class="message"
+            :class="msg.role"
+          >
             <div class="message-content">
               <div v-if="msg.image" class="message-image">
                 <img :src="msg.image" alt="Snapshot" />
@@ -57,7 +62,8 @@
 
         <div class="chat-input-area">
           <label class="screenshot-toggle">
-            <input type="checkbox" v-model="includeScreenshot" /> Dołącz screenshot tablicy
+            <input type="checkbox" v-model="includeScreenshot" />
+            Dołącz screenshot tablicy
           </label>
 
           <div v-if="pendingSnapshot" class="snapshot-preview">
@@ -66,7 +72,12 @@
           </div>
 
           <div class="input-row">
-            <button class="snap-btn" @click="captureSnapshot" :disabled="isLoading" title="Zrób screenshot">
+            <button
+              class="snap-btn"
+              @click="captureSnapshot"
+              :disabled="isLoading"
+              title="Zrób screenshot"
+            >
               <component :is="CameraIcon" class="icon" />
             </button>
 
@@ -79,7 +90,8 @@
                 ref="inputRef"
               ></textarea>
               <div v-if="suggestionTail" class="ghost" aria-hidden="true">
-                <span>{{ userInput }}</span><span class="ghost-tail">{{ suggestionTail }}</span>
+                <span>{{ userInput }}</span
+                ><span class="ghost-tail">{{ suggestionTail }}</span>
               </div>
             </div>
 
@@ -100,7 +112,7 @@
           <div v-if="agentLastReply" class="agent-reply">
             <div class="reply-bubble" v-html="renderMarkdown(agentLastReply)"></div>
           </div>
-          
+
           <div v-if="agentLoading" class="message assistant loading">
             <div class="typing-indicator">
               <span></span><span></span><span></span>
@@ -112,20 +124,45 @@
           </div>
 
           <div class="quick-actions">
-            <button @click="triggerAgentAction('Align selected elements to grid')" :disabled="agentLoading">
+            <button
+              @click="triggerAgentAction('Align selected elements to grid')"
+              :disabled="agentLoading"
+            >
               Align to Grid
             </button>
-            <button @click="triggerAgentAction('Clean up handwriting')" :disabled="agentLoading">
+            <button
+              @click="triggerAgentAction('Clean up handwriting')"
+              :disabled="agentLoading"
+            >
               Clean Handwriting
             </button>
-            <button @click="triggerAgentAction('Simplify selected equation')" :disabled="agentLoading">
+            <button
+              @click="triggerAgentAction('Simplify selected equation')"
+              :disabled="agentLoading"
+            >
               Simplify Equation
-            
             </button>
           </div>
         </div>
 
         <div class="chat-input-area">
+          <div class="model-selector">
+            <select v-model="selectedModel">
+              <option value="x-ai/grok-4.1-fast:free">Grok 4.1 Fast (Free)</option>
+              <option value="kwaipilot/kat-coder-pro:free">Kat Coder Pro (Free)</option>
+              <option value="openai/gpt-oss-120b:exacto">GPT-120B (Exacto)</option>
+              <option value="qwen/qwen3-coder:free">Qwen 3 Coder (Free)</option>
+              <option value="z-ai/glm-4.5-air:free">GLM 4.5 Air (Free)</option>
+            </select>
+            <label
+              class="screenshot-toggle-mini"
+              title="Dołącz widok tablicy (dla modeli wizyjnych)"
+            >
+              <input type="checkbox" v-model="includeScreenshotAgent" />
+              <component :is="ImageIcon" class="icon-small" />
+            </label>
+          </div>
+
           <div class="input-row">
             <div class="input-wrapper">
               <textarea
@@ -145,16 +182,20 @@
           </div>
         </div>
       </div>
-
     </div>
   </div>
 </template>
 
-<!-- ... script section remains same ... -->
 <script setup>
-// ... (script content same as original, omitted for brevity as replace tool handles context) ...
 import { ref, nextTick, onMounted, computed } from 'vue';
-import { Sparkles, Minus, Maximize2, Camera, Send } from 'lucide-vue-next';
+import {
+  Sparkles,
+  Minus,
+  Maximize2,
+  Camera,
+  Send,
+  Image as ImageIconRaw,
+} from 'lucide-vue-next';
 import html2canvas from 'html2canvas';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
@@ -163,7 +204,8 @@ import { resolveBackendBaseUrl } from '../services/backendUrl';
 import { useAiStore } from '../composables/useAiStore';
 
 const API_BASE = resolveBackendBaseUrl();
-const REQUEST_TIMEOUT_MS = Number(import.meta?.env?.VITE_AI_CHAT_TIMEOUT_MS) || 60000;
+const REQUEST_TIMEOUT_MS =
+  Number(import.meta?.env?.VITE_AI_CHAT_TIMEOUT_MS) || 60000;
 
 // Icons
 const SparklesIcon = Sparkles;
@@ -171,6 +213,7 @@ const MinimizeIcon = Minus;
 const MaximizeIcon = Maximize2;
 const CameraIcon = Camera;
 const SendIcon = Send;
+const ImageIcon = ImageIconRaw;
 
 const props = defineProps({
   whiteboardRef: {
@@ -186,7 +229,7 @@ const props = defineProps({
 const isMinimized = ref(false);
 const activeTab = ref('chat'); // 'chat' | 'agent'
 
-// Chat State
+// Chat state
 const isLoading = ref(false);
 const includeScreenshot = ref(true);
 const messages = ref([]);
@@ -198,9 +241,11 @@ const messagesContainer = ref(null);
 const inputRef = ref(null);
 const sentIntro = ref(false);
 
-// Agent State
+// Agent state
 const agentInput = ref('');
-// We need boardId.
+const selectedModel = ref('x-ai/grok-4.1-fast:free');
+const includeScreenshotAgent = ref(true);
+
 const boardId = computed(() => props.roomId || '');
 const { state: aiState, runBoardAssistant } = useAiStore();
 const agentLoading = computed(() => aiState.isRunning);
@@ -213,31 +258,31 @@ const toggleMinimize = () => {
   }
 };
 
-// --- Chat Logic ---
+// --- Chat logic ---
 
 const renderMarkdown = (text) => {
   if (!text) return '';
-  
+
   let withLatex = text;
 
-  // Handle \[ ... \] (Display mode)
-  withLatex = withLatex.replace(/\\\[([\s\S]+?)\\\]/g, (_, expr) => 
-    katex.renderToString(expr, { displayMode: true, throwOnError: false })
+  // \[ ... \] display
+  withLatex = withLatex.replace(/\\\[([\s\S]+?)\\\]/g, (_, expr) =>
+    katex.renderToString(expr, { displayMode: true, throwOnError: false }),
   );
 
-  // Handle \( ... \) (Inline mode)
-  withLatex = withLatex.replace(/\\\(([\s\S]+?)\\\)/g, (_, expr) => 
-    katex.renderToString(expr, { displayMode: false, throwOnError: false })
+  // \( ... \) inline
+  withLatex = withLatex.replace(/\\\(([\s\S]+?)\\\)/g, (_, expr) =>
+    katex.renderToString(expr, { displayMode: false, throwOnError: false }),
   );
 
-  // Handle $$ ... $$ (Display mode)
-  withLatex = withLatex.replace(/\$\$([\s\S]+?)\$\$/g, (_, expr) => 
-    katex.renderToString(expr, { displayMode: true, throwOnError: false })
+  // $$ ... $$ display
+  withLatex = withLatex.replace(/\$\$([\s\S]+?)\$\$/g, (_, expr) =>
+    katex.renderToString(expr, { displayMode: true, throwOnError: false }),
   );
 
-  // Handle $ ... $ (Inline mode)
-  withLatex = withLatex.replace(/\$([^$\n]+?)\$/g, (_, expr) => 
-    katex.renderToString(expr, { displayMode: false, throwOnError: false })
+  // $ ... $ inline
+  withLatex = withLatex.replace(/\$([^$\n]+?)\$/g, (_, expr) =>
+    katex.renderToString(expr, { displayMode: false, throwOnError: false }),
   );
 
   const html = marked.parse(withLatex);
@@ -253,13 +298,18 @@ const scrollToBottom = () => {
 };
 
 const captureSnapshot = async () => {
-  const targetEl = props.whiteboardRef?.containerRef || document.querySelector('.whiteboard-container');
+  const targetEl =
+    props.whiteboardRef?.containerRef ||
+    document.querySelector('.whiteboard-container');
   if (!targetEl) return null;
+
   try {
     const panel = document.querySelector('.ai-chat-panel');
     if (panel) panel.style.opacity = '0';
+
     const canvas = await html2canvas(targetEl, { useCORS: true, scale: 1 });
     if (panel) panel.style.opacity = '1';
+
     const dataUrl = canvas.toDataURL('image/png');
     pendingSnapshot.value = dataUrl;
     return dataUrl;
@@ -269,11 +319,10 @@ const captureSnapshot = async () => {
   }
 };
 
-const buildHistory = () => {
-  return messages.value
+const buildHistory = () =>
+  messages.value
     .filter((m) => m.role === 'user' || m.role === 'assistant')
     .map((m) => ({ role: m.role, content: m.content }));
-};
 
 const updateSuggestion = (answer) => {
   assistantSuggestion.value = answer || '';
@@ -288,6 +337,7 @@ const updateSuggestion = (answer) => {
 const fetchWithTimeout = async (url, options = {}, timeout = REQUEST_TIMEOUT_MS) => {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeout);
+
   try {
     const response = await fetch(url, { ...options, signal: controller.signal });
     return response;
@@ -303,7 +353,11 @@ const sendMessage = async (mode = 'normal_chat') => {
   if (!text && !pendingSnapshot.value && mode === 'normal_chat') return;
 
   if (mode === 'normal_chat') {
-    messages.value.push({ role: 'user', content: text, image: pendingSnapshot.value });
+    messages.value.push({
+      role: 'user',
+      content: text,
+      image: pendingSnapshot.value,
+    });
   }
 
   const history = buildHistory();
@@ -311,8 +365,8 @@ const sendMessage = async (mode = 'normal_chat') => {
     attachingScreenshot && pendingSnapshot.value
       ? pendingSnapshot.value
       : attachingScreenshot
-        ? await captureSnapshot()
-        : null;
+      ? await captureSnapshot()
+      : null;
 
   userInput.value = '';
   pendingSnapshot.value = null;
@@ -339,24 +393,32 @@ const sendMessage = async (mode = 'normal_chat') => {
       try {
         const parsed = JSON.parse(errText);
         if (parsed?.fallback) {
-          messages.value.push({ role: 'assistant', content: parsed.fallback });
+          messages.value.push({
+            role: 'assistant',
+            content: parsed.fallback,
+          });
           return;
         }
         errText = parsed?.error || errText;
       } catch {
+        // ignore JSON parse error
       }
       throw new Error(`API ${response.status}: ${errText}`);
     }
 
     const data = await response.json();
-    messages.value.push({ role: 'assistant', content: data.answer || data.fallback || 'Brak odpowiedzi' });
+    messages.value.push({
+      role: 'assistant',
+      content: data.answer || data.fallback || 'Brak odpowiedzi',
+    });
     updateSuggestion(data.answer || '');
     sentIntro.value = true;
   } catch (error) {
     console.error('AI Chat Error:', error);
-    const fallbackMessage = (error && error.name === 'AbortError')
-      ? 'AI nie odpowiedziało na czas. Spróbuj ponownie.'
-      : 'Wystąpił błąd po stronie AI.';
+    const fallbackMessage =
+      error && error.name === 'AbortError'
+        ? 'AI nie odpowiedziało na czas. Spróbuj ponownie.'
+        : 'Wystąpił błąd po stronie AI.';
     messages.value.push({ role: 'assistant', content: fallbackMessage });
     assistantSuggestion.value = '';
     suggestionTail.value = '';
@@ -375,38 +437,45 @@ const onKeyDown = (e) => {
     suggestionTail.value = '';
     return;
   }
+
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault();
     sendMessage('normal_chat');
   }
 };
 
-// --- Agent Logic ---
+// --- Agent logic ---
 
 const getViewport = () => {
   if (!props.whiteboardRef) return undefined;
+
   const { panOffset, zoomLevel, canvasWidth, canvasHeight } = props.whiteboardRef;
   if (!panOffset || !zoomLevel) return undefined;
-  
+
   return {
     x: panOffset.x,
     y: panOffset.y,
     width: canvasWidth,
     height: canvasHeight,
-    zoom: zoomLevel
+    zoom: zoomLevel,
   };
 };
 
 const submitAgent = async () => {
   if (!agentInput.value.trim()) return;
+
   const msg = agentInput.value;
   agentInput.value = '';
-  
+
   try {
-    // Capture snapshot for context (so agent can see handwriting)
-    // Capture snapshot for context (so agent can see handwriting)
-    const snapshot = await captureSnapshot();
-    runBoardAssistant(boardId.value, msg, getViewport(), snapshot);
+    const snapshot = includeScreenshotAgent.value ? await captureSnapshot() : null;
+    await runBoardAssistant(
+      boardId.value,
+      msg,
+      getViewport(),
+      snapshot,
+      selectedModel.value,
+    );
   } catch (e) {
     console.error(e);
   }
@@ -414,10 +483,14 @@ const submitAgent = async () => {
 
 const triggerAgentAction = async (prompt) => {
   try {
-    // Capture snapshot for context
-    // Capture snapshot for context
-    const snapshot = await captureSnapshot();
-    runBoardAssistant(boardId.value, prompt, getViewport(), snapshot);
+    const snapshot = includeScreenshotAgent.value ? await captureSnapshot() : null;
+    await runBoardAssistant(
+      boardId.value,
+      prompt,
+      getViewport(),
+      snapshot,
+      selectedModel.value,
+    );
   } catch (e) {
     console.error(e);
   }
@@ -439,7 +512,7 @@ onMounted(() => {
   background: rgba(255, 255, 255, 0.85);
   backdrop-filter: blur(16px);
   border: 1px solid rgba(255, 255, 255, 0.5);
-  box-shadow: 
+  box-shadow:
     0 10px 40px -10px rgba(0, 0, 0, 0.15),
     0 0 0 1px rgba(255, 255, 255, 0.2);
   display: flex;
@@ -453,7 +526,7 @@ onMounted(() => {
 .dark-mode .ai-chat-panel {
   background: rgba(30, 41, 59, 0.85);
   border-color: rgba(255, 255, 255, 0.1);
-  box-shadow: 
+  box-shadow:
     0 10px 40px -10px rgba(0, 0, 0, 0.4),
     0 0 0 1px rgba(255, 255, 255, 0.05);
 }
@@ -496,7 +569,7 @@ onMounted(() => {
 }
 
 .header-title .icon {
-  color: #8b5cf6; /* Violet accent */
+  color: #8b5cf6;
 }
 
 .header-controls {
@@ -530,7 +603,7 @@ onMounted(() => {
   display: flex;
   padding: 8px 16px 0;
   gap: 16px;
-  border-bottom: 1px solid rgba(0,0,0,0.05);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
 }
 
 .tab-btn {
@@ -615,8 +688,15 @@ onMounted(() => {
 }
 
 @keyframes slideIn {
-  from { opacity: 0; transform: translateY(10px); }
-  to { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .message.user {
@@ -633,11 +713,11 @@ onMounted(() => {
   font-size: 14px;
   line-height: 1.6;
   word-break: break-word;
-  box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.05);
 }
 
 .message.user .message-content {
-  background: #6366f1; /* Indigo 500 */
+  background: #6366f1;
   color: white;
   border-bottom-right-radius: 4px;
 }
@@ -645,43 +725,48 @@ onMounted(() => {
 .message.assistant .message-content {
   background: white;
   color: var(--text-primary);
-  border: 1px solid rgba(0,0,0,0.05);
+  border: 1px solid rgba(0, 0, 0, 0.05);
   border-bottom-left-radius: 4px;
 }
 
 .dark-mode .message.assistant .message-content {
   background: #1e293b;
-  border-color: rgba(255,255,255,0.05);
+  border-color: rgba(255, 255, 255, 0.05);
 }
 
 .message-content :deep(p) {
   margin: 0 0 8px 0;
 }
+
 .message-content :deep(p:last-child) {
   margin-bottom: 0;
 }
+
 .message-content :deep(pre) {
-  background: rgba(0,0,0,0.1);
+  background: rgba(0, 0, 0, 0.1);
   padding: 10px;
   border-radius: 8px;
   overflow-x: auto;
   margin: 8px 0;
 }
+
 .message-content :deep(code) {
   font-family: 'Fira Code', monospace;
-  background: rgba(0,0,0,0.1);
+  background: rgba(0, 0, 0, 0.1);
   padding: 2px 5px;
   border-radius: 4px;
   font-size: 0.9em;
 }
 
-/* KaTeX Math Rendering */
+/* KaTeX */
 .message-content :deep(.katex) {
   font-size: 1.1em;
 }
+
 .message.user .message-content :deep(.katex) {
   color: white;
 }
+
 .message.assistant .message-content :deep(.katex) {
   color: inherit;
 }
@@ -690,7 +775,7 @@ onMounted(() => {
   margin-bottom: 8px;
   border-radius: 12px;
   overflow: hidden;
-  border: 1px solid rgba(0,0,0,0.1);
+  border: 1px solid rgba(0, 0, 0, 0.1);
 }
 
 .message-image img {
@@ -711,6 +796,31 @@ onMounted(() => {
   border-top-color: rgba(255, 255, 255, 0.05);
 }
 
+.model-selector {
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.model-selector select {
+  flex: 1;
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  background: rgba(255, 255, 255, 0.5);
+  font-size: 12px;
+  color: var(--text-secondary);
+  outline: none;
+  cursor: pointer;
+}
+
+.dark-mode .model-selector select {
+  background: rgba(0, 0, 0, 0.2);
+  border-color: rgba(255, 255, 255, 0.1);
+  color: var(--text-secondary);
+}
+
 .screenshot-toggle {
   display: inline-flex;
   align-items: center;
@@ -726,6 +836,24 @@ onMounted(() => {
   accent-color: #6366f1;
 }
 
+.screenshot-toggle-mini {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.screenshot-toggle-mini input {
+  accent-color: #6366f1;
+}
+
+.icon-small {
+  width: 16px;
+  height: 16px;
+}
+
 .snapshot-preview {
   position: relative;
   display: inline-block;
@@ -735,7 +863,7 @@ onMounted(() => {
 .snapshot-preview img {
   height: 80px;
   border-radius: 8px;
-  border: 1px solid var(--glass-border);
+  border: 1px solid var(--glass-border, rgba(148, 163, 184, 0.3));
   box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
 }
 
@@ -754,7 +882,7 @@ onMounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
 }
 
 .input-row {
@@ -764,13 +892,13 @@ onMounted(() => {
   background: white;
   padding: 8px;
   border-radius: 24px;
-  box-shadow: 0 2px 10px rgba(0,0,0,0.05);
-  border: 1px solid rgba(0,0,0,0.05);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+  border: 1px solid rgba(0, 0, 0, 0.05);
 }
 
 .dark-mode .input-row {
   background: #1e293b;
-  border-color: rgba(255,255,255,0.05);
+  border-color: rgba(255, 255, 255, 0.05);
 }
 
 .input-wrapper {
@@ -792,7 +920,7 @@ textarea {
 }
 
 .ghost {
-  display: none;
+  display: none; /* jeśli chcesz podgląd, zmień na position:absolute i ustaw przez CSS */
 }
 
 .ghost-tail {
@@ -851,15 +979,26 @@ textarea {
   animation: bounce 1.4s infinite ease-in-out both;
 }
 
-.typing-indicator span:nth-child(1) { animation-delay: -0.32s; }
-.typing-indicator span:nth-child(2) { animation-delay: -0.16s; }
-
-@keyframes bounce {
-  0%, 80%, 100% { transform: scale(0); }
-  40% { transform: scale(1); }
+.typing-indicator span:nth-child(1) {
+  animation-delay: -0.32s;
+}
+.typing-indicator span:nth-child(2) {
+  animation-delay: -0.16s;
 }
 
-/* Agent Styles */
+@keyframes bounce {
+  0%,
+  80%,
+  100% {
+    transform: scale(0);
+  }
+
+  40% {
+    transform: scale(1);
+  }
+}
+
+/* Agent styles */
 .agent-reply {
   margin-bottom: 8px;
 }
@@ -887,7 +1026,7 @@ textarea {
 .quick-actions button {
   font-size: 12px;
   padding: 6px 12px;
-  background: rgba(0,0,0,0.05);
+  background: rgba(0, 0, 0, 0.05);
   border: none;
   border-radius: 16px;
   cursor: pointer;
@@ -901,8 +1040,9 @@ textarea {
 }
 
 .dark-mode .quick-actions button {
-  background: rgba(255,255,255,0.05);
+  background: rgba(255, 255, 255, 0.05);
 }
+
 .dark-mode .quick-actions button:hover:not(:disabled) {
   background: rgba(99, 102, 241, 0.2);
 }

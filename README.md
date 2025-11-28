@@ -101,7 +101,7 @@ graph TD
     end
 
     subgraph AI ["AI Brain"]
-        LLM[LLM (Grok/DeepSeek)]
+        LLM["LLM (Grok/DeepSeek)"]
         Context[Context Window]
     end
 

@@ -25,25 +25,7 @@ dist/
 dist-ssr/
 *.local
 
-# === LOGI ===
-logs/
-*.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
-lerna-debug.log*
-
-# === VSCODE / SYSTEM / IDE ===
-.vscode/*
-!.vscode/extensions.json
-.idea/
-.DS_Store
-*.suo
-dist-ssr/
-*.local
-
-# === LOGI ===
+# === LOGS ===
 logs/
 *.log
 npm-debug.log*
@@ -66,22 +48,6 @@ lerna-debug.log*
 # === PLAYGROUND ===
 frontend-playground/
 
-# === DEPLOYMENT & TEMP ===
-deploy-all.ps1
-deploy-backend.ps1
-deploy-frontend.ps1
-mailmap.txt
-README_DEPLOY.md
-temp_websocket_cat.txt
-{*}.png
-
-# === PATCHES ===
-whiteboard_diff_61b38e73_to_HEAD.patch
-smooth_transform_backup.patch
-movableobject_diff_61b38e73_to_HEAD.patch
-
 # === SERVER DATA ===
 server/data/*.json
 server/data/*.bin
-
-update.md

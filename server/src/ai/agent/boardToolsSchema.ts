@@ -25,28 +25,16 @@ export const boardToolsSchema: ChatCompletionTool[] = [
             },
         },
     },
-    {
-        type: 'function',
-        function: {
-            name: 'generate_diagram_from_prompt',
-            description:
-                'Generate simple block diagram / flowchart for the given prompt. Returns new nodes in board format.',
-            parameters: {
-                type: 'object',
-                properties: {
-                    prompt: { type: 'string' },
-                    centerX: { type: 'number', description: 'Center X of generated diagram.' },
-                    centerY: { type: 'number', description: 'Center Y of generated diagram.' },
-                },
-                required: ['prompt'],
-            },
-        },
-    },
+
+    // UWAGA: generate_diagram_from_prompt celowo usunięte z listy tools,
+    // żeby nie odpalać drugiego calla do LLM.
+
     {
         type: 'function',
         function: {
             name: 'simplify_equation_block',
-            description: 'Take a raw text block (e.g. handwriting OCR) and replace it with a simplified LaTeX version.',
+            description:
+                'Take a raw text block (e.g. handwriting OCR) and replace it with a simplified LaTeX version.',
             parameters: {
                 type: 'object',
                 properties: {
@@ -59,12 +47,13 @@ export const boardToolsSchema: ChatCompletionTool[] = [
             },
         },
     },
+
     {
         type: 'function',
         function: {
             name: 'draw_board_patch',
             description:
-                'Create or update board objects directly. Use for low-level drawing when higher-level tools like connect_objects or label_object are not sufficient.',
+                'Create or update board objects directly. Use ONLY when higher-level tools (connect_objects, label_object, set_style, draw_handstroke, etc.) are not sufficient.',
             parameters: {
                 type: 'object',
                 properties: {
@@ -74,7 +63,11 @@ export const boardToolsSchema: ChatCompletionTool[] = [
                             type: 'object',
                             description: 'A board object to create.',
                             properties: {
-                                id: { type: 'string', description: 'Unique ID, e.g. "ai-rect-1"' },
+                                id: {
+                                    type: 'string',
+                                    description:
+                                        'Unique ID, e.g. "ai-rect-1". If omitted, server will generate one.',
+                                },
                                 type: {
                                     type: 'string',
                                     enum: [
@@ -93,11 +86,24 @@ export const boardToolsSchema: ChatCompletionTool[] = [
                                 y: { type: 'number' },
                                 width: { type: 'number' },
                                 height: { type: 'number' },
+                                rotation: { type: 'number' },
+
                                 text: { type: 'string' },
                                 latex: { type: 'string' },
-                                color: { type: 'string' },
-                                rotation: { type: 'number' },
-                                lineWidth: { type: 'number', description: 'Stroke width in px' },
+
+                                // Kolor / styl
+                                color: {
+                                    type: 'string',
+                                    description: 'Stroke color (hex), e.g. "#000000".',
+                                },
+                                fillColor: {
+                                    type: 'string',
+                                    description: 'Fill color (hex).',
+                                },
+                                lineWidth: {
+                                    type: 'number',
+                                    description: 'Stroke width in px.',
+                                },
                                 lineStyle: {
                                     type: 'string',
                                     enum: ['solid', 'dashed', 'dotted'],
@@ -106,16 +112,38 @@ export const boardToolsSchema: ChatCompletionTool[] = [
                                     type: 'string',
                                     enum: ['none', 'start', 'end', 'both'],
                                 },
-                                fillColor: { type: 'string' },
+
+                                // Dla linii / strzałek
+                                start: {
+                                    type: 'object',
+                                    properties: {
+                                        x: { type: 'number' },
+                                        y: { type: 'number' },
+                                    },
+                                },
+                                end: {
+                                    type: 'object',
+                                    properties: {
+                                        x: { type: 'number' },
+                                        y: { type: 'number' },
+                                    },
+                                },
+
+                                // Dla pióra / ścieżek
                                 points: {
                                     type: 'array',
                                     items: {
                                         type: 'object',
-                                        properties: { x: { type: 'number' }, y: { type: 'number' } },
+                                        properties: {
+                                            x: { type: 'number' },
+                                            y: { type: 'number' },
+                                        },
                                     },
                                 },
                             },
-                            required: ['id', 'type', 'x', 'y'],
+                            // ID nie jest już wymagane – serwer potrafi je wygenerować.
+                            required: ['type', 'x', 'y'],
+                            additionalProperties: true,
                         },
                     },
                     updates: {
@@ -126,7 +154,9 @@ export const boardToolsSchema: ChatCompletionTool[] = [
                                 id: { type: 'string' },
                                 props: {
                                     type: 'object',
-                                    description: 'Properties to update (x, y, width, height, style, text, latex, ...)',
+                                    description:
+                                        'Properties to update (x, y, width, height, style, text, latex, ...).',
+                                    additionalProperties: true,
                                 },
                             },
                             required: ['id', 'props'],
@@ -138,9 +168,11 @@ export const boardToolsSchema: ChatCompletionTool[] = [
                         description: 'Ids of objects to delete as part of this patch.',
                     },
                 },
+                additionalProperties: false,
             },
         },
     },
+
     {
         type: 'function',
         function: {
@@ -150,13 +182,16 @@ export const boardToolsSchema: ChatCompletionTool[] = [
             parameters: {
                 type: 'object',
                 properties: {
-                    fromId: { type: 'string', description: 'Source object id' },
-                    toId: { type: 'string', description: 'Target object id' },
+                    fromId: { type: 'string', description: 'Source object id.' },
+                    toId: { type: 'string', description: 'Target object id.' },
                     style: {
                         type: 'object',
-                        description: 'Optional style overrides',
+                        description: 'Optional style overrides.',
                         properties: {
-                            lineWidth: { type: 'number', description: 'Stroke width in px (1–8)' },
+                            lineWidth: {
+                                type: 'number',
+                                description: 'Stroke width in px (1–8).',
+                            },
                             lineStyle: {
                                 type: 'string',
                                 enum: ['solid', 'dashed', 'dotted'],
@@ -164,19 +199,22 @@ export const boardToolsSchema: ChatCompletionTool[] = [
                             arrowHead: {
                                 type: 'string',
                                 enum: ['end', 'both'],
-                                description: 'Arrowhead direction (default "end")',
+                                description: 'Arrowhead direction (default "end").',
                             },
                             color: {
                                 type: 'string',
-                                description: 'Stroke color hex, e.g. "#000000"',
+                                description: 'Stroke color hex, e.g. "#000000".',
                             },
                         },
+                        additionalProperties: false,
                     },
                 },
                 required: ['fromId', 'toId'],
+                additionalProperties: false,
             },
         },
     },
+
     {
         type: 'function',
         function: {
@@ -189,7 +227,8 @@ export const boardToolsSchema: ChatCompletionTool[] = [
                     objectId: { type: 'string' },
                     text: {
                         type: 'string',
-                        description: 'Label content. For LaTeX do NOT add $ or \\( \\).',
+                        description:
+                            'Label content. For LaTeX do NOT add $ or \\( \\).',
                     },
                     mode: {
                         type: 'string',
@@ -204,9 +243,11 @@ export const boardToolsSchema: ChatCompletionTool[] = [
                     },
                 },
                 required: ['objectId', 'text'],
+                additionalProperties: false,
             },
         },
     },
+
     {
         type: 'function',
         function: {
@@ -223,7 +264,8 @@ export const boardToolsSchema: ChatCompletionTool[] = [
                     },
                     props: {
                         type: 'object',
-                        description: 'Style props to apply to all given ids.',
+                        description:
+                            'Style props to apply to all given ids. Non-style fields are allowed but discouraged.',
                         properties: {
                             lineWidth: { type: 'number' },
                             lineStyle: {
@@ -237,17 +279,21 @@ export const boardToolsSchema: ChatCompletionTool[] = [
                                 enum: ['none', 'start', 'end', 'both'],
                             },
                         },
+                        additionalProperties: true,
                     },
                 },
                 required: ['ids', 'props'],
+                additionalProperties: false,
             },
         },
     },
+
     {
         type: 'function',
         function: {
             name: 'delete_objects',
-            description: 'Delete one or more objects from the board by their ids.',
+            description:
+                'Delete one or more objects from the board by their ids.',
             parameters: {
                 type: 'object',
                 properties: {
@@ -257,9 +303,11 @@ export const boardToolsSchema: ChatCompletionTool[] = [
                     },
                 },
                 required: ['ids'],
+                additionalProperties: false,
             },
         },
     },
+
     {
         type: 'function',
         function: {
@@ -272,7 +320,7 @@ export const boardToolsSchema: ChatCompletionTool[] = [
                     points: {
                         type: 'array',
                         description:
-                            '2–6 key points of the stroke in board coordinates. The server will interpolate and smooth.',
+                            '2–8 key points of the stroke in board coordinates. Server will interpolate and smooth.',
                         items: {
                             type: 'object',
                             properties: {
@@ -280,6 +328,7 @@ export const boardToolsSchema: ChatCompletionTool[] = [
                                 y: { type: 'number' },
                             },
                             required: ['x', 'y'],
+                            additionalProperties: false,
                         },
                         minItems: 2,
                         maxItems: 8,
@@ -292,24 +341,29 @@ export const boardToolsSchema: ChatCompletionTool[] = [
                     },
                     color: {
                         type: 'string',
-                        description: 'Stroke color (hex). Default: current board color.',
+                        description:
+                            'Stroke color (hex). Default: current board color.',
                     },
                 },
                 required: ['points'],
+                additionalProperties: false,
             },
         },
     },
+
     {
         type: 'function',
         function: {
             name: 'insert_latex_box',
-            description: 'Insert a new LaTeX equation block at a specific position.',
+            description:
+                'Insert a new LaTeX equation block at a specific position.',
             parameters: {
                 type: 'object',
                 properties: {
                     latex: {
                         type: 'string',
-                        description: 'The LaTeX code to render. Do NOT include delimiters like $ or \\(.',
+                        description:
+                            'The LaTeX code to render. Do NOT include delimiters like $ or \\(.',
                     },
                     x: { type: 'number' },
                     y: { type: 'number' },
@@ -317,23 +371,31 @@ export const boardToolsSchema: ChatCompletionTool[] = [
                     height: { type: 'number' },
                 },
                 required: ['latex'],
+                additionalProperties: false,
             },
         },
     },
+
     {
         type: 'function',
         function: {
             name: 'text_block_to_latex',
-            description: 'Convert an existing text object into a rendered LaTeX block.',
+            description:
+                'Convert an existing text object into a rendered LaTeX block.',
             parameters: {
                 type: 'object',
                 properties: {
-                    objectId: { type: 'string', description: 'ID of the text object to convert.' },
+                    objectId: {
+                        type: 'string',
+                        description: 'ID of the text object to convert.',
+                    },
                 },
                 required: ['objectId'],
+                additionalProperties: false,
             },
         },
     },
+
     {
         type: 'function',
         function: {
@@ -342,13 +404,30 @@ export const boardToolsSchema: ChatCompletionTool[] = [
             parameters: {
                 type: 'object',
                 properties: {
-                    expression: { type: 'string', description: 'Math expression of x, e.g. "sin(x)" or "x^2".' },
-                    xMin: { type: 'number', description: 'Domain start (default -10).' },
-                    xMax: { type: 'number', description: 'Domain end (default 10).' },
-                    x: { type: 'number', description: 'Position X.' },
-                    y: { type: 'number', description: 'Position Y.' },
+                    expression: {
+                        type: 'string',
+                        description:
+                            'Math expression of x, e.g. "sin(x)" or "x^2".',
+                    },
+                    xMin: {
+                        type: 'number',
+                        description: 'Domain start (default -10).',
+                    },
+                    xMax: {
+                        type: 'number',
+                        description: 'Domain end (default 10).',
+                    },
+                    x: {
+                        type: 'number',
+                        description: 'Position X of the plot (optional).',
+                    },
+                    y: {
+                        type: 'number',
+                        description: 'Position Y of the plot (optional).',
+                    },
                 },
                 required: ['expression'],
+                additionalProperties: false,
             },
         },
     },

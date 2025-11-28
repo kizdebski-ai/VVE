@@ -1,3 +1,4 @@
+// server/src/routes/aiBoardAssistant.ts
 import { Router } from 'express';
 import { BoardDoc } from '../yjs/boardDoc';
 import { runBoardAgent } from '../ai/agent/boardAgent';
@@ -21,13 +22,21 @@ export const createAiBoardAssistantRouter = (roomManager: RoomManager) => {
                 image?: string;
                 model?: string;
             };
-            console.log(`[AI Route] Received request. Message length: ${message?.length}, Image present: ${!!image}, Viewport: ${!!viewport}, Model: ${model}`);
 
-            // Get the room/doc from RoomManager
-            // We use get() which lazily loads or creates. 
-            // Ideally we should check if it exists first, but get() is safe.
+            console.log(
+                `[AI Route] Received request.`,
+                `boardId=${boardId}`,
+                `msgLen=${message?.length ?? 0}`,
+                `image=${!!image}`,
+                `viewport=${viewport ? 'yes' : 'no'}`,
+                `model=${model ?? 'default'}`,
+            );
+
+            // Lazily get/create room & doc from RoomManager
             const { room } = roomManager.get(boardId);
-            console.log(`[AI Route] Request for boardId: ${boardId}. Room exists: ${!!room}, Doc exists: ${!!room?.doc}`);
+            console.log(
+                `[AI Route] Room lookup: room=${!!room}, doc=${!!room?.doc}`,
+            );
 
             if (!room || !room.doc) {
                 res.status(404).json({ error: 'Board not found' });
@@ -35,11 +44,12 @@ export const createAiBoardAssistantRouter = (roomManager: RoomManager) => {
             }
 
             const doc = new BoardDoc(room.doc);
-            const snapshotBefore = doc.getSnapshot();
-            console.log(`[AI Route] Snapshot before: ${snapshotBefore.objects.length} objects`);
 
-            // Optimization: We could filter the snapshot here based on viewport to save tokens
+            // Jeden snapshot „przed” – ten sam przekazujemy do agenta jako stan wejściowy
             const snapshot = doc.getSnapshot();
+            console.log(
+                `[AI Route] Snapshot before: ${snapshot.objects.length} objects`,
+            );
 
             const result = await runBoardAgent({
                 doc,
@@ -47,17 +57,27 @@ export const createAiBoardAssistantRouter = (roomManager: RoomManager) => {
                 userMessage: message,
                 ...(viewport && { viewport }),
                 ...(image && { image }),
-                ...(model && { model })
+                ...(model && { model }),
             });
 
             const snapshotAfter = doc.getSnapshot();
-            console.log(`[AI Route] Snapshot after: ${snapshotAfter.objects.length} objects`);
-            console.log(`[AI Route] Patch result:`, JSON.stringify({
-                creates: result.patch?.creates?.length ?? 0,
-                updates: result.patch?.updates?.length ?? 0,
-                deletes: result.patch?.deletes?.length ?? 0,
-                reply: result.reply?.substring(0, 100)
-            }));
+            console.log(
+                `[AI Route] Snapshot after: ${snapshotAfter.objects.length} objects`,
+            );
+
+            console.log(
+                `[AI Route] Patch result:`,
+                JSON.stringify(
+                    {
+                        creates: result.patch?.creates?.length ?? 0,
+                        updates: result.patch?.updates?.length ?? 0,
+                        deletes: result.patch?.deletes?.length ?? 0,
+                        replyPreview: result.reply?.substring(0, 100) ?? '',
+                    },
+                    null,
+                    2,
+                ),
+            );
 
             res.json(result);
         } catch (err) {

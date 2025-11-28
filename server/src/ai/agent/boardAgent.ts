@@ -4,11 +4,10 @@ import type {
 } from 'openai/resources/chat/completions';
 import { llmClient, BOARD_AI_MODEL } from '../provider/llmClient';
 import { BoardDoc } from '../../yjs/boardDoc';
-import { BoardSnapshot, BoardPatch, BoardObject } from '../../models/boardSnapshot';
+import { BoardSnapshot, BoardPatch } from '../../models/boardSnapshot';
 import { boardToolsSchema } from './boardToolsSchema';
 import {
     toolAlignSelectionToGrid,
-    toolGenerateDiagramFromPrompt,
     toolSimplifyEquationBlock,
     toolDrawBoardPatch,
     toolInsertLatexBox,
@@ -47,12 +46,13 @@ GENERAL RULES
   * label_object     – to add text/LaTeX labels to objects,
   * set_style        – to change stroke width / dash / color / arrowStyle,
   * align_selection_to_grid – to clean up spacing,
-  * plot_function, insert_latex_box etc. for math.
+  * plot_function, insert_latex_box, text_block_to_latex, simplify_equation_block for math-specific tasks.
+- Use draw_board_patch only for low-level operations that are not possible with other tools.
 
 GEOMETRY
 - Do NOT approximate straight lines with many small points; use line objects.
-- For axes, vectors and connections always prefer connect_objects or line with arrowStyle.
-- Assume grid size is 8px. When giving coordinates in draw_board_patch, keep them multiples of 8.
+- For axes, vectors and connections always prefer connect_objects or a line with arrowStyle.
+- Assume grid size is 8 px. When giving coordinates in draw_board_patch, keep them multiples of 8.
 - When creating several similar shapes (e.g. wheels, snowman circles), align their centers or edges and then call align_selection_to_grid.
 
 STATE
@@ -60,7 +60,7 @@ STATE
 - If you want to change an object, prefer updates via draw_board_patch or set_style instead of creating a new object in the same place.
 
 MATH & LATEX
-- For formulas, vector labels etc. use label_object with mode="latex" when attaching to existing objects.
+- For small labels on diagrams use label_object with mode="latex" (no $ delimiters).
 - Use insert_latex_box only when you need a standalone equation block, not a small label.
 
 HANDWRITING vs SHAPES
@@ -94,7 +94,7 @@ export async function runBoardAgent(params: {
     const effectiveModel = model || BOARD_AI_MODEL;
     console.log(`[AI Agent] Using model: ${effectiveModel}`);
 
-    // 🔥 LEKKI kontekst zamiast pełnego snapshotu
+    // Lekki kontekst zamiast pełnego snapshotu
     const agentContext = buildAgentBoardContext(snapshot, viewport, 64);
 
     let userContent: any = JSON.stringify({
@@ -102,16 +102,15 @@ export async function runBoardAgent(params: {
         request: userMessage,
     });
 
-    // List of models known to be text-only or having issues with images on the free tier
+    // Modele, które traktujemy jako tekstowe (bez obrazów)
     const textOnlyModels = [
         'qwen/qwen3-coder:free',
-        'moonshotai/kimi-k2:free',
+        'openai/gpt-oss-120b:exacto',
         'kwaipilot/kat-coder-pro:free',
         'z-ai/glm-4.5-air:free',
-        'x-ai/grok-4.1-fast:free'
+        'x-ai/grok-4.1-fast:free',
     ];
 
-    // Only send image if model is NOT in the text-only list
     const shouldSendImage = image && !textOnlyModels.includes(effectiveModel);
 
     if (shouldSendImage) {
@@ -133,7 +132,7 @@ export async function runBoardAgent(params: {
         console.log(`[AI Agent] Skipping image for text-only model: ${effectiveModel}`);
     }
 
-    // RAG: Retrieve relevant docs
+    // RAG: dokumentacja narzędzi / schematu
     const docs = retrieveBoardDocs(userMessage);
 
     const baseMessages: ChatCompletionMessageParam[] = [
@@ -153,7 +152,7 @@ export async function runBoardAgent(params: {
         },
     ];
 
-    // 1) First call - model decides on tool_calls
+    // 1) Pierwsze wywołanie – model decyduje jakie tools wywołać
     let first;
     try {
         first = await llmClient.chat.completions.create({
@@ -166,7 +165,8 @@ export async function runBoardAgent(params: {
     } catch (error) {
         console.error('[AI] Error calling AI model:', error);
         return {
-            reply: `Failed to connect to AI service. ${error instanceof Error ? error.message : 'Unknown error'}`
+            reply: `Failed to connect to AI service. ${error instanceof Error ? error.message : 'Unknown error'
+                }`,
         };
     }
 
@@ -182,9 +182,8 @@ export async function runBoardAgent(params: {
         return { reply: 'AI model returned an invalid response. Please try again.' };
     }
 
-    // Validate that the message has either content or tool_calls
-    const hasContent = firstMsg.content && firstMsg.content.trim().length > 0;
-    const hasToolCalls = firstMsg.tool_calls && firstMsg.tool_calls.length > 0;
+    const hasContent = typeof firstMsg.content === 'string' && firstMsg.content.trim().length > 0;
+    const hasToolCalls = !!firstMsg.tool_calls && firstMsg.tool_calls.length > 0;
 
     if (!hasContent && !hasToolCalls) {
         console.error('[AI] Empty response from model:', {
@@ -192,10 +191,13 @@ export async function runBoardAgent(params: {
             message: firstMsg,
             finish_reason: first.choices[0]?.finish_reason,
         });
-        return { reply: 'AI model returned an empty response. This may be a temporary issue with the AI service. Please try again.' };
+        return {
+            reply:
+                'AI model returned an empty response. This may be a temporary issue with the AI service. Please try again.',
+        };
     }
 
-    // If no tool_calls - just return text
+    // Jeśli model nie wywołuje żadnych narzędzi – zwracamy tylko tekst
     if (!hasToolCalls) {
         return { reply: firstMsg.content ?? '' };
     }
@@ -203,94 +205,57 @@ export async function runBoardAgent(params: {
     const toolMessages: ChatCompletionMessageParam[] = [];
     let lastPatch: BoardPatch | undefined;
 
-    // 2) Execute tools on server side
-    // At this point, we know hasToolCalls is true, so tool_calls is defined
+    // Bardzo ważne: używamy "żywego" snapshotu, aktualizowanego po każdym patchu
+    let workingSnapshot: BoardSnapshot = snapshot;
+
+    // 2) Wykonanie tooli po stronie serwera
     for (const toolCall of firstMsg.tool_calls!) {
-        // Type guard: ensure toolCall has a 'function' property
         if (!('function' in toolCall) || !toolCall.function) {
             console.warn('[AI] Skipping tool call without function property:', toolCall);
             continue;
         }
 
         const { name, arguments: rawArgs } = toolCall.function;
-        let args;
+        let args: any;
         try {
             args = JSON.parse(rawArgs || '{}');
-            console.log(`[AI Agent] Tool Call: ${name}`, JSON.stringify(args).substring(0, 200));
+            console.log(
+                `[AI Agent] Tool Call: ${name}`,
+                JSON.stringify(args).substring(0, 200),
+            );
         } catch (e) {
             console.error('[AI] Failed to parse tool arguments:', e);
             toolMessages.push({
                 role: 'tool',
                 tool_call_id: toolCall.id,
-                content: JSON.stringify({ status: 'error', message: 'Invalid JSON arguments' }),
+                content: JSON.stringify({
+                    status: 'error',
+                    message: 'Invalid JSON arguments',
+                }),
             });
             continue;
         }
 
+        const respondOk = (patch: BoardPatch) => {
+            lastPatch = patch;
+            // po każdej modyfikacji odświeżamy snapshot, żeby kolejne tool calls widziały aktualny stan
+            workingSnapshot = params.doc.getSnapshot();
+            toolMessages.push({
+                role: 'tool',
+                tool_call_id: toolCall.id,
+                content: JSON.stringify({ status: 'ok', patch }),
+            });
+        };
+
         switch (name) {
             case 'align_selection_to_grid': {
-                const patch = toolAlignSelectionToGrid(doc, snapshot, args);
-                lastPatch = patch;
-                toolMessages.push({
-                    role: 'tool',
-                    tool_call_id: toolCall.id,
-                    content: JSON.stringify({ status: 'ok', patch }),
-                });
-                break;
-            }
-
-            case 'generate_diagram_from_prompt': {
-                let nodes: BoardObject[] = [];
-                try {
-                    // Second "mini" call just to turn prompt into BoardObject[]
-                    const gen = await llmClient.chat.completions.create({
-                        model: effectiveModel,
-                        temperature: 0.3,
-                        messages: [
-                            {
-                                role: 'system',
-                                content:
-                                    'You generate JSON arrays of BoardObject for a whiteboard. Respond with pure JSON.',
-                            },
-                            {
-                                role: 'user',
-                                content: JSON.stringify({
-                                    prompt: args.prompt,
-                                    centerX: args.centerX,
-                                    centerY: args.centerY,
-                                }),
-                            },
-                        ],
-                    });
-
-                    const raw = gen.choices[0]?.message.content ?? '[]';
-                    // Attempt to parse JSON, handling potential markdown code blocks
-                    const jsonText = raw.replace(/```json\n?|\n?```/g, '').trim();
-                    nodes = JSON.parse(jsonText);
-                } catch (e) {
-                    console.error('[AI] Failed to generate/parse diagram nodes', e);
-                    toolMessages.push({
-                        role: 'tool',
-                        tool_call_id: toolCall.id,
-                        content: JSON.stringify({ status: 'error', message: 'Failed to generate diagram' }),
-                    });
-                    break;
-                }
-
-                const patch = toolGenerateDiagramFromPrompt(doc, snapshot, args, nodes);
-                lastPatch = patch;
-
-                toolMessages.push({
-                    role: 'tool',
-                    tool_call_id: toolCall.id,
-                    content: JSON.stringify({ status: 'ok', patch }),
-                });
+                const patch = toolAlignSelectionToGrid(doc, workingSnapshot, args);
+                respondOk(patch);
                 break;
             }
 
             case 'simplify_equation_block': {
-                // Small call to simplify LaTeX
-                const equation = snapshot.objects.find(o => o.id === args.objectId);
+                const equation = workingSnapshot.objects.find(o => o.id === args.objectId);
                 const original = equation?.text ?? '';
                 let latex = original;
 
@@ -316,45 +281,33 @@ export async function runBoardAgent(params: {
                     toolMessages.push({
                         role: 'tool',
                         tool_call_id: toolCall.id,
-                        content: JSON.stringify({ status: 'error', message: 'Failed to simplify equation' }),
+                        content: JSON.stringify({
+                            status: 'error',
+                            message: 'Failed to simplify equation',
+                        }),
                     });
                     break;
                 }
-                const patch = toolSimplifyEquationBlock(doc, snapshot, args, latex);
-                lastPatch = patch;
 
-                toolMessages.push({
-                    role: 'tool',
-                    tool_call_id: toolCall.id,
-                    content: JSON.stringify({ status: 'ok', patch }),
-                });
+                const patch = toolSimplifyEquationBlock(doc, workingSnapshot, args, latex);
+                respondOk(patch);
                 break;
             }
 
             case 'draw_board_patch': {
-                const patch = toolDrawBoardPatch(doc, snapshot, args);
-                lastPatch = patch;
-                toolMessages.push({
-                    role: 'tool',
-                    tool_call_id: toolCall.id,
-                    content: JSON.stringify({ status: 'ok', patch }),
-                });
+                const patch = toolDrawBoardPatch(doc, workingSnapshot, args);
+                respondOk(patch);
                 break;
             }
 
             case 'insert_latex_box': {
-                const patch = toolInsertLatexBox(doc, snapshot, args);
-                lastPatch = patch;
-                toolMessages.push({
-                    role: 'tool',
-                    tool_call_id: toolCall.id,
-                    content: JSON.stringify({ status: 'ok', patch }),
-                });
+                const patch = toolInsertLatexBox(doc, workingSnapshot, args);
+                respondOk(patch);
                 break;
             }
 
             case 'text_block_to_latex': {
-                const block = snapshot.objects.find(o => o.id === args.objectId);
+                const block = workingSnapshot.objects.find(o => o.id === args.objectId);
                 const original = block?.text ?? '';
                 let latex = original;
 
@@ -377,85 +330,52 @@ export async function runBoardAgent(params: {
                     toolMessages.push({
                         role: 'tool',
                         tool_call_id: toolCall.id,
-                        content: JSON.stringify({ status: 'error', message: 'Failed to convert text to latex' }),
+                        content: JSON.stringify({
+                            status: 'error',
+                            message: 'Failed to convert text to latex',
+                        }),
                     });
                     break;
                 }
 
-                const patch = toolTextBlockToLatexUpdate(doc, snapshot, args, latex);
-                lastPatch = patch;
-
-                toolMessages.push({
-                    role: 'tool',
-                    tool_call_id: toolCall.id,
-                    content: JSON.stringify({ status: 'ok', patch }),
-                });
+                const patch = toolTextBlockToLatexUpdate(doc, workingSnapshot, args, latex);
+                respondOk(patch);
                 break;
             }
 
             case 'plot_function': {
-                const patch = toolPlotFunction(doc, snapshot, args);
-                lastPatch = patch;
-                toolMessages.push({
-                    role: 'tool',
-                    tool_call_id: toolCall.id,
-                    content: JSON.stringify({ status: 'ok', patch }),
-                });
+                const patch = toolPlotFunction(doc, workingSnapshot, args);
+                respondOk(patch);
                 break;
             }
 
             case 'connect_objects': {
-                const patch = toolConnectObjects(doc, snapshot, args);
-                lastPatch = patch;
-                toolMessages.push({
-                    role: 'tool',
-                    tool_call_id: toolCall.id,
-                    content: JSON.stringify({ status: 'ok', patch }),
-                });
+                const patch = toolConnectObjects(doc, workingSnapshot, args);
+                respondOk(patch);
                 break;
             }
 
             case 'label_object': {
-                const patch = toolLabelObject(doc, snapshot, args);
-                lastPatch = patch;
-                toolMessages.push({
-                    role: 'tool',
-                    tool_call_id: toolCall.id,
-                    content: JSON.stringify({ status: 'ok', patch }),
-                });
+                const patch = toolLabelObject(doc, workingSnapshot, args);
+                respondOk(patch);
                 break;
             }
 
             case 'set_style': {
-                const patch = toolSetStyle(doc, snapshot, args);
-                lastPatch = patch;
-                toolMessages.push({
-                    role: 'tool',
-                    tool_call_id: toolCall.id,
-                    content: JSON.stringify({ status: 'ok', patch }),
-                });
+                const patch = toolSetStyle(doc, workingSnapshot, args);
+                respondOk(patch);
                 break;
             }
 
             case 'delete_objects': {
-                const patch = toolDeleteObjects(doc, snapshot, args);
-                lastPatch = patch;
-                toolMessages.push({
-                    role: 'tool',
-                    tool_call_id: toolCall.id,
-                    content: JSON.stringify({ status: 'ok', patch }),
-                });
+                const patch = toolDeleteObjects(doc, workingSnapshot, args);
+                respondOk(patch);
                 break;
             }
 
             case 'draw_handstroke': {
-                const patch = toolDrawHandstroke(doc, snapshot, args);
-                lastPatch = patch;
-                toolMessages.push({
-                    role: 'tool',
-                    tool_call_id: toolCall.id,
-                    content: JSON.stringify({ status: 'ok', patch }),
-                });
+                const patch = toolDrawHandstroke(doc, workingSnapshot, args);
+                respondOk(patch);
                 break;
             }
 
@@ -463,30 +383,35 @@ export async function runBoardAgent(params: {
                 toolMessages.push({
                     role: 'tool',
                     tool_call_id: toolCall.id,
-                    content: JSON.stringify({ status: 'error', message: 'Unknown tool' }),
+                    content: JSON.stringify({
+                        status: 'error',
+                        message: `Unknown tool: ${name}`,
+                    }),
                 });
         }
     }
 
-    // 3) Second call - model sees tool results and returns text for user
+    // 3) Drugie wywołanie – model widzi wyniki tooli i generuje odpowiedź tekstową
     let second;
     try {
         second = await llmClient.chat.completions.create({
             model: effectiveModel,
             temperature: 0.2,
-            messages: [
-                ...baseMessages,
-                firstMsg,
-                ...toolMessages,
-            ],
+            messages: [...baseMessages, firstMsg, ...toolMessages],
         });
     } catch (error) {
         console.error('[AI] Error in second AI model call:', error);
-        return { reply: 'Failed to generate final response from AI service.', ...(lastPatch && { patch: lastPatch }) };
+        return {
+            reply: 'Failed to generate final response from AI service.',
+            ...(lastPatch && { patch: lastPatch }),
+        };
     }
 
     if (!second.choices || second.choices.length === 0) {
-        return { reply: 'AI model returned no final response.', ...(lastPatch && { patch: lastPatch }) };
+        return {
+            reply: 'AI model returned no final response.',
+            ...(lastPatch && { patch: lastPatch }),
+        };
     }
 
     const reply = second.choices[0]?.message?.content ?? '';

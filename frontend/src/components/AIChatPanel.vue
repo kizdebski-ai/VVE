@@ -150,7 +150,7 @@
             <select v-model="selectedModel">
               <option value="x-ai/grok-4.1-fast:free">Grok 4.1 Fast (Free)</option>
               <option value="kwaipilot/kat-coder-pro:free">Kat Coder Pro (Free)</option>
-              <option value="moonshotai/kimi-k2:free">Kimi K2 (Free)</option>
+              <option value="openai/gpt-oss-120b:exacto">GPT-120B (Exacto)</option>
               <option value="qwen/qwen3-coder:free">Qwen 3 Coder (Free)</option>
               <option value="z-ai/glm-4.5-air:free">GLM 4.5 Air (Free)</option>
             </select>

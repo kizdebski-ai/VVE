@@ -1,5 +1,13 @@
+// server/src/ai/tools/boardTools.ts
+
 import { BoardDoc } from '../../yjs/boardDoc';
-import { BoardPatch, BoardSnapshot, BoardObject } from '../../models/boardSnapshot';
+import {
+    BoardPatch,
+    BoardSnapshot,
+    BoardObject,
+} from '../../models/boardSnapshot';
+
+// ---------- Typy argumentów narzędzi ----------
 
 type AlignSelectionArgs = {
     gridSize: number;
@@ -10,248 +18,85 @@ type GenerateDiagramArgs = {
     prompt: string;
     centerX?: number;
     centerY?: number;
-    nodes?: BoardObject[]; // Optional, passed from agent if pre-generated
+    nodes?: BoardObject[];
 };
 
 type SimplifyEquationArgs = {
     objectId: string;
 };
 
-const snap = (v: number, grid: number) =>
-    Math.round(v / grid) * grid;
+type DrawBoardPatchArgs = { patch: BoardPatch | any };
 
-function getSelection(snapshot: BoardSnapshot, selectionIds?: string[]): BoardObject[] {
+type InsertLatexArgs = {
+    latex: string;
+    x?: number;
+    y?: number;
+    width?: number;
+    height?: number;
+};
+
+type TextToLatexArgs = { objectId: string };
+
+type PlotFunctionArgs = {
+    expression: string;
+    xMin?: number;
+    xMax?: number;
+    x?: number;
+    y?: number;
+};
+
+// High–level tools
+type ConnectObjectsArgs = {
+    fromId: string;
+    toId: string;
+    style?: {
+        lineWidth?: number;
+        lineStyle?: 'solid' | 'dashed' | 'dotted';
+        arrowHead?: 'end' | 'both';
+        color?: string;
+    };
+};
+
+type LabelObjectArgs = {
+    objectId: string;
+    text: string;
+    mode?: 'plain' | 'latex';
+    position?: 'top' | 'bottom' | 'left' | 'right' | 'center';
+};
+
+type SetStyleArgs = {
+    ids: string[];
+    props: Partial<BoardObject>;
+};
+
+type DeleteObjectsArgs = { ids: string[] };
+
+type DrawHandstrokeArgs = {
+    points: { x: number; y: number }[];
+    style?: 'teacher_marker' | 'student_pen' | 'sketch';
+    color?: string;
+};
+
+// ---------- Helpery geometryczne / ID / snapping ----------
+
+const snap = (v: number, grid: number) => Math.round(v / grid) * grid;
+
+function getSelection(
+    snapshot: BoardSnapshot,
+    selectionIds?: string[],
+): BoardObject[] {
     if (selectionIds?.length) {
         const set = new Set(selectionIds);
-        return snapshot.objects.filter(o => set.has(o.id));
+        return snapshot.objects.filter((o) => set.has(o.id));
     }
-    return snapshot.objects.filter(o => o.selected);
+    return snapshot.objects.filter((o) => o.selected);
 }
 
-// 1) Align to grid
-export function toolAlignSelectionToGrid(
-    doc: BoardDoc,
-    snapshot: BoardSnapshot,
-    args: AlignSelectionArgs,
-): BoardPatch {
-    const { gridSize } = args;
-    const sel = getSelection(snapshot, args.selectionIds);
-    const updates: NonNullable<BoardPatch['updates']> = [];
+const GRID = 8;
 
-    for (const o of sel) {
-        const props: Partial<BoardObject> = {
-            x: snap(o.x, gridSize),
-            y: snap(o.y, gridSize),
-        };
-
-        if (o.points && o.points.length) {
-            props.points = o.points.map(p => ({
-                x: snap(p.x, gridSize),
-                y: snap(p.y, gridSize),
-            }));
-        }
-
-        updates.push({ id: o.id, props });
-    }
-
-    const patch: BoardPatch = { updates };
-    doc.applyPatch(patch);
-    return patch;
-}
-
-// 2) Bardzo prosty generator diagramu – LLM zwraca JSON z węzłami.
-export function toolGenerateDiagramFromPrompt(
-    doc: BoardDoc,
-    snapshot: BoardSnapshot,
-    args: GenerateDiagramArgs,
-    nodes: BoardObject[],
-): BoardPatch {
-    // Tu zakładamy, że "nodes" to wynik z LLM (parsowany po stronie agenta),
-    // już w formacie BoardObject. Agent doda id, typ, x, y itd.
-    const patch: BoardPatch = {
-        creates: nodes,
-    };
-    doc.applyPatch(patch);
-    return patch;
-}
-
-// 3) Uproszczenie równania – w praktyce wywołasz tu dodatkowe LLM albo libkę.
-export function toolSimplifyEquationBlock(
-    doc: BoardDoc,
-    snapshot: BoardSnapshot,
-    args: SimplifyEquationArgs,
-    simplifiedLatex: string,
-): BoardPatch {
-    const target = snapshot.objects.find(o => o.id === args.objectId);
-    if (!target) return { updates: [] };
-
-    const patch: BoardPatch = {
-        updates: [{ id: target.id, props: { text: simplifiedLatex } }],
-    };
-    doc.applyPatch(patch);
-    return patch;
-}
-
-// --- New Tools ---
-
-type DrawBoardPatchArgs = { patch: BoardPatch };
-type InsertLatexArgs = { latex: string; x?: number; y?: number; width?: number; height?: number };
-type TextToLatexArgs = { objectId: string };
-type PlotFunctionArgs = { expression: string; xMin?: number; xMax?: number; x?: number; y?: number };
-
-// 4) Draw Board Patch (Low-level)
-// 4) Draw Board Patch (Low-level)
-export function toolDrawBoardPatch(
-    doc: BoardDoc,
-    _snapshot: BoardSnapshot,
-    args: any,
-): BoardPatch {
-    const patch: BoardPatch = {
-        creates: [],
-        updates: [],
-        deletes: [],
-    };
-
-    // Handle nested 'patch' object if present (legacy/schema variation)
-    const source = args.patch || args;
-
-    if (Array.isArray(source.creates)) {
-        patch.creates = source.creates.map((raw: any) => {
-            const obj = {
-                ...raw,
-                id: raw.id || `ai-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-            };
-
-            // Normalize LINE objects: ensure start/end exist
-            if (obj.type === 'line' && (!obj.start || !obj.end)) {
-                const x = obj.x || 0;
-                const y = obj.y || 0;
-                const w = obj.width || 0;
-                const h = obj.height || 0;
-                obj.start = { x, y };
-                obj.end = { x: x + w, y: y + h };
-            }
-
-            // Ensure default color
-            if (!obj.color && !obj.strokeColor) {
-                obj.color = '#000000';
-            }
-
-            return obj;
-        });
-    }
-
-    if (Array.isArray(source.updates)) {
-        patch.updates = source.updates.map((u: any) => ({
-            id: u.id,
-            props: u.props,
-        }));
-    }
-
-    if (Array.isArray(source.deletes)) {
-        patch.deletes = [...source.deletes];
-    }
-
-    // Basic validation
-    const createsLen = patch.creates?.length ?? 0;
-    const updatesLen = patch.updates?.length ?? 0;
-    const deletesLen = patch.deletes?.length ?? 0;
-
-    if (createsLen + updatesLen + deletesLen > 200) {
-        throw new Error('Patch too large from AI');
-    }
-
-    if (createsLen === 0 && updatesLen === 0 && deletesLen === 0) {
-        return { creates: [], updates: [], deletes: [] };
-    }
-
-    doc.applyPatch(patch);
-    return patch;
-}
-
-// 5) Insert LaTeX Box
-export function toolInsertLatexBox(
-    doc: BoardDoc,
-    snapshot: BoardSnapshot,
-    args: InsertLatexArgs,
-): BoardPatch {
-    const baseX = args.x ?? snapshot.objects[0]?.x ?? 100;
-    const baseY = args.y ?? snapshot.objects[0]?.y ?? 100;
-
-    const latexObj: BoardObject = {
-        id: `ai-latex-${Date.now()}`,
-        type: 'latex',
-        x: baseX,
-        y: baseY,
-        width: args.width ?? 260,
-        height: args.height ?? 120,
-        latex: args.latex,
-    };
-
-    const patch: BoardPatch = { creates: [latexObj] };
-    doc.applyPatch(patch);
-    return patch;
-}
-
-// 6) Text Block to LaTeX Update
-export function toolTextBlockToLatexUpdate(
-    doc: BoardDoc,
-    snapshot: BoardSnapshot,
-    args: TextToLatexArgs,
-    latex: string,
-): BoardPatch {
-    const target = snapshot.objects.find(o => o.id === args.objectId);
-    if (!target) return { updates: [] };
-
-    const patch: BoardPatch = {
-        updates: [
-            {
-                id: target.id,
-                props: {
-                    type: 'latex',
-                    latex,
-                    text: '', // Clear text as it's now latex
-                },
-            },
-        ],
-    };
-
-    doc.applyPatch(patch);
-    return patch;
-}
-
-// 7) Plot Function
-export function toolPlotFunction(
-    doc: BoardDoc,
-    snapshot: BoardSnapshot,
-    args: PlotFunctionArgs,
-): BoardPatch {
-    const baseX = args.x ?? snapshot.objects[0]?.x ?? 100;
-    const baseY = args.y ?? snapshot.objects[0]?.y ?? 100;
-
-    const plot: BoardObject = {
-        id: `ai-fplot-${Date.now()}`,
-        type: 'mathFunctionPlot',
-        x: baseX,
-        y: baseY,
-        width: 400,
-        height: 260,
-        expression: args.expression,
-        xRange: [args.xMin ?? -10, args.xMax ?? 10],
-    };
-
-    const patch: BoardPatch = { creates: [plot] };
-    doc.applyPatch(patch);
-    return patch;
-}
-
-// --- NEW HIGH-LEVEL TOOLS (update.md) ---
-
-const GRID = 8; // Grid size for snapping
-
-function snapObjectToGrid<T extends { x?: number; y?: number; width?: number; height?: number }>(
-    obj: T,
-): T {
+function snapObjectToGrid<
+    T extends { x?: number; y?: number; width?: number; height?: number },
+>(obj: T): T {
     return {
         ...obj,
         x: obj.x !== undefined ? snap(obj.x, GRID) : obj.x,
@@ -275,28 +120,274 @@ function getCenter(o: BoardObject) {
 }
 
 function newId(prefix: string) {
-    return `${prefix}-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`;
+    return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-// 8) Connect Objects - arrows/vectors between objects
-type ConnectObjectsArgs = {
-    fromId: string;
-    toId: string;
-    style?: {
-        lineWidth?: number;
-        lineStyle?: 'solid' | 'dashed' | 'dotted';
-        arrowHead?: 'end' | 'both';
-        color?: string;
+// Delikatny jitter do „odręcznego” looku
+function jitter(val: number, amount: number) {
+    return val + (Math.random() * 2 - 1) * amount;
+}
+
+// Prosta interpolacja Catmull–Rom dla wygładzenia stroke’a
+function interpolateStroke(
+    points: { x: number; y: number }[],
+    step = 0.2,
+) {
+    if (points.length <= 2) return points;
+
+    const res: { x: number; y: number }[] = [];
+    for (let i = 0; i < points.length - 1; i++) {
+        const p0 = points[i === 0 ? i : i - 1]!;
+        const p1 = points[i]!;
+        const p2 = points[i + 1]!;
+        const p3 = points[i + 2 < points.length ? i + 2 : i + 1]!;
+
+        for (let t = 0; t < 1; t += step) {
+            const t2 = t * t;
+            const t3 = t2 * t;
+
+            const x =
+                0.5 *
+                ((2 * p1.x) +
+                    (-p0.x + p2.x) * t +
+                    (2 * p0.x - 5 * p1.x + 4 * p2.x - p3.x) * t2 +
+                    (-p0.x + 3 * p1.x - 3 * p2.x + p3.x) * t3);
+
+            const y =
+                0.5 *
+                ((2 * p1.y) +
+                    (-p0.y + p2.y) * t +
+                    (2 * p0.y - 5 * p1.y + 4 * p2.y - p3.y) * t2 +
+                    (-p0.y + 3 * p1.y - 3 * p2.y + p3.y) * t3);
+
+            res.push({ x, y });
+        }
+    }
+
+    const lastPoint = points[points.length - 1];
+    if (lastPoint) res.push(lastPoint);
+    return res;
+}
+
+// ---------- 1) Align to Grid ----------
+
+export function toolAlignSelectionToGrid(
+    doc: BoardDoc,
+    snapshot: BoardSnapshot,
+    args: AlignSelectionArgs,
+): BoardPatch {
+    const { gridSize } = args;
+    const sel = getSelection(snapshot, args.selectionIds);
+    const updates: NonNullable<BoardPatch['updates']> = [];
+
+    for (const o of sel) {
+        const props: Partial<BoardObject> = {
+            x: snap(o.x, gridSize),
+            y: snap(o.y, gridSize),
+        };
+
+        if (o.points && o.points.length) {
+            props.points = o.points.map((p) => ({
+                x: snap(p.x, gridSize),
+                y: snap(p.y, gridSize),
+            }));
+        }
+
+        updates.push({ id: o.id, props });
+    }
+
+    const patch: BoardPatch = { updates };
+    doc.applyPatch(patch);
+    return patch;
+}
+
+// ---------- 2) (opcjonalny) generate_diagram_from_prompt ----------
+// Zostawiam jako prosty wrapper na „creates”, jeśli jeszcze gdzieś go używasz.
+export function toolGenerateDiagramFromPrompt(
+    doc: BoardDoc,
+    _snapshot: BoardSnapshot,
+    _args: GenerateDiagramArgs,
+    nodes: BoardObject[],
+): BoardPatch {
+    const patch: BoardPatch = { creates: nodes };
+    doc.applyPatch(patch);
+    return patch;
+}
+
+// ---------- 3) Simplify Equation Block ----------
+
+export function toolSimplifyEquationBlock(
+    doc: BoardDoc,
+    snapshot: BoardSnapshot,
+    args: SimplifyEquationArgs,
+    simplifiedLatex: string,
+): BoardPatch {
+    const target = snapshot.objects.find((o) => o.id === args.objectId);
+    if (!target) return { updates: [] };
+
+    const patch: BoardPatch = {
+        updates: [{ id: target.id, props: { text: simplifiedLatex } }],
     };
-};
+    doc.applyPatch(patch);
+    return patch;
+}
+
+// ---------- 4) Niskopoziomowy draw_board_patch ----------
+
+export function toolDrawBoardPatch(
+    doc: BoardDoc,
+    _snapshot: BoardSnapshot,
+    args: DrawBoardPatchArgs,
+): BoardPatch {
+    const patch: BoardPatch = {
+        creates: [],
+        updates: [],
+        deletes: [],
+    };
+
+    const source = (args as DrawBoardPatchArgs).patch || args;
+
+    if (Array.isArray(source.creates)) {
+        patch.creates = source.creates.map((raw: any) => {
+            const obj: any = {
+                ...raw,
+                id:
+                    raw.id ||
+                    newId('ai'),
+            };
+
+            if (obj.type === 'line' && (!obj.start || !obj.end)) {
+                const x = obj.x || 0;
+                const y = obj.y || 0;
+                const w = obj.width || 0;
+                const h = obj.height || 0;
+                obj.start = { x, y };
+                obj.end = { x: x + w, y: y + h };
+            }
+
+            if (!obj.color && !obj.strokeColor) {
+                obj.color = '#000000';
+            }
+
+            return obj as BoardObject;
+        });
+    }
+
+    if (Array.isArray(source.updates)) {
+        patch.updates = source.updates.map((u: any) => ({
+            id: u.id,
+            props: u.props as Partial<BoardObject>,
+        }));
+    }
+
+    if (Array.isArray(source.deletes)) {
+        patch.deletes = [...source.deletes];
+    }
+
+    const createsLen = patch.creates?.length ?? 0;
+    const updatesLen = patch.updates?.length ?? 0;
+    const deletesLen = patch.deletes?.length ?? 0;
+
+    if (createsLen + updatesLen + deletesLen > 200) {
+        throw new Error('Patch too large from AI');
+    }
+
+    if (createsLen === 0 && updatesLen === 0 && deletesLen === 0) {
+        return { creates: [], updates: [], deletes: [] };
+    }
+
+    doc.applyPatch(patch);
+    return patch;
+}
+
+// ---------- 5) Insert LaTeX Box ----------
+
+export function toolInsertLatexBox(
+    doc: BoardDoc,
+    snapshot: BoardSnapshot,
+    args: InsertLatexArgs,
+): BoardPatch {
+    const baseX = args.x ?? snapshot.objects[0]?.x ?? 100;
+    const baseY = args.y ?? snapshot.objects[0]?.y ?? 100;
+
+    const latexObj: BoardObject = {
+        id: newId('ai-latex'),
+        type: 'latex',
+        x: baseX,
+        y: baseY,
+        width: args.width ?? 260,
+        height: args.height ?? 120,
+        latex: args.latex,
+    };
+
+    const patch: BoardPatch = { creates: [latexObj] };
+    doc.applyPatch(patch);
+    return patch;
+}
+
+// ---------- 6) Text Block -> LaTeX ----------
+
+export function toolTextBlockToLatexUpdate(
+    doc: BoardDoc,
+    snapshot: BoardSnapshot,
+    args: TextToLatexArgs,
+    latex: string,
+): BoardPatch {
+    const target = snapshot.objects.find((o) => o.id === args.objectId);
+    if (!target) return { updates: [] };
+
+    const patch: BoardPatch = {
+        updates: [
+            {
+                id: target.id,
+                props: {
+                    type: 'latex',
+                    latex,
+                    text: '',
+                },
+            },
+        ],
+    };
+
+    doc.applyPatch(patch);
+    return patch;
+}
+
+// ---------- 7) Plot Function ----------
+
+export function toolPlotFunction(
+    doc: BoardDoc,
+    snapshot: BoardSnapshot,
+    args: PlotFunctionArgs,
+): BoardPatch {
+    const baseX = args.x ?? snapshot.objects[0]?.x ?? 100;
+    const baseY = args.y ?? snapshot.objects[0]?.y ?? 100;
+
+    const plot: BoardObject = {
+        id: newId('ai-fplot'),
+        type: 'mathFunctionPlot',
+        x: baseX,
+        y: baseY,
+        width: 400,
+        height: 260,
+        expression: args.expression,
+        xRange: [args.xMin ?? -10, args.xMax ?? 10],
+    };
+
+    const patch: BoardPatch = { creates: [plot] };
+    doc.applyPatch(patch);
+    return patch;
+}
+
+// ---------- 8) Connect Objects (strzałki / wektory) ----------
 
 export function toolConnectObjects(
     doc: BoardDoc,
     snapshot: BoardSnapshot,
     args: ConnectObjectsArgs,
 ): BoardPatch {
-    const from = snapshot.objects.find(o => o.id === args.fromId);
-    const to = snapshot.objects.find(o => o.id === args.toId);
+    const from = snapshot.objects.find((o) => o.id === args.fromId);
+    const to = snapshot.objects.find((o) => o.id === args.toId);
     if (!from || !to) {
         return { creates: [], updates: [] };
     }
@@ -319,25 +410,19 @@ export function toolConnectObjects(
         arrowStyle: args.style?.arrowHead ?? 'end',
     };
 
-    const patch = { creates: [snapObjectToGrid(arrow)] };
+    const patch: BoardPatch = { creates: [snapObjectToGrid(arrow)] };
     doc.applyPatch(patch);
     return patch;
 }
 
-// 9) Label Object - text/LaTeX labels attached to objects
-type LabelObjectArgs = {
-    objectId: string;
-    text: string;
-    mode?: 'plain' | 'latex';
-    position?: 'top' | 'bottom' | 'left' | 'right' | 'center';
-};
+// ---------- 9) Label Object ----------
 
 export function toolLabelObject(
     doc: BoardDoc,
     snapshot: BoardSnapshot,
     args: LabelObjectArgs,
 ): BoardPatch {
-    const target = snapshot.objects.find(o => o.id === args.objectId);
+    const target = snapshot.objects.find((o) => o.id === args.objectId);
     if (!target) return { creates: [], updates: [] };
 
     const mode = args.mode ?? 'plain';
@@ -379,114 +464,65 @@ export function toolLabelObject(
         y,
         width: 0,
         height: 0,
-        ...(mode === 'plain' ? { text: args.text } : { latex: args.text }),
+        ...(mode === 'plain'
+            ? { text: args.text }
+            : { latex: args.text }),
         color: '#000000',
     };
 
-    const patch = { creates: [snapObjectToGrid(base)] };
+    const patch: BoardPatch = { creates: [snapObjectToGrid(base)] };
     doc.applyPatch(patch);
     return patch;
 }
 
-// 10) Set Style - update style properties
-type SetStyleArgs = {
-    ids: string[];
-    props: Partial<BoardObject>;
-};
+// ---------- 10) Set Style ----------
 
 export function toolSetStyle(
     doc: BoardDoc,
-    snapshot: BoardSnapshot,
+    _snapshot: BoardSnapshot,
     args: SetStyleArgs,
 ): BoardPatch {
-    const updates = args.ids.map(id => ({
+    const updates = args.ids.map((id) => ({
         id,
         props: args.props,
     }));
-    const patch = { creates: [], updates };
+    const patch: BoardPatch = { updates };
     doc.applyPatch(patch);
     return patch;
 }
 
-// 11) Delete Objects
-type DeleteObjectsArgs = { ids: string[] };
+// ---------- 11) Delete Objects ----------
 
 export function toolDeleteObjects(
     doc: BoardDoc,
-    snapshot: BoardSnapshot,
+    _snapshot: BoardSnapshot,
     args: DeleteObjectsArgs,
 ): BoardPatch {
-    const patch = {
-        creates: [],
-        updates: [],
+    const patch: BoardPatch = {
         deletes: args.ids,
     };
     doc.applyPatch(patch);
     return patch;
 }
 
-// 12) Draw Handstroke - natural pen strokes
-type DrawHandstrokeArgs = {
-    points: { x: number; y: number }[];
-    style?: 'teacher_marker' | 'student_pen' | 'sketch';
-    color?: string;
-};
-
-function jitter(val: number, amount: number) {
-    return val + (Math.random() * 2 - 1) * amount;
-}
-
-// Simple Catmull-Rom interpolation
-function interpolateStroke(points: { x: number; y: number }[], step = 0.2) {
-    if (points.length <= 2) return points;
-    if (points.length < 3) return points;
-
-    const res: { x: number; y: number }[] = [];
-    for (let i = 0; i < points.length - 1; i++) {
-        const p0 = points[i === 0 ? i : i - 1]!;
-        const p1 = points[i]!;
-        const p2 = points[i + 1]!;
-        const p3 = points[i + 2 < points.length ? i + 2 : i + 1]!;
-
-        for (let t = 0; t < 1; t += step) {
-            const t2 = t * t;
-            const t3 = t2 * t;
-
-            const x =
-                0.5 *
-                ((2 * p1.x) +
-                    (-p0.x + p2.x) * t +
-                    (2 * p0.x - 5 * p1.x + 4 * p2.x - p3.x) * t2 +
-                    (-p0.x + 3 * p1.x - 3 * p2.x + p3.x) * t3);
-
-            const y =
-                0.5 *
-                ((2 * p1.y) +
-                    (-p0.y + p2.y) * t +
-                    (2 * p0.y - 5 * p1.y + 4 * p2.y - p3.y) * t2 +
-                    (-p0.y + 3 * p1.y - 3 * p2.y + p3.y) * t3);
-
-            res.push({ x, y });
-        }
-    }
-    const lastPoint = points[points.length - 1];
-    if (lastPoint) res.push(lastPoint);
-    return res;
-}
+// ---------- 12) Draw Handstroke (naturalny odręczny stroke) ----------
 
 export function toolDrawHandstroke(
     doc: BoardDoc,
-    snapshot: BoardSnapshot,
+    _snapshot: BoardSnapshot,
     args: DrawHandstrokeArgs,
 ): BoardPatch {
     if (!args.points || args.points.length < 2) {
         return { creates: [], updates: [] };
     }
 
-    const base = args.points.map(p => ({
+    const base = args.points.map((p) => ({
         x: jitter(p.x, 0.5),
         y: jitter(p.y, 0.5),
-        t: typeof performance !== 'undefined' ? performance.now() : Date.now(),
+        t:
+            typeof performance !== 'undefined'
+                ? performance.now()
+                : Date.now(),
     }));
 
     const dense = interpolateStroke(base, 0.25);
@@ -500,9 +536,8 @@ export function toolDrawHandstroke(
 
     const cfg = configByStyle[style];
 
-    // Calculate bounding box from points
-    const xs = dense.map(p => p.x);
-    const ys = dense.map(p => p.y);
+    const xs = dense.map((p) => p.x);
+    const ys = dense.map((p) => p.y);
     const minX = Math.min(...xs);
     const minY = Math.min(...ys);
     const maxX = Math.max(...xs);
@@ -520,15 +555,14 @@ export function toolDrawHandstroke(
         smoothedPoints: [],
         color: args.color ?? '#000000',
         lineWidth: cfg.baseWidth,
-        penStyle: 'technical',
+        penStyle: style,
         penConfig: {
             smoothing: cfg.smoothing,
         },
         timestamp: Date.now(),
     };
 
-    const patch = { creates: [element] };
+    const patch: BoardPatch = { creates: [element] };
     doc.applyPatch(patch);
     return patch;
 }
-

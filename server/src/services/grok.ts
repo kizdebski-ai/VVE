@@ -40,7 +40,7 @@ export async function callGrok({
   if (model.includes('grok') || model === process.env.CHAT_MODEL) {
     fallbackModels = [
       model,
-      process.env.CHAT_MODEL_FALLBACK_1 || 'x-ai/grok-4.1-fast:free',
+      process.env.CHAT_MODEL_FALLBACK_1 || 'openai/gpt-oss-120b:exacto',
       process.env.CHAT_MODEL_FALLBACK_2 || 'nvidia/nemotron-nano-12b-v2-vl:free',
     ];
   } else {

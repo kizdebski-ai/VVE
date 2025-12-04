@@ -899,3 +899,17 @@ odręcznie podkreślać, stawiać nawiasy, zakreślenia,
 rysować precyzyjne wektory i osie tam, gdzie trzeba,
 
 robić to wszystko bez lagów, bo po drucie idą tylko 2–6 punktów, a nie cała chmura.
+
+server/src/yjs/boardDoc.ts
+
+server/src/ai/models/boardSnapshot.ts (jeśli zmieniałeś typy)
+
+server/src/ai/tools/boardTools.ts
+
+server/src/ai/agent/boardToolsSchema.ts
+
+server/src/ai/agent/boardAgent.ts
+
+ewentualnie plik z rysowaniem linii/penem, jeśli też go ruszałeś.
+
+Wtedy:

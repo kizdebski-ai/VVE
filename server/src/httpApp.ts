@@ -10,6 +10,10 @@ import { HttpError } from './services/httpError';
 import { callGrok, ChatMessage, type CallGrokOptions } from './services/grok';
 
 import { createAiBoardAssistantRouter } from './routes/aiBoardAssistant';
+import { createAdminTeachersRouter } from './routes/adminTeachers';
+import { createTeacherAuthRouter } from './routes/teacherAuth';
+import { createTeacherBoardsRouter } from './routes/teacherBoards';
+import { createBoardAccessRouter } from './routes/boardAccess';
 
 const API_ROOMS = '/api/rooms';
 const AI_SOLVER_ROUTE = '/api/ai/solve-equation/';
@@ -45,8 +49,12 @@ export const createHttpApp = ({ roomManager, aiSolver }: CreateAppOptions) => {
   // AI endpoints accept screenshots, so allow a slightly larger body size
   app.use(express.json({ limit: '20mb' }));
 
-  // Register AI Board Assistant Router
+  // Register routers
   app.use('/api/ai/board-assistant', createAiBoardAssistantRouter(roomManager));
+  app.use('/api/admin/teachers', createAdminTeachersRouter());
+  app.use(createTeacherAuthRouter());
+  app.use('/api/teacher/boards', createTeacherBoardsRouter());
+  app.use(createBoardAccessRouter());
 
   // Basic root status page so Railway shows a friendly message instead of "Cannot GET /"
   app.get('/', (_, res) => {

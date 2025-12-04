@@ -35,7 +35,7 @@ export function connectToYjs(roomId: string): YjsConnection {
   let socket: WebSocket | null = null;
   let reconnectTimeout = 1000;
   const reconnectTimeoutMax = 10000;
-  let reconnectTimer: ReturnType<typeof window.setTimeout> | null = null;
+  let reconnectTimer: number | null = null;
   let explicitlyDisconnected = false;
   let listenersAttached = false;
 

@@ -16,6 +16,17 @@ services:
     volumes:
       - backend_data:/data
 
+  postgres:
+    image: postgres:15-alpine
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres_password
+      POSTGRES_DB: whitevue
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
   frontend:
     build:
       context: ./frontend
@@ -28,3 +39,4 @@ services:
 
 volumes:
   backend_data:
+  postgres_data:

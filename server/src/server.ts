@@ -9,6 +9,7 @@ import { RoomManager, RoomContext } from './rooms';
 import { FilePersistence } from './persistence';
 import { createHttpApp } from './httpApp';
 import { OpenRouterEquationSolver } from './services/aiSolver';
+import { verifyBoardWsToken } from './services/boardTokens';
 
 // Debug: Check API Key
 const apiKey = process.env.OPENROUTER_API_KEY;
@@ -175,13 +176,17 @@ const removeConnection = (roomId: string, room: RoomContext, ws: WebSocket) => {
   logger.info('Client disconnected', { roomId, clients: room.connections.size });
 };
 
-const parseRoomId = (requestUrl?: string | null): string | null => {
+const parseWsParams = (
+  requestUrl?: string | null
+): { roomId: string; token: string | null } | null => {
   if (!requestUrl) return null;
   try {
     const url = new URL(requestUrl, 'http://localhost');
     const segments = url.pathname.split('/').filter(Boolean);
     if (segments.length >= 3 && segments[0] === 'ws' && segments[1] === 'whiteboard') {
-      return decodeURIComponent(segments.slice(2).join('/'));
+      const roomId = decodeURIComponent(segments.slice(2).join('/'));
+      const token = url.searchParams.get('wsToken') || url.searchParams.get('token');
+      return { roomId, token };
     }
   } catch {
     return null;
@@ -198,9 +203,16 @@ const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
 wss.on('connection', (socket: ManagedSocket, request) => {
-  const roomId = parseRoomId(request.url);
-  if (!roomId) {
+  const parsed = parseWsParams(request.url);
+  if (!parsed) {
     socket.close(1008, 'Invalid room');
+    return;
+  }
+
+  const { roomId, token } = parsed;
+  const session = token ? verifyBoardWsToken(token) : null;
+  if (!session || session.boardId !== roomId) {
+    socket.close(1008, 'Unauthorized');
     return;
   }
 

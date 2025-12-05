@@ -14,8 +14,7 @@ for (const dir of searchDirs) {
       continue;
     }
     resolvedPaths.add(normalizedPath);
-    const shouldOverride = filename === '.env.secrets';
-    const result = dotenv.config({ path: normalizedPath, override: shouldOverride });
+    const result = dotenv.config({ path: normalizedPath, override: true });
     const error = result.error as NodeJS.ErrnoException | undefined;
     if (error && error.code !== 'ENOENT') {
       console.warn(`Failed to load ${filename} at ${normalizedPath}:`, error.message);
@@ -42,6 +41,7 @@ export const config = {
   host: process.env.HOST || '0.0.0.0',
   port: Number(process.env.PORT || 8000),
   nodeEnv: process.env.NODE_ENV || 'development',
+  exposeMagicLinks: true,
   cleanupIntervalMs: 60_000,
   roomTtlMs: 24 * 60 * 60 * 1000, // 24 hours (increased for persistence)
   pingIntervalMs: 30_000,

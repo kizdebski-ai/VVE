@@ -61,3 +61,10 @@ export const markTeacherLogin = async (teacherId: string, trx?: Knex): Promise<v
     .where({ id: teacherId })
     .update({ last_login_at: new Date() });
 };
+
+export const getAllTeachers = async (trx?: Knex): Promise<TeacherRecord[]> => {
+  const db = trx ?? getDb();
+  return db<TeacherRecord>('teachers')
+    .orderBy('created_at', 'desc')
+    .limit(500);
+};

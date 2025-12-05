@@ -48,8 +48,8 @@ export const verifyToken = async (token: string, stored: string): Promise<boolea
 };
 
 export interface MagicLinkMetadata {
-  ip?: string | null;
-  userAgent?: string | null;
+  ip?: string | null | undefined;
+  userAgent?: string | null | undefined;
 }
 
 export interface MagicLinkCreationResult {
@@ -80,13 +80,16 @@ export const createTeacherMagicLink = async (
     .returning('*');
 
   const url = buildMagicLinkUrl(token, teacherId);
+  if (!record) {
+    throw new Error('Failed to create magic link record');
+  }
   return { token, url, expiresAt, record };
 };
 
 export interface MagicLinkConsumeResult {
   success: boolean;
   reason?: 'invalid' | 'expired' | 'used' | 'not_found';
-  link?: TeacherMagicLinkRecord;
+  link?: TeacherMagicLinkRecord | undefined;
 }
 
 export const consumeMagicLink = async (
@@ -98,8 +101,8 @@ export const consumeMagicLink = async (
   const now = new Date();
   const candidates = await db<TeacherMagicLinkRecord>('teacher_magic_links')
     .where({ teacher_id: teacherId })
-    .andWhere('expires_at', '>', now)
-    .andWhereNull('used_at')
+    .where('expires_at', '>', now)
+    .whereNull('used_at')
     .orderBy('created_at', 'desc');
 
   let match: TeacherMagicLinkRecord | undefined;

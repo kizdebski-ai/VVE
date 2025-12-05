@@ -2,6 +2,7 @@ import express, { Request } from 'express';
 import cors from 'cors';
 import * as fs from 'fs';
 import * as path from 'path';
+import { randomUUID } from 'crypto';
 
 import { logger } from './logger';
 import type { RoomManager } from './rooms';
@@ -49,6 +50,30 @@ export const createHttpApp = ({ roomManager, aiSolver }: CreateAppOptions) => {
   // AI endpoints accept screenshots, so allow a slightly larger body size
   app.use(express.json({ limit: '20mb' }));
 
+  // Correlation ID middleware
+  app.use((req, res, next) => {
+    const headerId = Array.isArray(req.headers['x-request-id'])
+      ? req.headers['x-request-id'][0]
+      : req.headers['x-request-id'];
+    const correlationId = typeof headerId === 'string' && headerId.trim() ? headerId.trim() : randomUUID();
+    (req as any).correlationId = correlationId;
+    res.setHeader('x-request-id', correlationId);
+    next();
+  });
+
+  // Lightweight request logging for sensitive routes
+  app.use((req, _res, next) => {
+    const correlationId = (req as any).correlationId;
+    if (
+      req.path.startsWith('/api/ai/board-assistant') ||
+      req.path.startsWith('/api/teacher/boards') ||
+      req.path.startsWith('/board/')
+    ) {
+      logger.info('HTTP request', { path: req.path, method: req.method, correlationId });
+    }
+    next();
+  });
+
   // Register routers
   app.use('/api/ai/board-assistant', createAiBoardAssistantRouter(roomManager));
   app.use('/api/admin/teachers', createAdminTeachersRouter());
@@ -84,10 +109,10 @@ export const createHttpApp = ({ roomManager, aiSolver }: CreateAppOptions) => {
     res.json({ rooms });
   });
 
-  app.post(API_ROOMS, (req, res) => {
+  app.post(API_ROOMS, async (req, res) => {
     try {
       const payload = req.body || {};
-      const room = roomManager.createRoom({
+      const room = await roomManager.createRoom({
         displayName: typeof payload.displayName === 'string' ? payload.displayName : undefined,
         ownerName: typeof payload.ownerName === 'string' ? payload.ownerName : undefined,
         roomId: typeof payload.roomId === 'string' ? payload.roomId : undefined
@@ -110,7 +135,7 @@ export const createHttpApp = ({ roomManager, aiSolver }: CreateAppOptions) => {
     res.json(room);
   });
 
-  app.patch(`${API_ROOMS}/:roomId`, (req, res) => {
+  app.patch(`${API_ROOMS}/:roomId`, async (req, res) => {
     const ownerSecret = readOwnerSecret(req);
     if (!ownerSecret) {
       res.status(403).json({ error: 'ownerSecret is required.' });
@@ -118,7 +143,7 @@ export const createHttpApp = ({ roomManager, aiSolver }: CreateAppOptions) => {
     }
     try {
       const payload = req.body || {};
-      const room = roomManager.updateRoom(req.params.roomId, ownerSecret, {
+      const room = await roomManager.updateRoom(req.params.roomId, ownerSecret, {
         displayName: typeof payload.displayName === 'string' ? payload.displayName : undefined,
         ownerName: typeof payload.ownerName === 'string' ? payload.ownerName : undefined,
         isListed: typeof payload.isListed === 'boolean' ? payload.isListed : undefined,
@@ -132,14 +157,14 @@ export const createHttpApp = ({ roomManager, aiSolver }: CreateAppOptions) => {
     }
   });
 
-  app.delete(`${API_ROOMS}/:roomId`, (req, res) => {
+  app.delete(`${API_ROOMS}/:roomId`, async (req, res) => {
     const ownerSecret = readOwnerSecret(req);
     if (!ownerSecret) {
       res.status(403).json({ error: 'ownerSecret is required.' });
       return;
     }
     try {
-      const room = roomManager.archiveRoom(req.params.roomId, ownerSecret);
+      const room = await roomManager.archiveRoom(req.params.roomId, ownerSecret);
       res.json(room);
     } catch (error) {
       const message = (error as Error).message || 'Unable to archive room.';

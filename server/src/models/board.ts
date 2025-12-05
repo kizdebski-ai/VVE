@@ -14,4 +14,5 @@ export interface BoardRecord {
 
 export interface BoardWithStudent extends BoardRecord {
   student_name: string | null;
+  teacher_full_name?: string | null;
 }

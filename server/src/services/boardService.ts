@@ -59,7 +59,7 @@ export const createBoardForTeacher = async (params: CreateBoardParams): Promise<
   const studentToken = deriveStudentToken(boardId, slug);
   const studentTokenHash = await hashToken(studentToken);
 
-  return db.transaction(async (trx) => {
+  return db.transaction(async (trx): Promise<CreateBoardResult> => {
     let studentId: string | null = null;
     if (params.studentName) {
       const studentRows = await trx('students')
@@ -88,6 +88,10 @@ export const createBoardForTeacher = async (params: CreateBoardParams): Promise<
         valid_until: validUntil
       })
       .returning('*');
+
+    if (!board) {
+      throw new Error('Failed to create board');
+    }
 
     const emptyDoc = new Y.Doc();
     const encoded = Y.encodeStateAsUpdate(emptyDoc);
@@ -119,7 +123,7 @@ export const listBoardsForTeacher = async (teacherId: string): Promise<ListBoard
   const rows = await db<BoardRecord>('boards')
     .leftJoin('students', 'boards.student_id', 'students.id')
     .where('boards.teacher_id', teacherId)
-    .andWhereNull('boards.deleted_at')
+    .whereNull('boards.deleted_at')
     .select(
       'boards.id',
       'boards.title',
@@ -152,10 +156,12 @@ export const findBoardBySlug = async (slug: string): Promise<BoardWithStudent | 
   const db = getDb();
   const row = await db<BoardRecord>('boards')
     .leftJoin('students', 'boards.student_id', 'students.id')
+    .leftJoin('teachers', 'boards.teacher_id', 'teachers.id')
     .where('boards.public_slug', slug)
     .first(
       'boards.*',
-      db.ref('students.full_name').as('student_name')
+      db.ref('students.full_name').as('student_name'),
+      db.ref('teachers.full_name').as('teacher_full_name')
     );
   if (!row) return null;
   return row as unknown as BoardWithStudent;

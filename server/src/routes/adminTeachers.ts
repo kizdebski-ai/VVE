@@ -4,7 +4,8 @@ import { parse } from 'csv-parse/sync';
 import { logger } from '../logger';
 import { config } from '../config';
 import { createTeacherMagicLink } from '../services/teacherMagicLinks';
-import { getOrCreateTeacher, findTeacherById, normalizeTeacherEmail } from '../services/teacherService';
+import { getOrCreateTeacher, findTeacherById, normalizeTeacherEmail, getAllTeachers } from '../services/teacherService';
+import { getDb } from '../db';
 
 const upload = multer({ storage: multer.memoryStorage() });
 const textParser = express.text({ type: ['text/csv', 'text/plain', 'application/csv'] });
@@ -83,6 +84,43 @@ const dedupeByEmail = (rows: ImportRow[]): ImportRow[] => {
 export const createAdminTeachersRouter = () => {
   const router = Router();
 
+  // List all teachers with their last magic link info
+  router.get('/', async (req, res) => {
+    try {
+      const teachers = await getAllTeachers();
+
+      // Get last magic link for each teacher
+      const teacherIds = teachers.map(t => t.id);
+      const lastLinks = await getDb()('teacher_magic_links')
+        .whereIn('teacher_id', teacherIds)
+        .whereNull('used_at')
+        .where('expires_at', '>', new Date())
+        .orderBy('created_at', 'desc');
+
+      const linksByTeacher = new Map<string, { expiresAt: Date }>();
+      for (const link of lastLinks) {
+        if (!linksByTeacher.has(link.teacher_id)) {
+          linksByTeacher.set(link.teacher_id, { expiresAt: link.expires_at });
+        }
+      }
+
+      const results = teachers.map(t => ({
+        teacherId: t.id,
+        email: t.email,
+        fullName: t.full_name,
+        createdAt: t.created_at,
+        lastLoginAt: t.last_login_at,
+        hasActiveLink: linksByTeacher.has(t.id),
+        linkExpiresAt: linksByTeacher.get(t.id)?.expiresAt || null
+      }));
+
+      res.json({ teachers: results });
+    } catch (error) {
+      logger.error('Failed to list teachers', { error: (error as Error).message });
+      res.status(500).json({ error: 'Unable to list teachers.' });
+    }
+  });
+
   router.post('/import', textParser, upload.single('file'), async (req, res) => {
     const fileContent = req.file ? req.file.buffer.toString('utf-8') : null;
     const rowsFromFile = fileContent ? parseCsvTeachers(fileContent) : [];
@@ -117,7 +155,7 @@ export const createAdminTeachersRouter = () => {
           teacherId: teacher.id,
           created,
           expiresAt: magicLink.expiresAt.toISOString(),
-          magicLink: config.nodeEnv === 'production' ? undefined : magicLink.url
+          magicLink: magicLink.url
         });
       } catch (error) {
         logger.error('Failed to import teacher', { email: row.email, error: (error as Error).message });
@@ -144,7 +182,7 @@ export const createAdminTeachersRouter = () => {
       res.json({
         teacherId,
         expiresAt: magicLink.expiresAt.toISOString(),
-        magicLink: config.nodeEnv === 'production' ? undefined : magicLink.url
+        magicLink: magicLink.url
       });
     } catch (error) {
       logger.error('Failed to generate magic link', { teacherId, error: (error as Error).message });

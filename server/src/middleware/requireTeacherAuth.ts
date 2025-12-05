@@ -28,7 +28,7 @@ export const requireTeacherAuth: RequestHandler = async (req, res, next) => {
       return;
     }
 
-    const teacher = await getDb<TeacherRecord>('teachers')
+    const teacher = await getDb()<TeacherRecord>('teachers')
       .where({ id: session.teacherId, is_active: true })
       .first();
 

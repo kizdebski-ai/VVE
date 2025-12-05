@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { requireTeacherAuth } from '../middleware/requireTeacherAuth';
 import { createBoardForTeacher, listBoardsForTeacher, updateBoard } from '../services/boardService';
+import { createRateLimiter } from '../middleware/rateLimiter';
 
 const parseDate = (value: unknown): Date | null => {
   if (typeof value !== 'string') return null;
@@ -13,6 +14,13 @@ export const createTeacherBoardsRouter = () => {
   const router = Router();
 
   router.use(requireTeacherAuth);
+  router.use(
+    createRateLimiter({
+      windowMs: 60_000,
+      max: 120,
+      keyResolver: (req) => req.teacher?.id || req.ip || 'unknown'
+    })
+  );
 
   router.get('/', async (req, res) => {
     const teacher = req.teacher!;

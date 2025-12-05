@@ -6,6 +6,8 @@ declare module 'express-serve-static-core' {
     teacher?: TeacherRecord;
     board?: BoardRecord;
     boardRole?: 'teacher' | 'student';
+    boardReadOnly?: boolean;
+    correlationId?: string;
   }
 }
 

@@ -41,10 +41,9 @@ export const boardStudentAuth: RequestHandler = async (req, res, next) => {
   }
 
   const now = new Date();
-  if (board.valid_until && new Date(board.valid_until) < now) {
-    res.status(410).json({ error: 'Link wygasl. Popros nauczyciela o nowy link.' });
-    return;
-  }
+  const isExpired = board.valid_until ? new Date(board.valid_until) < now : false;
+  const isArchived = Boolean(board.archived_at);
+  const readOnly = isExpired || isArchived;
 
   const ip = clientIp(req);
   const userAgent = typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'] : null;
@@ -55,7 +54,8 @@ export const boardStudentAuth: RequestHandler = async (req, res, next) => {
     if (session && session.teacherId === board.teacher_id) {
       req.board = board;
       req.boardRole = 'teacher';
-      await getDb<BoardAccessLogRecord>('board_access_logs').insert({
+      req.boardReadOnly = readOnly;
+      await getDb()('board_access_logs').insert({
         board_id: board.id,
         actor_type: 'teacher',
         actor_id: board.teacher_id,
@@ -81,8 +81,9 @@ export const boardStudentAuth: RequestHandler = async (req, res, next) => {
 
   req.board = board;
   req.boardRole = 'student';
+  req.boardReadOnly = readOnly;
 
-  await getDb<BoardAccessLogRecord>('board_access_logs').insert({
+  await getDb()('board_access_logs').insert({
     board_id: board.id,
     actor_type: 'student',
     actor_id: board.student_id,

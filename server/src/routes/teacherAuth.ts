@@ -6,6 +6,7 @@ import { BoardAccessLogRecord } from '../models/teacher';
 import { consumeMagicLink } from '../services/teacherMagicLinks';
 import { createTeacherSessionToken, teacherSessionCookieName } from '../services/teacherSessions';
 import { findTeacherById, markTeacherLogin } from '../services/teacherService';
+import { createRateLimiter } from '../middleware/rateLimiter';
 
 const sessionMaxAgeMs = 1000 * 60 * 60 * 24 * 30; // 30 days
 
@@ -17,18 +18,21 @@ const renderErrorPage = (res: import('express').Response, message: string, statu
     );
 };
 
-const getClientIp = (req: import('express').Request) => {
+const getClientIp = (req: import('express').Request): string | null => {
   const forwarded = req.headers['x-forwarded-for'];
   if (typeof forwarded === 'string' && forwarded.length > 0) {
-    return forwarded.split(',')[0].trim();
+    const first = forwarded.split(',')[0];
+    return first ? first.trim() : null;
   }
-  return req.ip;
+  return req.ip ?? null;
 };
 
 export const createTeacherAuthRouter = () => {
   const router = Router();
+  const loginLimiter = createRateLimiter({ windowMs: 60_000, max: 10 });
 
-  router.get('/teacher/login', async (req, res) => {
+  router.get('/teacher/login', loginLimiter, async (req, res) => {
+    const correlationId = req.correlationId;
     const token = typeof req.query.token === 'string' ? req.query.token : '';
     const teacherId = typeof req.query.id === 'string' ? req.query.id : '';
 
@@ -66,7 +70,7 @@ export const createTeacherAuthRouter = () => {
       });
 
       await markTeacherLogin(teacher.id);
-      await getDb<BoardAccessLogRecord>('board_access_logs').insert({
+      await getDb()('board_access_logs').insert({
         board_id: null,
         actor_type: 'teacher',
         actor_id: teacher.id,
@@ -78,7 +82,8 @@ export const createTeacherAuthRouter = () => {
     } catch (error) {
       logger.error('Teacher magic link login failed', {
         error: (error as Error).message,
-        teacherId
+        teacherId,
+        correlationId
       });
       renderErrorPage(res, 'Wystapil blad. Sprobuj ponownie lub popros o nowy link.', 500);
     }

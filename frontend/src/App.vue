@@ -19,6 +19,7 @@
         :room-id="roomId"
         :room-key="roomKey"
         :username="username"
+        :ws-token="storedWsToken"
         :debug-mode="debugMode"
         :current-shape="currentShape"
         :current-line-style="currentLineStyle"
@@ -372,6 +373,11 @@ export default {
     const formattedLastSaved = computed(() => {
       if (!lastSaved.value) return '';
       return new Date(lastSaved.value).toLocaleTimeString();
+    });
+    
+    // WS Token for board access (from student/teacher entry)
+    const storedWsToken = computed(() => {
+      return localStorage.getItem('board_ws_token') || null;
     });
 
     // Graph Panels
@@ -1182,27 +1188,46 @@ export default {
     // --- Lifecycle Hooks ---
     onMounted(() => {
       const bootstrapRoom = async () => {
+        const urlParams = new URLSearchParams(window.location.search);
+        
+        // Check for wsToken-based access (from student/teacher board entry)
+        const queryRoom = urlParams.get('room');
+        const queryWsToken = urlParams.get('wsToken');
+        const queryName = urlParams.get('name');
+        
+        if (queryRoom && queryWsToken) {
+          // Student/teacher board access via token (no E2E encryption needed)
+          roomId.value = queryRoom;
+          // Use a dummy key or skip encryption for token-based boards
+          roomKey.value = 'board-token-access';
+          if (queryName) {
+            username.value = queryName;
+            localStorage.setItem('username', queryName);
+          }
+          // Store wsToken for WhiteboardCanvas to use
+          localStorage.setItem('board_ws_token', queryWsToken);
+          appDebugLog(`App mounted with board token. Room ID: ${roomId.value}`);
+          return;
+        }
+        
+        // Standard encrypted room access
         const parsedHash = parseRoomHash(window.location.hash);
         if (parsedHash) {
           roomId.value = parsedHash.roomId;
           roomKey.value = parsedHash.roomKey;
           updateRoomUrlHash();
+        } else if (queryRoom) {
+          roomId.value = queryRoom;
+          await ensureRoomKey();
+          updateRoomUrlHash();
         } else {
-          const urlParams = new URLSearchParams(window.location.search);
-          const queryRoom = urlParams.get('room');
-          if (queryRoom) {
-            roomId.value = queryRoom;
-            await ensureRoomKey();
-            updateRoomUrlHash();
-          } else {
-            const newUrl = await createNewRoomUrl();
-            const newParsed = parseRoomHash(new URL(newUrl).hash);
-            if (newParsed) {
-              roomId.value = newParsed.roomId;
-              roomKey.value = newParsed.roomKey;
-            }
-            window.history.replaceState({}, '', newUrl);
+          const newUrl = await createNewRoomUrl();
+          const newParsed = parseRoomHash(new URL(newUrl).hash);
+          if (newParsed) {
+            roomId.value = newParsed.roomId;
+            roomKey.value = newParsed.roomKey;
           }
+          window.history.replaceState({}, '', newUrl);
         }
         localStorage.setItem('last_room_id', roomId.value);
         appDebugLog(`App mounted. Room ID: ${roomId.value}`);
@@ -1248,6 +1273,7 @@ export default {
       userInfoCollapsed,
       roomId,
       roomKey,
+      storedWsToken,
       currentTool,
       currentColor,
       currentLineWidth,

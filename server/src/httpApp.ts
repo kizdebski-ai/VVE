@@ -1,4 +1,4 @@
-import express, { Request } from 'express';
+import express, { Request, type RequestHandler } from 'express';
 import cors from 'cors';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -9,6 +9,7 @@ import type { RoomManager } from './rooms';
 import type { EquationSolver } from './services/aiSolver';
 import { HttpError } from './services/httpError';
 import { callGrok, ChatMessage, type CallGrokOptions } from './services/grok';
+import { config } from './config';
 
 import { createAiBoardAssistantRouter } from './routes/aiBoardAssistant';
 import { createAdminTeachersRouter } from './routes/adminTeachers';
@@ -38,6 +39,10 @@ const readOwnerSecret = (req: Request) =>
   (req.headers['x-owner-secret'] as string) ||
   (req.body && typeof req.body.ownerSecret === 'string' ? req.body.ownerSecret : undefined) ||
   (typeof req.query.ownerSecret === 'string' ? req.query.ownerSecret : undefined);
+
+const readAdminSecret = (req: Request) =>
+  (req.headers['x-admin-secret'] as string) ||
+  (typeof req.query.adminSecret === 'string' ? req.query.adminSecret : undefined);
 
 export interface CreateAppOptions {
   roomManager: RoomManager;
@@ -74,9 +79,26 @@ export const createHttpApp = ({ roomManager, aiSolver }: CreateAppOptions) => {
     next();
   });
 
+  const requireAdminSecret: RequestHandler = (req, res, next) => {
+    const expectedSecret = config.adminSecret;
+    if (!expectedSecret) {
+      logger.warn('Admin request blocked because admin secret is not configured', { path: req.path });
+      res.status(503).json({ error: 'Admin endpoints are not configured.' });
+      return;
+    }
+
+    const provided = readAdminSecret(req);
+    if (provided !== expectedSecret) {
+      res.status(401).json({ error: 'Unauthorized' });
+      return;
+    }
+
+    next();
+  };
+
   // Register routers
   app.use('/api/ai/board-assistant', createAiBoardAssistantRouter(roomManager));
-  app.use('/api/admin/teachers', createAdminTeachersRouter());
+  app.use('/api/admin/teachers', requireAdminSecret, createAdminTeachersRouter());
   app.use(createTeacherAuthRouter());
   app.use('/api/teacher/boards', createTeacherBoardsRouter());
   app.use(createBoardAccessRouter());

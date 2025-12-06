@@ -235,9 +235,11 @@ wss.on('connection', (socket: ManagedSocket, request) => {
     }
 
     const session = token ? verifyBoardWsToken(token) : null;
-    if (isBoardRoom && session && session.boardId !== roomId) {
-      socket.close(1008, 'Unauthorized');
-      return;
+    if (isBoardRoom) {
+      if (!session || session.boardId !== roomId) {
+        socket.close(1008, 'Unauthorized');
+        return;
+      }
     }
 
     const { room, created } = await roomManager.get(roomId);

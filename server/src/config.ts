@@ -56,7 +56,8 @@ export const config = {
   databaseUrl: process.env.DATABASE_URL,
   teacherAppBaseUrl: process.env.TEACHER_APP_BASE_URL || process.env.APP_BASE_URL || 'https://app.whitevue.com',
   teacherSessionSecret: process.env.TEACHER_SESSION_SECRET || process.env.SESSION_SECRET || 'change-me-in-prod',
-  teacherSessionCookie: process.env.TEACHER_SESSION_COOKIE || 'teacher_session'
+  teacherSessionCookie: process.env.TEACHER_SESSION_COOKIE || 'teacher_session',
+  adminSecret: process.env.ADMIN_SECRET
 };
 
 export const paths = {

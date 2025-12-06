@@ -14,8 +14,7 @@ for (const dir of searchDirs) {
       continue;
     }
     resolvedPaths.add(normalizedPath);
-    const shouldOverride = filename === '.env.secrets';
-    const result = dotenv.config({ path: normalizedPath, override: shouldOverride });
+    const result = dotenv.config({ path: normalizedPath, override: true });
     const error = result.error as NodeJS.ErrnoException | undefined;
     if (error && error.code !== 'ENOENT') {
       console.warn(`Failed to load ${filename} at ${normalizedPath}:`, error.message);
@@ -41,6 +40,8 @@ console.log('--------------------');
 export const config = {
   host: process.env.HOST || '0.0.0.0',
   port: Number(process.env.PORT || 8000),
+  nodeEnv: process.env.NODE_ENV || 'development',
+  exposeMagicLinks: true,
   cleanupIntervalMs: 60_000,
   roomTtlMs: 24 * 60 * 60 * 1000, // 24 hours (increased for persistence)
   pingIntervalMs: 30_000,
@@ -51,7 +52,12 @@ export const config = {
   // AI Board Assistant
   aiModel: process.env.BOARD_AI_MODEL || 'openai/gpt-oss-120b:exacto', // Default to free Grok model
   aiBaseUrl: 'https://openrouter.ai/api/v1',
-  aiBoardAssistantEnabled: !!process.env.OPENROUTER_API_KEY && process.env.AI_BOARD_ASSISTANT_ENABLED !== 'false'
+  aiBoardAssistantEnabled: !!process.env.OPENROUTER_API_KEY && process.env.AI_BOARD_ASSISTANT_ENABLED !== 'false',
+  databaseUrl: process.env.DATABASE_URL,
+  teacherAppBaseUrl: process.env.TEACHER_APP_BASE_URL || process.env.APP_BASE_URL || 'https://app.whitevue.com',
+  teacherSessionSecret: process.env.TEACHER_SESSION_SECRET || process.env.SESSION_SECRET || 'change-me-in-prod',
+  teacherSessionCookie: process.env.TEACHER_SESSION_COOKIE || 'teacher_session',
+  adminSecret: process.env.ADMIN_SECRET
 };
 
 export const paths = {

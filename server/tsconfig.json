@@ -1,6 +1,6 @@
 {
   "compilerOptions": {
-    "rootDir": "src",
+    "rootDir": ".",
     "outDir": "dist",
     "module": "CommonJS",
     "moduleResolution": "node",
@@ -23,7 +23,9 @@
     "resolveJsonModule": true
   },
   "include": [
-    "src/**/*"
+    "src/**/*",
+    "knexfile.ts",
+    "migrations/**/*"
   ],
   "exclude": [
     "tests",

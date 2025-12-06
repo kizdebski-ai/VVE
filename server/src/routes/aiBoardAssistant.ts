@@ -33,7 +33,7 @@ export const createAiBoardAssistantRouter = (roomManager: RoomManager) => {
             );
 
             // Lazily get/create room & doc from RoomManager
-            const { room } = roomManager.get(boardId);
+            const { room } = await roomManager.get(boardId);
             console.log(
                 `[AI Route] Room lookup: room=${!!room}, doc=${!!room?.doc}`,
             );

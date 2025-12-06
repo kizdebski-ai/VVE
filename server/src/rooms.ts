@@ -4,6 +4,7 @@ import * as Y from 'yjs';
 import { Awareness } from 'y-protocols/awareness';
 import { PersistenceLayer } from './persistence';
 import { logger } from './logger';
+import { BoardYjsPersistence } from './services/boardYjsPersistence';
 
 export interface RoomMetadata {
   roomId: string;
@@ -87,9 +88,11 @@ const now = () => Date.now();
 export class RoomManager {
   private rooms = new Map<string, RoomContext>();
   private persistence: PersistenceLayer;
+  private boardPersistence?: BoardYjsPersistence;
 
-  constructor(persistence?: PersistenceLayer) {
+  constructor(persistence?: PersistenceLayer, boardPersistence?: BoardYjsPersistence) {
     this.persistence = persistence ?? new InMemoryPersistence();
+    this.boardPersistence = boardPersistence;
     this.loadFromPersistence();
   }
 
@@ -147,7 +150,7 @@ export class RoomManager {
       connections: new Map(),
       lastActive: timestamp,
       initialized: false,
-      hydrated: true,
+      hydrated: this.boardPersistence ? false : true,
       hydrating: false,
       meta: {
         roomId,
@@ -195,82 +198,49 @@ export class RoomManager {
     return payload;
   }
 
-  get(roomId: string): RoomLookup {
+  async get(roomId: string): Promise<RoomLookup> {
     let room = this.rooms.get(roomId);
     let created = false;
-
-    if (room && room.hydrated === false && !room.hydrating) {
-      // Lazy load the full room data
-      // We need to do this synchronously or handle async in get().
-      // Since get() is synchronous in the current architecture (and used by ws connection),
-      // we might have a problem if persistence is async.
-      // However, for the purpose of this refactor, we'll assume we can trigger the load.
-      // BUT, persistence.loadRoom IS async.
-      // The WebSocket connection handler 'handleConnection' calls 'roomManager.get(roomId)'.
-      // We need to change how get works or how it's called.
-      // For now, let's keep the old behavior of loading everything at start if we can't easily change get() to async.
-      // WAIT, the user explicitly asked for optimization.
-      // If I can't change get() signature easily without breaking everything, 
-      // I should probably revert to full load OR accept that the first connection might be slightly delayed 
-      // if we can make the connection handler await.
-
-      // Let's check where get() is used. It's used in server.ts handleConnection.
-      // We can't easily make that async without refactoring server.ts too.
-
-      // ALTERNATIVE: Just load the doc content asynchronously and let Yjs sync it when ready?
-      // No, the doc needs to be populated for the initial sync.
-
-      // Let's try to load it here. If we can't await, we have to rely on the promise.
-      // But we can't return a promise here if the return type is RoomLookup.
-
-      // Actually, looking at the code, I can't easily make get() async without changing the interface.
-      // Let's stick to the plan but maybe we have to accept that for now we load everything 
-      // OR we change the server.ts to handle async room retrieval.
-
-      // Let's assume for this task I can't change server.ts extensively.
-      // So I will revert the "Lazy Load" part of the plan for `get` and just optimize `loadFromPersistence` 
-      // to NOT fail if a single room is corrupted, and maybe load them in parallel.
-
-      // BUT, I already changed loadFromPersistence to be lazy. 
-      // So I MUST handle initialization here.
-
-      // Since I cannot await here, I will trigger the load and the doc will be updated asynchronously.
-      // Yjs docs can be updated anytime. Clients will receive updates when the doc is loaded.
-      // This is actually a valid strategy!
-
-      room.hydrating = true;
-      this.persistence.loadRoom(roomId).then(data => {
-        if (data && room) {
-          // Apply the loaded state to the existing doc
-          Y.applyUpdate(room.doc, Y.encodeStateAsUpdate(data.doc));
-          room.meta = data.meta;
-          room.hydrated = true;
-          room.hydrating = false;
-          logger.info(`Lazy loaded room ${roomId}`);
-        } else if (room) {
-          room.hydrated = true;
-          room.hydrating = false;
-        }
-      }).catch(err => {
-        logger.error(`Failed to lazy load room ${roomId}`, err);
-        if (room) {
-          room.hydrating = false;
-        }
-      });
-    }
 
     if (!room) {
       room = this.createContext(roomId);
       this.rooms.set(roomId, room);
       created = true;
-      this.saveRoom(room);
+    }
+
+    if (room && room.hydrated === false && !room.hydrating) {
+      room.hydrating = true;
+      try {
+        const isBoard = this.boardPersistence
+          ? await this.boardPersistence.isBoardRoom(roomId)
+          : false;
+
+        if (isBoard && this.boardPersistence) {
+          await this.boardPersistence.hydrate(room);
+        } else {
+          const data = await this.persistence.loadRoom(roomId);
+          if (data) {
+            Y.applyUpdate(room.doc, Y.encodeStateAsUpdate(data.doc));
+            room.meta = data.meta;
+          } else {
+            await this.saveRoom(room);
+          }
+          room.hydrated = true;
+        }
+      } catch (err) {
+        logger.error(`Failed to hydrate room ${roomId}`, {
+          error: (err as Error).message
+        });
+      } finally {
+        room.hydrating = false;
+      }
     }
 
     this.bumpActivity(room);
-    return { room, created };
+    return { room: room!, created };
   }
 
-  createRoom(options: CreateRoomOptions = {}): RoomSnapshot & { ownerSecret: string } {
+  async createRoom(options: CreateRoomOptions = {}): Promise<RoomSnapshot & { ownerSecret: string }> {
     const roomId = options.roomId ? options.roomId.trim() : this.generateRoomId();
     if (!roomId) {
       throw new Error('Room ID cannot be empty.');
@@ -278,7 +248,7 @@ export class RoomManager {
     if (this.rooms.has(roomId)) {
       throw new Error('Room with this ID already exists.');
     }
-    const { room } = this.get(roomId);
+    const { room } = await this.get(roomId);
     if (options.displayName) {
       room.meta.displayName = options.displayName.trim();
     }
@@ -286,7 +256,7 @@ export class RoomManager {
       room.meta.ownerName = options.ownerName.trim();
     }
     room.meta.updatedAt = now();
-    this.saveRoom(room);
+    await this.saveRoom(room);
     return this.serialize(room, true) as RoomSnapshot & { ownerSecret: string };
   }
 
@@ -324,7 +294,7 @@ export class RoomManager {
     }
   }
 
-  updateRoom(roomId: string, ownerSecret: string, updates: UpdateRoomOptions) {
+  async updateRoom(roomId: string, ownerSecret: string, updates: UpdateRoomOptions) {
     const room = this.rooms.get(roomId);
     if (!room) throw new Error('Room not found.');
     this.assertOwner(room, ownerSecret);
@@ -341,18 +311,18 @@ export class RoomManager {
       room.meta.metadata = { ...room.meta.metadata, ...updates.metadata };
     }
     room.meta.updatedAt = now();
-    this.saveRoom(room);
+    await this.saveRoom(room);
     return this.serialize(room, true);
   }
 
-  archiveRoom(roomId: string, ownerSecret: string) {
+  async archiveRoom(roomId: string, ownerSecret: string) {
     const room = this.rooms.get(roomId);
     if (!room) throw new Error('Room not found.');
     this.assertOwner(room, ownerSecret);
     room.meta.isArchived = true;
     room.meta.isListed = false;
     room.meta.updatedAt = now();
-    this.saveRoom(room);
+    await this.saveRoom(room);
     return this.serialize(room, true);
   }
 

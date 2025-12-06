@@ -1,5 +1,17 @@
 import request from 'supertest';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
+vi.mock('multer', () => {
+  const multerStub = () => ({
+    single: () => (_req: any, _res: any, next: any) => next()
+  });
+  (multerStub as any).memoryStorage = () => ({});
+  return { default: multerStub };
+});
+
+vi.mock('csv-parse/sync', () => ({
+  parse: () => []
+}));
 
 import { createHttpApp } from '../src/httpApp';
 import { RoomManager } from '../src/rooms';

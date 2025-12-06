@@ -9,6 +9,8 @@ import { RoomManager, RoomContext } from './rooms';
 import { FilePersistence } from './persistence';
 import { createHttpApp } from './httpApp';
 import { OpenRouterEquationSolver } from './services/aiSolver';
+import { verifyBoardWsToken } from './services/boardTokens';
+import { BoardYjsPersistence } from './services/boardYjsPersistence';
 
 // Debug: Check API Key
 const apiKey = process.env.OPENROUTER_API_KEY;
@@ -89,6 +91,14 @@ const initializeRoom = (room: RoomContext) => {
     room.lastActive = timestamp;
     logger.info('Generated update', { size: update.length, originIsWs: origin instanceof WebSocket, origin });
     console.log(`[Server] Generated update. Size: ${update.length}, Origin: ${origin}`);
+    boardPersistence
+      .recordUpdate(room.id, update, room.doc)
+      .catch((error) =>
+        logger.error('Failed to persist Yjs update', {
+          boardId: room.id,
+          error: (error as Error).message
+        })
+      );
     broadcast(room, messageSync, update, origin as WebSocket | null);
   });
 
@@ -175,13 +185,17 @@ const removeConnection = (roomId: string, room: RoomContext, ws: WebSocket) => {
   logger.info('Client disconnected', { roomId, clients: room.connections.size });
 };
 
-const parseRoomId = (requestUrl?: string | null): string | null => {
+const parseWsParams = (
+  requestUrl?: string | null
+): { roomId: string; token: string | null } | null => {
   if (!requestUrl) return null;
   try {
     const url = new URL(requestUrl, 'http://localhost');
     const segments = url.pathname.split('/').filter(Boolean);
     if (segments.length >= 3 && segments[0] === 'ws' && segments[1] === 'whiteboard') {
-      return decodeURIComponent(segments.slice(2).join('/'));
+      const roomId = decodeURIComponent(segments.slice(2).join('/'));
+      const token = url.searchParams.get('wsToken') || url.searchParams.get('token');
+      return { roomId, token };
     }
   } catch {
     return null;
@@ -190,39 +204,67 @@ const parseRoomId = (requestUrl?: string | null): string | null => {
 };
 
 const persistence = new FilePersistence(config.dataDir);
-const roomManager = new RoomManager(persistence);
+const boardPersistence = new BoardYjsPersistence();
+const roomManager = new RoomManager(persistence, boardPersistence);
 const aiSolver = new OpenRouterEquationSolver();
+boardPersistence.startCleanupJob();
 export const app = createHttpApp({ roomManager, aiSolver });
 
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
 wss.on('connection', (socket: ManagedSocket, request) => {
-  const roomId = parseRoomId(request.url);
-  if (!roomId) {
-    socket.close(1008, 'Invalid room');
-    return;
-  }
+  (async () => {
+    const parsed = parseWsParams(request.url);
+    if (!parsed) {
+      socket.close(1008, 'Invalid room');
+      return;
+    }
 
-  const { room, created } = roomManager.get(roomId);
-  initializeRoom(room);
+    const { roomId, token } = parsed;
+    let isBoardRoom = false;
+    try {
+      isBoardRoom = await boardPersistence.isBoardRoom(roomId);
+    } catch (error) {
+      logger.error('Board lookup failed for WebSocket', {
+        roomId,
+        error: (error as Error).message
+      });
+      // Fail open for non-board rooms to preserve basic realtime when DB is down.
+      isBoardRoom = false;
+    }
 
-  socket.isAlive = true;
-  socket.on('pong', () => {
+    const session = token ? verifyBoardWsToken(token) : null;
+    if (isBoardRoom) {
+      if (!session || session.boardId !== roomId) {
+        socket.close(1008, 'Unauthorized');
+        return;
+      }
+    }
+
+    const { room, created } = await roomManager.get(roomId);
+    initializeRoom(room);
+
     socket.isAlive = true;
+    socket.on('pong', () => {
+      socket.isAlive = true;
+    });
+
+    room.connections.set(socket, new Set());
+    logger.info('Client connected', { roomId, clients: room.connections.size, created });
+
+    sendInitialSync(room, socket);
+
+    socket.on('message', (raw) => {
+      handleMessage(room, socket, toUint8Array(raw));
+    });
+
+    socket.on('close', () => removeConnection(roomId, room, socket));
+    socket.on('error', (error) => logger.warn('WebSocket error', { roomId, error: error.message }));
+  })().catch((error) => {
+    logger.error('WebSocket connection failed', { error: (error as Error).message });
+    socket.close(1011, 'Internal error');
   });
-
-  room.connections.set(socket, new Set());
-  logger.info('Client connected', { roomId, clients: room.connections.size, created });
-
-  sendInitialSync(room, socket);
-
-  socket.on('message', (raw) => {
-    handleMessage(room, socket, toUint8Array(raw));
-  });
-
-  socket.on('close', () => removeConnection(roomId, room, socket));
-  socket.on('error', (error) => logger.warn('WebSocket error', { roomId, error: error.message }));
 });
 
 const pingInterval = setInterval(() => {

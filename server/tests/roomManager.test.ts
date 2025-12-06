@@ -9,8 +9,8 @@ describe('RoomManager', () => {
     manager = new RoomManager();
   });
 
-  it('creates rooms and returns owner secrets', () => {
-    const room = manager.createRoom({ roomId: 'room_a', displayName: 'Design' });
+  it('creates rooms and returns owner secrets', async () => {
+    const room = await manager.createRoom({ roomId: 'room_a', displayName: 'Design' });
     expect(room.roomId).toBe('room_a');
     expect(room.displayName).toBe('Design');
     expect(room.ownerSecret).toBeTypeOf('string');
@@ -21,15 +21,15 @@ describe('RoomManager', () => {
     expect(listed[0].roomId).toBe('room_a');
   });
 
-  it('enforces owner secrets when updating rooms', () => {
-    const room = manager.createRoom({ roomId: 'secured', ownerName: 'Alice' });
-    expect(() =>
+  it('enforces owner secrets when updating rooms', async () => {
+    const room = await manager.createRoom({ roomId: 'secured', ownerName: 'Alice' });
+    await expect(
       manager.updateRoom('secured', 'fake-secret', {
         displayName: 'Fail'
       })
-    ).toThrow('Invalid owner secret.');
+    ).rejects.toThrow('Invalid owner secret.');
 
-    const updated = manager.updateRoom('secured', room.ownerSecret, {
+    const updated = await manager.updateRoom('secured', room.ownerSecret, {
       displayName: 'All Hands',
       metadata: { topic: 'weekly' }
     });
@@ -37,15 +37,15 @@ describe('RoomManager', () => {
     expect(updated.metadata).toMatchObject({ topic: 'weekly' });
   });
 
-  it('archives and cleans up inactive rooms', () => {
-    const room = manager.createRoom({ roomId: 'to-archive' });
-    manager.archiveRoom('to-archive', room.ownerSecret);
+  it('archives and cleans up inactive rooms', async () => {
+    const room = await manager.createRoom({ roomId: 'to-archive' });
+    await manager.archiveRoom('to-archive', room.ownerSecret);
     const visible = manager.listRooms();
     expect(visible).toHaveLength(0);
     const includeArchived = manager.listRooms({ includeArchived: true });
     expect(includeArchived).toHaveLength(1);
 
-    const lookup = manager.get('stale');
+    const lookup = await manager.get('stale');
     lookup.room.connections.clear();
     lookup.room.lastActive = 0;
     lookup.room.meta.lastActiveAt = 0;

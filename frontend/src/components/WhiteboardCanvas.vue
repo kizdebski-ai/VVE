@@ -225,7 +225,9 @@ export default {
     // Props from App.vue (already existed)
     roomId: { type: String, required: true },
     roomKey: { type: [String, Object], default: null },
-    username: { type: String, default: 'Anonymous' }
+    username: { type: String, default: 'Anonymous' },
+    wsToken: { type: String, default: null },
+    onConnectionStatus: { type: Function, default: null }
   },
   emits: [
     'state-updated',
@@ -1616,7 +1618,14 @@ export default {
 
         try {
             // Pass roomKey to connectToYjs for E2E encryption
-            const connection = await connectToYjs(normalizedRoomId);
+            const connection = await connectToYjs(normalizedRoomId, {
+              wsToken: props.wsToken || undefined,
+              onStatus: (status) => {
+                if (typeof props.onConnectionStatus === 'function') {
+                  props.onConnectionStatus(status);
+                }
+              }
+            });
             yjsConnection.value = connection;
             ydoc.value = connection.ydoc;
             yDrawings.value = connection.yDrawings;

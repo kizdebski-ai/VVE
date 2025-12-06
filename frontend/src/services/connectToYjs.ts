@@ -14,6 +14,11 @@ export interface YjsConnection {
   disconnect: () => void;
 }
 
+export interface ConnectOptions {
+  wsToken?: string | null;
+  onStatus?: (status: 'connecting' | 'connected' | 'reconnecting' | 'disconnected') => void;
+}
+
 const buildWebSocketUrl = (roomId: string) => {
   const url = resolveWsUrl(roomId);
   if (url) return url;
@@ -23,19 +28,26 @@ const buildWebSocketUrl = (roomId: string) => {
   return `${protocol}//${host}/ws/whiteboard/${roomId}`;
 };
 
-export function connectToYjs(roomId: string): YjsConnection {
+export function connectToYjs(roomId: string, options?: ConnectOptions): YjsConnection {
   const ydoc = new Y.Doc();
   ydoc.gc = true;
   const awareness = new Awareness(ydoc);
   const yDrawings: Y.Array<any> = ydoc.getArray('drawings');
 
   // Determine WebSocket URL
-  const wsUrl = buildWebSocketUrl(roomId);
+  const baseUrl = buildWebSocketUrl(roomId);
+  const wsUrl = options?.wsToken ? `${baseUrl}?wsToken=${encodeURIComponent(options.wsToken)}` : baseUrl;
+  const notify = (status: ConnectOptions['onStatus']) => {
+    if (typeof status === 'function') {
+      status('connecting');
+    }
+  };
+  notify(options?.onStatus);
 
   let socket: WebSocket | null = null;
   let reconnectTimeout = 1000;
   const reconnectTimeoutMax = 10000;
-  let reconnectTimer: ReturnType<typeof window.setTimeout> | null = null;
+  let reconnectTimer: number | null = null;
   let explicitlyDisconnected = false;
   let listenersAttached = false;
 
@@ -74,6 +86,7 @@ export function connectToYjs(roomId: string): YjsConnection {
     socket.binaryType = 'arraybuffer';
 
     socket.onopen = () => {
+      options?.onStatus?.('connected');
       reconnectTimeout = 1000;
       if (reconnectTimer) {
         window.clearTimeout(reconnectTimer);
@@ -117,8 +130,10 @@ export function connectToYjs(roomId: string): YjsConnection {
     socket.onclose = (event) => {
       socket = null;
       clearAwarenessStates('websocketProvider');
+      options?.onStatus?.('disconnected');
 
       if (!explicitlyDisconnected) {
+        options?.onStatus?.('reconnecting');
         reconnectTimer = window.setTimeout(setupWebSocket, reconnectTimeout);
         reconnectTimeout = Math.min(reconnectTimeout * 2, reconnectTimeoutMax);
       }

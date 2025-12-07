@@ -2,7 +2,7 @@
   <div
     ref="movableObjectRef"
     class="movable-object"
-    :class="{ 'is-selected': isSelected }"
+    :class="{ 'is-selected': isSelected, 'is-line-type': isLineType }"
     :style="objectStyle"
     @mousedown.stop="handleLeftClickOnObject" 
     @dblclick.stop="handleDoubleClick"
@@ -263,6 +263,63 @@ const shiftPointsArray = (pointsValue: any, dx: number, dy: number) => {
   }));
 };
 
+// Helper: Get line points in relative format for rendering
+// Returns points relative to (0, 0) for the local canvas (normalized to bounding box origin)
+const getLinePointsForRender = (data: MovableObjectData): { x: number, y: number }[] | null => {
+  let rawPoints: { x: number, y: number }[] | null = null;
+  
+  // Check if we have linePoints (new format)
+  const linePoints = data.points;
+  if (Array.isArray(linePoints) && linePoints.length >= 2 && data.type === 'line') {
+    rawPoints = linePoints.map(p => ({ x: ensureNumber(p.x, 0), y: ensureNumber(p.y, 0) }));
+  }
+  // Fallback: Convert from old start/end format
+  else if (data.startX !== undefined && data.startY !== undefined && 
+      data.endX !== undefined && data.endY !== undefined) {
+    const baseX = data.x || 0;
+    const baseY = data.y || 0;
+    rawPoints = [
+      { x: (data.startX || 0) - baseX, y: (data.startY || 0) - baseY },
+      { x: (data.endX || 0) - baseX, y: (data.endY || 0) - baseY }
+    ];
+  }
+  
+  if (!rawPoints) return null;
+  
+  // Normalize: shift points so min is at (0, 0)
+  // This matches what displayFrame does with offsetX/offsetY
+  const xs = rawPoints.map(p => p.x);
+  const ys = rawPoints.map(p => p.y);
+  const minX = Math.min(...xs);
+  const minY = Math.min(...ys);
+  
+  return rawPoints.map(p => ({
+    x: p.x - minX,
+    y: p.y - minY
+  }));
+};
+
+// Helper: Calculate bounding box from line points (relative to element x,y)
+const getLineBoundsFromPoints = (points: { x: number, y: number }[]): { width: number, height: number, offsetX: number, offsetY: number } => {
+  if (!points || points.length < 2) {
+    return { width: 1, height: 1, offsetX: 0, offsetY: 0 };
+  }
+  
+  const xs = points.map(p => p.x);
+  const ys = points.map(p => p.y);
+  const minX = Math.min(...xs);
+  const minY = Math.min(...ys);
+  const maxX = Math.max(...xs);
+  const maxY = Math.max(...ys);
+  
+  return {
+    width: Math.max(1, maxX - minX),
+    height: Math.max(1, maxY - minY),
+    offsetX: minX,
+    offsetY: minY
+  };
+};
+
 const computeRatio = (value: number | undefined, axisStart: number, axisLength: number, fallback = 0) => {
   if (value === undefined || !Number.isFinite(value) || axisLength === 0) {
     return fallback;
@@ -399,8 +456,9 @@ const syncDataFromYMap = () => {
 
 const lineHitPadding = computed(() => {
   const lineWidth = ensureNumber(objectData.lineWidth, 2);
-  const screenPadding = Math.max(12, lineWidth * props.zoomLevel * 2);
-  return screenPadding / props.zoomLevel;
+  // Minimal padding: just stroke + handle radius (8px) 
+  const handleRadius = 8;
+  return Math.max(handleRadius, lineWidth + 4);
 });
 
 // Padding needed for shapes to prevent stroke clipping
@@ -427,8 +485,25 @@ const shapeStrokePadding = computed(() => {
 
 const displayFrame = computed(() => {
   if (isLineType.value) {
-    // Lines need padding for hit detection and stroke rendering
+    // Lines: calculate bounding box from points
     const padding = lineHitPadding.value;
+    const linePoints = getLinePointsForRender(objectData);
+    
+    if (linePoints && linePoints.length >= 2) {
+      // Calculate bounds from points (points are relative to objectData.x, objectData.y)
+      const bounds = getLineBoundsFromPoints(linePoints);
+      
+      // The frame starts at the element position minus padding
+      return {
+        x: ensureNumber(objectData.x, 0) + bounds.offsetX - padding,
+        y: ensureNumber(objectData.y, 0) + bounds.offsetY - padding,
+        width: Math.max(1, bounds.width + padding * 2),
+        height: Math.max(1, bounds.height + padding * 2),
+        padding,
+      };
+    }
+    
+    // Fallback to old format
     const baseWidth = Math.max(0, ensureNumber(objectData.width, 0));
     const baseHeight = Math.max(0, ensureNumber(objectData.height, 0));
     return {
@@ -469,7 +544,10 @@ const objectStyle = computed(() => {
       ? (isDragging.value ? 'grabbing' : (internalIsSelected.value ? 'grab' : 'pointer'))
       : 'default',
     pointerEvents: (props.interactionEnabled ? 'auto' : 'none') as 'auto' | 'none',
-    border: internalIsSelected.value ? '2px solid dodgerblue' : '1px solid transparent',
+    // Lines don't get a rectangular border - only endpoint handles
+    border: isLineType.value 
+      ? 'none' 
+      : (internalIsSelected.value ? '2px solid dodgerblue' : '1px solid transparent'),
     transformOrigin: 'top left', 
     userSelect: 'none' as const,
     boxSizing: 'border-box' as const,
@@ -484,7 +562,30 @@ const lineHandlePositions = computed(() => {
   if (!isLineType.value) {
     return { start: {}, end: {} };
   }
+  
   const frame = displayFrame.value;
+  const padding = frame.padding || 0;
+  
+  // Get line points for positioning handles
+  const linePoints = getLinePointsForRender(objectData);
+  
+  if (linePoints && linePoints.length >= 2) {
+    // Points are already normalized (min at 0,0) - add padding offset
+    return {
+      start: {
+        left: `${(linePoints[0].x + padding) * props.zoomLevel}px`,
+        top: `${(linePoints[0].y + padding) * props.zoomLevel}px`,
+        transform: 'translate(-50%, -50%)',
+      },
+      end: {
+        left: `${(linePoints[1].x + padding) * props.zoomLevel}px`,
+        top: `${(linePoints[1].y + padding) * props.zoomLevel}px`,
+        transform: 'translate(-50%, -50%)',
+      },
+    };
+  }
+  
+  // Fallback to old format
   const startX = ensureNumber(objectData.startX, objectData.x);
   const startY = ensureNumber(objectData.startY, objectData.y);
   const endX = ensureNumber(objectData.endX, objectData.x + objectData.width);
@@ -807,13 +908,26 @@ const startLineEndpointDrag = (event: MouseEvent, handle: 'start' | 'end') => {
   currentLineHandle.value = handle;
   initialMousePos.x = event.clientX;
   initialMousePos.y = event.clientY;
-  initialLineSnapshot.startX = Number.isFinite(objectData.startX) ? objectData.startX! : objectData.x;
-  initialLineSnapshot.startY = Number.isFinite(objectData.startY) ? objectData.startY! : objectData.y;
-  initialLineSnapshot.endX = Number.isFinite(objectData.endX) ? objectData.endX! : objectData.x + objectData.width;
-  initialLineSnapshot.endY = Number.isFinite(objectData.endY) ? objectData.endY! : objectData.y + objectData.height;
+  
+  // Get absolute positions of line endpoints
+  const linePoints = getLinePointsForRender(objectData);
+  if (linePoints && linePoints.length >= 2) {
+    // New format: points are relative to (x, y)
+    initialLineSnapshot.startX = objectData.x + linePoints[0].x;
+    initialLineSnapshot.startY = objectData.y + linePoints[0].y;
+    initialLineSnapshot.endX = objectData.x + linePoints[1].x;
+    initialLineSnapshot.endY = objectData.y + linePoints[1].y;
+  } else {
+    // Old format fallback
+    initialLineSnapshot.startX = Number.isFinite(objectData.startX) ? objectData.startX! : objectData.x;
+    initialLineSnapshot.startY = Number.isFinite(objectData.startY) ? objectData.startY! : objectData.y;
+    initialLineSnapshot.endX = Number.isFinite(objectData.endX) ? objectData.endX! : objectData.x + objectData.width;
+    initialLineSnapshot.endY = Number.isFinite(objectData.endY) ? objectData.endY! : objectData.y + objectData.height;
+  }
+  
   emit('interaction-start', objectData.id);
-  document.addEventListener('mousemove', handleResize);
-  document.addEventListener('mouseup', stopResize);
+  document.addEventListener('mousemove', handleLineResize); // Use handleLineResize instead of handleResize
+  document.addEventListener('mouseup', stopLineResize);
 };
 
 const handleLineResize = (event: MouseEvent) => {
@@ -834,22 +948,67 @@ const handleLineResize = (event: MouseEvent) => {
     newEndY += dy;
   }
 
+  // Calculate new bounding box
   const newX = Math.min(newStartX, newEndX);
   const newY = Math.min(newStartY, newEndY);
-  const newWidth = Math.abs(newEndX - newStartX);
-  const newHeight = Math.abs(newEndY - newStartY);
+  const newWidth = Math.max(1, Math.abs(newEndX - newStartX));
+  const newHeight = Math.max(1, Math.abs(newEndY - newStartY));
 
-  objectData.startX = newStartX;
-  objectData.startY = newStartY;
-  objectData.endX = newEndX;
-  objectData.endY = newEndY;
+  // Update local objectData (for immediate visual feedback)
   objectData.x = newX;
   objectData.y = newY;
   objectData.width = newWidth;
   objectData.height = newHeight;
+  objectData.startX = newStartX;
+  objectData.startY = newStartY;
+  objectData.endX = newEndX;
+  objectData.endY = newEndY;
+  
+  // Update points in new format (relative to x, y)
+  objectData.points = [
+    { x: newStartX - newX, y: newStartY - newY },
+    { x: newEndX - newX, y: newEndY - newY }
+  ];
 
-  // Defer Yjs update to stopResize
   emit('update:object', { ...props.object.toJSON(), ...objectData });
+};
+
+const stopLineResize = () => {
+  if (!isResizing.value || !currentLineHandle.value) return;
+  
+  isResizing.value = false;
+  emit('interaction-end', objectData.id);
+  document.removeEventListener('mousemove', handleLineResize);
+  document.removeEventListener('mouseup', stopLineResize);
+
+  // Commit to Yjs with new point-based format
+  props.object.doc?.transact(() => {
+    props.object.set('x', objectData.x);
+    props.object.set('y', objectData.y);
+    props.object.set('width', objectData.width);
+    props.object.set('height', objectData.height);
+    
+    // Save points in new format
+    props.object.set('points', [
+      { x: objectData.startX! - objectData.x, y: objectData.startY! - objectData.y },
+      { x: objectData.endX! - objectData.x, y: objectData.endY! - objectData.y }
+    ]);
+    
+    // Also update start/end maps for backwards compatibility
+    const startMap = props.object.get('start');
+    if (startMap && typeof startMap.set === 'function') {
+      startMap.set('x', objectData.startX);
+      startMap.set('y', objectData.startY);
+    }
+    const endMap = props.object.get('end');
+    if (endMap && typeof endMap.set === 'function') {
+      endMap.set('x', objectData.endX);
+      endMap.set('y', objectData.endY);
+    }
+  }, 'local-line-resize');
+
+  currentLineHandle.value = null;
+  emit('update:object', props.object);
 };
 
 const renderLocalCanvas = () => {
@@ -881,29 +1040,69 @@ const renderLocalCanvas = () => {
   // Scale for zoom
   ctx.scale(props.zoomLevel, props.zoomLevel);
   
-  // Handle padding for lines
+  // Handle padding
   const padding = frame.padding || 0;
   ctx.translate(padding, padding);
 
-  // Construct local element relative to (0,0)
-  const localElement = {
-    ...objectData,
-    x: 0,
-    y: 0,
-    start: isLineType.value 
-      ? { x: (objectData.startX || 0) - objectData.x, y: (objectData.startY || 0) - objectData.y }
-      : { x: 0, y: 0 },
-    end: isLineType.value
-      ? { x: (objectData.endX || 0) - objectData.x, y: (objectData.endY || 0) - objectData.y }
-      : { x: objectData.width, y: objectData.height }
-  };
+  // Construct local element relative to (0,0) - NO CLIPPING for lines
+  let localElement: any;
+  
+  if (isLineType.value) {
+    // For lines: use point-based rendering
+    const linePoints = getLinePointsForRender(objectData);
+    
+    if (linePoints && linePoints.length >= 2) {
+      // New format: use points array (relative to 0,0 after padding offset)
+      localElement = {
+        ...objectData,
+        x: 0,
+        y: 0,
+        // Pass points for new format drawing
+        points: linePoints,
+        // Clear old format to avoid confusion
+        start: undefined,
+        end: undefined
+      };
+    } else {
+      // Fallback to old format
+      localElement = {
+        ...objectData,
+        x: 0,
+        y: 0,
+        start: { x: (objectData.startX || 0) - objectData.x, y: (objectData.startY || 0) - objectData.y },
+        end: { x: (objectData.endX || 0) - objectData.x, y: (objectData.endY || 0) - objectData.y }
+      };
+    }
+  } else {
+    // For shapes: use standard bounding box
+    localElement = {
+      ...objectData,
+      x: 0,
+      y: 0,
+      start: { x: 0, y: 0 },
+      end: { x: objectData.width, y: objectData.height }
+    };
+  }
 
-  // Draw
+  // For selected lines: add a glow effect
+  if (isLineType.value && internalIsSelected.value) {
+    ctx.save();
+    ctx.shadowColor = '#3b82f6';
+    ctx.shadowBlur = 8 * props.zoomLevel;
+    ctx.shadowOffsetX = 0;
+    ctx.shadowOffsetY = 0;
+  }
+
+  // Draw WITHOUT clipping - just render the element
   drawElement(ctx, localElement, false, 1, undefined, undefined, {}, rough.canvas(canvas) as any);
+  
+  if (isLineType.value && internalIsSelected.value) {
+    ctx.restore();
+  }
 };
 
 watch(
-  [() => objectData, () => props.zoomLevel, () => displayFrame.value],
+  [() => objectData, () => props.zoomLevel, () => displayFrame.value, () => internalIsSelected.value],
   () => {
     // Use requestAnimationFrame to avoid layout thrashing
     requestAnimationFrame(renderLocalCanvas);
@@ -1086,6 +1285,20 @@ onUnmounted(() => {
   border-radius: 12px;
 }
 
+/* Lines: no box selection - only endpoint handles */
+.movable-object.is-line-type {
+  background-color: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  border-radius: 0 !important;
+}
+
+.movable-object.is-line-type.is-selected {
+  background-color: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+
 .object-content {
   width: 100%;
   height: 100%;
@@ -1164,14 +1377,14 @@ onUnmounted(() => {
   border-radius: 50%;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.15);
   pointer-events: all;
-  transform: translate(-50%, -50%);
-  transition: transform 0.1s ease, background-color 0.1s ease;
+  cursor: crosshair;
+  transition: background-color 0.1s ease, box-shadow 0.1s ease;
   z-index: 12;
 }
 
 .line-end-handle:hover {
-  transform: translate(-50%, -50%) scale(1.1);
   background-color: #2563eb;
+  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.4);
 }
 
 /* Circular Handles */

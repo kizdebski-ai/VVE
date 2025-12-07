@@ -2778,30 +2778,46 @@ export default {
                       }
                       else if (elementToAdd.type === 'line' || 
                                (elementToAdd.start && elementToAdd.end)) { // Covers shapes
-                          const x = Math.min(elementToAdd.start.x, elementToAdd.end.x);
-                          const y = Math.min(elementToAdd.start.y, elementToAdd.end.y);
-                          const width = Math.abs(elementToAdd.start.x - elementToAdd.end.x);
-                          const height = Math.abs(elementToAdd.start.y - elementToAdd.end.y);
+                          const startX = elementToAdd.start.x;
+                          const startY = elementToAdd.start.y;
+                          const endX = elementToAdd.end.x;
+                          const endY = elementToAdd.end.y;
+                          
+                          // Calculate bounding box
+                          const x = Math.min(startX, endX);
+                          const y = Math.min(startY, endY);
+                          const width = Math.abs(startX - endX);
+                          const height = Math.abs(startY - endY);
+                          
                           yElementMap.set('x', x);
                           yElementMap.set('y', y);
                           yElementMap.set('width', width);
                           yElementMap.set('height', height);
 
-                          // Store start/end as nested Y.Maps (can be kept for now)
-                          const startMap = new Y.Map();
-                          startMap.set('x', elementToAdd.start.x);
-                          startMap.set('y', elementToAdd.start.y);
-                          yElementMap.set('start', startMap);
-
-                          const endMap = new Y.Map();
-                          endMap.set('x', elementToAdd.end.x);
-                          endMap.set('y', elementToAdd.end.y);
-                          yElementMap.set('end', endMap);
-
+                          // For LINES: Store points in new relative format
                           if (elementToAdd.type === 'line') {
+                            // Points relative to (x, y) - the top-left of bounding box
+                            const linePoints = [
+                              { x: startX - x, y: startY - y },
+                              { x: endX - x, y: endY - y }
+                            ];
+                            yElementMap.set('points', linePoints);
+                            
                             const arrowStyle = elementToAdd.arrowStyle || props.currentArrowStyle || 'none';
                             yElementMap.set('arrowStyle', arrowStyle);
                           }
+
+                          // Store start/end as nested Y.Maps (backwards compatibility)
+                          const startMap = new Y.Map();
+                          startMap.set('x', startX);
+                          startMap.set('y', startY);
+                          yElementMap.set('start', startMap);
+
+                          const endMap = new Y.Map();
+                          endMap.set('x', endX);
+                          endMap.set('y', endY);
+                          yElementMap.set('end', endMap);
+
                           if (elementToAdd.startBinding) {
                             yElementMap.set('startBinding', elementToAdd.startBinding);
                           }

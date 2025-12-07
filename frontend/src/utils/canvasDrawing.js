@@ -142,24 +142,46 @@ export const drawElement = (
     }
 
     case 'line': {
-      if (!element.start || !element.end) break;
+      // Support both old format (start/end) and new format (x, y, points[])
+      let startX, startY, endX, endY;
+
+      if (element.points && element.points.length >= 2) {
+        // New point-based format - points are relative to (x, y)
+        const baseX = element.x || 0;
+        const baseY = element.y || 0;
+        startX = baseX + element.points[0].x;
+        startY = baseY + element.points[0].y;
+        endX = baseX + element.points[1].x;
+        endY = baseY + element.points[1].y;
+      } else if (element.start && element.end) {
+        // Old format - absolute start/end points
+        startX = element.start.x;
+        startY = element.start.y;
+        endX = element.end.x;
+        endY = element.end.y;
+      } else {
+        break; // No valid line data
+      }
 
       if (isClean) {
         context.beginPath();
-        context.moveTo(element.start.x, element.start.y);
-        context.lineTo(element.end.x, element.end.y);
+        context.moveTo(startX, startY);
+        context.lineTo(endX, endY);
         context.stroke();
       } else {
-        rc.line(element.start.x, element.start.y, element.end.x, element.end.y, options);
+        rc.line(startX, startY, endX, endY, options);
       }
 
       // Arrowheads
       const arrowStyle = element.arrowStyle || 'none';
+      const startPt = { x: startX, y: startY };
+      const endPt = { x: endX, y: endY };
+
       if (arrowStyle === 'end' || arrowStyle === 'both') {
-        drawArrowhead(context, rc, element.start, element.end, options, isClean);
+        drawArrowhead(context, rc, startPt, endPt, options, isClean);
       }
       if (arrowStyle === 'start' || arrowStyle === 'both') {
-        drawArrowhead(context, rc, element.end, element.start, options, isClean);
+        drawArrowhead(context, rc, endPt, startPt, options, isClean);
       }
       break;
     }

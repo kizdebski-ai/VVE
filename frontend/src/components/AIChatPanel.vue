@@ -113,10 +113,14 @@
             <div class="reply-bubble" v-html="renderMarkdown(agentLastReply)"></div>
           </div>
 
-          <div v-if="agentLoading" class="message assistant loading">
-            <div class="typing-indicator">
-              <span></span><span></span><span></span>
+          <div v-if="agentLoading" class="agent-status-panel">
+            <div class="status-row">
+              <div class="typing-indicator">
+                <span></span><span></span><span></span>
+              </div>
+              <span class="status-text">{{ aiState.currentStatus }}</span>
             </div>
+            <div class="elapsed-time">{{ formatElapsed(aiState.elapsedMs) }}</div>
           </div>
 
           <div v-else-if="!agentLastReply" class="empty-state">
@@ -147,12 +151,11 @@
 
         <div class="chat-input-area">
           <div class="model-selector">
-            <select v-model="selectedModel">
-              <option value="x-ai/grok-4.1-fast:free">Grok 4.1 Fast (Free)</option>
+            <select v-model="selectedModel" class="model-select">
               <option value="kwaipilot/kat-coder-pro:free">Kat Coder Pro (Free)</option>
+              <option value="x-ai/grok-4.1-fast">Grok 4.1 Fast</option>
+              <option value="deepseek/deepseek-v3.2">DeepSeek V3.2</option>
               <option value="openai/gpt-oss-120b:exacto">GPT-120B (Exacto)</option>
-              <option value="qwen/qwen3-coder:free">Qwen 3 Coder (Free)</option>
-              <option value="z-ai/glm-4.5-air:free">GLM 4.5 Air (Free)</option>
             </select>
             <label
               class="screenshot-toggle-mini"
@@ -243,13 +246,26 @@ const sentIntro = ref(false);
 
 // Agent state
 const agentInput = ref('');
-const selectedModel = ref('x-ai/grok-4.1-fast:free');
+const selectedModel = ref('kwaipilot/kat-coder-pro:free');
 const includeScreenshotAgent = ref(true);
 
 const boardId = computed(() => props.roomId || '');
 const { state: aiState, runBoardAssistant } = useAiStore();
 const agentLoading = computed(() => aiState.isRunning);
 const agentLastReply = computed(() => aiState.lastReply);
+
+// Format elapsed time as "X.Xs" or "Xm Xs"
+const formatElapsed = (ms) => {
+  if (!ms) return '';
+  const seconds = Math.floor(ms / 1000);
+  const tenths = Math.floor((ms % 1000) / 100);
+  if (seconds < 60) {
+    return `${seconds}.${tenths}s`;
+  }
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds % 60;
+  return `${minutes}m ${remainingSeconds}s`;
+};
 
 const toggleMinimize = () => {
   isMinimized.value = !isMinimized.value;
@@ -797,28 +813,67 @@ onMounted(() => {
 }
 
 .model-selector {
-  margin-bottom: 8px;
+  margin-bottom: 10px;
   display: flex;
   align-items: center;
   gap: 8px;
 }
 
-.model-selector select {
+.model-select {
   flex: 1;
-  padding: 6px 10px;
+  padding: 8px 12px;
+  padding-right: 32px;
   border-radius: 8px;
-  border: 1px solid rgba(0, 0, 0, 0.1);
-  background: rgba(255, 255, 255, 0.5);
-  font-size: 12px;
-  color: var(--text-secondary);
+  border: 1px solid #e2e8f0;
+  background: #ffffff;
+  font-size: 13px;
+  font-weight: 500;
+  color: #1e293b;
   outline: none;
   cursor: pointer;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  transition: all 0.2s;
 }
 
-.dark-mode .model-selector select {
-  background: rgba(0, 0, 0, 0.2);
-  border-color: rgba(255, 255, 255, 0.1);
-  color: var(--text-secondary);
+.model-select:hover {
+  border-color: #cbd5e1;
+  background-color: #f8fafc;
+}
+
+.model-select:focus {
+  border-color: #6366f1;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+}
+
+.model-select option {
+  padding: 10px;
+  background: #fff;
+  color: #1e293b;
+}
+
+.dark-mode .model-select {
+  background-color: #1e293b;
+  border-color: #334155;
+  color: #f1f5f9;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+}
+
+.dark-mode .model-select:hover {
+  border-color: #475569;
+  background-color: #334155;
+}
+
+.dark-mode .model-select:focus {
+  border-color: #818cf8;
+  box-shadow: 0 0 0 3px rgba(129, 140, 248, 0.15);
+}
+
+.dark-mode .model-select option {
+  background: #1e293b;
+  color: #f1f5f9;
 }
 
 .screenshot-toggle {
@@ -1045,5 +1100,69 @@ textarea {
 
 .dark-mode .quick-actions button:hover:not(:disabled) {
   background: rgba(99, 102, 241, 0.2);
+}
+
+/* Agent Status Panel - Real-time feedback */
+.agent-status-panel {
+  background: linear-gradient(135deg, rgba(99, 102, 241, 0.1), rgba(139, 92, 246, 0.1));
+  border: 1px solid rgba(99, 102, 241, 0.2);
+  border-radius: 12px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+
+.status-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.status-text {
+  font-size: 13px;
+  font-weight: 500;
+  color: #6366f1;
+}
+
+.dark-mode .status-text {
+  color: #a5b4fc;
+}
+
+.elapsed-time {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  margin-top: 8px;
+  font-family: 'Monaco', 'Menlo', monospace;
+}
+
+.agent-status-panel .typing-indicator {
+  display: flex;
+  gap: 4px;
+}
+
+.agent-status-panel .typing-indicator span {
+  width: 6px;
+  height: 6px;
+  background: #6366f1;
+  border-radius: 50%;
+  animation: bounce 1.2s infinite ease-in-out;
+}
+
+.agent-status-panel .typing-indicator span:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+.agent-status-panel .typing-indicator span:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+@keyframes bounce {
+  0%, 80%, 100% {
+    transform: scale(0.8);
+    opacity: 0.5;
+  }
+  40% {
+    transform: scale(1.2);
+    opacity: 1;
+  }
 }
 </style>

@@ -43,6 +43,7 @@ export const drawElement = (
 ) => {
   if (!context || !element || !element.type) return;
 
+
   const type = element.type;
   const rc = rcOverride || rough.canvas(context.canvas);
 

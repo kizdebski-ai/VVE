@@ -1,404 +1,269 @@
 <template>
   <div class="dashboard-shell">
-    <header class="dashboard-header">
-      <div>
-        <p class="eyebrow">WhiteVue · Nauczyciel</p>
-        <h1>Moje tablice</h1>
-        <p class="subtle">Szybki podgląd wszystkich tablic uczniów, linki i status ważności.</p>
+    <header class="dashboard-header full-width-container">
+      <div class="header-content">
+        <div>
+          <span class="eyebrow">Panel Nauczyciela</span>
+          <h1>Moje tablice</h1>
+          <p class="subtext">Twórz lekcje i zarządzaj uczniami.</p>
+        </div>
+        <div class="header-actions">
+          <button class="btn-secondary icon-only" @click="refresh" :disabled="loading" title="Odśwież">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.3"/></svg>
+          </button>
+          <button class="btn-primary" @click="showCreate = true">
+            Nowa tablica
+          </button>
+        </div>
       </div>
-      <div class="header-actions">
-        <button class="ghost" @click="refresh" :disabled="loading">
-          Odśwież
-        </button>
-        <button class="primary" @click="showCreate = true">Nowa tablica</button>
+      
+      <div class="filters-row">
+        <div class="input-wrapper search">
+          <input v-model="query" type="text" placeholder="Szukaj ucznia lub tematu..." />
+        </div>
+        <div class="input-wrapper filter">
+          <select v-model="statusFilter">
+            <option value="all">Wszystkie statusy</option>
+            <option value="active">Aktywne</option>
+            <option value="archived">Zarchiwizowane</option>
+            <option value="expired">Po terminie</option>
+          </select>
+        </div>
       </div>
     </header>
 
-    <section class="filters">
-      <div class="field">
-        <label>Szukaj (uczeń/tytuł)</label>
-        <input v-model="query" type="text" placeholder="np. Kowalski, Matematyka" />
-      </div>
-      <div class="field">
-        <label>Status</label>
-        <select v-model="statusFilter">
-          <option value="all">Wszystkie</option>
-          <option value="active">Aktywne</option>
-          <option value="archived">Zarchiwizowane</option>
-          <option value="expired">Po terminie</option>
-        </select>
-      </div>
-    </section>
+    <main class="dashboard-content full-width-container">
+      <section class="minimal-card table-section">
+        <div v-if="loading" class="state-empty">
+          <div class="spinner"></div> Ładowanie...
+        </div>
 
-    <section class="card">
-      <div class="table-head">
-        <span>Tablica</span>
-        <span>Uczeń</span>
-        <span>Ważne do</span>
-        <span>Status</span>
-        <span>Akcje</span>
-      </div>
-      <div v-if="loading" class="empty">Ładowanie...</div>
-      <div v-else-if="!filteredBoards.length" class="empty">Brak tablic spełniających kryteria.</div>
-      <div v-else class="table-body">
-        <div v-for="board in filteredBoards" :key="board.id" class="table-row">
-          <div>
-            <div class="title">{{ board.title || 'Bez tytułu' }}</div>
-            <div class="muted">ID: {{ board.id.slice(0, 8) }}…</div>
+        <div v-else-if="!filteredBoards.length" class="state-empty">
+          Brak wyników wyszukiwania.
+        </div>
+        
+        <table v-else class="data-table">
+          <thead>
+            <tr>
+              <th style="width: 40%">Temat / ID</th>
+              <th style="width: 20%">Uczeń</th>
+              <th style="width: 20%">Termin</th>
+              <th style="width: 10%">Status</th>
+              <th style="width: 10%; text-align: right;">Akcje</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="board in filteredBoards" :key="board.id">
+              <td>
+                <div class="cell-primary">{{ board.title || 'Bez tytułu' }}</div>
+                <div class="cell-secondary">ID: {{ board.id.slice(0, 8) }}</div>
+              </td>
+              <td>
+                <div class="student-cell">
+                  <div class="avatar-sm">{{ (board.student_name || 'U')[0] }}</div>
+                  <span>{{ board.student_name || 'Anonim' }}</span>
+                </div>
+              </td>
+              <td>
+                <div class="cell-date" :class="{ 'text-danger': daysLeft(board.valid_until) < 3 }">
+                  {{ formatDate(board.valid_until) }}
+                </div>
+              </td>
+              <td>
+                <span v-if="board.archived_at" class="status-pill archived">Archiwum</span>
+                <span v-else-if="isExpired(board)" class="status-pill expired">Koniec</span>
+                <span v-else class="status-pill active">Aktywna</span>
+              </td>
+              <td style="text-align: right;">
+                <div class="actions-cell">
+                  <button class="btn-ghost" @click="copy(board.student_url)" title="Kopiuj link">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                  </button>
+                  <button class="btn-ghost" @click="openBoard(board.student_url)" title="Podgląd">
+                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+                  </button>
+                  <button class="btn-ghost" @click="toggleArchive(board)" :title="board.archived_at ? 'Przywróć' : 'Archiwizuj'">
+                    <svg v-if="board.archived_at" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/></svg>
+                    <svg v-else xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg>
+                  </button>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+    </main>
+
+    <!-- Modal -->
+    <div v-if="showCreate" class="modal-backdrop" @click.self="showCreate = false">
+      <div class="minimal-card modal-panel">
+        <header class="modal-header">
+          <h3>Nowa tablica</h3>
+          <button class="btn-ghost icon-only" @click="showCreate = false">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+          </button>
+        </header>
+        
+        <div class="modal-body">
+          <div class="field-group">
+            <label>Imię ucznia / Nazwa grupy</label>
+            <input ref="focusInput" v-model="form.studentName" type="text" placeholder="np. Jan Kowalski" @keydown.enter="createBoard" />
           </div>
-          <div>
-            <div class="title">{{ board.student_name || 'Uczeń' }}</div>
+          <div class="field-group">
+            <label>Temat lekcji (opcjonalnie)</label>
+            <input v-model="form.title" type="text" placeholder="np. Ułamki zwykłe" @keydown.enter="createBoard" />
           </div>
-          <div>
-            <span :class="['badge', badgeTone(board)]">
-              ważne do: {{ formatDate(board.valid_until) }}
-            </span>
+          <div class="field-group">
+            <label>Ważne do (opcjonalnie)</label>
+            <input v-model="form.validUntil" type="date" />
           </div>
-          <div>
-            <span class="chip" v-if="board.archived_at">Zarchiwizowane</span>
-            <span class="chip neutral" v-else-if="isExpired(board)">Po terminie</span>
-            <span class="chip success" v-else>Aktywne</span>
-          </div>
-          <div class="actions">
-            <button class="ghost" @click="copy(board.student_url)">Kopiuj link</button>
-            <button class="ghost" @click="openBoard(board.student_url)">Otwórz</button>
-            <button class="ghost danger" @click="toggleArchive(board)">
-              {{ board.archived_at ? 'Przywróć' : 'Archiwizuj' }}
-            </button>
+
+          <div v-if="createResult" class="result-area">
+            <p class="success-msg">
+               <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+               Utworzono tablicę!
+            </p>
+            <div class="copy-row">
+              <input type="text" readonly :value="createResult.studentLink" />
+              <button class="btn-primary" @click="copy(createResult.studentLink)">Kopiuj</button>
+            </div>
           </div>
         </div>
-      </div>
-    </section>
 
-    <section v-if="showCreate" class="modal-backdrop" @click.self="showCreate = false">
-      <div class="modal">
-        <h3>Nowa tablica</h3>
-        <label>Uczeń</label>
-        <input v-model="form.studentName" placeholder="Imię i nazwisko ucznia" />
-        <label>Tytuł</label>
-        <input v-model="form.title" placeholder="Nazwa tablicy" />
-        <label>Data ważności (opcjonalna)</label>
-        <input v-model="form.validUntil" type="date" />
-        <div class="modal-actions">
-          <button class="ghost" @click="showCreate = false">Anuluj</button>
-          <button class="primary" :disabled="creating" @click="createBoard">Utwórz</button>
-        </div>
-        <p v-if="createResult" class="muted">
-          Link ucznia: <button class="ghost" @click="copy(createResult.studentUrl)">Kopiuj</button>
-          <br />
-          {{ createResult.studentUrl }}
-        </p>
+        <footer class="modal-footer" v-if="!createResult">
+          <button class="btn-secondary" @click="showCreate = false">Anuluj</button>
+          <button class="btn-primary" :disabled="!form.studentName || creating" @click="createBoard">
+            {{ creating ? 'Tworzenie...' : 'Utwórz' }}
+          </button>
+        </footer>
       </div>
-    </section>
+    </div>
   </div>
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref } from 'vue';
+import { ref, onMounted, computed, reactive, watch, nextTick } from 'vue';
 import { resolveBackendBaseUrl } from '../services/backendUrl';
 
 const boards = ref([]);
 const loading = ref(false);
-const query = ref('');
-const statusFilter = ref('all');
 const showCreate = ref(false);
 const creating = ref(false);
 const createResult = ref(null);
+const query = ref('');
+const statusFilter = ref('active');
+
 const form = reactive({ studentName: '', title: '', validUntil: '' });
 const apiBase = resolveBackendBaseUrl();
+const focusInput = ref(null);
 
 const fetchBoards = async () => {
   loading.value = true;
   try {
     const res = await fetch(`${apiBase}/api/teacher/boards`, { credentials: 'include' });
-    if (!res.ok) throw new Error('Nie udało się pobrać tablic');
+    if (!res.ok) throw new Error('Error fetching boards');
     const data = await res.json();
     boards.value = data.boards || [];
-  } catch (err) {
-    console.error(err);
-  } finally {
-    loading.value = false;
-  }
+  } catch (err) { console.error(err); } 
+  finally { loading.value = false; }
 };
 
 onMounted(fetchBoards);
-
 const refresh = () => fetchBoards();
 
-const daysLeft = (date) => {
-  const diff = new Date(date) - new Date();
-  return Math.floor(diff / (1000 * 60 * 60 * 24));
-};
-
-const isExpired = (board) => daysLeft(board.valid_until) < 0;
-
-const badgeTone = (board) => {
-  const d = daysLeft(board.valid_until);
-  if (board.archived_at) return 'muted';
-  if (d < 0) return 'danger';
-  if (d <= 7) return 'danger';
-  if (d <= 30) return 'warning';
-  return 'success';
-};
-
-const formatDate = (date) => {
-  try {
-    return new Date(date).toLocaleDateString();
-  } catch {
-    return date;
-  }
-};
+const daysLeft = (d) => d ? Math.ceil((new Date(d) - new Date()) / (1000 * 60 * 60 * 24)) : 999;
+const isExpired = (b) => b.valid_until && new Date(b.valid_until) < new Date();
+const formatDate = (d) => d ? new Date(d).toLocaleDateString('pl-PL') : '---';
 
 const filteredBoards = computed(() => {
   const q = query.value.toLowerCase().trim();
-  return boards.value
-    .filter((b) => {
-      if (statusFilter.value === 'archived' && !b.archived_at) return false;
-      if (statusFilter.value === 'active' && (b.archived_at || isExpired(b))) return false;
-      if (statusFilter.value === 'expired' && !isExpired(b)) return false;
-      if (!q) return true;
-      return (
-        (b.title || '').toLowerCase().includes(q) ||
-        (b.student_name || '').toLowerCase().includes(q)
-      );
-    })
-    .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+  return boards.value.filter(b => {
+    if (statusFilter.value === 'active' && (b.archived_at || isExpired(b))) return false;
+    if (statusFilter.value === 'archived' && !b.archived_at) return false;
+    if (statusFilter.value === 'expired' && !isExpired(b)) return false;
+    return !q || (b.title+' '+b.student_name).toLowerCase().includes(q);
+  }).sort((a,b) => new Date(b.created_at) - new Date(a.created_at));
 });
 
-const copy = async (text) => {
+const copy = (t) => navigator.clipboard.writeText(t);
+const openBoard = (u) => window.open(u, '_blank');
+const toggleArchive = async (b) => {
   try {
-    await navigator.clipboard.writeText(text);
-  } catch (err) {
-    console.error('Copy failed', err);
-  }
-};
-
-const openBoard = (url) => {
-  window.open(url, '_blank', 'noreferrer');
-};
-
-const toggleArchive = async (board) => {
-  try {
-    const res = await fetch(`${apiBase}/api/teacher/boards/${board.id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify({ archived: !board.archived_at })
+    await fetch(`${apiBase}/api/teacher/boards/${b.id}`, {
+      method: 'PATCH', headers:{'Content-Type':'application/json'},
+      credentials:'include', body:JSON.stringify({archived:!b.archived_at})
     });
-    if (!res.ok) throw new Error('Nie udało się zaktualizować');
-    await fetchBoards();
-  } catch (err) {
-    console.error(err);
-  }
+    fetchBoards();
+  } catch(e){}
 };
 
 const createBoard = async () => {
   creating.value = true;
-  createResult.value = null;
   try {
-    const payload = {
-      studentName: form.studentName || null,
-      title: form.title || null,
-      validUntil: form.validUntil || undefined
-    };
     const res = await fetch(`${apiBase}/api/teacher/boards`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify(payload)
+      method:'POST', headers:{'Content-Type':'application/json'}, credentials:'include',
+      body:JSON.stringify({studentName:form.studentName, title:form.title, validUntil:form.validUntil})
     });
-    if (!res.ok) throw new Error('Nie udało się utworzyć tablicy');
-    const data = await res.json();
-    createResult.value = data;
-    showCreate.value = false;
-    form.studentName = '';
-    form.title = '';
-    form.validUntil = '';
-    await fetchBoards();
-  } catch (err) {
-    console.error(err);
-  } finally {
-    creating.value = false;
-  }
+    if(!res.ok) throw new Error();
+    createResult.value = await res.json();
+    form.studentName = form.title = form.validUntil = '';
+    fetchBoards();
+  } catch(e){ alert('Błąd'); }
+  finally { creating.value = false; }
 };
+
+watch(showCreate, (val) => {
+  if(val) { createResult.value = null; nextTick(() => focusInput.value?.focus()); }
+});
 </script>
 
 <style scoped>
 .dashboard-shell {
+  padding-top: 40px;
+  padding-bottom: 80px;
+  background-color: var(--bg-base);
   min-height: 100vh;
-  background: radial-gradient(circle at 20% 20%, #eef2ff, #f8fafc 40%), #f8fafc;
-  color: #0f172a;
-  padding: 32px 28px 64px;
-  font-family: 'Inter', system-ui, -apple-system, sans-serif;
-}
-.dashboard-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 16px;
-  margin-bottom: 16px;
-}
-.eyebrow {
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  font-size: 12px;
-  color: #6366f1;
-  margin: 0 0 4px;
-}
-h1 {
-  margin: 0;
-  font-size: 32px;
-  font-weight: 700;
-}
-.subtle {
-  margin: 4px 0 0;
-  color: #475569;
-}
-.header-actions {
-  display: flex;
-  gap: 10px;
-}
-.filters {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 12px;
-  margin: 12px 0 16px;
-}
-.field {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.field input,
-.field select {
-  padding: 10px 12px;
-  border-radius: 10px;
-  border: 1px solid #e2e8f0;
-  background: white;
-  font-size: 14px;
-}
-.card {
-  background: white;
-  border-radius: 16px;
-  padding: 12px;
-  box-shadow: 0 20px 60px rgba(15, 23, 42, 0.08);
-  border: 1px solid #e2e8f0;
-}
-.table-head,
-.table-row {
-  display: grid;
-  grid-template-columns: 2fr 1.4fr 1.3fr 1fr 1.7fr;
-  gap: 10px;
-  align-items: center;
-}
-.table-head {
-  font-size: 13px;
-  color: #94a3b8;
-  padding: 6px 4px;
-}
-.table-row {
-  padding: 10px 8px;
-  border-radius: 12px;
-  transition: background 0.2s ease;
-}
-.table-row:hover {
-  background: #f8fafc;
-}
-.title {
-  font-weight: 600;
-}
-.muted {
-  color: #94a3b8;
-  font-size: 12px;
-}
-.actions {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-.badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 10px;
-  border-radius: 999px;
-  font-size: 12px;
-  font-weight: 600;
-}
-.badge.success { background: #ecfeff; color: #0ea5e9; }
-.badge.warning { background: #fff7ed; color: #ea580c; }
-.badge.danger { background: #fef2f2; color: #ef4444; }
-.badge.muted { background: #e2e8f0; color: #475569; }
-
-.chip {
-  padding: 6px 10px;
-  border-radius: 10px;
-  font-size: 12px;
-  font-weight: 600;
-  background: #e0f2fe;
-  color: #0369a1;
-}
-.chip.neutral { background: #fef9c3; color: #854d0e; }
-.chip.success { background: #dcfce7; color: #15803d; }
-
-.empty {
-  padding: 16px;
-  color: #64748b;
 }
 
-.ghost, .primary, .danger {
-  border: none;
-  cursor: pointer;
-  border-radius: 10px;
-  padding: 10px 14px;
-  font-weight: 600;
-  font-size: 14px;
-  transition: transform 0.15s ease, box-shadow 0.15s ease;
-}
-.ghost {
-  background: #eef2ff;
-  color: #4338ca;
-}
-.ghost:hover { box-shadow: 0 6px 18px rgba(67, 56, 202, 0.15); transform: translateY(-1px); }
-.primary {
-  background: linear-gradient(120deg, #4338ca, #6366f1);
-  color: white;
-  box-shadow: 0 10px 30px rgba(99, 102, 241, 0.35);
-}
-.primary:disabled { opacity: 0.6; cursor: not-allowed; }
-.danger {
-  background: #fef2f2;
-  color: #b91c1c;
-}
+.dashboard-header { margin-bottom: 32px; }
+.header-content { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 24px; }
+.header-actions { display: flex; gap: 12px; }
 
+.filters-row { display: flex; gap: 16px; margin-bottom: 24px; }
+.search { flex: 0 0 300px; }
+.filter { flex: 0 0 200px; }
+
+.table-section { overflow-x: auto; background: var(--bg-surface); } /* Ensure visible bg */
+
+.cell-primary { font-weight: 600; color: var(--text-primary); }
+.cell-secondary { font-size: 11px; font-family: monospace; color: var(--text-tertiary); margin-top: 2px; }
+.student-cell { display: flex; align-items: center; gap: 10px; }
+.avatar-sm {
+  width: 28px; height: 28px; background: var(--bg-surface-hover); border-radius: 50%;
+  border: 1px solid var(--border-subtle);
+  display: flex; align-items: center; justify-content: center; font-size: 12px; color: var(--text-secondary);
+}
+.cell-date { font-family: monospace; color: var(--text-secondary); }
+.text-danger { color: var(--danger); font-weight: 700; }
+.actions-cell { display: flex; justify-content: flex-end; gap: 8px; }
+
+/* Modal */
 .modal-backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgba(15, 23, 42, 0.3);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 9999;
+  position: fixed; inset: 0; background: rgba(0,0,0,0.5);
+  display: flex; align-items: center; justify-content: center; z-index: 100;
+  backdrop-filter: blur(4px);
 }
-.modal {
-  background: white;
-  padding: 20px;
-  border-radius: 14px;
-  width: min(520px, 92vw);
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  box-shadow: 0 20px 60px rgba(15, 23, 42, 0.2);
-}
-.modal input {
-  border: 1px solid #e2e8f0;
-  padding: 10px;
-  border-radius: 10px;
-}
-.modal-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  margin-top: 6px;
-}
+.modal-panel { width: 420px; background: var(--bg-surface); border-color: var(--border-subtle); box-shadow: 0 10px 40px -10px rgba(0,0,0,0.15); }
+.modal-header { display: flex; justify-content: space-between; margin-bottom: 20px; align-items: center; }
+.modal-header h3 { margin: 0; font-size: 18px; color: var(--text-primary); }
+
+.field-group { margin-bottom: 16px; }
+.field-group label { display: block; font-size: 12px; color: var(--text-secondary); margin-bottom: 6px; font-weight: 600; }
+
+.modal-footer { display: flex; justify-content: flex-end; gap: 12px; margin-top: 24px; }
+
+.result-area { background: #dcfce7; padding: 16px; border-radius: 6px; margin-top: 12px; border: 1px solid #bbf7d0; }
+.success-msg { color: #16a34a; font-size: 13px; font-weight: 700; margin-bottom: 8px; display: flex; align-items: center; gap: 6px; }
+.copy-row { display: flex; gap: 8px; }
+.state-empty { padding: 40px; text-align: center; color: var(--text-tertiary); font-style: italic; }
 </style>

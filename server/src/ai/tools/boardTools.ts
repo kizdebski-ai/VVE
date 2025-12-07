@@ -6,6 +6,7 @@ import {
     BoardSnapshot,
     BoardObject,
 } from '../../models/boardSnapshot';
+import { applyLayoutFixes, LayoutElement } from '../agent/layoutEngine';
 
 // ---------- Typy argumentów narzędzi ----------
 
@@ -232,7 +233,7 @@ export function toolSimplifyEquationBlock(
     return patch;
 }
 
-// ---------- 4) Niskopoziomowy draw_board_patch ----------
+// ---------- 4) Niskopoziomowy draw_board_patch (z enforced grid snapping) ----------
 
 export function toolDrawBoardPatch(
     doc: BoardDoc,
@@ -248,25 +249,67 @@ export function toolDrawBoardPatch(
     const source = (args as DrawBoardPatchArgs).patch || args;
 
     if (Array.isArray(source.creates)) {
+        console.log('[AI DEBUG] Creating objects:', JSON.stringify(source.creates, null, 2));
         patch.creates = source.creates.map((raw: any) => {
+            const id = raw.id || newId('ai');
+            const type = raw.type;
+
+            // Enforce grid snapping on all coordinates
+            const x = snap(raw.x ?? 0, GRID);
+            const y = snap(raw.y ?? 0, GRID);
+            const width = snap(raw.width ?? 0, GRID);
+            const height = snap(raw.height ?? 0, GRID);
+
             const obj: any = {
                 ...raw,
-                id:
-                    raw.id ||
-                    newId('ai'),
+                id,
+                type,
+                x,
+                y,
+                width,
+                height,
             };
 
-            if (obj.type === 'line' && (!obj.start || !obj.end)) {
-                const x = obj.x || 0;
-                const y = obj.y || 0;
-                const w = obj.width || 0;
-                const h = obj.height || 0;
-                obj.start = { x, y };
-                obj.end = { x: x + w, y: y + h };
+            // CRITICAL FIX: Frontend canvasDrawing.js requires start/end for ALL shapes
+            // Types that need start/end: line, rectangle, square, circle, triangle, trapezoid, 
+            // parallelogram, deltoid, diamond, cuboid, tetrahedron, cube, sphere, cylinder, pyramid, cone
+            const shapesNeedingStartEnd = [
+                'line', 'rectangle', 'square', 'circle', 'triangle',
+                'trapezoid', 'parallelogram', 'deltoid', 'diamond',
+                'cuboid', 'tetrahedron', 'cube', 'sphere', 'cylinder', 'pyramid', 'cone'
+            ];
+
+            if (shapesNeedingStartEnd.includes(type)) {
+                // Compute start/end from x/y/width/height
+                const sx = raw.start?.x ?? x;
+                const sy = raw.start?.y ?? y;
+                const ex = raw.end?.x ?? (x + (width || 100));
+                const ey = raw.end?.y ?? (y + (height || 100));
+                obj.start = { x: snap(sx, GRID), y: snap(sy, GRID) };
+                obj.end = { x: snap(ex, GRID), y: snap(ey, GRID) };
+
+                // Also ensure width/height are set if they were missing
+                if (!obj.width || obj.width === 0) {
+                    obj.width = Math.abs(obj.end.x - obj.start.x) || 100;
+                }
+                if (!obj.height || obj.height === 0) {
+                    obj.height = Math.abs(obj.end.y - obj.start.y) || 100;
+                }
             }
 
+            // Ensure color always exists
             if (!obj.color && !obj.strokeColor) {
                 obj.color = '#000000';
+            }
+
+            // Ensure lineWidth for visibility
+            if (!obj.lineWidth) {
+                obj.lineWidth = 2;
+            }
+
+            // If fillColor is provided, use clean rendering (roughness=0) for solid fill
+            if (obj.fillColor) {
+                obj.roughness = 0;
             }
 
             return obj as BoardObject;
@@ -274,10 +317,31 @@ export function toolDrawBoardPatch(
     }
 
     if (Array.isArray(source.updates)) {
-        patch.updates = source.updates.map((u: any) => ({
-            id: u.id,
-            props: u.props as Partial<BoardObject>,
-        }));
+        patch.updates = source.updates.map((u: any) => {
+            const props: any = { ...u.props };
+
+            // Snap coordinate updates to grid
+            if ('x' in props) props.x = snap(props.x, GRID);
+            if ('y' in props) props.y = snap(props.y, GRID);
+            if ('width' in props) props.width = snap(props.width, GRID);
+            if ('height' in props) props.height = snap(props.height, GRID);
+
+            // Snap line start/end
+            if (props.start) {
+                props.start = {
+                    x: snap(props.start.x, GRID),
+                    y: snap(props.start.y, GRID),
+                };
+            }
+            if (props.end) {
+                props.end = {
+                    x: snap(props.end.x, GRID),
+                    y: snap(props.end.y, GRID),
+                };
+            }
+
+            return { id: u.id, props };
+        });
     }
 
     if (Array.isArray(source.deletes)) {
@@ -295,6 +359,15 @@ export function toolDrawBoardPatch(
     if (createsLen === 0 && updatesLen === 0 && deletesLen === 0) {
         return { creates: [], updates: [], deletes: [] };
     }
+
+    // ========== LAYOUT ENGINE INTEGRATION ==========
+    // Use the professional Layout Engine to fix coordinates and normalize elements
+    if (patch.creates && patch.creates.length > 0) {
+        console.log('[LAYOUT ENGINE] Processing', patch.creates.length, 'new elements');
+        patch.creates = applyLayoutFixes(patch.creates as LayoutElement[]) as BoardObject[];
+        console.log('[LAYOUT ENGINE] Applied layout fixes');
+    }
+    // ========== END LAYOUT ENGINE ==========
 
     doc.applyPatch(patch);
     return patch;
@@ -563,6 +636,181 @@ export function toolDrawHandstroke(
     };
 
     const patch: BoardPatch = { creates: [element] };
+    doc.applyPatch(patch);
+    return patch;
+}
+
+// ---------- 13) Distribute Horizontally ----------
+
+type DistributeArgs = { ids: string[] };
+
+export function toolDistributeHorizontally(
+    doc: BoardDoc,
+    snapshot: BoardSnapshot,
+    args: DistributeArgs,
+): BoardPatch {
+    if (!args.ids || args.ids.length < 3) {
+        return { updates: [] };
+    }
+
+    const objects = snapshot.objects.filter(o => args.ids.includes(o.id));
+    if (objects.length < 3) return { updates: [] };
+
+    // Sort by x position
+    objects.sort((a, b) => (a.x ?? 0) - (b.x ?? 0));
+
+    const first = objects[0]!;
+    const last = objects[objects.length - 1]!;
+    const firstX = first.x ?? 0;
+    const lastX = last.x ?? 0;
+    const totalWidth = (lastX + (last.width ?? 0)) - firstX;
+    const gap = totalWidth / (objects.length - 1);
+
+    const updates = objects.slice(1, -1).map((obj, i) => ({
+        id: obj.id,
+        props: { x: snap(firstX + gap * (i + 1), GRID) },
+    }));
+
+    const patch: BoardPatch = { updates };
+    doc.applyPatch(patch);
+    return patch;
+}
+
+// ---------- 14) Distribute Vertically ----------
+
+export function toolDistributeVertically(
+    doc: BoardDoc,
+    snapshot: BoardSnapshot,
+    args: DistributeArgs,
+): BoardPatch {
+    if (!args.ids || args.ids.length < 3) {
+        return { updates: [] };
+    }
+
+    const objects = snapshot.objects.filter(o => args.ids.includes(o.id));
+    if (objects.length < 3) return { updates: [] };
+
+    // Sort by y position
+    objects.sort((a, b) => (a.y ?? 0) - (b.y ?? 0));
+
+    const first = objects[0]!;
+    const last = objects[objects.length - 1]!;
+    const firstY = first.y ?? 0;
+    const lastY = last.y ?? 0;
+    const totalHeight = (lastY + (last.height ?? 0)) - firstY;
+    const gap = totalHeight / (objects.length - 1);
+
+    const updates = objects.slice(1, -1).map((obj, i) => ({
+        id: obj.id,
+        props: { y: snap(firstY + gap * (i + 1), GRID) },
+    }));
+
+    const patch: BoardPatch = { updates };
+    doc.applyPatch(patch);
+    return patch;
+}
+
+// ---------- 15) Clone Object ----------
+
+type CloneObjectArgs = {
+    id: string;
+    offsetX?: number;
+    offsetY?: number;
+};
+
+export function toolCloneObject(
+    doc: BoardDoc,
+    snapshot: BoardSnapshot,
+    args: CloneObjectArgs,
+): BoardPatch {
+    const source = snapshot.objects.find(o => o.id === args.id);
+    if (!source) return { creates: [] };
+
+    const offsetX = snap(args.offsetX ?? 40, GRID);
+    const offsetY = snap(args.offsetY ?? 40, GRID);
+
+    const clone: BoardObject = {
+        ...source,
+        id: newId('clone'),
+        x: snap((source.x ?? 0) + offsetX, GRID),
+        y: snap((source.y ?? 0) + offsetY, GRID),
+        selected: false,
+    };
+
+    // Clone line start/end if present
+    if (source.start && source.end) {
+        clone.start = {
+            x: snap(source.start.x + offsetX, GRID),
+            y: snap(source.start.y + offsetY, GRID),
+        };
+        clone.end = {
+            x: snap(source.end.x + offsetX, GRID),
+            y: snap(source.end.y + offsetY, GRID),
+        };
+    }
+
+    // Clone points if present
+    if (source.points && Array.isArray(source.points)) {
+        clone.points = source.points.map(p => ({
+            x: p.x + offsetX,
+            y: p.y + offsetY,
+        }));
+    }
+
+    const patch: BoardPatch = { creates: [clone] };
+    doc.applyPatch(patch);
+    return patch;
+}
+
+// ---------- 16) Move Object (Simpler than draw_board_patch) ----------
+
+type MoveObjectArgs = {
+    id: string;
+    x?: number;
+    y?: number;
+    deltaX?: number;
+    deltaY?: number;
+};
+
+export function toolMoveObject(
+    doc: BoardDoc,
+    snapshot: BoardSnapshot,
+    args: MoveObjectArgs,
+): BoardPatch {
+    const target = snapshot.objects.find(o => o.id === args.id);
+    if (!target) return { updates: [] };
+
+    let newX = target.x ?? 0;
+    let newY = target.y ?? 0;
+
+    // Absolute positioning
+    if (args.x !== undefined) newX = args.x;
+    if (args.y !== undefined) newY = args.y;
+
+    // Relative positioning (delta)
+    if (args.deltaX !== undefined) newX += args.deltaX;
+    if (args.deltaY !== undefined) newY += args.deltaY;
+
+    const props: any = {
+        x: snap(newX, GRID),
+        y: snap(newY, GRID),
+    };
+
+    // Also move line start/end if present
+    if (target.start && target.end) {
+        const dx = props.x - (target.x ?? 0);
+        const dy = props.y - (target.y ?? 0);
+        props.start = {
+            x: snap(target.start.x + dx, GRID),
+            y: snap(target.start.y + dy, GRID),
+        };
+        props.end = {
+            x: snap(target.end.x + dx, GRID),
+            y: snap(target.end.y + dy, GRID),
+        };
+    }
+
+    const patch: BoardPatch = { updates: [{ id: args.id, props }] };
     doc.applyPatch(patch);
     return patch;
 }

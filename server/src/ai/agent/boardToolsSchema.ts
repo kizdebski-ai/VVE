@@ -53,20 +53,21 @@ export const boardToolsSchema: ChatCompletionTool[] = [
         function: {
             name: 'draw_board_patch',
             description:
-                'Create or update board objects directly. Use ONLY when higher-level tools (connect_objects, label_object, set_style, draw_handstroke, etc.) are not sufficient.',
+                'Create, update or delete board objects. Use this to draw new shapes (circles, rectangles, triangles, lines, etc.). IMPORTANT: Every shape MUST have type, x, y, width, height, and color properties.',
             parameters: {
                 type: 'object',
                 properties: {
                     creates: {
                         type: 'array',
+                        description: 'Array of new objects to create on the board.',
                         items: {
                             type: 'object',
-                            description: 'A board object to create.',
+                            description: 'A board object to create. Remember: Y increases DOWNWARD (y=100 is above y=300).',
                             properties: {
                                 id: {
                                     type: 'string',
                                     description:
-                                        'Unique ID, e.g. "ai-rect-1". If omitted, server will generate one.',
+                                        'Unique ID, e.g. "ai-circle-1". If omitted, server will generate one.',
                                 },
                                 type: {
                                     type: 'string',
@@ -76,33 +77,47 @@ export const boardToolsSchema: ChatCompletionTool[] = [
                                         'line',
                                         'text',
                                         'latex',
-                                        'image',
                                         'triangle',
                                         'diamond',
-                                        'pen',
+                                        'square',
                                     ],
+                                    description: 'Shape type. Use "circle" for circles/ellipses, "rectangle" for rectangles, "line" for straight lines/arrows.',
                                 },
-                                x: { type: 'number' },
-                                y: { type: 'number' },
-                                width: { type: 'number' },
-                                height: { type: 'number' },
-                                rotation: { type: 'number' },
-
-                                text: { type: 'string' },
-                                latex: { type: 'string' },
-
-                                // Kolor / styl
+                                x: {
+                                    type: 'number',
+                                    description: 'LEFT edge X coordinate. Board origin (0,0) is top-left. X increases rightward.',
+                                },
+                                y: {
+                                    type: 'number',
+                                    description: 'TOP edge Y coordinate. Y increases DOWNWARD (y=100 is visually ABOVE y=300).',
+                                },
+                                width: {
+                                    type: 'number',
+                                    description: 'Horizontal size in pixels. Minimum 20 for visibility. Common values: 40 (small), 80 (medium), 120 (large).',
+                                },
+                                height: {
+                                    type: 'number',
+                                    description: 'Vertical size in pixels. Minimum 20 for visibility. For circles, use same value as width.',
+                                },
                                 color: {
                                     type: 'string',
-                                    description: 'Stroke color (hex), e.g. "#000000".',
+                                    description: 'Stroke color as hex string. REQUIRED for visibility. Use "#000000" for black, "#ff0000" for red, etc.',
                                 },
+                                rotation: {
+                                    type: 'number',
+                                    description: 'Rotation angle in degrees (optional).',
+                                },
+
+                                text: { type: 'string', description: 'Text content for type="text".' },
+                                latex: { type: 'string', description: 'LaTeX content for type="latex".' },
+
                                 fillColor: {
                                     type: 'string',
-                                    description: 'Fill color (hex).',
+                                    description: 'Fill color (hex). Use "#FFFFFF" for white fill (e.g., snowman body), "#ADD8E6" for light blue.',
                                 },
                                 lineWidth: {
                                     type: 'number',
-                                    description: 'Stroke width in px.',
+                                    description: 'Stroke width in px. Default 2. Use 1-4 for thin lines, 4-8 for thick.',
                                 },
                                 lineStyle: {
                                     type: 'string',
@@ -111,11 +126,13 @@ export const boardToolsSchema: ChatCompletionTool[] = [
                                 arrowStyle: {
                                     type: 'string',
                                     enum: ['none', 'start', 'end', 'both'],
+                                    description: 'For type="line". Use "end" for arrow pointing to end, "both" for double arrow.',
                                 },
 
                                 // Dla linii / strzałek
                                 start: {
                                     type: 'object',
+                                    description: 'Starting point for lines. Alternative to x/y/width/height.',
                                     properties: {
                                         x: { type: 'number' },
                                         y: { type: 'number' },
@@ -123,6 +140,7 @@ export const boardToolsSchema: ChatCompletionTool[] = [
                                 },
                                 end: {
                                     type: 'object',
+                                    description: 'Ending point for lines.',
                                     properties: {
                                         x: { type: 'number' },
                                         y: { type: 'number' },
@@ -132,6 +150,7 @@ export const boardToolsSchema: ChatCompletionTool[] = [
                                 // Dla pióra / ścieżek
                                 points: {
                                     type: 'array',
+                                    description: 'Array of points for type="pen". Usually not needed.',
                                     items: {
                                         type: 'object',
                                         properties: {
@@ -141,8 +160,8 @@ export const boardToolsSchema: ChatCompletionTool[] = [
                                     },
                                 },
                             },
-                            // ID nie jest już wymagane – serwer potrafi je wygenerować.
-                            required: ['type', 'x', 'y'],
+                            // Require the essential fields for visibility
+                            required: ['type', 'x', 'y', 'width', 'height', 'color'],
                             additionalProperties: true,
                         },
                     },
@@ -427,6 +446,116 @@ export const boardToolsSchema: ChatCompletionTool[] = [
                     },
                 },
                 required: ['expression'],
+                additionalProperties: false,
+            },
+        },
+    },
+
+    // ---------- New High-Level Tools ----------
+
+    {
+        type: 'function',
+        function: {
+            name: 'distribute_horizontally',
+            description:
+                'Evenly distribute selected objects horizontally. Requires at least 3 object IDs. Objects at the leftmost and rightmost positions are anchored.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    ids: {
+                        type: 'array',
+                        items: { type: 'string' },
+                        description: 'IDs of the objects to distribute (minimum 3).',
+                        minItems: 3,
+                    },
+                },
+                required: ['ids'],
+                additionalProperties: false,
+            },
+        },
+    },
+
+    {
+        type: 'function',
+        function: {
+            name: 'distribute_vertically',
+            description:
+                'Evenly distribute selected objects vertically. Requires at least 3 object IDs. Objects at the topmost and bottommost positions are anchored.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    ids: {
+                        type: 'array',
+                        items: { type: 'string' },
+                        description: 'IDs of the objects to distribute (minimum 3).',
+                        minItems: 3,
+                    },
+                },
+                required: ['ids'],
+                additionalProperties: false,
+            },
+        },
+    },
+
+    {
+        type: 'function',
+        function: {
+            name: 'clone_object',
+            description:
+                'Duplicate an existing object with an optional offset. Useful for creating copies instead of drawing new shapes from scratch.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    id: {
+                        type: 'string',
+                        description: 'ID of the object to clone.',
+                    },
+                    offsetX: {
+                        type: 'number',
+                        description: 'Horizontal offset from original (default 40px).',
+                    },
+                    offsetY: {
+                        type: 'number',
+                        description: 'Vertical offset from original (default 40px).',
+                    },
+                },
+                required: ['id'],
+                additionalProperties: false,
+            },
+        },
+    },
+
+    {
+        type: 'function',
+        function: {
+            name: 'move_object',
+            description:
+                'Move a single object to a new position. Simpler than draw_board_patch for moving one object. Supports absolute (x, y) or relative (deltaX, deltaY) positioning.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    id: {
+                        type: 'string',
+                        description: 'ID of the object to move.',
+                    },
+                    x: {
+                        type: 'number',
+                        description: 'New absolute X position (optional).',
+                    },
+                    y: {
+                        type: 'number',
+                        description: 'New absolute Y position (optional).',
+                    },
+                    deltaX: {
+                        type: 'number',
+                        description: 'Move by this amount in X direction (optional).',
+                    },
+                    deltaY: {
+                        type: 'number',
+                        description: 'Move by this amount in Y direction (optional).',
+                    },
+                },
+                required: ['id'],
                 additionalProperties: false,
             },
         },

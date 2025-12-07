@@ -1,14 +1,14 @@
 export interface BoardCapabilityDoc {
-    id: string;
-    tags: string[];
-    doc: string;
+  id: string;
+  tags: string[];
+  doc: string;
 }
 
 export const BOARD_CAPABILITIES: BoardCapabilityDoc[] = [
-    {
-        id: 'schema-board-object',
-        tags: ['schema', 'json', 'board', 'object', 'patch'],
-        doc: `
+  {
+    id: 'schema-board-object',
+    tags: ['schema', 'json', 'board', 'object', 'patch'],
+    doc: `
 BoardObject (uproszczony schemat JSON używany przez narzędzia):
 
 {
@@ -65,11 +65,11 @@ BoardPatch (używane przez draw_board_patch i wewnętrznie):
   "deletes"?: string[] // ID obiektów do usunięcia
 }
 `,
-    },
-    {
-        id: 'tool-align-grid',
-        tags: ['align', 'grid', 'layout'],
-        doc: `
+  },
+  {
+    id: 'tool-align-grid',
+    tags: ['align', 'grid', 'layout'],
+    doc: `
 Tool: align_selection_to_grid
 Purpose: dociąga zaznaczone obiekty do linii siatki, żeby były równo wyrównane.
 
@@ -82,11 +82,11 @@ Args:
 Effect:
 Aktualizuje x/y (oraz points przy ścieżkach), tak aby były wielokrotnością gridSize.
 `,
-    },
-    {
-        id: 'tool-simplify-equation',
-        tags: ['equation', 'simplify', 'latex', 'math'],
-        doc: `
+  },
+  {
+    id: 'tool-simplify-equation',
+    tags: ['equation', 'simplify', 'latex', 'math'],
+    doc: `
 Tool: simplify_equation_block
 Purpose: zastępuje surowy tekst równania jego uproszczoną wersją w LaTeX.
 
@@ -98,11 +98,11 @@ Args:
 Effect:
 Aktualizuje dany obiekt tak, aby jego zawartość była prostszą wersją w LaTeX (np. do dalszego renderu).
 `,
-    },
-    {
-        id: 'tool-plot-function',
-        tags: ['function', 'plot', 'math', 'graph'],
-        doc: `
+  },
+  {
+    id: 'tool-plot-function',
+    tags: ['function', 'plot', 'math', 'graph'],
+    doc: `
 Tool: plot_function
 Purpose: wstawia wykres funkcji matematycznej.
 
@@ -121,11 +121,11 @@ Tworzy BoardObject o type "mathFunctionPlot" z:
 - xRange = [xMin, xMax] (domyślnie [-10, 10]),
 - width/height ustawionym tak, by wykres był czytelny.
 `,
-    },
-    {
-        id: 'tool-insert-latex',
-        tags: ['latex', 'math', 'equation', 'formula'],
-        doc: `
+  },
+  {
+    id: 'tool-insert-latex',
+    tags: ['latex', 'math', 'equation', 'formula'],
+    doc: `
 Tool: insert_latex_box
 Purpose: wstawia nowy blok z równaniem LaTeX.
 
@@ -141,11 +141,11 @@ Args:
 Result:
 Tworzy BoardObject o type "latex" w podanym miejscu.
 `,
-    },
-    {
-        id: 'tool-text-to-latex',
-        tags: ['latex', 'text', 'convert'],
-        doc: `
+  },
+  {
+    id: 'tool-text-to-latex',
+    tags: ['latex', 'text', 'convert'],
+    doc: `
 Tool: text_block_to_latex
 Purpose: zamienia istniejący blok tekstu w renderowany blok LaTeX.
 
@@ -157,11 +157,11 @@ Args:
 Result:
 Ten sam obiekt zmienia type na "latex", ustawia pole "latex" i czyści "text".
 `,
-    },
-    {
-        id: 'tool-draw-patch',
-        tags: ['draw', 'create', 'update', 'low-level', 'rect', 'shape'],
-        doc: `
+  },
+  {
+    id: 'tool-draw-patch',
+    tags: ['draw', 'create', 'update', 'low-level', 'rect', 'shape'],
+    doc: `
 Tool: draw_board_patch
 Purpose: niskopoziomowe API do bezpośredniego tworzenia/aktualizacji obiektów tablicy.
 
@@ -179,11 +179,11 @@ Server akceptuje też wariant zagnieżdżony:
 
 Używaj, gdy inne narzędzia (connect_objects, label_object itd.) nie wystarczają.
 `,
-    },
-    {
-        id: 'tool-connect-objects',
-        tags: ['connect', 'arrow', 'vector', 'line'],
-        doc: `
+  },
+  {
+    id: 'tool-connect-objects',
+    tags: ['connect', 'arrow', 'vector', 'line'],
+    doc: `
 Tool: connect_objects
 Purpose: łączy dwa istniejące obiekty strzałką / wektorem od środka bounding boxu A do środka B.
 
@@ -203,11 +203,11 @@ Result:
 Tworzy BoardObject o type "line" ze start/end ustawionym między obiektami
 i prostymi propercjami stylu (lineWidth, lineStyle, arrowStyle, color).
 `,
-    },
-    {
-        id: 'tool-label-object',
-        tags: ['label', 'text', 'latex', 'annotation'],
-        doc: `
+  },
+  {
+    id: 'tool-label-object',
+    tags: ['label', 'text', 'latex', 'annotation'],
+    doc: `
 Tool: label_object
 Purpose: dodaje krótki podpis (plain lub LaTeX) do istniejącego obiektu.
 
@@ -223,11 +223,11 @@ Result:
 Tworzy nowy BoardObject typu "text" lub "latex" umieszczony w wybranej pozycji
 względem obiektu bazowego (z zachowaniem niewielkiego odstępu).
 `,
-    },
-    {
-        id: 'tool-set-style',
-        tags: ['style', 'color', 'stroke', 'arrow', 'batch'],
-        doc: `
+  },
+  {
+    id: 'tool-set-style',
+    tags: ['style', 'color', 'stroke', 'arrow', 'batch'],
+    doc: `
 Tool: set_style
 Purpose: masowa zmiana stylu wielu obiektów naraz (grubość linii, kolor, strzałki, wypełnienie).
 
@@ -246,11 +246,11 @@ Args:
 Result:
 Dla każdego ID wykonuje update z podanymi właściwościami stylu (Partial<BoardObject>).
 `,
-    },
-    {
-        id: 'tool-delete-objects',
-        tags: ['delete', 'remove', 'erase'],
-        doc: `
+  },
+  {
+    id: 'tool-delete-objects',
+    tags: ['delete', 'remove', 'erase'],
+    doc: `
 Tool: delete_objects
 Purpose: usuwa jeden lub wiele obiektów z tablicy po ID.
 
@@ -262,11 +262,11 @@ Args:
 Result:
 Logika BoardPatch ustawia "deletes" na te ID; odpowiada to realnemu usunięciu z dokumentu Yjs.
 `,
-    },
-    {
-        id: 'tool-draw-handstroke',
-        tags: ['pen', 'handwriting', 'stroke', 'path'],
-        doc: `
+  },
+  {
+    id: 'tool-draw-handstroke',
+    tags: ['pen', 'handwriting', 'stroke', 'path'],
+    doc: `
 Tool: draw_handstroke
 Purpose: rysuje odręczny stroke (jak marker/długopis). Model podaje tylko kilka punktów,
 serwer zagęszcza i wygładza linię.
@@ -288,16 +288,119 @@ Tworzy BoardObject typu "pen" z:
 - points = zagęszczone punkty po interpolacji,
 - lineWidth/penStyle/penConfig dobranym do wybranego stylu.
 `,
-    },
+  },
+  {
+    id: 'tool-draw-patch-grid-example',
+    tags: ['draw', 'grid', 'examples', 'alignment'],
+    doc: `
+Tool: draw_board_patch (grid-aligned example)
+Purpose: Create three aligned circles in a vertical column, centered in the middle of the viewport.
+
+All x, y, width, height are multiples of gridSize=8.
+
+Example patch:
+{
+  "creates": [
+    { "id": "snow-top",    "type": "circle", "x": 400, "y": 200, "width": 80, "height": 80, "color": "#000000" },
+    { "id": "snow-middle", "type": "circle", "x": 400, "y": 280, "width": 120, "height": 120, "color": "#000000" },
+    { "id": "snow-bottom", "type": "circle", "x": 400, "y": 400, "width": 160, "height": 160, "color": "#000000" }
+  ]
+}
+
+Key points:
+- Objects are vertically aligned (same x center)
+- Sizes are grid-aligned (80, 120, 160)
+- Positions are grid-aligned (200, 280, 400)
+`,
+  },
+  {
+    id: 'tool-distribute',
+    tags: ['distribute', 'align', 'spacing', 'layout'],
+    doc: `
+Tools: distribute_horizontally / distribute_vertically
+Purpose: równomierne rozłożenie obiektów poziomo lub pionowo.
+
+Args:
+{
+  "ids": ["id-1", "id-2", "id-3"]
+}
+
+Notes:
+- Wymaga minimum 3 obiektów.
+- Pierwszy i ostatni obiekt (skrajne) pozostają na miejscu.
+- Pozostałe obiekty są przesuwane tak, aby odstępy były równe.
+`,
+  },
+  {
+    id: 'tool-clone',
+    tags: ['clone', 'duplicate', 'copy'],
+    doc: `
+Tool: clone_object
+Purpose: duplikowanie istniejącego obiektu z opcjonalnym przesunięciem.
+
+Args:
+{
+  "id": "id-źródła",
+  "offsetX": 40,  // opcjonalne, domyślnie 40
+  "offsetY": 40   // opcjonalne, domyślnie 40
+}
+
+Result:
+Tworzy kopię obiektu z nowym ID, przesuniętą o (offsetX, offsetY).
+Kopiuje też start/end dla linii oraz points dla ścieżek.
+`,
+  },
+  {
+    id: 'tool-move',
+    tags: ['move', 'reposition', 'position'],
+    doc: `
+Tool: move_object
+Purpose: przeniesienie pojedynczego obiektu (prostsze niż draw_board_patch).
+
+Args:
+{
+  "id": "id-obiektu",
+  "x": 100,       // pozycja absolutna X (opcjonalna)
+  "y": 200,       // pozycja absolutna Y (opcjonalna)
+  "deltaX": 50,   // przesunięcie względne X (opcjonalne)
+  "deltaY": -20   // przesunięcie względne Y (opcjonalne)
+}
+
+Notes:
+- Można użyć pozycji absolutnej (x, y) lub względnej (deltaX, deltaY).
+- Jeśli obiekt ma start/end (linia), są one również przesuwane.
+- Wszystkie współrzędne są automatycznie zaokrąglane do siatki.
+`,
+  },
+  {
+    id: 'spatial-awareness',
+    tags: ['zone', 'spatial', 'center', 'nearby'],
+    doc: `
+Spatial Awareness (świadomość przestrzenna)
+
+Każdy obiekt w boardContext ma:
+- centerX, centerY: środek obiektu (współrzędne)
+- zone: jedna z 9 stref viewportu:
+  * top-left, top-center, top-right
+  * middle-left, middle, middle-right
+  * bottom-left, bottom-center, bottom-right
+- nearbyIds: lista ID obiektów w promieniu 100px
+
+Jak używać:
+- zone pomaga określić gdzie umieścić nowe obiekty (np. "w lewym górnym rogu")
+- centerX/centerY pomocne do wyrównywania (np. "ustaw środki w jednej linii")
+- nearbyIds pokazuje które obiekty są blisko siebie (do łączenia strzałkami)
+`,
+  },
 ];
 
 export function retrieveBoardDocs(query: string): string[] {
-    const q = query.toLowerCase();
-    // Proste dopasowanie po tagach / treści
-    return BOARD_CAPABILITIES
-        .filter(c =>
-            c.tags.some(t => q.includes(t)) ||
-            c.doc.toLowerCase().includes(q),
-        )
-        .map(c => c.doc);
+  const q = query.toLowerCase();
+  // Proste dopasowanie po tagach / treści
+  return BOARD_CAPABILITIES
+    .filter(c =>
+      c.tags.some(t => q.includes(t)) ||
+      c.doc.toLowerCase().includes(q),
+    )
+    .map(c => c.doc);
 }

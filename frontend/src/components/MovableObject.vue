@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div
     ref="movableObjectRef"
     class="movable-object"
@@ -1177,3 +1177,4 @@ onUnmounted(() => {
 .se-handle { bottom: -5px; right: -5px; cursor: nwse-resize; }
 
 </style>
+

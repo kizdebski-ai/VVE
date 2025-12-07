@@ -217,6 +217,7 @@ export default {
     currentLineStyle: { type: String, default: 'solid' },
     currentArrowStyle: { type: String, default: 'none' },
     currentRoughness: { type: Number, default: 1 }, // 0 = clean, 1 = default/sloppy
+    currentFillColor: { type: String, default: null },
     // Feature configuration
     activeFeature: { type: String, default: null },
     gridAlignOptions: { type: Object, default: () => ({}) },
@@ -2422,11 +2423,14 @@ export default {
       if (SHAPE_TOOLS.has(toolType) || toolType === 'line') {
           elementData.lineStyle = props.currentLineStyle;
           elementData.roughness = props.currentRoughness;
+          if (props.currentFillColor) {
+              elementData.fillColor = props.currentFillColor;
+          }
           if (toolType === 'line') {
              elementData.arrowStyle = props.currentArrowStyle;
           }
           if (debugModeEnabled.value) {
-              debugLog(`[startDrawing] Style set: ${elementData.lineStyle}, Roughness: ${elementData.roughness}`);
+              debugLog(`[startDrawing] Style set: ${elementData.lineStyle}, Roughness: ${elementData.roughness}, Fill: ${elementData.fillColor}`);
           }
       }
 
@@ -2726,11 +2730,15 @@ export default {
                       const shapeOrLine = SHAPE_TOOLS.has(elementToAdd.type) || elementToAdd.type === 'line';
                       const resolvedLineStyle = elementToAdd.lineStyle ?? (shapeOrLine ? props.currentLineStyle || 'solid' : undefined);
                       const resolvedRoughness = elementToAdd.roughness ?? (shapeOrLine ? props.currentRoughness ?? 1 : undefined);
+                      const resolvedFillColor = elementToAdd.fillColor ?? (shapeOrLine ? props.currentFillColor : undefined);
                       if (resolvedLineStyle !== undefined && resolvedLineStyle !== null) {
                         yElementMap.set('lineStyle', resolvedLineStyle);
                       }
                       if (resolvedRoughness !== undefined && resolvedRoughness !== null) {
                         yElementMap.set('roughness', resolvedRoughness);
+                      }
+                      if (resolvedFillColor !== undefined && resolvedFillColor !== null) {
+                        yElementMap.set('fillColor', resolvedFillColor);
                       }
 
                       // Handle type-specific properties and x, y, width, height

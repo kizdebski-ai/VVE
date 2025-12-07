@@ -408,43 +408,56 @@ export const drawElement = (
       }
       break;
 
+
     case 'tetrahedron':
       if (element.start && element.end) {
         const x = Math.min(element.start.x, element.end.x);
         const y = Math.min(element.start.y, element.end.y);
         const w = Math.abs(element.end.x - element.start.x);
         const h = Math.abs(element.end.y - element.start.y);
-        const apex = [x + w / 2, y];
-        const left = [x, y + h];
-        const right = [x + w, y + h];
-        const back = [x + w / 2, y + h * 0.65];
 
-        const faces = [
-          [left, right, back],
-          [apex, left, back],
-          [apex, right, back],
-          [apex, left, right]
-        ];
+        // 3D tetrahedron points (apex at top, triangular base at bottom)
+        const apex = { x: x + w / 2, y: y };
+        const baseLeft = { x: x, y: y + h };
+        const baseRight = { x: x + w, y: y + h };
+        const baseBack = { x: x + w / 2, y: y + h * 0.7 }; // Back point of base (higher = more visible)
 
         if (isClean) {
-          faces.forEach((pts, idx) => {
-            context.beginPath();
-            context.moveTo(pts[0][0], pts[0][1]);
-            context.lineTo(pts[1][0], pts[1][1]);
-            context.lineTo(pts[2][0], pts[2][1]);
-            context.closePath();
-            if (idx === 0) {
-              context.setLineDash([5, 5]);
-              context.stroke();
-              context.setLineDash([]);
-            } else {
-              context.stroke();
-            }
-          });
+          // Draw visible front edges (solid)
+          context.beginPath();
+          // Front triangle face (apex -> baseLeft -> baseRight)
+          context.moveTo(apex.x, apex.y);
+          context.lineTo(baseLeft.x, baseLeft.y);
+          context.lineTo(baseRight.x, baseRight.y);
+          context.closePath();
+          context.stroke();
+
+          // Draw edges to back point (apex to back, left to back, right to back)
+          context.beginPath();
+          context.moveTo(apex.x, apex.y);
+          context.lineTo(baseBack.x, baseBack.y);
+          context.stroke();
+
+          // Hidden edges (dashed)
+          context.setLineDash([5, 5]);
+          context.beginPath();
+          context.moveTo(baseLeft.x, baseLeft.y);
+          context.lineTo(baseBack.x, baseBack.y);
+          context.moveTo(baseRight.x, baseRight.y);
+          context.lineTo(baseBack.x, baseBack.y);
+          context.stroke();
+          context.setLineDash([]);
         } else {
-          faces.forEach((pts, idx) => {
-            rc.polygon(pts, idx === 0 ? { ...options, strokeLineDash: [6, 4] } : options);
-          });
+          // Visible edges
+          rc.line(apex.x, apex.y, baseLeft.x, baseLeft.y, options);
+          rc.line(apex.x, apex.y, baseRight.x, baseRight.y, options);
+          rc.line(baseLeft.x, baseLeft.y, baseRight.x, baseRight.y, options);
+          rc.line(apex.x, apex.y, baseBack.x, baseBack.y, options);
+
+          // Hidden edges (dashed)
+          const hiddenOptions = { ...options, strokeLineDash: [5, 5] };
+          rc.line(baseLeft.x, baseLeft.y, baseBack.x, baseBack.y, hiddenOptions);
+          rc.line(baseRight.x, baseRight.y, baseBack.x, baseBack.y, hiddenOptions);
         }
       }
       break;
@@ -805,30 +818,68 @@ const drawPyramid = (rc, context, element, options, isClean) => {
   const x = Math.min(element.start.x, element.end.x);
   const y = Math.min(element.start.y, element.end.y);
 
-  const top = { x: x + w / 2, y: y };
-  const bl = { x: x, y: y + h };
-  const br = { x: x + w, y: y + h };
-  const back = { x: x + w * 0.7, y: y + h * 0.8 };
+  // 3D pyramid with rectangular base
+  const apex = { x: x + w / 2, y: y };
+
+  // Base corners (rectangular base in 3D perspective)
+  const baseFrontLeft = { x: x, y: y + h };
+  const baseFrontRight = { x: x + w, y: y + h };
+  const baseBackLeft = { x: x + w * 0.2, y: y + h * 0.75 };
+  const baseBackRight = { x: x + w * 0.8, y: y + h * 0.75 };
 
   if (isClean) {
+    // Draw front edges (solid) - apex to front corners
     context.beginPath();
-    context.moveTo(bl.x, bl.y);
-    context.lineTo(br.x, br.y);
-    context.lineTo(top.x, top.y);
-    context.closePath();
+    context.moveTo(apex.x, apex.y);
+    context.lineTo(baseFrontLeft.x, baseFrontLeft.y);
+    context.moveTo(apex.x, apex.y);
+    context.lineTo(baseFrontRight.x, baseFrontRight.y);
     context.stroke();
 
+    // Draw front base edge (solid)
     context.beginPath();
+    context.moveTo(baseFrontLeft.x, baseFrontLeft.y);
+    context.lineTo(baseFrontRight.x, baseFrontRight.y);
+    context.stroke();
+
+    // Draw visible back edges (apex to back corners)
+    context.beginPath();
+    context.moveTo(apex.x, apex.y);
+    context.lineTo(baseBackLeft.x, baseBackLeft.y);
+    context.moveTo(apex.x, apex.y);
+    context.lineTo(baseBackRight.x, baseBackRight.y);
+    context.stroke();
+
+    // Draw side edges (front to back)
+    context.beginPath();
+    context.moveTo(baseFrontLeft.x, baseFrontLeft.y);
+    context.lineTo(baseBackLeft.x, baseBackLeft.y);
+    context.moveTo(baseFrontRight.x, baseFrontRight.y);
+    context.lineTo(baseBackRight.x, baseBackRight.y);
+    context.stroke();
+
+    // Hidden edges (dashed) - back base edge
     context.setLineDash([5, 5]);
-    context.moveTo(top.x, top.y);
-    context.lineTo(back.x, back.y);
+    context.beginPath();
+    context.moveTo(baseBackLeft.x, baseBackLeft.y);
+    context.lineTo(baseBackRight.x, baseBackRight.y);
     context.stroke();
     context.setLineDash([]);
   } else {
-    rc.polygon([
-      [bl.x, bl.y], [br.x, br.y], [top.x, top.y]
-    ], options);
-    rc.line(top.x, top.y, back.x, back.y, { ...options, strokeLineDash: [5, 5] });
+    // Visible edges
+    rc.line(apex.x, apex.y, baseFrontLeft.x, baseFrontLeft.y, options);
+    rc.line(apex.x, apex.y, baseFrontRight.x, baseFrontRight.y, options);
+    rc.line(apex.x, apex.y, baseBackLeft.x, baseBackLeft.y, options);
+    rc.line(apex.x, apex.y, baseBackRight.x, baseBackRight.y, options);
+
+    // Base edges (visible)
+    rc.line(baseFrontLeft.x, baseFrontLeft.y, baseFrontRight.x, baseFrontRight.y, options);
+    rc.line(baseFrontLeft.x, baseFrontLeft.y, baseBackLeft.x, baseBackLeft.y, options);
+    rc.line(baseFrontRight.x, baseFrontRight.y, baseBackRight.x, baseBackRight.y, options);
+
+    // Hidden back base edge (dashed)
+    const hiddenOptions = { ...options, strokeLineDash: [5, 5] };
+    rc.line(baseBackLeft.x, baseBackLeft.y, baseBackRight.x, baseBackRight.y, hiddenOptions);
   }
 };
 

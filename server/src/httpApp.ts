@@ -81,9 +81,18 @@ export const createHttpApp = ({ roomManager, aiSolver }: CreateAppOptions) => {
 
   const requireAdminSecret: RequestHandler = (req, res, next) => {
     const expectedSecret = config.adminSecret;
+
+    // In development, if no secret is configured, allow access
     if (!expectedSecret) {
-      logger.warn('Admin request blocked because admin secret is not configured', { path: req.path });
-      res.status(503).json({ error: 'Admin endpoints are not configured.' });
+      const isProduction = process.env.NODE_ENV === 'production';
+      if (isProduction) {
+        logger.warn('Admin request blocked because admin secret is not configured', { path: req.path });
+        res.status(503).json({ error: 'Admin endpoints are not configured.' });
+        return;
+      }
+      // Allow in development without secret
+      logger.debug('Admin access allowed without secret (dev mode)', { path: req.path });
+      next();
       return;
     }
 

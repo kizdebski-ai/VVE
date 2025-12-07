@@ -122,6 +122,28 @@
                   ></button>
                 </div>
               </div>
+
+              <div class="popover-section">
+                <div class="section-title">Fill color</div>
+                <div class="color-row">
+                  <button
+                    class="color-swatch fill-none"
+                    :class="{ active: currentFillColor === null }"
+                    @click="selectFillColor(null)"
+                    title="No fill"
+                  >
+                    <span class="no-fill-x">✕</span>
+                  </button>
+                  <button
+                    v-for="swatch in fillColorSwatches"
+                    :key="swatch"
+                    class="color-swatch"
+                    :style="{ backgroundColor: swatch }"
+                    :class="{ active: currentFillColor === swatch }"
+                    @click="selectFillColor(swatch)"
+                  ></button>
+                </div>
+              </div>
             </div>
           </Teleport>
         </div>
@@ -298,12 +320,14 @@ import {
   Box,
   Cylinder,
   Cone,
-  Pyramid
+  Pyramid,
+  Globe
 } from 'lucide-vue-next';
 
 const props = defineProps({
   activeTool: { type: String, default: 'pen' },
   color: { type: String, default: '#000000' },
+  fillColor: { type: String, default: null },
   lineWidth: { type: Number, default: 2 },
   lineStyle: { type: String, default: 'solid' },
   arrowStyle: { type: String, default: 'none' },
@@ -318,6 +342,7 @@ const props = defineProps({
 const emit = defineEmits([
   'update:activeTool',
   'update:color',
+  'update:fillColor',
   'update:lineWidth',
   'update:lineStyle',
   'update:arrowStyle',
@@ -352,10 +377,11 @@ const shapeOptions = [
   { tool: 'deltoid', label: 'Kite', icon: Diamond },
   { tool: 'cube', label: 'Cube', icon: Box },
   { tool: 'cuboid', label: 'Cuboid', icon: Box },
+  { tool: 'sphere', label: 'Sphere', icon: Globe },
   { tool: 'cylinder', label: 'Cylinder', icon: Cylinder },
   { tool: 'cone', label: 'Cone', icon: Cone },
   { tool: 'pyramid', label: 'Pyramid', icon: Pyramid },
-  { tool: 'tetrahedron', label: 'Tetrahedron', icon: Octagon },
+  { tool: 'tetrahedron', label: 'Tetrahedron', icon: Pyramid },
   { tool: 'line', label: 'Line', icon: Minus, toolType: 'lines' }
 ];
 
@@ -389,6 +415,17 @@ const colorSwatches = [
   '#14b8a6'
 ];
 
+const fillColorSwatches = [
+  '#fef3c7', // amber-100
+  '#dbeafe', // blue-100
+  '#dcfce7', // green-100
+  '#fee2e2', // red-100
+  '#ede9fe', // violet-100
+  '#ccfbf1', // teal-100
+  '#f3f4f6', // gray-100
+  '#ffffff'  // white
+];
+
 const coordinateOptions = [
   { type: '2d', label: '2D Coordinate System' },
   { type: '3d', label: '3D Coordinate System' }
@@ -396,6 +433,7 @@ const coordinateOptions = [
 
 const currentTool = ref(props.activeTool);
 const currentColor = ref(props.color);
+const currentFillColor = ref(props.fillColor);
 const currentLineWidth = ref(props.lineWidth);
 const currentLineStyle = ref(props.lineStyle);
 const currentArrowStyle = ref(props.arrowStyle);
@@ -418,6 +456,7 @@ const colorInput = ref(null);
 
 watch(() => props.activeTool, (val) => { currentTool.value = val; });
 watch(() => props.color, (val) => { currentColor.value = val; });
+watch(() => props.fillColor, (val) => { currentFillColor.value = val; });
 watch(() => props.lineWidth, (val) => { currentLineWidth.value = val; });
 watch(() => props.lineStyle, (val) => { currentLineStyle.value = val; });
 watch(() => props.arrowStyle, (val) => { currentArrowStyle.value = val; });
@@ -527,6 +566,11 @@ const selectArrowStyle = (style) => {
 const selectColorSwatch = (swatch) => {
   currentColor.value = swatch;
   emit('update:color', swatch);
+};
+
+const selectFillColor = (color) => {
+  currentFillColor.value = color;
+  emit('update:fillColor', color);
 };
 
 const toggleCoordinateMenu = () => {
@@ -754,6 +798,8 @@ onBeforeUnmount(() => {
 
 .shapes-popover {
   min-width: 280px;
+  max-height: calc(100vh - 40px);
+  overflow-y: auto;
 }
 
 .coordinate-menu {
@@ -829,6 +875,15 @@ onBeforeUnmount(() => {
   border-color: white;
   box-shadow: 0 0 0 2px var(--accent-primary);
   transform: scale(1.1);
+}
+
+.color-swatch.fill-none {
+  background: linear-gradient(135deg, #fff 45%, #ef4444 45%, #ef4444 55%, #fff 55%);
+  border: 2px solid var(--glass-border);
+}
+
+.color-swatch.fill-none .no-fill-x {
+  display: none;
 }
 
 .shapes-grid {

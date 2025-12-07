@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div
     ref="movableObjectRef"
     class="movable-object"
@@ -146,7 +146,13 @@ interface MovableObjectData {
   startY?: number;
   endX?: number;
   endY?: number;
-  lineStyle?: string; 
+  lineStyle?: string;
+  roughness?: number; // 0 = clean, 1 = sketchy, 2 = rough
+  arrowStyle?: string; // For line arrows: 'none', 'start', 'end', 'both'
+  fillColor?: string; // Fill color for shapes
+  fillStyle?: string; // Fill style: 'solid', 'hachure', etc.
+  fillOpacity?: number; // Fill opacity 0-1
+  seed?: number; // RoughJS seed for consistent rendering
   text?: string;
   fontSize?: number;
   latex?: string; // For LaTeX rendering
@@ -338,6 +344,12 @@ const bootstrapObjectData = () => {
         endX: endPoint.x,
         endY: endPoint.y,
         lineStyle: props.object.get('lineStyle'),
+        roughness: props.object.get('roughness'),
+        arrowStyle: props.object.get('arrowStyle'),
+        fillColor: props.object.get('fillColor'),
+        fillStyle: props.object.get('fillStyle'),
+        fillOpacity: props.object.get('fillOpacity'),
+        seed: props.object.get('seed'),
         text: props.object.get('text'),
         fontSize: props.object.get('fontSize'),
         expression: props.object.get('expression'),
@@ -371,12 +383,18 @@ const syncDataFromYMap = () => {
     objectData.endX = endPoint.x;
     objectData.endY = endPoint.y;
     objectData.lineStyle = props.object.get('lineStyle');
+    objectData.roughness = props.object.get('roughness');
+    objectData.arrowStyle = props.object.get('arrowStyle');
+    objectData.fillColor = props.object.get('fillColor');
+    objectData.fillStyle = props.object.get('fillStyle');
+    objectData.fillOpacity = props.object.get('fillOpacity');
+    objectData.seed = props.object.get('seed');
     objectData.text = props.object.get('text');
     objectData.fontSize = props.object.get('fontSize');
     objectData.expression = props.object.get('expression');
     objectData.xRange = props.object.get('xRange');
     objectData.points = props.object.get('points');
-    objectData.latex = props.object.get('latex'); // Fix: Sync latex property
+    objectData.latex = props.object.get('latex');
 };
 
 const lineHitPadding = computed(() => {
@@ -385,24 +403,50 @@ const lineHitPadding = computed(() => {
   return screenPadding / props.zoomLevel;
 });
 
+// Padding needed for shapes to prevent stroke clipping
+const shapeStrokePadding = computed(() => {
+  const lineWidth = ensureNumber(objectData.lineWidth, 2);
+  const roughness = ensureNumber(objectData.roughness, 1);
+  const shapeType = objectData.type;
+  
+  // Base padding for stroke
+  const roughnessExtra = roughness > 0 ? lineWidth * roughness * 0.5 : 0;
+  let basePadding = Math.max(lineWidth + 2, lineWidth + roughnessExtra + 4);
+  
+  // 3D shapes have ellipses that extend beyond the bounding box
+  // The ellipse vertical radius is typically width * 0.15 to 0.3
+  const is3DShape = ['cone', 'cylinder', 'sphere', 'cube', 'cuboid', 'pyramid', 'tetrahedron'].includes(shapeType);
+  if (is3DShape) {
+    // Ellipse extends beyond bounding box by approximately width * 0.2
+    const extraFor3D = Math.max(objectData.width, objectData.height) * 0.25;
+    basePadding = Math.max(basePadding, extraFor3D + lineWidth);
+  }
+  
+  return basePadding;
+});
+
 const displayFrame = computed(() => {
-  if (!isLineType.value) {
+  if (isLineType.value) {
+    // Lines need padding for hit detection and stroke rendering
+    const padding = lineHitPadding.value;
+    const baseWidth = Math.max(0, ensureNumber(objectData.width, 0));
+    const baseHeight = Math.max(0, ensureNumber(objectData.height, 0));
     return {
-      x: ensureNumber(objectData.x, 0),
-      y: ensureNumber(objectData.y, 0),
-      width: Math.max(1, ensureNumber(objectData.width, 1)),
-      height: Math.max(1, ensureNumber(objectData.height, 1)),
-      padding: 0,
+      x: ensureNumber(objectData.x, 0) - padding,
+      y: ensureNumber(objectData.y, 0) - padding,
+      width: Math.max(1, baseWidth + padding * 2),
+      height: Math.max(1, baseHeight + padding * 2),
+      padding,
     };
   }
-  const padding = lineHitPadding.value;
-  const baseWidth = Math.max(0, ensureNumber(objectData.width, 0));
-  const baseHeight = Math.max(0, ensureNumber(objectData.height, 0));
+  
+  // All shapes need padding to prevent stroke clipping
+  const padding = shapeStrokePadding.value;
   return {
     x: ensureNumber(objectData.x, 0) - padding,
     y: ensureNumber(objectData.y, 0) - padding,
-    width: Math.max(1, baseWidth + padding * 2),
-    height: Math.max(1, baseHeight + padding * 2),
+    width: Math.max(1, ensureNumber(objectData.width, 1) + padding * 2),
+    height: Math.max(1, ensureNumber(objectData.height, 1) + padding * 2),
     padding,
   };
 });
@@ -1177,3 +1221,4 @@ onUnmounted(() => {
 .se-handle { bottom: -5px; right: -5px; cursor: nwse-resize; }
 
 </style>
+

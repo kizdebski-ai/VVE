@@ -18,6 +18,10 @@ import {
     toolSetStyle,
     toolDeleteObjects,
     toolDrawHandstroke,
+    toolDistributeHorizontally,
+    toolDistributeVertically,
+    toolCloneObject,
+    toolMoveObject,
 } from '../tools/boardTools';
 import { retrieveBoardDocs } from '../docs/boardCapabilities';
 import { buildAgentBoardContext } from './boardAgentContext';
@@ -32,50 +36,122 @@ type AgentResult = {
 };
 
 const SYSTEM_PROMPT = `
-You are an AI Board Assistant for a math & diagram whiteboard.
+You are an AI Board Assistant for a collaborative math & diagram whiteboard.
+Your task is to accurately draw shapes, diagrams, and mathematical figures.
 
-You receive:
-- a JSON snapshot of the board (objects with id, type, x, y, width, height, text/latex),
-- optional viewport info,
-- a user request.
+═══════════════════════════════════════════════════════════════════
+COORDINATE SYSTEM
+═══════════════════════════════════════════════════════════════════
+- Origin (0,0): TOP-LEFT corner of canvas
+- X-axis: increases → RIGHT (0 to ~800)
+- Y-axis: increases ↓ DOWN (0 to ~600)
+- Grid: 8px (coordinates snap to multiples of 8)
 
-GENERAL RULES
-- Prefer using TOOLS instead of describing what you did.
-- Prefer HIGH-LEVEL tools that operate on object ids and relations:
-  * connect_objects  – to draw arrows/vectors between existing objects,
-  * label_object     – to add text/LaTeX labels to objects,
-  * set_style        – to change stroke width / dash / color / arrowStyle,
-  * align_selection_to_grid – to clean up spacing,
-  * plot_function, insert_latex_box, text_block_to_latex, simplify_equation_block for math-specific tasks.
-- Use draw_board_patch only for low-level operations that are not possible with other tools.
+KEY CONCEPT: Lower Y value = higher on screen.
+If you want object B below object A: B.y > A.y
 
-GEOMETRY
-- Do NOT approximate straight lines with many small points; use line objects.
-- For axes, vectors and connections always prefer connect_objects or a line with arrowStyle.
-- Assume grid size is 8 px. When giving coordinates in draw_board_patch, keep them multiples of 8.
-- When creating several similar shapes (e.g. wheels, snowman circles), align their centers or edges and then call align_selection_to_grid.
+═══════════════════════════════════════════════════════════════════
+SHAPE PROPERTIES (for draw_board_patch)
+═══════════════════════════════════════════════════════════════════
+Required for EVERY shape:
+- type: "circle" | "rectangle" | "square" | "triangle" | "diamond" | "line" | "text" | "latex"
+- x: left edge X coordinate (number)
+- y: top edge Y coordinate (number)
+- width: horizontal size in pixels (number, min 8)
+- height: vertical size in pixels (number, min 8)
+- color: stroke color as hex string (e.g., "#000000")
 
-STATE
-- Trust the JSON snapshot: if an id is not present there, it does not exist on the board.
-- If you want to change an object, prefer updates via draw_board_patch or set_style instead of creating a new object in the same place.
+Optional:
+- fillColor: fill color as hex (e.g., "#FFFFFF" for white)
+- lineWidth: stroke thickness 1-8 (default 2)
+- arrowStyle: "none" | "end" | "start" | "both" (for type="line")
+- rotation: angle in degrees
 
-MATH & LATEX
-- For small labels on diagrams use label_object with mode="latex" (no $ delimiters).
-- Use insert_latex_box only when you need a standalone equation block, not a small label.
+═══════════════════════════════════════════════════════════════════
+GEOMETRIC COMPUTATION FORMULAS (use these for precise positioning)
+═══════════════════════════════════════════════════════════════════
 
-HANDWRITING vs SHAPES
-- Use draw_handstroke when:
-  * the user explicitly asks for "odręczne" writing, underlines, curly braces etc.,
-  * you add emphasis (underlining, circling, crossing out),
-  * you draw quick sketch marks (ticks, corrections, small brackets).
-- Use line / arrows / connect_objects when:
-  * drawing axes, vectors, connectors between blocks,
-  * suggesting precise geometric constructions,
-  * any line that should be perfectly straight or symmetric.
-- Use rectangles / circles / triangles etc. for geometric and diagram shapes, not pen strokes.
+BOUNDING BOX EDGES:
+- left   = x
+- right  = x + width
+- top    = y
+- bottom = y + height
 
-Respond to the user with a short explanation (1–3 sentences) and rely on tools for actual modifications.
-CRITICAL: If you do not call a tool, NO changes will be made to the board. You MUST call a tool (like draw_board_patch) to draw or modify anything. Describing it in text is NOT enough.
+CENTER POINT:
+- centerX = x + width/2
+- centerY = y + height/2
+
+OBJECTS TOUCHING (no gap):
+- Vertical: objectB.y = objectA.y + objectA.height
+- Horizontal: objectB.x = objectA.x + objectA.width
+
+OBJECT B INSIDE OBJECT A (containment):
+- B.x >= A.x AND B.x + B.width <= A.x + A.width
+- B.y >= A.y AND B.y + B.height <= A.y + A.height
+
+CENTER ALIGNMENT (same horizontal center):
+- B.x = A.x + (A.width - B.width) / 2
+
+RELATIVE POSITIONING:
+- To place B at left edge of A: B.x = A.x - B.width
+- To place B at right edge of A: B.x = A.x + A.width
+- To place B at vertical center of A: B.y = A.y + (A.height - B.height) / 2
+
+LINE FROM POINT (startX, startY) TO (endX, endY):
+- x = startX
+- y = startY
+- width = endX - startX (can be negative)
+- height = endY - startY (can be negative)
+
+═══════════════════════════════════════════════════════════════════
+AVAILABLE TOOLS
+═══════════════════════════════════════════════════════════════════
+1. draw_board_patch
+   - Creates new shapes with "creates" array
+   - Updates existing shapes with "updates" array  
+   - Deletes shapes with "deletes" array
+   - PRIMARY tool for drawing anything new
+
+2. connect_objects
+   - Draws arrow/line between two existing objects by ID
+   - Use for connecting diagram elements
+
+3. label_object
+   - Adds text label to existing object
+   - Automatically positions relative to object
+
+4. set_style
+   - Changes color, lineWidth, fillColor of existing objects
+
+5. move_object
+   - Repositions existing object to new coordinates
+
+═══════════════════════════════════════════════════════════════════
+SPATIAL REASONING PRINCIPLES
+═══════════════════════════════════════════════════════════════════
+When drawing multi-part figures:
+1. Plan the overall layout first (what goes where)
+2. Calculate parent/container positions first
+3. Calculate child/detail positions RELATIVE to parents
+4. Use the formulas above for precise placement
+5. Verify: children should be within parent bounds
+
+Common patterns:
+- Stacked objects: each subsequent y = previous y + previous height
+- Centered children: child.x = parent.x + (parent.width - child.width)/2
+- Side-by-side: second.x = first.x + first.width + gap
+
+═══════════════════════════════════════════════════════════════════
+EXECUTION RULES
+═══════════════════════════════════════════════════════════════════
+- You MUST call a tool to make changes. Text without tool calls = nothing happens.
+- ALWAYS include "color" - shapes without color are invisible.
+- Width and height must be > 0.
+- For complex drawings, create ALL objects in a single draw_board_patch call.
+- Double-check your coordinate calculations before calling the tool.
+
+You have access to boardContext.objects with existing shapes.
+Each has: id, type, x, y, width, height, left, right, top, bottom, centerX, centerY.
 `;
 
 export async function runBoardAgent(params: {
@@ -86,6 +162,7 @@ export async function runBoardAgent(params: {
     image?: string;
     model?: string;
 }): Promise<AgentResult> {
+    console.log('[AI AGENT] Request received:', { userMessage: params.userMessage, model: params.model });
     if (!llmClient) {
         return { reply: 'Board assistant is not configured on the server.' };
     }
@@ -104,11 +181,9 @@ export async function runBoardAgent(params: {
 
     // Modele, które traktujemy jako tekstowe (bez obrazów)
     const textOnlyModels = [
-        'qwen/qwen3-coder:free',
-        'openai/gpt-oss-120b:exacto',
         'kwaipilot/kat-coder-pro:free',
-        'z-ai/glm-4.5-air:free',
-        'x-ai/grok-4.1-fast:free',
+        'openai/gpt-oss-120b:exacto',
+        'deepseek/deepseek-v3.2',
     ];
 
     const shouldSendImage = image && !textOnlyModels.includes(effectiveModel);
@@ -157,7 +232,7 @@ export async function runBoardAgent(params: {
     try {
         first = await llmClient.chat.completions.create({
             model: effectiveModel,
-            temperature: 0.1,
+            temperature: 0,  // Maximum determinism for consistent drawings
             messages: baseMessages,
             tools: boardToolsSchema as ChatCompletionTool[],
             tool_choice: 'auto',
@@ -199,6 +274,18 @@ export async function runBoardAgent(params: {
 
     // Jeśli model nie wywołuje żadnych narzędzi – zwracamy tylko tekst
     if (!hasToolCalls) {
+        // Check if user was asking to draw something
+        const drawingKeywords = ['narysuj', 'rysuj', 'draw', 'dodaj', 'utwórz', 'stwórz', 'create', 'bałwan', 'snowman', 'circle', 'koło'];
+        const wasDrawingRequest = drawingKeywords.some(kw =>
+            userMessage.toLowerCase().includes(kw)
+        );
+
+        if (wasDrawingRequest) {
+            console.warn(`[AI] Model ${effectiveModel} returned text but user requested drawing. No tool called.`);
+            return {
+                reply: `${firstMsg.content ?? ''}\n\n⚠️ _Model nie wywołał żadnego narzędzia rysowania. Spróbuj użyć innego modelu lub sformułuj prośbę inaczej._`
+            };
+        }
         return { reply: firstMsg.content ?? '' };
     }
 
@@ -375,6 +462,30 @@ export async function runBoardAgent(params: {
 
             case 'draw_handstroke': {
                 const patch = toolDrawHandstroke(doc, workingSnapshot, args);
+                respondOk(patch);
+                break;
+            }
+
+            case 'distribute_horizontally': {
+                const patch = toolDistributeHorizontally(doc, workingSnapshot, args);
+                respondOk(patch);
+                break;
+            }
+
+            case 'distribute_vertically': {
+                const patch = toolDistributeVertically(doc, workingSnapshot, args);
+                respondOk(patch);
+                break;
+            }
+
+            case 'clone_object': {
+                const patch = toolCloneObject(doc, workingSnapshot, args);
+                respondOk(patch);
+                break;
+            }
+
+            case 'move_object': {
+                const patch = toolMoveObject(doc, workingSnapshot, args);
                 respondOk(patch);
                 break;
             }

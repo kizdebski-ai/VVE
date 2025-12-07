@@ -25,6 +25,7 @@
         :current-line-style="currentLineStyle"
         :current-arrow-style="currentArrowStyle"
         :current-roughness="currentRoughness"
+        :current-fill-color="currentFillColor"
         :active-feature="activeFeature"
         :grid-align-options="gridAlignOptions"
         :handwriting-styler-options="handwritingStylerOptions"
@@ -107,6 +108,7 @@
         <ToolBar
           :active-tool="currentTool"
           :color="currentColor"
+          :fill-color="currentFillColor"
           :line-width="currentLineWidth"
           :current-shape="currentShape"
           :line-style="currentLineStyle"
@@ -118,6 +120,7 @@
           orientation="vertical"
           @update:activeTool="handleToolChange"
           @update:color="handleColorChange"
+          @update:fillColor="handleFillColorChange"
           @update:lineWidth="handleLineWidthChange"
           @update:shape="handleShapeChange"
           @update:lineStyle="handleLineStyleChange"
@@ -296,6 +299,7 @@ export default {
     const globalError = ref(null);
     const currentTool = ref('pen');
     const currentColor = ref('#000000');
+    const currentFillColor = ref(null);
     const currentLineWidth = ref(2);
     const currentShape = ref('rectangle');
     const currentLineStyle = ref('solid');
@@ -797,6 +801,11 @@ export default {
       whiteboard.value?.setRoughness?.(value);
     };
 
+    const handleFillColorChange = (color) => {
+      currentFillColor.value = color;
+      whiteboard.value?.setFillColor?.(color);
+    };
+
     const handleEraserSizeChange = (size) => {
       whiteboard.value?.setEraserSize?.(size);
     };
@@ -1281,6 +1290,7 @@ export default {
       currentLineStyle,
       currentArrowStyle,
       currentRoughness,
+      currentFillColor,
       isCalculatorVisible, // Return state for modal
       activeUsersCount,
       localClientId,
@@ -1293,6 +1303,7 @@ export default {
       handleLineStyleChange,
       handleArrowStyleChange,
       handleRoughnessChange,
+      handleFillColorChange,
       toggleCalculator, // Return toggle method
       toggleUserInfoPanel,
       handleClearCanvas,

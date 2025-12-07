@@ -1,54 +1,63 @@
 <template>
   <div class="student-shell">
-    <div class="hero">
-      <div>
-        <p class="eyebrow">Zaproszenie do tablicy</p>
-        <h1>{{ boardTitle }}</h1>
-        <p class="subtle">
-          Nauczyciel: <strong>{{ boardInfo?.teacherName || '...' }}</strong>
-          · Uczeń: <strong>{{ boardInfo?.studentName || 'Ty' }}</strong>
-        </p>
-        <p class="badge">
-          Tablica dostępna do {{ validUntil }}
-          <span v-if="readOnly" class="pill">tryb tylko do odczytu</span>
-        </p>
-      </div>
-      <div class="hero-actions">
-        <div v-if="connectionStatus === 'reconnecting' || connectionStatus === 'disconnected'" class="reconnect">
-          Przywracanie połączenia…
+    <div class="center-content fade-in">
+      <div class="minimal-card entry-card">
+        <header class="card-header">
+          <p class="eyebrow">Zaproszenie</p>
+          <h1>{{ boardTitle }}</h1>
+        </header>
+
+        <div class="meta-grid">
+          <div class="meta-item">
+            <span class="label">Nauczyciel</span>
+            <span class="value">{{ boardInfo?.teacherName || '...' }}</span>
+          </div>
+          <div class="meta-item right">
+            <span class="label">Uczeń</span>
+            <span class="value">{{ boardInfo?.studentName || 'Ty' }}</span>
+          </div>
         </div>
-        <button class="primary" :disabled="loading || !boardInfo" @click="startBoard">
-          {{ readOnly ? 'Otwórz (read-only)' : 'Otwórz tablicę' }}
-        </button>
-      </div>
-    </div>
 
-    <div v-if="loading" class="panel">Ładowanie...</div>
-    <div v-else-if="error" class="panel error">{{ error }}</div>
+        <div v-if="loading" class="state-box loading">
+          <div class="spinner"></div> Ładowanie...
+        </div>
 
-    <div v-else class="board-panel" :class="{ readonly: readOnly }">
-      <div class="board-meta">
-        <span>Slug: {{ slug }}</span>
-        <span>ID: {{ boardInfo?.boardId?.slice(0, 8) }}…</span>
-        <span v-if="readOnly" class="pill warn">Read-only</span>
+        <div v-else-if="error" class="state-box error">
+          {{ error }}
+        </div>
+
+        <div v-else class="card-body">
+          <div class="info-row">
+             <div class="term-info">
+               <span class="label-sm">Ważne do:</span>
+               <span class="value-mono">{{ validUntil }}</span>
+             </div>
+             <div v-if="readOnly" class="badge-warn">Tylko odczyt</div>
+          </div>
+
+          <div class="actions">
+            <div v-if="connectionStatus === 'reconnecting' || connectionStatus === 'disconnected'" class="status-msg">
+              Łączenie...
+            </div>
+            <button class="btn-primary full-width big-btn" :disabled="loading || !boardInfo" @click="startBoard">
+              {{ readOnly ? 'Otwórz podgląd' : 'Dołącz do lekcji' }}
+            </button>
+          </div>
+        </div>
+
+        <!-- Hidden canvas pre-loader -->
+        <div v-if="showCanvas" class="hidden-canvas">
+          <WhiteboardCanvas
+            :room-id="boardInfo?.roomId"
+            :username="boardInfo?.studentName || 'Uczeń'"
+            :room-key="null"
+            :ws-token="boardInfo?.wsToken"
+            :on-connection-status="handleStatus"
+          />
+        </div>
       </div>
-      <WhiteboardCanvas
-        v-if="showCanvas"
-        class="canvas-shell"
-        :room-id="boardInfo?.roomId"
-        :username="boardInfo?.studentName || 'Uczeń'"
-        :room-key="null"
-        :ws-token="boardInfo?.wsToken"
-        :on-connection-status="handleStatus"
-      />
-      <div v-else class="panel">Kliknij „Otwórz tablicę”, aby rozpocząć.</div>
-      <div v-if="readOnly" class="overlay">Tryb tylko do odczytu</div>
-      <!-- Debug info -->
-      <div style="position: absolute; bottom: 10px; left: 10px; background: rgba(0,0,0,0.8); color: lime; padding: 8px; font-size: 11px; font-family: monospace; max-width: 400px; word-break: break-all;">
-        showCanvas: {{ showCanvas }}<br/>
-        roomId: {{ boardInfo?.roomId }}<br/>
-        wsToken: {{ boardInfo?.wsToken?.slice(0, 30) }}...
-      </div>
+      
+      <p class="footer-brand">WhiteVue Student</p>
     </div>
   </div>
 </template>
@@ -58,172 +67,85 @@ import { computed, onMounted, ref } from 'vue';
 import WhiteboardCanvas from '../components/WhiteboardCanvas.vue';
 import { resolveBackendBaseUrl } from '../services/backendUrl';
 
-const props = defineProps({
-  slug: { type: String, required: true }
-});
-
+const props = defineProps({ slug: { type: String, required: true } });
 const apiBase = resolveBackendBaseUrl();
+
 const boardInfo = ref(null);
 const loading = ref(false);
 const error = ref('');
 const showCanvas = ref(false);
-const readOnly = computed(() => Boolean(boardInfo.value?.readOnly));
 const connectionStatus = ref('connecting');
 
+const readOnly = computed(() => Boolean(boardInfo.value?.readOnly));
+const boardTitle = computed(() => boardInfo.value?.title || 'Tablica');
+const validUntil = computed(() => {
+  try { return boardInfo.value?.validUntil ? new Date(boardInfo.value.validUntil).toLocaleDateString() : 'Bezterminowo'; }
+  catch { return '---'; }
+});
+
 const fetchBoard = async () => {
-  loading.value = true;
-  error.value = '';
+  loading.value = true; error.value = '';
   try {
     const token = new URLSearchParams(window.location.search).get('token') || '';
-    // Always use /api/board/ for the API call
     const res = await fetch(`${apiBase}/api/board/${props.slug}?token=${encodeURIComponent(token)}`, { credentials: 'include' });
     if (!res.ok) throw new Error('Link jest nieprawidłowy lub wygasł.');
-    const data = await res.json();
-    boardInfo.value = data;
-  } catch (err) {
-    error.value = err.message || 'Nie udało się pobrać tablicy.';
-  } finally {
-    loading.value = false;
-  }
+    boardInfo.value = await res.json();
+  } catch (err) { error.value = err.message; }
+  finally { loading.value = false; }
 };
 
 onMounted(fetchBoard);
 
 const startBoard = () => {
-  if (!boardInfo.value) {
-    console.warn('No boardInfo, cannot start');
-    return;
-  }
-  // Redirect to full whiteboard with room ID and token
-  const roomId = boardInfo.value.roomId;
-  const wsToken = boardInfo.value.wsToken;
-  const studentName = boardInfo.value.studentName || 'Uczeń';
-  
-  // Navigate to main whiteboard app with query params
+  if (!boardInfo.value) return;
   const params = new URLSearchParams({
-    room: roomId,
-    wsToken: wsToken,
-    name: studentName
+    room: boardInfo.value.roomId,
+    wsToken: boardInfo.value.wsToken,
+    name: boardInfo.value.studentName || 'Uczeń'
   });
   window.location.href = `/?${params.toString()}`;
 };
 
-const handleStatus = (status) => {
-  connectionStatus.value = status;
-};
-
-const boardTitle = computed(() => boardInfo.value?.title || 'Tablica ucznia');
-const validUntil = computed(() => {
-  try {
-    return new Date(boardInfo.value?.validUntil || '').toLocaleDateString();
-  } catch {
-    return boardInfo.value?.validUntil || '---';
-  }
-});
+const handleStatus = (s) => connectionStatus.value = s;
 </script>
 
 <style scoped>
 .student-shell {
   min-height: 100vh;
-  background: linear-gradient(135deg, #0b1224, #111827);
-  color: #e2e8f0;
-  padding: 28px 20px 48px;
-  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  display: flex; align-items: center; justify-content: center;
+  padding: 20px;
+  background-color: var(--bg-base);
 }
-.hero {
-  display: flex;
-  justify-content: space-between;
-  gap: 16px;
-  align-items: center;
-  background: linear-gradient(120deg, rgba(99, 102, 241, 0.15), rgba(14, 165, 233, 0.12));
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 16px;
-  padding: 16px 18px;
-  box-shadow: 0 20px 50px rgba(0,0,0,0.25);
+.center-content { width: 100%; max-width: 420px; text-align: center; }
+
+.entry-card { text-align: left; background: var(--bg-surface); padding: 40px; box-shadow: 0 10px 40px -10px rgba(0,0,0,0.1); border-radius: 16px; border: 1px solid var(--border-subtle); }
+
+.card-header { margin-bottom: 24px; text-align: center; }
+.eyebrow { font-size: 11px; text-transform: uppercase; letter-spacing: 0.15em; color: var(--accent-primary); font-weight: 700; margin-bottom: 8px; }
+h1 { font-size: 26px; margin: 0; color: var(--text-primary); font-weight: 700; }
+
+.meta-grid {
+  display: flex; justify-content: space-between;
+  padding: 20px 0; border-top: 1px solid var(--border-subtle); border-bottom: 1px solid var(--border-subtle);
+  margin-bottom: 24px;
 }
-.eyebrow { letter-spacing: 0.08em; text-transform: uppercase; font-size: 12px; color: #c7d2fe; margin: 0 0 4px; }
-h1 { margin: 0; font-size: 26px; color: #f8fafc; }
-.subtle { margin: 6px 0; color: #cbd5e1; }
-.badge {
-  display: inline-flex;
-  gap: 8px;
-  align-items: center;
-  background: rgba(255,255,255,0.06);
-  border: 1px solid rgba(255,255,255,0.08);
-  padding: 8px 12px;
-  border-radius: 12px;
-}
-.pill {
-  background: rgba(99,102,241,0.2);
-  color: #c7d2fe;
-  padding: 4px 8px;
-  border-radius: 10px;
-  font-size: 12px;
-}
-.pill.warn {
-  background: rgba(234, 179, 8, 0.2);
-  color: #fde68a;
-}
-.hero-actions { display: flex; flex-direction: column; gap: 8px; align-items: flex-end; }
-.reconnect { color: #fbbf24; font-weight: 600; }
-.primary {
-  border: none;
-  padding: 10px 16px;
-  border-radius: 12px;
-  background: linear-gradient(120deg, #4f46e5, #06b6d4);
-  color: white;
-  font-weight: 700;
-  cursor: pointer;
-  box-shadow: 0 12px 30px rgba(79, 70, 229, 0.35);
-}
-.panel {
-  background: rgba(255,255,255,0.04);
-  border: 1px solid rgba(255,255,255,0.06);
-  border-radius: 14px;
-  padding: 16px;
-  margin-top: 14px;
-}
-.panel.error { color: #fca5a5; }
-.board-panel {
-  margin-top: 16px;
-  position: relative;
-  background: rgba(255,255,255,0.03);
-  border: 1px solid rgba(255,255,255,0.06);
-  border-radius: 18px;
-  padding: 12px;
-  min-height: 60vh;
-  overflow: hidden;
-}
-.board-panel.readonly {
-  border-color: rgba(251, 191, 36, 0.35);
-}
-.board-meta {
-  display: flex;
-  gap: 12px;
-  align-items: center;
-  color: #cbd5e1;
-  font-size: 13px;
-  margin-bottom: 8px;
-}
-.canvas-shell {
-  height: 70vh;
-  background: #0f172a;
-  border-radius: 12px;
-  overflow: hidden;
-}
-.board-panel.readonly .canvas-shell {
-  pointer-events: none;
-  filter: saturate(0.9);
-}
-.overlay {
-  position: absolute;
-  top: 10px;
-  right: 10px;
-  background: rgba(251, 191, 36, 0.2);
-  border: 1px solid rgba(251, 191, 36, 0.5);
-  color: #fcd34d;
-  padding: 8px 12px;
-  border-radius: 12px;
-  font-weight: 700;
-}
+.meta-item { display: flex; flex-direction: column; gap: 4px; }
+.meta-item.right { align-items: flex-end; }
+.label { font-size: 11px; text-transform: uppercase; color: var(--text-tertiary); font-weight: 600; }
+.value { font-size: 15px; color: var(--text-primary); font-weight: 600; }
+
+.info-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; }
+.term-info { display: flex; gap: 8px; align-items: baseline; }
+.label-sm { font-size: 13px; color: var(--text-secondary); }
+.value-mono { font-family: monospace; color: var(--text-primary); font-size: 14px; font-weight: 500; }
+.badge-warn { background: #fee2e2; color: #b91c1c; font-size: 11px; padding: 2px 8px; border-radius: 99px; font-weight: 600; }
+
+.big-btn { height: 48px; font-size: 16px; font-weight: 600; }
+.full-width { width: 100%; }
+
+.footer-brand { margin-top: 24px; font-size: 12px; color: var(--text-tertiary); }
+
+.state-box { padding: 24px; text-align: center; background: var(--bg-surface-hover); border-radius: 8px; color: var(--text-secondary); font-size: 14px; }
+.state-box.error { color: var(--danger); background: #fef2f2; border: 1px solid #fee2e2; }
+.hidden-canvas { display: none; }
 </style>

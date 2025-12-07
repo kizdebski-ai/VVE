@@ -1,171 +1,357 @@
-/* White Frosted Glass Theme (Black Text/Icons) */
+/* --- WhiteVue Design System: Clean Slate (Light High Contrast) --- */
 
 :root {
-  /* --- Palette --- */
-  --bg-base: #eef2ff; /* Very light blueish gray base */
-  
-  /* GLASS VARIABLES - White & Translucent */
-  /* Surface: White with 65% opacity - lets background color show through but stays bright */
-  --glass-surface: rgba(255, 255, 255, 0.65); 
-  --glass-border: rgba(255, 255, 255, 0.8); /* Solid white border */
-  --glass-highlight: rgba(255, 255, 255, 0.9);
-  --glass-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.15); /* Soft colored shadow */
-  --backdrop-blur: blur(20px); /* Strong blur implies "frosted" material */
+  /* --- Palette: Slate Light --- */
+  --bg-base: #f1f5f9;
+  /* Slate 100 - App Background */
+  --bg-surface: #ffffff;
+  /* White - Card Background */
+  --bg-surface-hover: #f8fafc;
+  /* Slate 50 */
 
-  /* Text & Icons - DARK/BLACK for contrast on white glass */
-  --text-primary: #1e293b; /* Slate 800 (Almost Black) */
-  --text-secondary: #475569; /* Slate 600 */
-  --icon-color: #1e293b;      /* FORCE BLACK ICONS */
-  
-  /* Accent */
-  --accent-primary: #2563eb; /* Blue 600 */
-  --accent-hover: #3b82f6;
-  --accent-glass: rgba(37, 99, 235, 0.15); /* Light blue tint for active state */
-  
-  /* Input Fields */
-  --input-bg: rgba(255, 255, 255, 0.6); /* White-ish input */
-  --input-text: #0f172a;
-  --input-border: rgba(0, 0, 0, 0.1);
-  --input-placeholder: rgba(0, 0, 0, 0.4);
+  /* --- Borders --- */
+  --border-subtle: #e2e8f0;
+  /* Slate 200 */
+  --border-strong: #cbd5e1;
+  /* Slate 300 */
 
-  --radius-md: 16px;
-  --ease-fluid: cubic-bezier(0.25, 0.8, 0.25, 1);
+  /* --- Text --- */
+  --text-primary: #0f172a;
+  /* Slate 900 - High Contrast Black */
+  --text-secondary: #475569;
+  /* Slate 600 - Readable Gray */
+  --text-tertiary: #94a3b8;
+  /* Slate 400 */
+
+  /* --- Brand Accent (Blue/Indigo) --- */
+  --accent-primary: #2563eb;
+  /* Blue 600 */
+  --accent-hover: #1d4ed8;
+  /* Blue 700 */
+  --accent-light: #60a5fa;
+  /* Blue 400 */
+
+  /* --- Status --- */
+  --danger: #dc2626;
+  /* Red 600 */
+  --success: #16a34a;
+  /* Green 600 */
+  --warning: #d97706;
+  /* Amber 600 */
+
+  /* --- Spacing & Radius --- */
+  --radius-md: 8px;
+  /* Sharper, cleaner radius */
+  --spacing-container: 32px;
+
+  /* --- Glass Compatibility (Mapped to Solid White) --- */
+  --glass-surface: #ffffff;
+  --glass-border: #e2e8f0;
+  --glass-highlight: #f8fafc;
+  --glass-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
 }
 
-/* --- Global Reset --- */
-* { margin: 0; padding: 0; box-sizing: border-box; }
+/* --- Global Reset & Typography --- */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
 
 body {
-  font-family: 'Inter', system-ui, sans-serif;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
   background-color: var(--bg-base);
-  /* Vibrant Gradient to show off the white glass transparency */
-  background-image: 
-    radial-gradient(at 0% 0%, rgba(167, 243, 208, 0.6) 0, transparent 50%), 
-    radial-gradient(at 100% 0%, rgba(165, 180, 252, 0.6) 0, transparent 50%), 
-    radial-gradient(at 100% 100%, rgba(253, 164, 175, 0.5) 0, transparent 50%),
-    radial-gradient(at 0% 100%, rgba(147, 197, 253, 0.6) 0, transparent 50%);
-  background-attachment: fixed;
-  background-size: cover;
   color: var(--text-primary);
-  overflow: hidden;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  min-height: 100vh;
 }
 
-#app { width: 100vw; height: 100vh; overflow: hidden; }
+#app {
+  width: 100%;
+  min-height: 100vh;
+}
 
-/* --- THE GLASS PANEL (White) --- */
-.glass-panel, .toolbar, .top-menu, .feature-panel, .dialog, .ai-chat-panel, .lobby-card {
-  background: var(--glass-surface) !important;
-  backdrop-filter: var(--backdrop-blur) !important;
-  -webkit-backdrop-filter: var(--backdrop-blur) !important;
-  border: 1px solid var(--glass-border) !important;
-  box-shadow: var(--glass-shadow) !important;
-  border-radius: var(--radius-md);
+/* --- Containers --- */
+.full-width-container {
+  width: 100%;
+  max-width: 1600px;
+  /* Wider for dashboard */
+  margin: 0 auto;
+  padding: 0 var(--spacing-container);
+}
+
+/* --- Cards & Panels --- */
+.minimal-card,
+.glass-panel {
+  background: var(--bg-surface) !important;
+  border: 1px solid var(--border-subtle) !important;
+  border-radius: var(--radius-md) !important;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1) !important;
+  backdrop-filter: none !important;
   color: var(--text-primary) !important;
 }
 
-/* Top shine */
-.glass-panel::before, .toolbar::before, .top-menu::before, .feature-panel::before {
-  content: '';
-  position: absolute;
-  top: 0; left: 0; right: 0; height: 1px;
-  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.8), transparent);
-  pointer-events: none;
+.minimal-card {
+  padding: 24px;
 }
 
-/* --- Icons & Buttons (Dark on White) --- */
-.icon-btn, .tool-btn, .menu-btn, .close-button, .control-btn {
-  color: var(--icon-color) !important; /* Black Icons */
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: 8px;
-  transition: all 0.2s;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.icon-btn:hover, .tool-btn:hover, .menu-btn:hover, .close-button:hover {
-  background: rgba(0, 0, 0, 0.05); /* Darken on hover */
-  color: #000000 !important;
-  transform: scale(1.05);
-}
-
-.tool-btn.active, .menu-btn.active-feature {
-  background: var(--accent-glass) !important; /* Light Blue bg */
-  color: var(--accent-primary) !important; /* Blue icon */
-  border-color: rgba(37, 99, 235, 0.3) !important;
-  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.15);
-}
-
-/* Ensure SVGs inherit the dark color */
-svg {
-  stroke: currentColor;
+/* Ensure header is visible */
+.card-head h3,
+.list-header h3,
+.modal-header h3 {
+  color: var(--text-primary) !important;
+  font-weight: 700;
 }
 
 /* --- Inputs --- */
-input, textarea, select {
-  background-color: var(--input-bg) !important;
-  color: var(--input-text) !important;
-  border: 1px solid var(--input-border) !important;
-  border-radius: 8px !important;
-  padding: 10px 12px !important;
-  font-family: inherit;
+input,
+select,
+textarea {
+  background: #ffffff;
+  border: 1px solid var(--border-strong);
+  color: var(--text-primary);
+  padding: 10px 14px;
+  border-radius: 6px;
+  font-size: 14px;
+  width: 100%;
   outline: none;
+  transition: border-color 0.2s;
 }
 
-input::placeholder, textarea::placeholder {
-  color: var(--input-placeholder) !important;
+input:focus,
+select:focus {
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
 }
 
-input:focus, textarea:focus {
-  background-color: #ffffff !important; /* Pure white on focus */
-  border-color: var(--accent-primary) !important;
-  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.2) !important;
+input::placeholder {
+  color: var(--text-tertiary);
 }
 
-/* --- Layout Fixes --- */
-.whiteboard-container, .whiteboard-container canvas {
-  background: transparent !important;
+/* --- Buttons --- */
+button {
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  transition: all 0.2s;
+  border-radius: 6px;
 }
 
-/* AI Chat Tweaks */
-.ai-chat-panel {
-  border-top: 1px solid white !important;
-}
-
-.message-content {
-  color: #ffffff !important; /* Bubbles need white text usually, handled below */
-}
-
-.message.user .message-content {
-  background: var(--accent-primary);
-  color: white !important;
-}
-
-.message.assistant .message-content {
-  background: rgba(255, 255, 255, 0.5); /* White-ish bubble */
-  border: 1px solid rgba(0,0,0,0.05);
-  color: #1e293b !important; /* Dark text for assistant */
-}
-
-/* Primary Button */
 .btn-primary {
   background: var(--accent-primary);
-  color: white;
+  color: #fff;
   border: none;
   padding: 10px 20px;
-  border-radius: 8px;
-  font-weight: 600;
-  box-shadow: 0 4px 10px rgba(37, 99, 235, 0.3);
 }
 
 .btn-primary:hover {
   background: var(--accent-hover);
-  transform: translateY(-1px);
+  box-shadow: 0 2px 4px rgba(37, 99, 235, 0.2);
 }
 
-/* Scrollbars */
-::-webkit-scrollbar { width: 6px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.1); border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,0.2); }
+.btn-primary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.btn-secondary {
+  background: white;
+  border: 1px solid var(--border-strong);
+  color: var(--text-secondary);
+  padding: 10px 20px;
+}
+
+.btn-secondary:hover {
+  background: var(--bg-surface-hover);
+  border-color: var(--text-secondary);
+  color: var(--text-primary);
+}
+
+.btn-ghost {
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  padding: 8px;
+}
+
+.btn-ghost:hover {
+  background: var(--bg-base);
+  color: var(--text-primary);
+}
+
+.icon-only {
+  width: 36px;
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+/* --- Data Table --- */
+.data-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.data-table th {
+  text-align: left;
+  font-size: 11px;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  font-weight: 700;
+  padding: 12px 16px;
+  border-bottom: 2px solid var(--border-subtle);
+  background: var(--bg-base);
+}
+
+.data-table td {
+  padding: 16px;
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  font-size: 14px;
+  vertical-align: middle;
+  background: var(--bg-surface);
+}
+
+.data-table tr:last-child td {
+  border-bottom: none;
+}
+
+.data-table tr:hover td {
+  background: var(--bg-surface-hover);
+  color: var(--text-primary);
+}
+
+/* --- Utilities --- */
+.eyebrow {
+  color: var(--accent-primary);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 4px;
+  display: block;
+}
+
+h1 {
+  font-size: 28px;
+  font-weight: 800;
+  color: var(--text-primary);
+  margin-bottom: 8px;
+  letter-spacing: -0.02em;
+}
+
+.subtext {
+  color: var(--text-secondary);
+  margin-bottom: 24px;
+  font-size: 15px;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--border-strong);
+  display: inline-block;
+}
+
+.status-dot.active {
+  background: var(--success);
+}
+
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 99px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.status-pill.active {
+  background: #dcfce7;
+  color: #15803d;
+}
+
+/* Green 100/700 */
+.status-pill.expired {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
+/* Red 100/700 */
+.status-pill.archived {
+  background: #f1f5f9;
+  color: #64748b;
+}
+
+/* Slate 100/500 */
+
+/* Component Specific Fixes */
+.ai-chat-panel,
+.whiteboard-container {
+  background: var(--bg-surface) !important;
+  border-color: var(--border-subtle) !important;
+}
+
+.message-user {
+  background: var(--accent-primary) !important;
+  color: #fff !important;
+}
+
+.message-ai {
+  background: var(--bg-base) !important;
+  color: var(--text-primary) !important;
+}
+
+/* Toolbars - Ensure they stand out on white canvas */
+.toolbar-container .glass-panel {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1) !important;
+  border: 1px solid var(--border-strong) !important;
+  background: #ffffff !important;
+  color: #0f172a !important;
+}
+
+.tool-btn {
+  color: #64748b;
+}
+
+.tool-btn:hover {
+  color: #0f172a;
+  background: #f1f5f9;
+}
+
+.tool-btn.active {
+  color: #2563eb;
+  background: #eff6ff;
+}
+
+/* Animations */
+.fade-in {
+  animation: fadeIn 0.4s ease-out;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Helpers */
+.text-danger {
+  color: var(--danger);
+}
+
+.text-success {
+  color: var(--success);
+}

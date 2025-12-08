@@ -29,13 +29,13 @@
               <input v-model="manual.fullName" type="text" placeholder="Jan Kowalski" />
             </div>
             <button class="btn-primary full-width" :disabled="submitting" @click="submitManual">
-              {{ submitting ? 'Przetwarzanie...' : 'Dodaj i generuj link' }}
+              {{ submitting ? 'Przetwarzanie...' : 'Dodaj nauczyciela' }}
             </button>
           </div>
 
           <div v-if="lastGeneratedLink" class="result-box">
             <div class="result-meta">
-              <span class="label">Link magiczny</span>
+              <span class="label">Stały link (nigdy nie wygasa)</span>
               <button class="btn-ghost" @click="copy(lastGeneratedLink)">Kopiuj</button>
             </div>
             <div class="code-block">{{ lastGeneratedLink }}</div>
@@ -86,7 +86,7 @@
                   <th>Nauczyciel</th>
                   <th>Email</th>
                   <th style="width: 100px; text-align: center;">Status</th>
-                  <th style="width: 100px; text-align: right;">Akcje</th>
+                  <th style="width: 160px; text-align: right;">Stały link</th>
                 </tr>
               </thead>
               <tbody>
@@ -99,15 +99,22 @@
                   </td>
                   <td class="email-cell">{{ item.email }}</td>
                   <td style="text-align: center;">
-                    <span class="status-dot" :class="{ active: item.hasActiveLink }"></span>
+                    <span class="status-dot" :class="{ active: item.hasPermanentLink || permanentLinks[item.teacherId] }"></span>
                   </td>
                   <td>
                     <div class="actions-right">
-                      <button class="btn-ghost small" :disabled="generating === item.teacherId" @click="generateLink(item.teacherId)">
-                        {{ generating === item.teacherId ? '...' : 'Generuj' }}
-                      </button>
-                      <button v-if="generatedLinks[item.teacherId]" class="btn-ghost icon-only small" @click="copy(generatedLinks[item.teacherId])">
-                         <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+                      <!-- Show loading state while fetching link -->
+                      <span v-if="loadingLinks[item.teacherId]" class="loading-text">...</span>
+                      <!-- Show copy button if link is available -->
+                      <template v-else-if="permanentLinks[item.teacherId]">
+                        <button class="btn-ghost small copy-btn" @click="copy(permanentLinks[item.teacherId])" title="Kopiuj link">
+                          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                          Kopiuj
+                        </button>
+                      </template>
+                      <!-- Fallback: generate link -->
+                      <button v-else class="btn-ghost small" :disabled="generating === item.teacherId" @click="generateLink(item.teacherId)">
+                        {{ generating === item.teacherId ? '...' : 'Pobierz link' }}
                       </button>
                     </div>
                   </td>
@@ -132,10 +139,32 @@ const loading = ref(false);
 const submitting = ref(false);
 const generating = ref(null);
 const lastGeneratedLink = ref('');
-const generatedLinks = reactive({});
+const permanentLinks = reactive({});
+const loadingLinks = reactive({});
 const apiBase = resolveBackendBaseUrl();
 
-const copy = (t) => navigator.clipboard.writeText(t);
+const copy = (t) => {
+  navigator.clipboard.writeText(t);
+  // Brief visual feedback could be added here
+};
+
+// Fetch permanent link for a teacher
+const fetchPermanentLink = async (teacherId) => {
+  if (permanentLinks[teacherId] || loadingLinks[teacherId]) return;
+  
+  loadingLinks[teacherId] = true;
+  try {
+    const res = await fetch(`${apiBase}/api/admin/teachers/${teacherId}/permanent-link`, { method: 'POST' });
+    const data = await res.json();
+    if (data.permanentLink) {
+      permanentLinks[teacherId] = data.permanentLink;
+    }
+  } catch (e) {
+    console.error('Failed to fetch permanent link:', e);
+  } finally {
+    loadingLinks[teacherId] = false;
+  }
+};
 
 const loadTeachers = async () => {
   loading.value = true;
@@ -143,6 +172,11 @@ const loadTeachers = async () => {
     const res = await fetch(`${apiBase}/api/admin/teachers`);
     const data = await res.json();
     teachers.value = data.teachers || [];
+    
+    // Automatically fetch permanent links for all teachers
+    for (const teacher of teachers.value) {
+      fetchPermanentLink(teacher.teacherId);
+    }
   } catch (e) { console.error(e); }
   finally { loading.value = false; }
 };
@@ -156,19 +190,27 @@ const submitManual = async () => {
       body: JSON.stringify(manual.value)
     });
     const data = await res.json();
-    if(data.results?.[0]?.magicLink) lastGeneratedLink.value = data.results[0].magicLink;
+    // Use permanentLink from new API
+    if(data.results?.[0]?.permanentLink) {
+      lastGeneratedLink.value = data.results[0].permanentLink;
+      // Also store in our cache
+      if (data.results[0].teacherId) {
+        permanentLinks[data.results[0].teacherId] = data.results[0].permanentLink;
+      }
+    }
     manual.value = { email: '', fullName: '' };
     loadTeachers();
   } catch(e){ alert('Błąd'); }
   finally { submitting.value = false; }
 };
 
+// Keep this for fallback but use permanent-link endpoint
 const generateLink = async (tid) => {
   generating.value = tid;
   try {
-    const res = await fetch(`${apiBase}/api/admin/teachers/${tid}/magic-link`, { method: 'POST' });
+    const res = await fetch(`${apiBase}/api/admin/teachers/${tid}/permanent-link`, { method: 'POST' });
     const data = await res.json();
-    if(data.magicLink) generatedLinks[tid] = data.magicLink;
+    if(data.permanentLink) permanentLinks[tid] = data.permanentLink;
     loadTeachers();
   } catch(e){}
   finally { generating.value = null; }
@@ -218,10 +260,10 @@ const submitCsv = async () => {
 .full-width { width: 100%; }
 
 .result-box {
-  margin-top: 16px; background: #e0e7ff; padding: 12px; border-radius: 6px; border: 1px solid #c7d2fe;
+  margin-top: 16px; background: #d1fae5; padding: 12px; border-radius: 6px; border: 1px solid #a7f3d0;
 }
 .result-meta { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
-.result-meta .label { font-size: 10px; font-weight: 700; color: var(--accent-primary); text-transform: uppercase; }
+.result-meta .label { font-size: 10px; font-weight: 700; color: #059669; text-transform: uppercase; }
 .code-block { font-family: monospace; font-size: 11px; word-break: break-all; color: var(--text-primary); }
 
 .mt-6 { margin-top: 24px; }
@@ -258,10 +300,20 @@ const submitCsv = async () => {
   display: flex; align-items: center; justify-content: center; font-size: 10px; color: var(--text-secondary);
 }
 .email-cell { font-family: monospace; font-size: 12px; color: var(--text-secondary); }
-.actions-right { display: flex; justify-content: flex-end; gap: 6px; }
+.actions-right { display: flex; justify-content: flex-end; gap: 6px; align-items: center; }
 .btn-ghost.small { font-size: 11px; padding: 4px 8px; height: 24px; }
+.loading-text { font-size: 11px; color: var(--text-tertiary); }
+
+.copy-btn {
+  display: flex; align-items: center; gap: 4px;
+  background: #d1fae5; color: #059669; border-color: #a7f3d0;
+}
+.copy-btn:hover {
+  background: #a7f3d0;
+}
 
 @media (max-width: 1024px) {
   .grid-layout { grid-template-columns: 1fr; }
 }
 </style>
+

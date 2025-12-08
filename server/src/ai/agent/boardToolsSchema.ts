@@ -560,4 +560,39 @@ export const boardToolsSchema: ChatCompletionTool[] = [
             },
         },
     },
+
+    {
+        type: 'function',
+        function: {
+            name: 'solve_equation',
+            description:
+                'Solve a mathematical equation using symbolic math (SymPy). Returns exact symbolic results (e.g., sqrt(2) not 1.414). Use this for complex equations that require precise solving. The result is automatically inserted as LaTeX on the board.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    equation: {
+                        type: 'string',
+                        description:
+                            'The equation to solve, e.g., "x^2 - 5x + 6 = 0" or "2x + 3 = 7". Use ^ for powers.',
+                    },
+                    insertResult: {
+                        type: 'boolean',
+                        description:
+                            'If true (default), insert the LaTeX result on the board. If false, just return the solution.',
+                        default: true,
+                    },
+                    x: {
+                        type: 'number',
+                        description: 'X position for the result LaTeX box (optional).',
+                    },
+                    y: {
+                        type: 'number',
+                        description: 'Y position for the result LaTeX box (optional).',
+                    },
+                },
+                required: ['equation'],
+                additionalProperties: false,
+            },
+        },
+    },
 ];

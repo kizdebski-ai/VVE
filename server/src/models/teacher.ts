@@ -6,6 +6,7 @@ export interface TeacherRecord {
   is_active: boolean;
   created_at: Date;
   last_login_at: Date | null;
+  permanent_token_hash: string | null;
 }
 
 export interface TeacherMagicLinkRecord {

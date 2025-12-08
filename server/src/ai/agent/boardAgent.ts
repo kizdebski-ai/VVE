@@ -22,9 +22,11 @@ import {
     toolDistributeVertically,
     toolCloneObject,
     toolMoveObject,
+    toolSolveEquation,
 } from '../tools/boardTools';
 import { retrieveBoardDocs } from '../docs/boardCapabilities';
 import { buildAgentBoardContext } from './boardAgentContext';
+import { extractTextFromImage, extractEquationsFromText } from '../ocr/ocrService';
 
 if (!llmClient) {
     console.warn('[AI] Board Assistant disabled – no LLM client configured');
@@ -126,6 +128,14 @@ AVAILABLE TOOLS
 5. move_object
    - Repositions existing object to new coordinates
 
+6. solve_equation
+   - Solves mathematical equations SYMBOLICALLY (using Python/SymPy)
+   - Returns EXACT results: sqrt(2), not 1.414...
+   - Use for: quadratic equations, systems of equations, complex algebra
+   - Automatically inserts result as LaTeX on the board
+   - PREFER this over manual solving for complex equations
+
+
 ═══════════════════════════════════════════════════════════════════
 SPATIAL REASONING PRINCIPLES
 ═══════════════════════════════════════════════════════════════════
@@ -186,7 +196,23 @@ export async function runBoardAgent(params: {
         'deepseek/deepseek-v3.2',
     ];
 
-    const shouldSendImage = image && !textOnlyModels.includes(effectiveModel);
+    const isTextOnlyModel = textOnlyModels.includes(effectiveModel);
+    const shouldSendImage = image && !isTextOnlyModel;
+
+    // For text-only models with handwriting: use OCR to extract text from image
+    let ocrText = '';
+    let ocrEquations: string[] = [];
+
+    if (isTextOnlyModel && image) {
+        console.log(`[AI Agent] Running OCR for text-only model: ${effectiveModel}`);
+        try {
+            ocrText = await extractTextFromImage(image);
+            ocrEquations = extractEquationsFromText(ocrText);
+            console.log(`[AI Agent] OCR extracted ${ocrEquations.length} potential equations`);
+        } catch (err) {
+            console.warn('[AI Agent] OCR failed:', err);
+        }
+    }
 
     if (shouldSendImage) {
         userContent = [
@@ -203,6 +229,16 @@ export async function runBoardAgent(params: {
                 image_url: { url: image },
             },
         ];
+    } else if (image && isTextOnlyModel) {
+        // Text-only model with OCR results
+        console.log(`[AI Agent] Using OCR text instead of image for: ${effectiveModel}`);
+        userContent = JSON.stringify({
+            boardContext: agentContext,
+            request: userMessage,
+            ocrExtractedText: ocrText || '(OCR could not extract text)',
+            ocrPotentialEquations: ocrEquations,
+            note: 'The ocrExtractedText contains handwritten content from the board (extracted via OCR). Use this to understand what was written by hand.',
+        });
     } else if (image) {
         console.log(`[AI Agent] Skipping image for text-only model: ${effectiveModel}`);
     }
@@ -256,6 +292,62 @@ export async function runBoardAgent(params: {
         console.error('[AI] No message in first choice:', JSON.stringify(first.choices[0], null, 2));
         return { reply: 'AI model returned an invalid response. Please try again.' };
     }
+
+    // --- DSML Parsing Fix for DeepSeek V3 ---
+    // DeepSeek sometimes returns raw DSML tags instead of native tool_calls
+    if (firstMsg.content && firstMsg.content.includes('<｜DSML｜function_calls>')) {
+        console.log('[AI Agent] Detected DSML format, attempting repair...');
+        try {
+            const content = firstMsg.content;
+            const toolCalls: any[] = [];
+
+            // Regex to match invokes: <｜DSML｜invoke name="toolName"> ...params... </｜DSML｜invoke>
+            const invokeRegex = /<｜DSML｜invoke name="([^"]+)">([\s\S]*?)<\/｜DSML｜invoke>/g;
+            let match;
+
+            while ((match = invokeRegex.exec(content)) !== null) {
+                const toolName = match[1]!;
+                const innerContent = match[2]!;
+                const args: Record<string, any> = {};
+
+                // Parse parameters: <｜DSML｜parameter name="paramName" string="false">value</｜DSML｜parameter>
+                // string="true" might mean value is a string literal? Usually JSON inside.
+                const paramRegex = /<｜DSML｜parameter name="([^"]+)"(?:\s+string="([^"]+)")?>([\s\S]*?)<\/｜DSML｜parameter>/g;
+                let paramMatch;
+
+                while ((paramMatch = paramRegex.exec(innerContent)) !== null) {
+                    const pName = paramMatch[1]!;
+                    const pValueRaw = paramMatch[3]!;
+                    try {
+                        // Try to parse as JSON first
+                        args[pName] = JSON.parse(pValueRaw);
+                    } catch {
+                        // Fallback to raw string
+                        args[pName] = pValueRaw;
+                    }
+                }
+
+                toolCalls.push({
+                    id: `call_${Date.now()}_${Math.random().toString(36).slice(2)}`,
+                    type: 'function',
+                    function: {
+                        name: toolName,
+                        arguments: JSON.stringify(args)
+                    }
+                });
+            }
+
+            if (toolCalls.length > 0) {
+                console.log(`[AI Agent] Repaired ${toolCalls.length} DSML tool calls`);
+                firstMsg.tool_calls = toolCalls;
+                // Clear content to avoid treating it as text response
+                firstMsg.content = null;
+            }
+        } catch (e) {
+            console.error('[AI Agent] DSML parsing failed:', e);
+        }
+    }
+    // ----------------------------------------
 
     const hasContent = typeof firstMsg.content === 'string' && firstMsg.content.trim().length > 0;
     const hasToolCalls = !!firstMsg.tool_calls && firstMsg.tool_calls.length > 0;
@@ -487,6 +579,32 @@ export async function runBoardAgent(params: {
             case 'move_object': {
                 const patch = toolMoveObject(doc, workingSnapshot, args);
                 respondOk(patch);
+                break;
+            }
+
+            case 'solve_equation': {
+                try {
+                    const { patch, result } = await toolSolveEquation(doc, workingSnapshot, args);
+                    lastPatch = patch;
+                    workingSnapshot = params.doc.getSnapshot();
+                    toolMessages.push({
+                        role: 'tool',
+                        tool_call_id: toolCall.id,
+                        content: JSON.stringify({
+                            status: result.success ? 'ok' : 'error',
+                            ...result,
+                        }),
+                    });
+                } catch (err: any) {
+                    toolMessages.push({
+                        role: 'tool',
+                        tool_call_id: toolCall.id,
+                        content: JSON.stringify({
+                            status: 'error',
+                            message: err.message || 'Failed to solve equation',
+                        }),
+                    });
+                }
                 break;
             }
 

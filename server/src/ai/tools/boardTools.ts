@@ -814,3 +814,77 @@ export function toolMoveObject(
     doc.applyPatch(patch);
     return patch;
 }
+
+// ---------- 17) Solve Equation (SymPy integration) ----------
+
+import { solveEquation as solveWithSymPy } from '../math/mathSolver';
+
+type SolveEquationArgs = {
+    equation: string;
+    insertResult?: boolean;
+    x?: number;
+    y?: number;
+};
+
+export async function toolSolveEquation(
+    doc: BoardDoc,
+    snapshot: BoardSnapshot,
+    args: SolveEquationArgs,
+): Promise<{ patch: BoardPatch; result: any }> {
+    console.log('[AI TOOL] Solving equation:', args.equation);
+
+    // Call Python/SymPy solver
+    const result = await solveWithSymPy(args.equation);
+
+    if (!result.success) {
+        console.error('[AI TOOL] Equation solve failed:', result.error);
+        return {
+            patch: { creates: [], updates: [] },
+            result: {
+                success: false,
+                error: result.error || 'Failed to solve equation',
+            },
+        };
+    }
+
+    // Create LaTeX block with the result if requested
+    const insertResult = args.insertResult !== false; // Default to true
+
+    if (insertResult && result.latex) {
+        const baseX = args.x ?? snapshot.objects[0]?.x ?? 100;
+        const baseY = args.y ?? (snapshot.objects[0]?.y ?? 100) + 100;
+
+        const latexObj: BoardObject = {
+            id: newId('ai-solution'),
+            type: 'latex',
+            x: snap(baseX, GRID),
+            y: snap(baseY, GRID),
+            width: 260,
+            height: 80,
+            latex: result.latex,
+            color: '#1e3a5f',
+        };
+
+        const patch: BoardPatch = { creates: [latexObj] };
+        doc.applyPatch(patch);
+
+        return {
+            patch,
+            result: {
+                success: true,
+                solutions: result.solutions,
+                latex: result.latex,
+            },
+        };
+    }
+
+    return {
+        patch: { creates: [], updates: [] },
+        result: {
+            success: true,
+            solutions: result.solutions,
+            latex: result.latex,
+        },
+    };
+}
+

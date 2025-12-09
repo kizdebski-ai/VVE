@@ -6,7 +6,7 @@ WhiteVue is a high-performance, real-time collaborative whiteboard built for tec
 
 ## Architecture Overview
 
-WhiteVue adopts a **Local-First** architecture. The application state lives primarily on the client, managed by a CRDT (Conflict-free Replicated Data Type) document. Synchronization happens in the background via WebSockets, ensuring the app remains responsive even under poor network conditions.
+WhiteVue adopts a **Local-First** architecture.   The application state lives primarily on the client, managed by a CRDT (Conflict-free Replicated Data Type) document. Synchronization happens in the background via WebSockets, ensuring the app remains responsive even under poor network conditions.
 
 ```mermaid
 graph TD

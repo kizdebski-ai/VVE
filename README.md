@@ -66,7 +66,7 @@ Building a whiteboard that feels "native" while supporting real-time multiplayer
 
 **The Solution:** We built a **Multimodal Agentic System** powered by RAG and Tool Use.
 
-![AI Agent Drawing Capability](assets/AI-snowman.png)
+![AI Agent Drawing Capability](assets/Ai-snowman.png)
 *Figure: The AI Agent autonomously drawing a snowman using primitive shapes and the `draw_handstroke` tool, demonstrating spatial awareness and creativity.*
 
 *   **Vision & Context:** When a user asks a question, we capture a high-resolution viewport snapshot and combine it with a JSON representation of the board state. This allows the AI (xAI Grok Vision / DeepSeek) to "see" and "read" the diagram simultaneously.

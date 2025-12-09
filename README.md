@@ -33,7 +33,7 @@ graph TD
 
 ## Core Engineering Challenges & Solutions
 
-Building a whiteboard that feels "native" while supporting real-time multiplayer involves solving several complex distributed system problems.
+Building a whiteboard that feels "native" while  supporting real-time multiplayer involves solving several complex distributed system problems.
 
 ### 1. The "Sticky" Binding System
 **The Challenge:** In a diagramming tool, lines must stay attached to shapes. If a user connects an arrow to a rectangle and then rotates that rectangle 45 degrees, the arrow should follow the specific anchor point (e.g., "top-center") naturally. Standard bounding-box logic fails here.

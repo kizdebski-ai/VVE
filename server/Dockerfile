@@ -25,7 +25,12 @@ RUN npm ci --omit=dev
 # Ensure data directory exists for persistence
 RUN mkdir -p /data
 
+# Copy compiled code
 COPY --from=builder /app/dist ./dist
+
+# Copy knexfile and migrations for database setup
+COPY --from=builder /app/dist/knexfile.js ./knexfile.js
+COPY --from=builder /app/dist/migrations ./migrations
 
 EXPOSE 8000
 

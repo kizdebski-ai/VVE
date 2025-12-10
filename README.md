@@ -6,7 +6,7 @@ WhiteVue is a high-performance, real-time collaborative whiteboard built for tec
 
 ## Architecture Overview
 
-WhiteVue adopts a **Local-First** architecture. The application state lives primarily on the client, managed by a CRDT (Conflict-free Replicated Data Type) document. Synchronization happens in the background via WebSockets, ensuring the app remains responsive even under poor network conditions.
+WhiteVue adopts a **Local-First** architecture.   The application state lives primarily on the client, managed by a CRDT (Conflict-free Replicated Data Type) document. Synchronization happens in the background via WebSockets, ensuring the app remains responsive even under poor network conditions.
 
 ```mermaid
 graph TD
@@ -33,7 +33,7 @@ graph TD
 
 ## Core Engineering Challenges & Solutions
 
-Building a whiteboard that feels "native" while supporting real-time multiplayer involves solving several complex distributed system problems.
+Building a whiteboard that feels "native" while  supporting real-time multiplayer involves solving several complex distributed system problems.
 
 ### 1. The "Sticky" Binding System
 **The Challenge:** In a diagramming tool, lines must stay attached to shapes. If a user connects an arrow to a rectangle and then rotates that rectangle 45 degrees, the arrow should follow the specific anchor point (e.g., "top-center") naturally. Standard bounding-box logic fails here.
@@ -66,7 +66,7 @@ Building a whiteboard that feels "native" while supporting real-time multiplayer
 
 **The Solution:** We built a **Multimodal Agentic System** powered by RAG and Tool Use.
 
-![AI Agent Drawing Capability](assets/AI-snowman.png)
+![AI Agent Drawing Capability](assets/Ai-snowman.png)
 *Figure: The AI Agent autonomously drawing a snowman using primitive shapes and the `draw_handstroke` tool, demonstrating spatial awareness and creativity.*
 
 *   **Vision & Context:** When a user asks a question, we capture a high-resolution viewport snapshot and combine it with a JSON representation of the board state. This allows the AI (xAI Grok Vision / DeepSeek) to "see" and "read" the diagram simultaneously.
@@ -134,7 +134,7 @@ graph TD
 
 1.  **Clone the repo:**
     ```bash
-    git clone https://github.com/your-username/WhiteVue.git
+    git clone https://github.com/kordin33/WhiteVue.git
     cd WhiteVue
     ```
 

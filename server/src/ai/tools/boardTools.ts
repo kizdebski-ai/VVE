@@ -887,4 +887,3 @@ export async function toolSolveEquation(
         },
     };
 }
-

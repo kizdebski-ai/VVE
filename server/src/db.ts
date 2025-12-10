@@ -12,11 +12,11 @@ export const getDb = (): Knex => {
 
     // Determine migrations directory based on environment
     const isProduction = process.env.NODE_ENV === 'production';
-    // In production (Docker): /app/migrations (copied by Dockerfile)
-    // In dev: server/migrations (relative to project root)
+    // In production (Docker): /app/migrations-js (pure JS, copied by Dockerfile)
+    // In dev: server/migrations-js
     const migrationsDir = isProduction
-      ? '/app/migrations'
-      : path.join(__dirname, '..', '..', 'migrations');
+      ? '/app/migrations-js'
+      : path.join(__dirname, '..', '..', 'migrations-js');
 
     console.log('[DB] Migrations directory:', migrationsDir);
     console.log('[DB] NODE_ENV:', process.env.NODE_ENV);
@@ -28,7 +28,7 @@ export const getDb = (): Knex => {
       migrations: {
         directory: migrationsDir,
         extension: 'js',
-        loadExtensions: ['.js']  // Force loading only .js files
+        loadExtensions: ['.js']
       }
     });
   }

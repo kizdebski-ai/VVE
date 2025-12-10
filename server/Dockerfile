@@ -30,9 +30,8 @@ RUN mkdir -p /data
 # Copy compiled code
 COPY --from=builder /app/dist ./dist
 
-# Copy knexfile and compiled migrations for database setup
-COPY --from=builder /app/dist/knexfile.js ./knexfile.js
-COPY --from=builder /app/dist/migrations ./migrations
+# Copy pure JavaScript migrations (not TypeScript!)
+COPY migrations-js ./migrations-js
 
 EXPOSE 8000
 

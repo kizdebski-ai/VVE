@@ -155,16 +155,10 @@
         <div class="chat-input-area">
           <div class="model-selector">
             <select v-model="selectedModel" class="model-select">
-<<<<<<< HEAD
               <option value="x-ai/grok-4.1-fast">🚀 High (Grok 4.1)</option>
               <option value="deepseek/deepseek-v3.2">⚡ Medium (DeepSeek)</option>
+              <option value="openai/gpt-oss-120b:exacto">🧠 GPT-120B (Exacto)</option>
               <option value="kwaipilot/kat-coder-pro:free">💡 Low (Kat Coder)</option>
-=======
-              <option value="kwaipilot/kat-coder-pro:free">Kat Coder Pro (Free)</option>
-              <option value="x-ai/grok-4.1-fast">Grok 4.1 Fast</option>
-              <option value="deepseek/deepseek-v3.2">DeepSeek V3.2</option>
-              <option value="openai/gpt-oss-120b:exacto">GPT-120B (Exacto)</option>
->>>>>>> origin/main
             </select>
             <label
               class="screenshot-toggle-mini"
@@ -255,11 +249,7 @@ const sentIntro = ref(false);
 
 // Agent state
 const agentInput = ref('');
-<<<<<<< HEAD
 const selectedModel = ref('x-ai/grok-4.1-fast'); // Default to Grok 4.1 (High)
-=======
-const selectedModel = ref('kwaipilot/kat-coder-pro:free');
->>>>>>> origin/main
 const includeScreenshotAgent = ref(true);
 
 const boardId = computed(() => props.roomId || '');

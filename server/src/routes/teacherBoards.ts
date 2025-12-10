@@ -54,15 +54,20 @@ export const createTeacherBoardsRouter = () => {
   router.patch('/:id', async (req, res) => {
     const teacher = req.teacher!;
     const body = req.body ?? {};
-    const title = body.title === undefined ? undefined : typeof body.title === 'string' ? body.title : null;
-    const validUntil = body.validUntil === undefined ? undefined : parseDate(body.validUntil);
-    const archived = body.archived === undefined ? undefined : Boolean(body.archived);
 
-    const updated = await updateBoard(req.params.id, teacher.id, {
-      title,
-      validUntil,
-      archivedAt: archived === undefined ? undefined : archived ? new Date() : null
-    });
+    // Build params object without undefined values to satisfy exactOptionalPropertyTypes
+    const params: import('../services/boardService').UpdateBoardParams = {};
+    if (body.title !== undefined) {
+      params.title = typeof body.title === 'string' ? body.title : null;
+    }
+    if (body.validUntil !== undefined) {
+      params.validUntil = parseDate(body.validUntil);
+    }
+    if (body.archived !== undefined) {
+      params.archivedAt = body.archived ? new Date() : null;
+    }
+
+    const updated = await updateBoard(req.params.id, teacher.id, params);
 
     if (!updated) {
       res.status(404).json({ error: 'Board not found.' });

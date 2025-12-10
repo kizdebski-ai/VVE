@@ -40,10 +40,11 @@ export const createTeacher = async (
     })
     .returning('*');
 
-  if (!created) {
+  const teacher = created;
+  if (!teacher) {
     throw new Error('Failed to create teacher');
   }
-  return created;
+  return teacher;
 };
 
 export const getOrCreateTeacher = async (

@@ -19,7 +19,7 @@ const readCookie = (cookieHeader: string | undefined, name: string): string | nu
 const clientIp = (req: import('express').Request) => {
   const forwarded = req.headers['x-forwarded-for'];
   if (typeof forwarded === 'string' && forwarded.length > 0) {
-    return forwarded.split(',')[0].trim();
+    return forwarded.split(',')[0]?.trim() ?? req.ip;
   }
   return req.ip;
 };

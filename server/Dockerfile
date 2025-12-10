@@ -6,7 +6,9 @@ COPY package*.json ./
 RUN npm ci
 
 COPY tsconfig.json ./
+COPY knexfile.ts ./
 COPY src ./src
+COPY migrations ./migrations
 
 RUN npm run build
 
@@ -28,7 +30,7 @@ RUN mkdir -p /data
 # Copy compiled code
 COPY --from=builder /app/dist ./dist
 
-# Copy knexfile and migrations for database setup
+# Copy knexfile and compiled migrations for database setup
 COPY --from=builder /app/dist/knexfile.js ./knexfile.js
 COPY --from=builder /app/dist/migrations ./migrations
 

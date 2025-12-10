@@ -19,6 +19,7 @@ export const getDb = (): Knex => {
       : path.join(__dirname, '..', '..', 'migrations');
 
     console.log('[DB] Migrations directory:', migrationsDir);
+    console.log('[DB] NODE_ENV:', process.env.NODE_ENV);
 
     instance = knex({
       client: 'pg',
@@ -26,7 +27,8 @@ export const getDb = (): Knex => {
       pool: { min: 0, max: 10 },
       migrations: {
         directory: migrationsDir,
-        extension: 'js'
+        extension: 'js',
+        loadExtensions: ['.js']  // Force loading only .js files
       }
     });
   }

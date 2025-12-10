@@ -88,11 +88,11 @@ const now = () => Date.now();
 export class RoomManager {
   private rooms = new Map<string, RoomContext>();
   private persistence: PersistenceLayer;
-  private boardPersistence?: BoardYjsPersistence;
+  private boardPersistence: BoardYjsPersistence | undefined;
 
   constructor(persistence?: PersistenceLayer, boardPersistence?: BoardYjsPersistence) {
     this.persistence = persistence ?? new InMemoryPersistence();
-    this.boardPersistence = boardPersistence;
+    this.boardPersistence = boardPersistence ?? undefined;
     this.loadFromPersistence();
   }
 

@@ -2,6 +2,9 @@ import { Router } from 'express';
 import { boardStudentAuth } from '../middleware/boardStudentAuth';
 import { createBoardWsToken } from '../services/boardTokens';
 
+// The public teacher name shown to students (never show real teacher name to students)
+const PUBLIC_TEACHER_NAME = 'Dawid Furmaniuk';
+
 export const createBoardAccessRouter = () => {
   const router = Router();
 
@@ -16,7 +19,8 @@ export const createBoardAccessRouter = () => {
       publicSlug: board.public_slug,
       title: board.title,
       studentName: (board as any).student_name ?? null,
-      teacherName: (board as any).teacher_full_name ?? null,
+      // Always show public teacher name to students, real name is for admin only
+      teacherName: PUBLIC_TEACHER_NAME,
       validUntil: board.valid_until,
       archivedAt: board.archived_at,
       readOnly: req.boardReadOnly ?? false,
@@ -38,7 +42,8 @@ export const createBoardAccessRouter = () => {
       publicSlug: board.public_slug,
       title: board.title,
       studentName: (board as any).student_name ?? null,
-      teacherName: (board as any).teacher_full_name ?? null,
+      // Always show public teacher name to students, real name is for admin only
+      teacherName: PUBLIC_TEACHER_NAME,
       validUntil: board.valid_until,
       archivedAt: board.archived_at,
       readOnly: req.boardReadOnly ?? false,
@@ -49,3 +54,4 @@ export const createBoardAccessRouter = () => {
 
   return router;
 };
+

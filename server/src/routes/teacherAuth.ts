@@ -4,6 +4,7 @@ import { config } from '../config';
 import { getDb } from '../db';
 import { BoardAccessLogRecord } from '../models/teacher';
 import { consumeMagicLink } from '../services/teacherMagicLinks';
+import { verifyTeacherPermanentToken } from '../services/teacherPermanentTokens';
 import { createTeacherSessionToken, teacherSessionCookieName } from '../services/teacherSessions';
 import { findTeacherById, markTeacherLogin } from '../services/teacherService';
 import { createRateLimiter } from '../middleware/rateLimiter';
@@ -35,6 +36,7 @@ export const createTeacherAuthRouter = () => {
     const correlationId = req.correlationId;
     const token = typeof req.query.token === 'string' ? req.query.token : '';
     const teacherId = typeof req.query.id === 'string' ? req.query.id : '';
+    const isPermanent = req.query.permanent === '1';
 
     if (!token || !teacherId) {
       renderErrorPage(res, 'Link jest nieprawidlowy lub wygasl.', 400);
@@ -51,13 +53,27 @@ export const createTeacherAuthRouter = () => {
       const ip = getClientIp(req);
       const userAgent = typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'] : null;
 
-      const result = await consumeMagicLink(teacherId, token, { ip, userAgent });
-      if (!result.success) {
-        const reason = result.reason === 'used'
-          ? 'Link zostal juz uzyty.'
-          : 'Link jest nieprawidlowy lub wygasl.';
-        renderErrorPage(res, reason, 400);
-        return;
+      let isValid = false;
+
+      if (isPermanent) {
+        // Permanent token - never expires, can be reused
+        const verifiedTeacher = await verifyTeacherPermanentToken(teacherId, token);
+        isValid = verifiedTeacher !== null;
+        if (!isValid) {
+          renderErrorPage(res, 'Link jest nieprawidlowy. Popros administratora o nowy link.', 400);
+          return;
+        }
+      } else {
+        // Magic link - one-time use, expires after 30 minutes
+        const result = await consumeMagicLink(teacherId, token, { ip, userAgent });
+        if (!result.success) {
+          const reason = result.reason === 'used'
+            ? 'Link zostal juz uzyty.'
+            : 'Link jest nieprawidlowy lub wygasl.';
+          renderErrorPage(res, reason, 400);
+          return;
+        }
+        isValid = true;
       }
 
       const sessionToken = createTeacherSessionToken(teacher.id, teacher.organization_id ?? null);
@@ -80,9 +96,10 @@ export const createTeacherAuthRouter = () => {
 
       res.redirect('/teacher/dashboard');
     } catch (error) {
-      logger.error('Teacher magic link login failed', {
+      logger.error('Teacher login failed', {
         error: (error as Error).message,
         teacherId,
+        isPermanent,
         correlationId
       });
       renderErrorPage(res, 'Wystapil blad. Sprobuj ponownie lub popros o nowy link.', 500);
@@ -91,3 +108,4 @@ export const createTeacherAuthRouter = () => {
 
   return router;
 };
+

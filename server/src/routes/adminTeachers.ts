@@ -4,6 +4,7 @@ import { parse } from 'csv-parse/sync';
 import { logger } from '../logger';
 import { config } from '../config';
 import { createTeacherMagicLink } from '../services/teacherMagicLinks';
+import { createOrGetPermanentToken } from '../services/teacherPermanentTokens';
 import { getOrCreateTeacher, findTeacherById, normalizeTeacherEmail, getAllTeachers } from '../services/teacherService';
 import { getDb } from '../db';
 
@@ -84,25 +85,10 @@ const dedupeByEmail = (rows: ImportRow[]): ImportRow[] => {
 export const createAdminTeachersRouter = () => {
   const router = Router();
 
-  // List all teachers with their last magic link info
+  // List all teachers with their permanent link status
   router.get('/', async (req, res) => {
     try {
       const teachers = await getAllTeachers();
-
-      // Get last magic link for each teacher
-      const teacherIds = teachers.map(t => t.id);
-      const lastLinks = await getDb()('teacher_magic_links')
-        .whereIn('teacher_id', teacherIds)
-        .whereNull('used_at')
-        .where('expires_at', '>', new Date())
-        .orderBy('created_at', 'desc');
-
-      const linksByTeacher = new Map<string, { expiresAt: Date }>();
-      for (const link of lastLinks) {
-        if (!linksByTeacher.has(link.teacher_id)) {
-          linksByTeacher.set(link.teacher_id, { expiresAt: link.expires_at });
-        }
-      }
 
       const results = teachers.map(t => ({
         teacherId: t.id,
@@ -110,8 +96,7 @@ export const createAdminTeachersRouter = () => {
         fullName: t.full_name,
         createdAt: t.created_at,
         lastLoginAt: t.last_login_at,
-        hasActiveLink: linksByTeacher.has(t.id),
-        linkExpiresAt: linksByTeacher.get(t.id)?.expiresAt || null
+        hasPermanentLink: Boolean(t.permanent_token_hash)
       }));
 
       res.json({ teachers: results });
@@ -148,14 +133,14 @@ export const createAdminTeachersRouter = () => {
         });
         if (created) createdCount += 1;
 
-        const magicLink = await createTeacherMagicLink(teacher.id);
+        // Generate permanent link for the teacher (can be copied by admin anytime)
+        const permanentToken = await createOrGetPermanentToken(teacher.id);
         results.push({
           email: teacher.email,
           fullName: teacher.full_name,
           teacherId: teacher.id,
           created,
-          expiresAt: magicLink.expiresAt.toISOString(),
-          magicLink: magicLink.url
+          permanentLink: permanentToken.url // Permanent link - never expires!
         });
       } catch (error) {
         logger.error('Failed to import teacher', { email: row.email, error: (error as Error).message });
@@ -170,6 +155,30 @@ export const createAdminTeachersRouter = () => {
     });
   });
 
+  // Generate/regenerate permanent link for a teacher (admin can copy this anytime)
+  router.post('/:id/permanent-link', async (req, res) => {
+    const teacherId = req.params.id;
+    try {
+      const teacher = await findTeacherById(teacherId);
+      if (!teacher) {
+        res.status(404).json({ error: 'Teacher not found.' });
+        return;
+      }
+      const permanentToken = await createOrGetPermanentToken(teacherId);
+      res.json({
+        teacherId,
+        email: teacher.email,
+        fullName: teacher.full_name,
+        permanentLink: permanentToken.url,
+        note: 'Ten link nigdy nie wygasa i moze byc uzywany wielokrotnie.'
+      });
+    } catch (error) {
+      logger.error('Failed to generate permanent link', { teacherId, error: (error as Error).message });
+      res.status(500).json({ error: 'Unable to generate permanent link.' });
+    }
+  });
+
+  // Keep the old magic-link endpoint for backwards compatibility
   router.post('/:id/magic-link', async (req, res) => {
     const teacherId = req.params.id;
     try {
@@ -182,7 +191,8 @@ export const createAdminTeachersRouter = () => {
       res.json({
         teacherId,
         expiresAt: magicLink.expiresAt.toISOString(),
-        magicLink: magicLink.url
+        magicLink: magicLink.url,
+        note: 'Ten link jest jednorazowy i wygasa po 30 minutach. Uzyj /permanent-link dla stalego linku.'
       });
     } catch (error) {
       logger.error('Failed to generate magic link', { teacherId, error: (error as Error).message });
@@ -192,3 +202,4 @@ export const createAdminTeachersRouter = () => {
 
   return router;
 };
+

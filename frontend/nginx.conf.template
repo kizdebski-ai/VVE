@@ -5,7 +5,19 @@ server {
 
     root /usr/share/nginx/html;
 
-    # Serve static assets
+    # Teacher login endpoint MUST go to backend (sets cookies and redirects)
+    location /teacher/login {
+        proxy_pass ${BACKEND_URL};
+        proxy_set_header Host $proxy_host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_ssl_server_name on;
+        proxy_ssl_name $proxy_host;
+        proxy_redirect off;
+    }
+
+    # Serve static assets (SPA routes fall back to index.html)
     location / {
         try_files $uri /index.html;
     }

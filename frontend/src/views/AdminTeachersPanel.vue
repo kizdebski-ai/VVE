@@ -146,6 +146,14 @@ const apiBase = resolveBackendBaseUrl();
 // Admin secret for authorizing admin API calls
 const adminSecret = import.meta.env.VITE_ADMIN_SECRET || '';
 
+// Debug log - helps identify if VITE_ADMIN_SECRET is set during build
+console.log('[AdminTeachersPanel] Admin secret status:', {
+  isSet: !!adminSecret,
+  length: adminSecret.length,
+  prefix: adminSecret ? adminSecret.substring(0, 4) + '...' : 'NOT_SET',
+  apiBase
+});
+
 // Helper to get headers with admin authorization
 const adminHeaders = (extra = {}) => ({
   'x-admin-secret': adminSecret,
@@ -166,6 +174,8 @@ const fetchPermanentLink = async (teacherId) => {
     const data = await res.json();
     if (data.permanentLink) {
       permanentLinks[teacherId] = data.permanentLink;
+    } else if (data.error) {
+      console.error('[AdminTeachersPanel] Permanent link error:', data.error);
     }
   } catch (e) {
     console.error('Failed to fetch permanent link:', e);
@@ -179,6 +189,13 @@ const loadTeachers = async () => {
   try {
     const res = await fetch(`${apiBase}/api/admin/teachers`, { headers: adminHeaders() });
     const data = await res.json();
+    
+    if (!res.ok) {
+      console.error('[AdminTeachersPanel] API error:', { status: res.status, data });
+      alert(`Błąd API (${res.status}): ${data.error || 'Nieznany błąd'}. Sprawdź czy VITE_ADMIN_SECRET i ADMIN_SECRET są poprawnie ustawione na Railway.`);
+      return;
+    }
+    
     teachers.value = data.teachers || [];
     
     // Automatically fetch permanent links for all teachers

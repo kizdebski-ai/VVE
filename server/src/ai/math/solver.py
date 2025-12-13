@@ -103,6 +103,7 @@ def solve_equation(equation_str: str) -> dict:
             'solutions': solution_simplified,
             'latex': result_latex,
             'original': equation_str
+
         }
         
     except Exception as e:

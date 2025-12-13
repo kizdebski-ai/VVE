@@ -3,7 +3,9 @@ FROM node:20-slim AS builder
 WORKDIR /app
 
 ARG VITE_BACKEND_URL=http://vve.railway.internal:8000
+ARG VITE_ADMIN_SECRET
 ENV VITE_BACKEND_URL=$VITE_BACKEND_URL
+ENV VITE_ADMIN_SECRET=$VITE_ADMIN_SECRET
 
 # Install dependencies
 COPY package*.json ./
@@ -11,6 +13,9 @@ RUN npm ci
 
 # Copy sources
 COPY . .
+
+# Debug: Show which VITE_ vars are set during build
+RUN echo "Build-time VITE_ADMIN_SECRET is set: $([ -n \"$VITE_ADMIN_SECRET\" ] && echo 'YES' || echo 'NO')"
 
 # Build static assets
 RUN npm run build

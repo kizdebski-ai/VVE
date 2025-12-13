@@ -82,12 +82,21 @@ export const createHttpApp = ({ roomManager, aiSolver }: CreateAppOptions) => {
   const requireAdminSecret: RequestHandler = (req, res, next) => {
     const expectedSecret = config.adminSecret;
 
+    // Log for debugging (will help identify Railway config issues)
+    logger.debug('Admin auth check', {
+      path: req.path,
+      hasExpectedSecret: !!expectedSecret,
+      expectedSecretPrefix: expectedSecret ? expectedSecret.substring(0, 4) + '...' : 'NOT_SET',
+      hasProvidedSecret: !!readAdminSecret(req),
+      providedSecretPrefix: readAdminSecret(req) ? (readAdminSecret(req) as string).substring(0, 4) + '...' : 'NOT_PROVIDED'
+    });
+
     // In development, if no secret is configured, allow access
     if (!expectedSecret) {
       const isProduction = process.env.NODE_ENV === 'production';
       if (isProduction) {
-        logger.warn('Admin request blocked because admin secret is not configured', { path: req.path });
-        res.status(503).json({ error: 'Admin endpoints are not configured.' });
+        logger.warn('Admin request blocked because ADMIN_SECRET env var is not configured on server', { path: req.path });
+        res.status(503).json({ error: 'Admin endpoints are not configured. Set ADMIN_SECRET env var on server.' });
         return;
       }
       // Allow in development without secret
@@ -98,7 +107,13 @@ export const createHttpApp = ({ roomManager, aiSolver }: CreateAppOptions) => {
 
     const provided = readAdminSecret(req);
     if (provided !== expectedSecret) {
-      res.status(401).json({ error: 'Unauthorized' });
+      logger.warn('Admin auth failed - secret mismatch', {
+        path: req.path,
+        providedLength: provided ? provided.length : 0,
+        expectedLength: expectedSecret.length,
+        secretsMatch: provided === expectedSecret
+      });
+      res.status(401).json({ error: 'Unauthorized - admin secret mismatch. Check VITE_ADMIN_SECRET in frontend and ADMIN_SECRET on server.' });
       return;
     }
 

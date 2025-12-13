@@ -26,6 +26,10 @@ const SNAPSHOT_EVERY_UPDATES = 20;
 const SNAPSHOT_INTERVAL_MS = 10_000;
 const CLEANUP_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6h
 
+// UUID v4 regex pattern - validates proper UUID format before querying DB
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const isValidUUID = (id: string): boolean => UUID_REGEX.test(id);
+
 export class BoardYjsPersistence {
   private knownBoards = new Set<string>();
   private missingBoards = new Set<string>();
@@ -35,6 +39,13 @@ export class BoardYjsPersistence {
   async isBoardRoom(boardId: string): Promise<boolean> {
     if (this.knownBoards.has(boardId)) return true;
     if (this.missingBoards.has(boardId)) return false;
+
+    // If boardId is not a valid UUID, it can't be a board room (boards table uses UUID primary key)
+    if (!isValidUUID(boardId)) {
+      this.missingBoards.add(boardId);
+      return false;
+    }
+
     const row = await getDb()('boards').where({ id: boardId }).first('id');
     if (row) {
       this.knownBoards.add(boardId);

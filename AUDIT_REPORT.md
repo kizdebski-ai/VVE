@@ -345,22 +345,52 @@ Root `package.json` ma `y-protocols` i `@previewjs/config` - wygląda na przypad
 6. ~~Naprawić contextmenu listener leak~~ [BUG-003]
 
 ### Faza 2 - Performance Fixes
-7. Naprawić viewport culling dla pen strokes [PERF-003]
-8. Optymalizować RoughJS (reuse rc object) [PERF-004]
-9. Inkrementalny update localScene zamiast toJSON() [PERF-001]
-10. Naprawić eraser race condition (use ID) [BUG-001]
-11. Naprawić watch leak w connectToRoom [BUG-002]
+7. ~~Naprawić viewport culling dla pen strokes~~ [PERF-003]
+8. ~~Optymalizować RoughJS (reuse rc object)~~ [PERF-004]
+9. ~~Inkrementalny update localScene (partial - reuse zamiast toJSON per frame)~~ [PERF-001]
+10. ~~Naprawić eraser race condition (use ID)~~ [BUG-001]
+11. ~~Naprawić watch leak w connectToRoom~~ [BUG-002]
+12. ~~Throttle awareness redraw (rAF)~~ [PERF-005]
+13. ~~Debounce bumpActivity w RoomManager~~ [BE-002]
 
-### Faza 3 - Architektura
-12. Rozbić WhiteboardCanvas na mniejsze composables [ARCH-001]
-13. Usunąć martwy kod i boilerplate [ARCH-004]
-14. Ujednolicić API style [ARCH-003]
+### Faza 3 - Security, UX, Architektura
+14. ~~WebSocket rate limiting (300 msg/s)~~ [SEC-002]
+15. ~~Walidacja rozmiaru obrazów (5MB)~~ [SEC-003]
+16. ~~Graceful WebSocket shutdown~~ [BE-004]
+17. ~~Widoczna ramka inline text editor~~ [UX-001]
+18. ~~Wskaźnik ładowania przy łączeniu~~ [UX-003]
+19. ~~Ostrzeżenie przy 500+ elementach~~ [UX-006]
+20. ~~Usunięcie 21 plików martwego kodu~~ [ARCH-004]
+21. ~~Cleanup root package.json~~ [DEP-001]
+
+### Nienaprawione (wymagają głębszej pracy)
+- [ ] Rozbić WhiteboardCanvas na composables [ARCH-001] - wymaga gruntownej refaktoryzacji
+- [ ] Ujednolicić API style (Options API → Composition API) [ARCH-003]
+- [ ] Path2D caching (wymaga redesignu kompatybilnego z pen styles) [PERF-007]
+- [ ] Custom dialog zamiast native confirm() [UX-004]
+- [ ] Kursor gumki odzwierciedlający eraserSize [UX-005]
+- [ ] prompt() → inline dialog w useDrawingTools [UX-002] (plik usunięty - martwy kod)
+- [ ] loadFromPersistence optymalizacja dla tysięcy pokoi [BE-003]
+- [ ] Code splitting (plotly.js 2.1MB chunk) [DEP-002]
+- [ ] Duplikacja tesseract.js i mathjs [DEP-003]
 
 ---
 
 ## 10. NOTATKI Z PRACY
 
-_Sekcja uzupełniana w trakcie iteracyjnego naprawiania._
-
 ### Commit Log
-_(będzie uzupełniany)_
+
+| # | Hash | Opis | Pliki |
+|---|------|------|-------|
+| 1 | `d5acc6de` | Quick wins: console.log, willReadFrequently, Math.random key, duplikaty | WhiteboardCanvas.vue, MovableObject.vue, useCanvasInput.js, server.ts, config.ts |
+| 2 | `4aff13ef` | Performance: viewport culling, RoughJS reuse, eraser race, watcher leak | WhiteboardCanvas.vue |
+| 3 | `962f0f7a` | Debounce bumpActivity persistence writes | rooms.ts |
+| 4 | `ac020363` | Awareness throttle, WS rate limiting, image validation, UX | WhiteboardCanvas.vue, server.ts |
+| 5 | `c1f748bc` | Remove 21 dead code files | 21 plików |
+| 6 | _(current)_ | Root package.json cleanup, audit report update | package.json, AUDIT_REPORT.md |
+
+### Statystyki
+- **Naprawione problemy:** 21/30
+- **Usunięte pliki:** 21
+- **Usunięte linie martwego kodu:** ~2300
+- **Nowe commity:** 6

@@ -267,9 +267,9 @@ const shiftPointsArray = (pointsValue: any, dx: number, dy: number) => {
 const getLinePointsForRender = (data: MovableObjectData): { x: number, y: number }[] | null => {
   let rawPoints: { x: number, y: number }[] | null = null;
   
-  // Check if we have linePoints (new format)
+  // Check if we have points array (line or pen type)
   const linePoints = data.points;
-  if (Array.isArray(linePoints) && linePoints.length >= 2 && data.type === 'line') {
+  if (Array.isArray(linePoints) && linePoints.length >= 1 && (data.type === 'line' || data.type === 'pen')) {
     rawPoints = linePoints.map(p => ({ x: ensureNumber(p.x, 0), y: ensureNumber(p.y, 0) }));
   }
   // Fallback: Convert from old start/end format
@@ -1046,24 +1046,21 @@ const renderLocalCanvas = () => {
   // Construct local element relative to (0,0) - NO CLIPPING for lines
   let localElement: any;
   
-  if (isLineType.value) {
-    // For lines: use point-based rendering
+  if (isLineType.value || objectData.type === 'pen') {
+    // For lines and pen strokes: use point-based rendering with normalization
     const linePoints = getLinePointsForRender(objectData);
-    
-    if (linePoints && linePoints.length >= 2) {
-      // New format: use points array (relative to 0,0 after padding offset)
+
+    if (linePoints && linePoints.length >= 1) {
       localElement = {
         ...objectData,
         x: 0,
         y: 0,
-        // Pass points for new format drawing
         points: linePoints,
-        // Clear old format to avoid confusion
         start: undefined,
         end: undefined
       };
-    } else {
-      // Fallback to old format
+    } else if (isLineType.value) {
+      // Fallback to old format (lines only)
       localElement = {
         ...objectData,
         x: 0,
@@ -1071,6 +1068,9 @@ const renderLocalCanvas = () => {
         start: { x: (objectData.startX || 0) - objectData.x, y: (objectData.startY || 0) - objectData.y },
         end: { x: (objectData.endX || 0) - objectData.x, y: (objectData.endY || 0) - objectData.y }
       };
+    } else {
+      // Pen with no points - shouldn't happen, but fallback
+      localElement = { ...objectData, x: 0, y: 0 };
     }
   } else {
     // For shapes: use standard bounding box

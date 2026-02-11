@@ -166,6 +166,8 @@ const props = defineProps({
 // Define emits
 const emit = defineEmits(['clear-canvas', 'toggle-feature', 'open-room-manager', 'export-whiteboard', 'export-pdf-single', 'export-pdf-paged', 'import-whiteboard']);
 
+// P0-FIX: Detect touch device and keep gear always visible on touch
+const isTouchDevice = ref(false);
 const showGear = ref(false); // Controls gear visibility
 const showMenu = ref(false); // Controls menu visibility
 const showShortcutsInfo = ref(false);
@@ -200,6 +202,11 @@ const updateFullscreenState = () => {
 
 onMounted(() => {
   document.addEventListener('fullscreenchange', updateFullscreenState);
+  // P0-FIX: On touch devices, always show gear icon (no hover available)
+  isTouchDevice.value = window.matchMedia('(hover: none)').matches || navigator.maxTouchPoints > 0;
+  if (isTouchDevice.value) {
+    showGear.value = true;
+  }
 });
 
 onBeforeUnmount(() => {
@@ -214,13 +221,13 @@ const handleMouseEnter = () => {
 
 // Hide gear and menu after a delay if mouse leaves container
 const handleMouseLeave = () => {
+  if (isTouchDevice.value) return; // P0-FIX: Never auto-hide on touch
   if (hideTimeout) clearTimeout(hideTimeout);
-  // Only hide if shortcuts dialog is not open
   if (!showShortcutsInfo.value) {
       hideTimeout = setTimeout(() => {
         showGear.value = false;
-        showMenu.value = false; // Also hide menu when leaving container
-      }, 500); // Adjust delay as needed
+        showMenu.value = false;
+      }, 500);
   }
 };
 

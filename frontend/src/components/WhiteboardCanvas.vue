@@ -2578,6 +2578,9 @@ export default {
         }, 'local-erase');
         refreshMovableElements();
 
+        // P0-FIX: Stop capturing so each erase is a separate undo step
+        undoManager.value?.stopCapturing();
+
         nextTick(() => {
           if (undoManager.value) {
              updateGlobalState();
@@ -2971,10 +2974,12 @@ export default {
                       }
                   }
 
-                  // Po każdej transakcji dodaj (inside try block):
+                  // P0-FIX: Stop capturing so each drawing action is a separate undo step
+                  undoManager.value?.stopCapturing();
+
                   nextTick(() => {
                      if (undoManager.value) {
-                        updateGlobalState(); // Use the shared function
+                        updateGlobalState();
                      }
                   });
               } catch (error) {
@@ -3445,7 +3450,10 @@ export default {
             selectedObjectId.value = null;
             snapGuides.value = [];
             refreshMovableElements();
-            redrawCanvas(); // Ensure immediate visual update even if observer lags
+            redrawCanvas();
+
+            // P0-FIX: Stop capturing so clear is a separate undo step
+            undoManager.value?.stopCapturing();
 
             showStatus('Canvas cleared');
 

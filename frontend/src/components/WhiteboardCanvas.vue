@@ -143,7 +143,7 @@ import { v4 as uuidv4 } from 'uuid';
 import katex from 'katex';
 // jsPDF loaded dynamically only when PDF export is triggered (code splitting)
 import 'katex/dist/katex.min.css';
-import { undoRedoState } from '../utils/undoRedoState';
+// undoRedoState moved to useUndoRedo composable
 import Collaborators from './Collaborators.vue';
 import ZoomPanControls from './ZoomPanControls.vue';
 import EraserModeControls from './EraserModeControls.vue';
@@ -167,6 +167,10 @@ import {
 } from '../utils/canvasTools.js';
 import { drawGrid as drawUtilGrid, computeGridSteps } from '../utils/canvasGrid.js';
 import MovableObject from './MovableObject.vue';
+import { useNotifications } from '../composables/useNotifications';
+import { useUndoRedo } from '../composables/useUndoRedo';
+import { useLineBindings } from '../composables/useLineBindings';
+import { usePdfExport } from '../composables/usePdfExport';
 
 
 // Debounce function
@@ -332,8 +336,8 @@ export default {
     const panOffset = ref({ x: 0, y: 0 });
     const isPanning = ref(false);
     const lastPanPoint = ref(null);
-    const statusMessage = ref('');
-    const statusTimeout = ref(null);
+    // --- Composables ---
+    const { statusMessage, notifications, showStatus, showToast } = useNotifications();
     const isConnecting = ref(false);
     const darkMode = ref(false);
     const eraserMode = ref('erase');
@@ -347,8 +351,7 @@ export default {
     const PEN_COORD_PRECISION = 2;
     const shiftPressedAtStart = ref(false); // Track shift key state at mousedown
     const startCoordsForShiftLine = ref(null); // Store start coords specifically for Shift+Pen
-    const notifications = ref([]);
-    const notificationId = ref(0);
+    // notifications and notificationId moved to useNotifications composable
     const debugModeEnabled = ref(props.debugMode);
     const debugLog = (...args) => {
       if (debugModeEnabled.value) {
@@ -362,6 +365,12 @@ export default {
     };
     const clipboardInput = ref(null);
     const imageCache = ref(new Map());
+
+    // --- PDF Export Composable ---
+    const {
+      exportBoardAsPdf, exportBoardAsPdfPaged,
+      getSnapshot, getSerializableState, loadState, exportAsText, importFromText,
+    } = usePdfExport({ yDrawings, ydoc, smoothingFactor, imageCache, showToast, debugLog, debugWarn });
     const activePenPresetKey = computed(() => props.handwritingStylerOptions?.preset || 'gel');
     const activePenPreset = computed(() => {
       const options = props.handwritingStylerOptions || {};
@@ -455,535 +464,40 @@ export default {
     const yDrawings = shallowRef(null);
     const activeRoomId = ref(null);
     const latestUsername = ref(props.username);
-    const undoManager = ref(null);
-    const canUndo = ref(false);
-    const canRedo = ref(false);
+    // --- Undo/Redo Composable (initialized after redrawCanvas is available) ---
+    // Undo/redo composable needs to be called here, but undo/redo methods
+    // will be wrapped later to include redrawCanvas callback.
+    const {
+      undoManager, canUndo, canRedo,
+      updateGlobalState, initializeUndoManager,
+      undo: undoCore, redo: redoCore,
+      teardownUndoManager,
+    } = useUndoRedo({ ydoc, yDrawings });
     
             
-    const BINDABLE_ELEMENT_TYPES = new Set([
-      'rectangle',
-      'circle',
-      'square',
-      'triangle',
-      'trapezoid',
-      'parallelogram',
-      'deltoid',
-      'cube',
-      'cuboid',
-      'sphere',
-      'cylinder',
-      'cone',
-      'pyramid',
-      'tetrahedron',
-      'text',
-      'image',
-      'coordinateSystem2D',
-      'coordinateSystem3D',
-      'mathFunctionPlot',
-      'physicsDataPlot'
-    ]);
-    const BINDING_PADDING = 8;
-    const BINDING_DISTANCE_THRESHOLD = 18;
-    const BINDING_GAP_DEFAULT = 4;
+    // --- Line Bindings Composable ---
+    const {
+      BINDABLE_ELEMENT_TYPES,
+      BINDING_DISTANCE_THRESHOLD,
+      getConnectorAnchors,
+      findElementMapById,
+      getRectFromElementMap,
+      findBindingTargetNearPoint,
+      attachBindingsToLineDraft,
+      updateBindingsForTarget,
+      refreshLineBindings,
+      detachLineBindings,
+    } = useLineBindings(yDrawings, ydoc);
 
-    const getConnectorAnchors = (rect) => {
-      if (!rect) return [];
-      const rot = (rect.rotation || 0) * Math.PI / 180;
-      const cosR = Math.cos(rot);
-      const sinR = Math.sin(rot);
-      const cx = rect.x + rect.width / 2;
-      const cy = rect.y + rect.height / 2;
-      const anchorsLocal = [
-        { x: -rect.width / 2, y: 0, normalLocal: { x: -1, y: 0 } }, // left
-        { x: rect.width / 2, y: 0, normalLocal: { x: 1, y: 0 } }, // right
-        { x: 0, y: -rect.height / 2, normalLocal: { x: 0, y: -1 } }, // top
-        { x: 0, y: rect.height / 2, normalLocal: { x: 0, y: 1 } }, // bottom
-        { x: 0, y: 0, normalLocal: null }, // center
-      ];
-      return anchorsLocal.map(({ x, y, normalLocal }) => {
-        const anchorWorld = {
-          x: cx + x * cosR - y * sinR,
-          y: cy + x * sinR + y * cosR,
-        };
-        const ratioX = rect.width ? (x + rect.width / 2) / rect.width : 0.5;
-        const ratioY = rect.height ? (y + rect.height / 2) / rect.height : 0.5;
-        return {
-          anchorLocal: { x, y },
-          anchorWorld,
-          ratioX,
-          ratioY,
-          normalLocal,
-        };
-      });
-    };
-    
-    const findElementMapById = (id) => {
-      if (!id || !yDrawings.value) return null;
-      return yDrawings.value.toArray().find((el) => el.get('id') === id) || null;
-    };
-    
-    const getRectFromElementMap = (map) => {
-      if (!map) return null;
-      const x = Number(map.get('x'));
-      const y = Number(map.get('y'));
-      const width = Math.abs(Number(map.get('width'))) || 0;
-      const height = Math.abs(Number(map.get('height'))) || 0;
-      const rotation = Number(map.get('rotation')) || 0;
-      if ([x, y, width, height].every((v) => Number.isFinite(v))) {
-        return { x, y, width, height, rotation };
-      }
-      const start = map.get('start');
-      const end = map.get('end');
-      const sx = start?.get?.('x');
-      const sy = start?.get?.('y');
-      const ex = end?.get?.('x');
-      const ey = end?.get?.('y');
-      if ([sx, sy, ex, ey].every((v) => Number.isFinite(v))) {
-        return {
-          x: Math.min(sx, ex),
-          y: Math.min(sy, ey),
-          width: Math.abs(ex - sx),
-          height: Math.abs(ey - sy),
-          rotation,
-        };
-      }
-      return null;
-    };
-    
-    const distanceToRect = (point, rect, padding = BINDING_PADDING) => {
-      const padded = {
-        x: rect.x - padding,
-        y: rect.y - padding,
-        width: rect.width + padding * 2,
-        height: rect.height + padding * 2,
-      };
-      const withinX = point.x >= padded.x && point.x <= padded.x + padded.width;
-      const withinY = point.y >= padded.y && point.y <= padded.y + padded.height;
-      if (withinX && withinY) return 0;
-      const dx = Math.max(padded.x - point.x, 0, point.x - (padded.x + padded.width));
-      const dy = Math.max(padded.y - point.y, 0, point.y - (padded.y + padded.height));
-      return Math.hypot(dx, dy);
-    };
-    
-    const clampVectorToRotatedRect = (rect, reference) => {
-      const rot = (rect.rotation || 0) * Math.PI / 180;
-      const cosR = Math.cos(-rot);
-      const sinR = Math.sin(-rot);
-      const cx = rect.x + rect.width / 2;
-      const cy = rect.y + rect.height / 2;
-      const toLocal = (pt) => {
-        const dx = pt.x - cx;
-        const dy = pt.y - cy;
-        return { x: dx * cosR - dy * sinR, y: dx * sinR + dy * cosR };
-      };
-      const toWorld = (pt) => {
-        const cosF = Math.cos(rot);
-        const sinF = Math.sin(rot);
-        return {
-          x: cx + pt.x * cosF - pt.y * sinF,
-          y: cy + pt.x * sinF + pt.y * cosF,
-        };
-      };
-    
-      const refLocal = toLocal(reference);
-      const halfW = rect.width / 2;
-      const halfH = rect.height / 2;
-      let dx = refLocal.x;
-      let dy = refLocal.y;
-      if (dx === 0 && dy === 0) dx = halfW;
-      const absDx = Math.abs(dx);
-      const absDy = Math.abs(dy);
-      let anchorLocal;
-      if (absDx * halfH > absDy * halfW) {
-        const scale = absDx === 0 ? 1 : halfW / absDx;
-        anchorLocal = { x: Math.sign(dx) * halfW, y: dy * scale };
-      } else {
-        const scale = absDy === 0 ? 1 : halfH / absDy;
-        anchorLocal = { x: dx * scale, y: Math.sign(dy) * halfH };
-      }
-      const anchorWorld = toWorld(anchorLocal);
-      return { anchorLocal, anchorWorld, toWorld };
-    };
-    
-    const makeBindingPayload = (targetMap, rect, referencePoint, fallbackPoint, lineWidth = 2, anchorOverride = null) => {
-      if (!targetMap || !rect) return { binding: null, point: null };
-      const rot = (rect.rotation || 0) * Math.PI / 180;
-      const cosR = Math.cos(rot);
-      const sinR = Math.sin(rot);
-      const cosInv = Math.cos(-rot);
-      const sinInv = Math.sin(-rot);
-      const cx = rect.x + rect.width / 2;
-      const cy = rect.y + rect.height / 2;
-      const ref = referencePoint || fallbackPoint || { x: rect.x + rect.width, y: rect.y + rect.height / 2 };
-
-      const anchorLocal = anchorOverride?.anchorLocal
-        ? { ...anchorOverride.anchorLocal }
-        : clampVectorToRotatedRect(rect, ref).anchorLocal;
-      const ratioX = anchorOverride?.ratioX ?? (rect.width ? (anchorLocal.x + rect.width / 2) / rect.width : 0.5);
-      const ratioY = anchorOverride?.ratioY ?? (rect.height ? (anchorLocal.y + rect.height / 2) / rect.height : 0.5);
-
-      const refLocal = {
-        x: (ref.x - cx) * cosInv - (ref.y - cy) * sinInv,
-        y: (ref.x - cx) * sinInv + (ref.y - cy) * cosInv,
-      };
-
-      let normalLocal = anchorOverride?.normalLocal || null;
-      if (!normalLocal) {
-        const vectorLocal = { x: refLocal.x - anchorLocal.x, y: refLocal.y - anchorLocal.y };
-        const len = Math.hypot(vectorLocal.x, vectorLocal.y);
-        if (!len || len < 1e-6) {
-          normalLocal = { x: 1, y: 0 };
-        } else {
-          normalLocal = { x: vectorLocal.x / len, y: vectorLocal.y / len };
-        }
-      }
-
-      const gap = Math.max(BINDING_GAP_DEFAULT, (lineWidth || 2) * 1.1);
-      const normalWorld = {
-        x: normalLocal.x * cosR - normalLocal.y * sinR,
-        y: normalLocal.x * sinR + normalLocal.y * cosR,
-      };
-      const normalLen = Math.hypot(normalWorld.x, normalWorld.y) || 1;
-      const anchorWorld = {
-        x: cx + anchorLocal.x * cosR - anchorLocal.y * sinR,
-        y: cy + anchorLocal.x * sinR + anchorLocal.y * cosR,
-      };
-      const point = {
-        x: anchorWorld.x + (normalWorld.x / normalLen) * gap,
-        y: anchorWorld.y + (normalWorld.y / normalLen) * gap,
-      };
-      const binding = {
-        elementId: targetMap.get('id'),
-        ratioX,
-        ratioY,
-        normalLocal,
-        gap,
-      };
-      return { binding, point };
-    };
-    
-    const resolveBindingPoint = (binding) => {
-      if (!binding) return null;
-      const target = findElementMapById(binding.elementId);
-      const rect = getRectFromElementMap(target);
-      if (!rect) return null;
-      const rot = (rect.rotation || 0) * Math.PI / 180;
-      const cosR = Math.cos(rot);
-      const sinR = Math.sin(rot);
-      const cx = rect.x + rect.width / 2;
-      const cy = rect.y + rect.height / 2;
-      const anchorLocal = {
-        x: (binding.ratioX ?? 0.5) * rect.width - rect.width / 2,
-        y: (binding.ratioY ?? 0.5) * rect.height - rect.height / 2,
-      };
-      const anchorWorld = {
-        x: cx + anchorLocal.x * cosR - anchorLocal.y * sinR,
-        y: cy + anchorLocal.x * sinR + anchorLocal.y * cosR,
-      };
-      const normalLocal = binding.normalLocal ?? binding.normal ?? { x: 1, y: 0 };
-      const gap = binding.gap ?? BINDING_GAP_DEFAULT;
-      const normalWorld = {
-        x: normalLocal.x * cosR - normalLocal.y * sinR,
-        y: normalLocal.x * sinR + normalLocal.y * cosR,
-      };
-      const len = Math.hypot(normalWorld.x, normalWorld.y) || 1;
-      return {
-        x: anchorWorld.x + (normalWorld.x / len) * gap,
-        y: anchorWorld.y + (normalWorld.y / len) * gap,
-      };
-    };
-    
-    const getLineEndpoints = (lineMap) => {
-      const startMap = lineMap?.get?.('start');
-      const endMap = lineMap?.get?.('end');
-      const start = startMap?.get ? { x: Number(startMap.get('x')), y: Number(startMap.get('y')) } : null;
-      const end = endMap?.get ? { x: Number(endMap.get('x')), y: Number(endMap.get('y')) } : null;
-      return { start, end };
-    };
-    
-    const setLineEndpoints = (lineMap, start, end) => {
-      if (!lineMap || !start || !end) return;
-      let startMap = lineMap.get('start');
-      let endMap = lineMap.get('end');
-      if (!(startMap instanceof Y.Map)) {
-        startMap = new Y.Map();
-        lineMap.set('start', startMap);
-      }
-      if (!(endMap instanceof Y.Map)) {
-        endMap = new Y.Map();
-        lineMap.set('end', endMap);
-      }
-      startMap.set('x', start.x);
-      startMap.set('y', start.y);
-      endMap.set('x', end.x);
-      endMap.set('y', end.y);
-      lineMap.set('x', Math.min(start.x, end.x));
-      lineMap.set('y', Math.min(start.y, end.y));
-      lineMap.set('width', Math.abs(end.x - start.x));
-      lineMap.set('height', Math.abs(end.y - start.y));
-    };
-    
-    const findBindingTargetNearPoint = (point, excludeId = null, maxDistance = BINDING_DISTANCE_THRESHOLD, collectAll = false) => {
-      if (!yDrawings.value || !point) return collectAll ? [] : null;
-      const elements = yDrawings.value.toArray();
-      let best = null;
-      let bestDistance = Infinity;
-      const hits = [];
-      for (let i = elements.length - 1; i >= 0; i--) {
-        const el = elements[i];
-        const id = el.get('id');
-        if (excludeId && id === excludeId) continue;
-        const type = el.get('type');
-        if (!BINDABLE_ELEMENT_TYPES.has(type)) continue;
-        const rect = getRectFromElementMap(el);
-        if (!rect) continue;
-        const anchors = getConnectorAnchors(rect);
-        anchors.forEach((anchor) => {
-          const dist = Math.hypot(anchor.anchorWorld.x - point.x, anchor.anchorWorld.y - point.y);
-          if (dist <= maxDistance) {
-            const payload = { map: el, rect, anchor, distance: dist };
-            if (collectAll) hits.push(payload);
-            if (dist < bestDistance) {
-              bestDistance = dist;
-              best = payload;
-            }
-          }
-        });
-      }
-      return collectAll ? hits : best;
-    };
-    
-    const attachBindingsToLineDraft = (lineDraft) => {
-      if (!lineDraft || lineDraft.type !== 'line' || !lineDraft.start || !lineDraft.end || !yDrawings.value) return;
-      const lineWidth = lineDraft.lineWidth || 2;
-      const startTarget = findBindingTargetNearPoint(lineDraft.start, lineDraft.id);
-      if (startTarget) {
-        const { binding, point } = makeBindingPayload(startTarget.map, startTarget.rect, lineDraft.end, lineDraft.start, lineWidth, startTarget.anchor);
-        if (binding && point) {
-          lineDraft.startBinding = binding;
-          lineDraft.start = point;
-        }
-      }
-      const endTarget = findBindingTargetNearPoint(lineDraft.end, lineDraft.id);
-      if (endTarget) {
-        const { binding, point } = makeBindingPayload(endTarget.map, endTarget.rect, lineDraft.start, lineDraft.end, lineWidth, endTarget.anchor);
-        if (binding && point) {
-          lineDraft.endBinding = binding;
-          lineDraft.end = point;
-        }
-      }
-      lineDraft.x = Math.min(lineDraft.start.x, lineDraft.end.x);
-      lineDraft.y = Math.min(lineDraft.start.y, lineDraft.end.y);
-      lineDraft.width = Math.abs(lineDraft.start.x - lineDraft.end.x);
-      lineDraft.height = Math.abs(lineDraft.start.y - lineDraft.end.y);
-    };
-    
-    const updateBindingsForTarget = (targetId) => {
-      if (!targetId || !yDrawings.value || !ydoc.value) return;
-      const target = findElementMapById(targetId);
-      const rect = getRectFromElementMap(target);
-      if (!rect) return;
-      const lines = yDrawings.value.toArray().filter((el) => el.get('type') === 'line');
-      if (!lines.length) return;
-      ydoc.value.transact(() => {
-        lines.forEach((line) => {
-          const { start, end } = getLineEndpoints(line);
-          if (!start || !end) return;
-          let nextStart = start;
-          let nextEnd = end;
-          let changed = false;
-          const startBinding = line.get('startBinding');
-          if (startBinding?.elementId === targetId) {
-            const point = resolveBindingPoint(startBinding);
-            if (point) {
-              nextStart = point;
-              changed = true;
-            }
-          }
-          const endBinding = line.get('endBinding');
-          if (endBinding?.elementId === targetId) {
-            const point = resolveBindingPoint(endBinding);
-            if (point) {
-              nextEnd = point;
-              changed = true;
-            }
-          }
-          if (changed) {
-            setLineEndpoints(line, nextStart, nextEnd);
-          }
-        });
-      }, 'auto-binding');
-    };
-    
-    const refreshLineBindings = (lineMap) => {
-      if (!lineMap || lineMap.get('type') !== 'line' || !ydoc.value) return;
-      const lineId = lineMap.get('id');
-      const { start, end } = getLineEndpoints(lineMap);
-      if (!start || !end) return;
-      const lineWidth = lineMap.get('lineWidth') || 2;
-      ydoc.value.transact(() => {
-        let nextStart = start;
-        let nextEnd = end;
-        let changed = false;
-    
-        const startBinding = lineMap.get('startBinding');
-        if (startBinding?.elementId) {
-          const point = resolveBindingPoint(startBinding);
-          if (point) {
-            nextStart = point;
-            changed = true;
-          } else {
-            lineMap.delete('startBinding');
-            changed = true;
-          }
-        } else {
-          const target = findBindingTargetNearPoint(start, lineId);
-          if (target) {
-            const { binding, point } = makeBindingPayload(target.map, target.rect, end, start, lineWidth, target.anchor);
-            if (binding && point) {
-              lineMap.set('startBinding', binding);
-              nextStart = point;
-              changed = true;
-            }
-          }
-        }
-    
-        const endBinding = lineMap.get('endBinding');
-        if (endBinding?.elementId) {
-          const point = resolveBindingPoint(endBinding);
-          if (point) {
-            nextEnd = point;
-            changed = true;
-          } else {
-            lineMap.delete('endBinding');
-            changed = true;
-          }
-        } else {
-          const target = findBindingTargetNearPoint(end, lineId);
-          if (target) {
-            const { binding, point } = makeBindingPayload(target.map, target.rect, start, end, lineWidth, target.anchor);
-            if (binding && point) {
-              lineMap.set('endBinding', binding);
-              nextEnd = point;
-              changed = true;
-            }
-          }
-        }
-    
-        if (changed && nextStart && nextEnd) {
-          setLineEndpoints(lineMap, nextStart, nextEnd);
-        }
-      }, 'auto-binding');
-    };
-// Define updateGlobalState outside initializeUndoManager to make it accessible in onBeforeUnmount
-    const updateGlobalState = () => {
-      if (undoManager.value) {
-        const hasUndo = undoManager.value.canUndo();
-        const hasRedo = undoManager.value.canRedo();
-
-        // Aktualizuj stan lokalny (nadal potrzebny dla debug panelu w tym komponencie)
-        canUndo.value = hasUndo;
-        canRedo.value = hasRedo;
-
-        // Aktualizuj stan globalny
-        undoRedoState.update(hasUndo, hasRedo);
-
-        // debugLog(`[Canvas] UndoManager stan: canUndo=${hasUndo}, canRedo=${hasRedo}`); // Commented out
-      } else {
-        canUndo.value = false;
-        canRedo.value = false;
-        undoRedoState.update(false, false);
-      }
-    };
-
-    // 2. Zastąp całą implementację UndoManager
-    const initializeUndoManager = () => {
-      // debugLog("[Canvas] Inicjalizacja UndoManager..."); // Commented out
-
-      if (undoManager.value) {
-        try {
-          undoManager.value.destroy();
-        } catch (e) {
-          // console.error("Błąd podczas czyszczenia UndoManagera:", e); // Commented out
-        }
-        undoManager.value = null;
-      }
-
-      if (!ydoc.value || !yDrawings.value) {
-        // console.error("initializeUndoManager: Brak ydoc lub yDrawings"); // Commented out
-        return;
-      }
-
-      // Konfiguracja UndoManager ze śledzeniem origin
-      // P0-FIX: Remove null/undefined from trackedOrigins to prevent capturing
-      // remote/internal transactions. Add captureTimeout: 0 to avoid grouping
-      // separate user actions into one undo step.
-      undoManager.value = new Y.UndoManager(yDrawings.value, {
-        captureTimeout: 0,
-        trackedOrigins: new Set([
-          'local-drawing', 'local-erase', 'local-clear', 'local-text', 'local-add-text', 'local-image', 'local-plot', 'local-coordsys',
-          'local-movable-drag', 'local-movable-rotate', 'local-movable-resize',
-          'clone-object', 'ai-align', 'ai-style', 'ai-math'
-        ])
-      });
-
-      // Use the externally defined updateGlobalState function
-      undoManager.value.on('stack-item-added', updateGlobalState);
-      undoManager.value.on('stack-item-popped', updateGlobalState);
-
-      // Inicjalne ustawienie stanu
-      updateGlobalState();
-
-      // debugLog("[Canvas] UndoManager zainicjalizowany"); // Commented out
-    };
-
-    // 3. Zastąp metody undo/redo
-    const undo = () => {
-      // debugLog("[Canvas] Undo - próba wykonania"); // Commented out
-
-      try {
-        if (undoManager.value && undoManager.value.canUndo()) {
-          undoManager.value.undo();
-          // debugLog("[Canvas] Undo wykonane"); // Commented out
-
-          // Dodatkowa aktualizacja globalnego stanu (już obsłużona przez listener 'stack-item-popped')
-          // undoRedoState.update(undoManager.value.canUndo(), undoManager.value.canRedo());
-
-          // Wymuś redraw
-          nextTick(() => {
-            redrawCanvas(true);
-            updateGlobalState();
-          });
-        } else {
-          // debugLog("[Canvas] Undo niemożliwe"); // Commented out
-        }
-      } catch (error) {
-        // console.error("[Canvas] Błąd podczas undo:", error); // Commented out
-      }
-    };
-
-    const redo = () => {
-      // debugLog("[Canvas] Redo - próba wykonania"); // Commented out
-
-      try {
-        if (undoManager.value && undoManager.value.canRedo()) {
-          undoManager.value.redo();
-          // debugLog("[Canvas] Redo wykonane"); // Commented out
-
-          // Dodatkowa aktualizacja globalnego stanu (już obsłużona przez listener 'stack-item-added')
-          // undoRedoState.update(undoManager.value.canUndo(), undoManager.value.canRedo());
-
-          // Wymuś redraw
-          nextTick(() => {
-            redrawCanvas(true);
-          });
-        } else {
-          // debugLog("[Canvas] Redo niemożliwe"); // Commented out
-        }
-      } catch (error) {
-        // console.error("[Canvas] Błąd podczas redo:", error); // Commented out
-      }
-    };
+    // Line binding functions (getConnectorAnchors, findElementMapById, getRectFromElementMap,
+    // distanceToRect, clampVectorToRotatedRect, makeBindingPayload, resolveBindingPoint,
+    // getLineEndpoints, setLineEndpoints, findBindingTargetNearPoint, attachBindingsToLineDraft,
+    // updateBindingsForTarget, refreshLineBindings, detachLineBindings)
+    // moved to useLineBindings composable
+    // updateGlobalState, initializeUndoManager, undo, redo moved to useUndoRedo composable
+    // Wrap undo/redo with redrawCanvas callback (redrawCanvas is defined later via closure)
+    const undo = () => undoCore(() => redrawCanvas(true));
+    const redo = () => redoCore(() => redrawCanvas(true));
 
     // --- Methods ---
 
@@ -1612,13 +1126,7 @@ export default {
         if (yDrawings.value) {
             yDrawings.value.unobserveDeep(handleYjsUpdate);
         }
-        if (undoManager.value) {
-            undoManager.value.off('stack-item-added', updateGlobalState);
-            undoManager.value.off('stack-item-popped', updateGlobalState);
-            undoManager.value.destroy();
-            undoManager.value = null;
-            updateGlobalState();
-        }
+        teardownUndoManager();
         if (yjsConnection.value) {
             yjsConnection.value.disconnect();
         }
@@ -3412,20 +2920,7 @@ export default {
 
     // --- Undo/Redo Methods --- (Replaced by Fragment 1)
 
-    // --- Status & Notifications ---
-    const showStatus = (message, duration = 2000) => {
-      statusMessage.value = message;
-      if (statusTimeout.value) clearTimeout(statusTimeout.value);
-      statusTimeout.value = setTimeout(() => { statusMessage.value = ''; }, duration);
-    };
-
-    const showToast = (message, type = 'default', duration = 3000) => {
-      const id = ++notificationId.value;
-      notifications.value.push({ id, message, type });
-      setTimeout(() => {
-        notifications.value = notifications.value.filter(n => n.id !== id);
-      }, duration);
-    };
+    // showStatus and showToast moved to useNotifications composable
 
     // --- Public methods exposed via ref ---
     const clearCanvas = (options = {}) => {
@@ -3478,362 +2973,12 @@ export default {
         }
     };
 
-    // --- PDF Export helpers ---
-    const normalizePointForBounds = (pt) => {
-      if (!pt) return null;
-      if (Array.isArray(pt)) {
-        const [x, y] = pt;
-        if (Number.isFinite(x) && Number.isFinite(y)) return { x, y };
-        return null;
-      }
-      const x = Number.isFinite(pt.x) ? pt.x : null;
-      const y = Number.isFinite(pt.y) ? pt.y : null;
-      if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
-      return { x, y };
-    };
+    // PDF export helpers (normalizePointForBounds, getElementBounds, getSceneBounds,
+    // preloadImagesForExport, EXPORT_DPI, PAGE_PX, PDF_IMAGE_COMPRESSION,
+    // drawGridForExport) moved to usePdfExport composable
 
-    const getElementBounds = (element) => {
-      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-      const addPoint = (x, y) => {
-        if (!Number.isFinite(x) || !Number.isFinite(y)) return;
-        minX = Math.min(minX, x);
-        minY = Math.min(minY, y);
-        maxX = Math.max(maxX, x);
-        maxY = Math.max(maxY, y);
-      };
-      const addRect = (x, y, w, h) => {
-        if (![x, y, w, h].every(Number.isFinite)) return;
-        addPoint(x, y);
-        addPoint(x + w, y + h);
-      };
-
-      if (Array.isArray(element?.points)) {
-        element.points.forEach((pt) => {
-          const p = normalizePointForBounds(pt);
-          if (p) addPoint(p.x, p.y);
-        });
-      }
-
-      if (element?.start && element?.end) {
-        const start = normalizePointForBounds(element.start);
-        const end = normalizePointForBounds(element.end);
-        if (start) addPoint(start.x, start.y);
-        if (end) addPoint(end.x, end.y);
-      }
-
-      if (element?.position) {
-        const { x, y } = element.position;
-        const width = Number.isFinite(element.width)
-          ? element.width
-          : Number.isFinite(element.size) ? element.size : 0;
-        const height = Number.isFinite(element.height)
-          ? element.height
-          : Number.isFinite(element.size) ? element.size : 0;
-        addRect(x, y, width, height);
-      }
-
-      if (Number.isFinite(element?.x) && Number.isFinite(element?.y)) {
-        const w = Number.isFinite(element.width) ? element.width : 0;
-        const h = Number.isFinite(element.height) ? element.height : 0;
-        addRect(element.x, element.y, w, h);
-      }
-
-      if (minX === Infinity || minY === Infinity || maxX === -Infinity || maxY === -Infinity) {
-        return null;
-      }
-      const padding = Math.max(2, Number.isFinite(element.lineWidth) ? element.lineWidth : 0);
-      return { x1: minX - padding, y1: minY - padding, x2: maxX + padding, y2: maxY + padding };
-    };
-
-    const getSceneBounds = (elements) => {
-      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-      elements.forEach((el) => {
-        const bounds = getElementBounds(el);
-        if (!bounds) return;
-        minX = Math.min(minX, bounds.x1);
-        minY = Math.min(minY, bounds.y1);
-        maxX = Math.max(maxX, bounds.x2);
-        maxY = Math.max(maxY, bounds.y2);
-      });
-      if (minX === Infinity || minY === Infinity || maxX === -Infinity || maxY === -Infinity) {
-        return null;
-      }
-      return { x1: minX, y1: minY, x2: maxX, y2: maxY };
-    };
-
-    const preloadImagesForExport = async (elements) => {
-      const loaders = [];
-      elements.forEach((el) => {
-        if (el.type !== 'image') return;
-        const src = el.src || el.dataUrl;
-        if (!src) return;
-        const cached = imageCache.value?.get(src);
-        if (cached && cached.complete) return;
-        loaders.push(new Promise((resolve) => {
-          const img = new Image();
-          img.onload = () => {
-            imageCache.value?.set(src, img);
-            resolve(true);
-          };
-          img.onerror = () => resolve(false);
-          img.src = src;
-        }));
-      });
-      if (loaders.length) {
-        await Promise.all(loaders);
-      }
-    };
-
-    // PDF export config
-    // P0-FIX: Reduced DPI from 600 to 200 to avoid OOM on iPad and reduce file size
-    const EXPORT_DPI = 200;
-    const PAGE_SIZE_INCH = { w: 8.27, h: 11.69 }; // A4 portrait in inches
-    const PAGE_PX = {
-      w: Math.round(PAGE_SIZE_INCH.w * EXPORT_DPI),
-      h: Math.round(PAGE_SIZE_INCH.h * EXPORT_DPI),
-    };
-    const PDF_IMAGE_COMPRESSION = 'FAST'; // Use FAST compression to reduce PDF size
-
-    const drawGridForExport = (ctx, bounds, scale, marginPx, pagePx) => {
-      const pan = {
-        x: marginPx - bounds.x1 * scale,
-        y: marginPx - bounds.y1 * scale,
-      };
-      // Use light grid in exports so the background stays printable even in dark mode.
-      drawUtilGrid(ctx, scale, pan, pagePx.w, pagePx.h, false);
-      return pan;
-    };
-
-    const exportBoardAsPdf = async () => {
-      try {
-        debugLog('[WhiteboardCanvas] exportBoardAsPdf start');
-        showToast('Preparing PDF...', 'info', 1500);
-        if (!yDrawings.value || !yDrawings.value.length) {
-          showToast('Nothing to export yet.', 'warning');
-          return;
-        }
-
-        const elements = yDrawings.value.toArray().map(map => map.toJSON());
-        const sceneBounds = getSceneBounds(elements);
-        if (!sceneBounds) {
-          showToast('Nothing to export yet.', 'warning');
-          return;
-        }
-        debugLog('[WhiteboardCanvas] exportBoardAsPdf scene bounds', sceneBounds);
-
-        await preloadImagesForExport(elements);
-
-        const marginPx = Math.round(0.2 * EXPORT_DPI); // ~0.2 inch margin
-        const worldW = Math.max(1, sceneBounds.x2 - sceneBounds.x1);
-        const worldH = Math.max(1, sceneBounds.y2 - sceneBounds.y1);
-        const scale = Math.min(
-          (PAGE_PX.w - 2 * marginPx) / worldW,
-          (PAGE_PX.h - 2 * marginPx) / worldH
-        );
-
-        const offscreen = document.createElement('canvas');
-        offscreen.width = PAGE_PX.w;
-        offscreen.height = PAGE_PX.h;
-        const ctx = offscreen.getContext('2d');
-        if (!ctx) {
-          showToast('Unable to prepare PDF canvas.', 'error');
-          return;
-        }
-
-        const pan = drawGridForExport(
-          ctx,
-          sceneBounds,
-          scale,
-          marginPx,
-          PAGE_PX
-        );
-
-        ctx.save();
-        ctx.translate(pan.x, pan.y);
-        ctx.scale(scale, scale);
-
-        elements.forEach((element) => {
-          drawElement(ctx, element, false, smoothingFactor.value, imageCache.value);
-        });
-
-        ctx.restore();
-
-        // Dynamic import for code splitting - jsPDF is only loaded when needed
-        const { jsPDF } = await import('jspdf');
-        const pdf = new jsPDF('portrait', 'pt', 'a4');
-        const pageW = pdf.internal.pageSize.getWidth();
-        const pageH = pdf.internal.pageSize.getHeight();
-        pdf.addImage(
-          offscreen.toDataURL('image/png'),
-          'PNG',
-          0,
-          0,
-          pageW,
-          pageH,
-          undefined,
-          PDF_IMAGE_COMPRESSION
-        );
-        const blob = pdf.output('blob');
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = 'whiteboard.pdf';
-        a.click();
-        URL.revokeObjectURL(url);
-        debugLog('[WhiteboardCanvas] exportBoardAsPdf done');
-        showToast('Exported to PDF', 'success');
-      } catch (err) {
-        console.error('[exportBoardAsPdf] failed', err);
-        showToast('PDF export failed. Check console.', 'error');
-      }
-    };
-
-    const tileIntersects = (tileRect, bounds) => {
-      return !(bounds.x2 <= tileRect.x1 || bounds.x1 >= tileRect.x2 || bounds.y2 <= tileRect.y1 || bounds.y1 >= tileRect.y2);
-    };
-
-    const renderTileToImage = (tileRect, elements) => {
-      const marginPx = Math.round(0.2 * EXPORT_DPI);
-      const worldW = Math.max(1, tileRect.x2 - tileRect.x1);
-      const worldH = Math.max(1, tileRect.y2 - tileRect.y1);
-      const scale = Math.min(
-        (PAGE_PX.w - 2 * marginPx) / worldW,
-        (PAGE_PX.h - 2 * marginPx) / worldH
-      );
-
-      const off = document.createElement('canvas');
-      off.width = PAGE_PX.w;
-      off.height = PAGE_PX.h;
-      const ctx = off.getContext('2d');
-      if (!ctx) return null;
-
-      const pan = drawGridForExport(
-        ctx,
-        tileRect,
-        scale,
-        marginPx,
-        PAGE_PX
-      );
-
-      ctx.save();
-      ctx.translate(pan.x, pan.y);
-      ctx.scale(scale, scale);
-
-      elements.forEach((el) => {
-        drawElement(ctx, el, false, smoothingFactor.value, imageCache.value);
-      });
-
-      ctx.restore();
-      return off.toDataURL('image/png');
-    };
-
-    const exportBoardAsPdfPaged = async () => {
-      try {
-        debugLog('[WhiteboardCanvas] exportBoardAsPdfPaged start');
-        showToast('Preparing PDF...', 'info', 1500);
-        if (!yDrawings.value || !yDrawings.value.length) {
-          showToast('Nothing to export yet.', 'warning');
-          return;
-        }
-
-        const elements = yDrawings.value.toArray().map(map => map.toJSON());
-        const sceneBounds = getSceneBounds(elements);
-        if (!sceneBounds) {
-          showToast('Nothing to export yet.', 'warning');
-          return;
-        }
-
-        await preloadImagesForExport(elements);
-
-        const TILE_W = 2000;
-        const TILE_H = 1400;
-        const tilesX = Math.max(1, Math.ceil((sceneBounds.x2 - sceneBounds.x1) / TILE_W));
-        const tilesY = Math.max(1, Math.ceil((sceneBounds.y2 - sceneBounds.y1) / TILE_H));
-
-        // Dynamic import for code splitting - jsPDF is only loaded when needed
-        const { jsPDF } = await import('jspdf');
-        const pdf = new jsPDF('portrait', 'pt', 'a4');
-        let isFirst = true;
-
-        for (let ty = 0; ty < tilesY; ty++) {
-          for (let tx = 0; tx < tilesX; tx++) {
-            const tileRect = {
-              x1: sceneBounds.x1 + tx * TILE_W,
-              y1: sceneBounds.y1 + ty * TILE_H,
-              x2: sceneBounds.x1 + (tx + 1) * TILE_W,
-              y2: sceneBounds.y1 + (ty + 1) * TILE_H,
-            };
-
-            const shapesInTile = elements.filter((el) => {
-              const b = getElementBounds(el);
-              if (!b) return false;
-              return tileIntersects(tileRect, b);
-            });
-
-            if (!shapesInTile.length) continue;
-
-            const imgData = renderTileToImage(tileRect, shapesInTile);
-            if (!imgData) continue;
-
-            if (!isFirst) pdf.addPage();
-            isFirst = false;
-            const pageW = pdf.internal.pageSize.getWidth();
-            const pageH = pdf.internal.pageSize.getHeight();
-            pdf.addImage(
-              imgData,
-              'PNG',
-              0,
-              0,
-              pageW,
-              pageH,
-              undefined,
-              PDF_IMAGE_COMPRESSION
-            );
-            pdf.setFontSize(10);
-            pdf.text(`Page ${pdf.getNumberOfPages()}`, pageW - 60, pageH - 20);
-          }
-        }
-
-        if (isFirst) {
-          showToast('Nothing to export yet.', 'warning');
-          return;
-        }
-
-        const blob = pdf.output('blob');
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = 'whiteboard-notes.pdf';
-        a.click();
-        URL.revokeObjectURL(url);
-        debugLog('[WhiteboardCanvas] exportBoardAsPdfPaged done');
-        showToast('Exported to PDF (notes)', 'success');
-      } catch (err) {
-        console.error('[exportBoardAsPdfPaged] failed', err);
-        showToast('PDF export failed. Check console.', 'error');
-      }
-    };
-
-    // P0-FIX: Implement getSnapshot (was missing, breaking Export Whiteboard)
-    const getSnapshot = () => {
-      if (!ydoc.value) return '';
-      try {
-        const stateUpdate = Y.encodeStateAsUpdate(ydoc.value);
-        // Convert Uint8Array to base64
-        let binary = '';
-        for (let i = 0; i < stateUpdate.length; i++) {
-          binary += String.fromCharCode(stateUpdate[i]);
-        }
-        return window.btoa(binary);
-      } catch (err) {
-        debugWarn('[getSnapshot] Error encoding state:', err);
-        return '';
-      }
-    };
-    const getSerializableState = () => { return getSnapshot(); };
-    const loadState = (state) => { return false; }; // Placeholder
-    const exportAsText = () => { return getSnapshot(); };
-    const importFromText = (text) => { return false; }; // Placeholder
+    // exportBoardAsPdf, exportBoardAsPdfPaged, getSnapshot, getSerializableState,
+    // loadState, exportAsText, importFromText moved to usePdfExport composable
 
     const toggleDebug = (enabled) => {
         debugModeEnabled.value = enabled;
@@ -4485,15 +3630,7 @@ export default {
   }
 };
 
-const detachLineBindings = (lineId) => {
-  if (!ydoc.value || !yDrawings.value) return;
-  const map = findElementMapById(lineId);
-  if (!map || map.get('type') !== 'line') return;
-  ydoc.value.transact(() => {
-    if (map.has('startBinding')) map.delete('startBinding');
-    if (map.has('endBinding')) map.delete('endBinding');
-  }, 'line-detach-binding');
-};
+// detachLineBindings moved to useLineBindings composable (was incorrectly outside setup scope)
 
 </script>
 

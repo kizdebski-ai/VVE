@@ -17,6 +17,7 @@ import { createAdminTeachersRouter } from './routes/adminTeachers';
 import { createTeacherAuthRouter } from './routes/teacherAuth';
 import { createTeacherBoardsRouter } from './routes/teacherBoards';
 import { createBoardAccessRouter } from './routes/boardAccess';
+import { verifyBoardWsToken } from './services/boardTokens';
 
 const API_ROOMS = '/api/rooms';
 const AI_SOLVER_ROUTE = '/api/ai/solve-equation/';
@@ -248,6 +249,20 @@ export const createHttpApp = ({ roomManager, aiSolver }: CreateAppOptions) => {
 
   app.post('/api/ai/chat', async (req, res) => {
     try {
+      // P2-15: Verify board token – students are blocked from AI chat
+      const boardToken = req.headers['x-board-token'] as string | undefined;
+      if (boardToken) {
+        const session = verifyBoardWsToken(boardToken);
+        if (!session) {
+          res.status(401).json({ error: 'Invalid or expired board token.' });
+          return;
+        }
+        if (session.role === 'student') {
+          res.status(403).json({ error: 'AI chat is not available for students.' });
+          return;
+        }
+      }
+
       const history = Array.isArray(req.body?.history) ? (req.body.history as ChatMessage[]) : [];
       const message = typeof req.body?.message === 'string' ? req.body.message.trim() : '';
       const includeScreenshot = Boolean(req.body?.includeScreenshot);

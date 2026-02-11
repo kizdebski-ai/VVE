@@ -37,9 +37,10 @@
         @update:has-stylized-strokes="hasStylizedStrokes = $event"
       />
       <AIChatPanel
-        v-if="roomId"
+        v-if="roomId && userRole !== 'student'"
         :whiteboard-ref="whiteboard?.containerRef?.value || null"
         :room-id="roomId"
+        :ws-token="storedWsToken"
       />
        <GridAlignPanel
          v-if="activeFeature === 'gridAlign'"
@@ -274,6 +275,7 @@ export default {
     const toolbar = ref(null); // Ref for the toolbar component
     const roomId = ref(null);
     const roomKey = ref(null);
+    const userRole = ref(null); // null = peer room (no role), 'teacher' | 'student'
     const username = ref(localStorage.getItem('username') || 'Guest');
     const updateUsername = () => {
       localStorage.setItem('username', username.value);
@@ -383,6 +385,18 @@ export default {
     const storedWsToken = computed(() => {
       return localStorage.getItem('board_ws_token') || null;
     });
+
+    // Decode role from a board wsToken (base64url payload before the dot)
+    const parseRoleFromToken = (token) => {
+      if (!token) return null;
+      try {
+        const [base] = token.split('.');
+        if (!base) return null;
+        const json = atob(base.replace(/-/g, '+').replace(/_/g, '/'));
+        const payload = JSON.parse(json);
+        return payload.role || null;
+      } catch { return null; }
+    };
 
     // Graph Panels
     const showMathGraphPanel = ref(false);
@@ -1207,13 +1221,14 @@ export default {
           roomId.value = queryRoom;
           // Use a dummy key or skip encryption for token-based boards
           roomKey.value = 'board-token-access';
+          userRole.value = parseRoleFromToken(queryWsToken);
           if (queryName) {
             username.value = queryName;
             localStorage.setItem('username', queryName);
           }
           // Store wsToken for WhiteboardCanvas to use
           localStorage.setItem('board_ws_token', queryWsToken);
-          appDebugLog(`App mounted with board token. Room ID: ${roomId.value}`);
+          appDebugLog(`App mounted with board token. Room ID: ${roomId.value}, role: ${userRole.value}`);
           return;
         }
         
@@ -1280,6 +1295,7 @@ export default {
       userInfoCollapsed,
       roomId,
       roomKey,
+      userRole,
       storedWsToken,
       currentTool,
       currentColor,

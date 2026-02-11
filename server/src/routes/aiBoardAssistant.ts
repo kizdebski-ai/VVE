@@ -5,6 +5,7 @@ import { runBoardAgent } from '../ai/agent/boardAgent';
 import { RoomManager } from '../rooms';
 import { config } from '../config';
 import { logger } from '../logger';
+import { verifyBoardWsToken } from '../services/boardTokens';
 
 export const createAiBoardAssistantRouter = (roomManager: RoomManager) => {
     const router = Router();
@@ -13,6 +14,20 @@ export const createAiBoardAssistantRouter = (roomManager: RoomManager) => {
         if (!config.aiBoardAssistantEnabled) {
             res.status(503).json({ error: 'AI Board Assistant is disabled.' });
             return;
+        }
+
+        // P2-15: Verify board token – students are blocked from AI board assistant
+        const boardToken = req.headers['x-board-token'] as string | undefined;
+        if (boardToken) {
+            const session = verifyBoardWsToken(boardToken);
+            if (!session) {
+                res.status(401).json({ error: 'Invalid or expired board token.' });
+                return;
+            }
+            if (session.role === 'student') {
+                res.status(403).json({ error: 'AI assistant is not available for students.' });
+                return;
+            }
         }
 
         try {

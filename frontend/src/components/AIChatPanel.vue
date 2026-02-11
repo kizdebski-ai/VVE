@@ -230,6 +230,10 @@ const props = defineProps({
     type: String,
     required: true,
   },
+  wsToken: {
+    type: String,
+    default: null,
+  },
 });
 
 const isMinimized = ref(false);
@@ -401,9 +405,12 @@ const sendMessage = async (mode = 'normal_chat') => {
       mode,
     };
 
+    const headers = { 'Content-Type': 'application/json' };
+    if (props.wsToken) headers['X-Board-Token'] = props.wsToken;
+
     const response = await fetchWithTimeout(`${API_BASE}/api/ai/chat`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify(payload),
     });
 
@@ -494,6 +501,7 @@ const submitAgent = async () => {
       getViewport(),
       snapshot,
       selectedModel.value,
+      props.wsToken,
     );
   } catch (e) {
     console.error(e);
@@ -509,6 +517,7 @@ const triggerAgentAction = async (prompt) => {
       getViewport(),
       snapshot,
       selectedModel.value,
+      props.wsToken,
     );
   } catch (e) {
     console.error(e);

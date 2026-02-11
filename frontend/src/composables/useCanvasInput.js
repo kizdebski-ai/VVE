@@ -331,8 +331,12 @@ export function useCanvasInput(canvasRef, zoomLevel, panOffset, currentTool, cur
     internalCanvasRef.value.addEventListener('touchend', handleTouchEnd, { passive: false });
     internalCanvasRef.value.addEventListener('touchcancel', handleTouchEnd, { passive: false }); // Treat cancel like end
 
-    // Prevent context menu on canvas
-    internalCanvasRef.value.addEventListener('contextmenu', (e) => e.preventDefault());
+    // Prevent context menu on canvas (save reference for cleanup)
+    const preventContextMenu = (e) => e.preventDefault();
+    internalCanvasRef.value.addEventListener('contextmenu', preventContextMenu);
+
+    // Store reference for cleanup
+    internalCanvasRef.value._preventContextMenu = preventContextMenu;
   });
 
   onUnmounted(() => {
@@ -345,7 +349,9 @@ export function useCanvasInput(canvasRef, zoomLevel, panOffset, currentTool, cur
     internalCanvasRef.value.removeEventListener('touchmove', handleTouchMove);
     internalCanvasRef.value.removeEventListener('touchend', handleTouchEnd);
     internalCanvasRef.value.removeEventListener('touchcancel', handleTouchEnd);
-    internalCanvasRef.value.removeEventListener('contextmenu', (e) => e.preventDefault());
+    if (internalCanvasRef.value._preventContextMenu) {
+      internalCanvasRef.value.removeEventListener('contextmenu', internalCanvasRef.value._preventContextMenu);
+    }
     document.body.style.cursor = ''; // Ensure cursor is reset
   });
 

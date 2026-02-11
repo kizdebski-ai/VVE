@@ -42,7 +42,7 @@
     <!-- Render MovableObject components -->
     <movable-object
       v-for="elementMap in movableElements"
-      :key="elementMap.get('id') || elementMap._tempKey || Math.random()"
+      :key="elementMap.get('id') || elementMap._tempKey || `fallback-${elementMap.doc?.clientID || 'u'}-${Date.now()}`"
       :object="elementMap"
       :zoom-level="zoomLevel"
       :pan-offset="panOffset"
@@ -1121,7 +1121,7 @@ export default {
         }
         // Map Yjs elements to local plain objects once
         const rawArray = yDrawings.value.toArray();
-        console.log(`[WhiteboardCanvas] updateLocalScene: processing ${rawArray.length} elements`);
+        // debugLog(`[WhiteboardCanvas] updateLocalScene: processing ${rawArray.length} elements`);
         localScene = rawArray.map(map => {
             const json = map.toJSON();
             if (overrideObject && json.id === overrideObject.id) {
@@ -1197,7 +1197,7 @@ export default {
 
       // Determine strokes to draw
       let strokesToDraw = localScene;
-      console.log(`[WhiteboardCanvas] redrawStatic: drawing ${strokesToDraw.length} strokes`);
+      // debugLog(`[WhiteboardCanvas] redrawStatic: drawing ${strokesToDraw.length} strokes`);
       if (props.activeFeature === 'styleHandwriting' && handwritingStylerModule.value?.hasStylizedStrokes()) {
           strokesToDraw = handwritingStylerModule.value.getStrokes();
       }
@@ -1586,7 +1586,7 @@ export default {
     };
 
     const handleYjsUpdate = (event) => {
-        console.log('[WhiteboardCanvas] Yjs update received', event);
+        // debugLog('[WhiteboardCanvas] Yjs update received', event);
         updateLocalScene(); // Sync local cache
         refreshMovableElements();
         syncModulesWithYjs();
@@ -1660,12 +1660,12 @@ export default {
 
     const initCanvas = () => {
       if (staticCanvas.value) {
-        staticContext.value = staticCanvas.value.getContext('2d', { willReadFrequently: true });
+        staticContext.value = staticCanvas.value.getContext('2d');
         staticContext.value.lineCap = 'round';
         staticContext.value.lineJoin = 'round';
       }
       if (drawCanvas.value) {
-        drawContext.value = drawCanvas.value.getContext('2d', { willReadFrequently: true });
+        drawContext.value = drawCanvas.value.getContext('2d');
         drawContext.value.lineCap = 'round';
         drawContext.value.lineJoin = 'round';
         drawContext.value.strokeStyle = currentColor.value;
@@ -2093,7 +2093,6 @@ export default {
 
         const clickedObjectFoundId = findMovableElementIdAtPoint(transformedCoords);
         selectedObjectId.value = clickedObjectFoundId;
-        debugLog('[WhiteboardCanvas] Right-click selected:', selectedObjectId.value);
         debugLog('[WhiteboardCanvas] Right-click selected:', selectedObjectId.value);
         redrawCanvas(false); // Selection is dynamic (overlay/MovableObject) - wait, MovableObject is DOM.
         // But if we have selection logic in canvas (e.g. highlight), we need redraw.
@@ -3467,7 +3466,7 @@ export default {
 
     const exportBoardAsPdf = async () => {
       try {
-        console.log('[WhiteboardCanvas] exportBoardAsPdf start');
+        debugLog('[WhiteboardCanvas] exportBoardAsPdf start');
         showToast('Preparing PDF...', 'info', 1500);
         if (!yDrawings.value || !yDrawings.value.length) {
           showToast('Nothing to export yet.', 'warning');
@@ -3480,7 +3479,7 @@ export default {
           showToast('Nothing to export yet.', 'warning');
           return;
         }
-        console.log('[WhiteboardCanvas] exportBoardAsPdf scene bounds', sceneBounds);
+        debugLog('[WhiteboardCanvas] exportBoardAsPdf scene bounds', sceneBounds);
 
         await preloadImagesForExport(elements);
 
@@ -3539,7 +3538,7 @@ export default {
         a.download = 'whiteboard.pdf';
         a.click();
         URL.revokeObjectURL(url);
-        console.log('[WhiteboardCanvas] exportBoardAsPdf done');
+        debugLog('[WhiteboardCanvas] exportBoardAsPdf done');
         showToast('Exported to PDF', 'success');
       } catch (err) {
         console.error('[exportBoardAsPdf] failed', err);
@@ -3588,7 +3587,7 @@ export default {
 
     const exportBoardAsPdfPaged = async () => {
       try {
-        console.log('[WhiteboardCanvas] exportBoardAsPdfPaged start');
+        debugLog('[WhiteboardCanvas] exportBoardAsPdfPaged start');
         showToast('Preparing PDF...', 'info', 1500);
         if (!yDrawings.value || !yDrawings.value.length) {
           showToast('Nothing to export yet.', 'warning');
@@ -3663,7 +3662,7 @@ export default {
         a.download = 'whiteboard-notes.pdf';
         a.click();
         URL.revokeObjectURL(url);
-        console.log('[WhiteboardCanvas] exportBoardAsPdfPaged done');
+        debugLog('[WhiteboardCanvas] exportBoardAsPdfPaged done');
         showToast('Exported to PDF (notes)', 'success');
       } catch (err) {
         console.error('[exportBoardAsPdfPaged] failed', err);

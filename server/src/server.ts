@@ -12,18 +12,13 @@ import { OpenRouterEquationSolver } from './services/aiSolver';
 import { verifyBoardWsToken } from './services/boardTokens';
 import { BoardYjsPersistence } from './services/boardYjsPersistence';
 
-// Debug: Check API Key
+// Startup config check (no secrets logged)
 const apiKey = process.env.OPENROUTER_API_KEY;
-console.log('----------------------------------------');
-console.log('Server Startup Config Check:');
-console.log(`OPENROUTER_API_KEY present: ${!!apiKey}`);
-if (apiKey) {
-  console.log(`OPENROUTER_API_KEY length: ${apiKey.length}`);
-  console.log(`OPENROUTER_API_KEY prefix: ${apiKey.substring(0, 10)}...`);
+if (!apiKey) {
+  logger.warn('OPENROUTER_API_KEY is not set - AI features will be unavailable');
 } else {
-  console.error('CRITICAL: OPENROUTER_API_KEY is MISSING in process.env!');
+  logger.info('OPENROUTER_API_KEY configured', { length: apiKey.length });
 }
-console.log('----------------------------------------');
 
 const messageSync = 0;
 const messageAwareness = 1;
@@ -62,9 +57,7 @@ const broadcast = (
       sentCount++;
     }
   });
-  if (type === messageSync) {
-    console.log(`[Server] Broadcast sync update to ${sentCount} clients (total: ${room.connections.size})`);
-  }
+  // Verbose sync logging removed for performance
 };
 
 const toUint8Array = (raw: WebSocket.RawData): Uint8Array => {
@@ -89,8 +82,7 @@ const initializeRoom = (room: RoomContext) => {
     room.meta.updatedAt = timestamp;
     room.meta.lastActiveAt = timestamp;
     room.lastActive = timestamp;
-    logger.info('Generated update', { size: update.length, originIsWs: origin instanceof WebSocket, origin });
-    console.log(`[Server] Generated update. Size: ${update.length}, Origin: ${origin}`);
+    logger.debug('Generated update', { size: update.length, originIsWs: origin instanceof WebSocket });
     boardPersistence
       .recordUpdate(room.id, update, room.doc)
       .catch((error) =>

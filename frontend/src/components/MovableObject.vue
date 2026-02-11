@@ -178,7 +178,6 @@ const emit = defineEmits<{
   (e: 'update:object', object: Y.Map<any> | any): void;
   (e: 'clone-object', data: any): void;
   (e: 'update:snap-guides', guides: any[]): void;
-  (e: 'update:snap-guides', guides: any[]): void;
   (e: 'double-click', id: string | number): void;
   (e: 'interaction-start', id: string | number): void;
   (e: 'interaction-end', id: string | number): void;

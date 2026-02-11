@@ -28,14 +28,12 @@ for (const dir of searchDirs) {
   }
 }
 
-console.log('--- Config Debug ---');
-console.log('CWD:', process.cwd());
+// Config debug (only in development)
 const loadedNames = loadedEnvFiles.filter((entry) => entry.loaded).map((entry) => entry.path);
-console.log('Env files loaded:', loadedNames.length ? loadedNames.join(', ') : 'None');
 const parsedKeys = loadedEnvFiles.flatMap((entry) => entry.parsedKeys);
-console.log('Parsed env keys:', parsedKeys.length ? parsedKeys : 'None');
-console.log('OPENROUTER_API_KEY from process.env:', process.env.OPENROUTER_API_KEY ? 'Present' : 'Missing');
-console.log('--------------------');
+if (process.env.NODE_ENV !== 'production') {
+  console.log('Config: env files loaded:', loadedNames.length ? loadedNames.join(', ') : 'None');
+}
 
 export const config = {
   host: process.env.HOST || '0.0.0.0',

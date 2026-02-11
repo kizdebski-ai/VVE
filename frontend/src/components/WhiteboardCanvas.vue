@@ -417,6 +417,10 @@ export default {
     const movableElements = shallowRef([]);
     const hoveredElementIndex = ref(-1);
     const selectedObjectId = ref(null); // Added for selection state
+    // Watch selection changes to update DOM elements (placed at setup root to avoid leak)
+    watch(selectedObjectId, () => {
+        refreshMovableElements();
+    });
     const interactingElementId = ref(null); // Track which element is being interacted with (drag/resize/rotate)
     const spacePanActive = ref(false);
     const connectorsVisible = computed(() => currentTool.value === 'lines' || (isDrawing.value && currentElementPreview.value?.type === 'line'));
@@ -1140,8 +1144,6 @@ export default {
     };
 
     const isElementVisible = (element, viewRect) => {
-        // Simple bounding box check
-        // Assuming element has x, y, width, height or start/end
         let minX, minY, maxX, maxY;
 
         if (element.type === 'line' && element.start && element.end) {
@@ -1149,26 +1151,42 @@ export default {
             minY = Math.min(element.start.y, element.end.y);
             maxX = Math.max(element.start.x, element.end.x);
             maxY = Math.max(element.start.y, element.end.y);
-            // Add line width padding
             const padding = (element.lineWidth || 2) / 2;
             minX -= padding; minY -= padding; maxX += padding; maxY += padding;
-        } else if (typeof element.x === 'number' && typeof element.y === 'number') {
+        } else if (typeof element.x === 'number' && typeof element.y === 'number'
+                   && typeof element.width === 'number' && typeof element.height === 'number') {
+            // Use stored bounds (x, y, width, height) - works for pen, shapes, images, text
             minX = element.x;
             minY = element.y;
-            maxX = element.x + (element.width || 0);
-            maxY = element.y + (element.height || 0);
+            maxX = element.x + element.width;
+            maxY = element.y + element.height;
+            // Add padding for pen strokes that may extend beyond bounds
+            const padding = (element.lineWidth || 2);
+            minX -= padding; minY -= padding; maxX += padding; maxY += padding;
         } else if (element.points && element.points.length > 0) {
-             // For freehand strokes
-             // This might be expensive to iterate points every time. 
-             // Ideally bounds should be stored on the element.
-             // If not present, we skip culling or calculate once.
-             // Let's assume for now we skip culling for complex paths without bounds
-             return true; 
+            // Compute bounds from points on the fly (cached via _bounds)
+            if (element._bounds) {
+                ({ minX, minY, maxX, maxY } = element._bounds);
+            } else {
+                minX = Infinity; minY = Infinity; maxX = -Infinity; maxY = -Infinity;
+                for (const pt of element.points) {
+                    const px = typeof pt.x === 'number' ? pt.x : (Array.isArray(pt) ? pt[0] : 0);
+                    const py = typeof pt.y === 'number' ? pt.y : (Array.isArray(pt) ? pt[1] : 0);
+                    if (px < minX) minX = px;
+                    if (py < minY) minY = py;
+                    if (px > maxX) maxX = px;
+                    if (py > maxY) maxY = py;
+                }
+                const padding = (element.lineWidth || 2);
+                minX -= padding; minY -= padding; maxX += padding; maxY += padding;
+                // Cache computed bounds on the element for subsequent frames
+                element._bounds = { minX, minY, maxX, maxY };
+            }
         } else {
             return true; // Default to visible if bounds unknown
         }
 
-        return !(maxX < viewRect.x || minX > viewRect.x + viewRect.width || 
+        return !(maxX < viewRect.x || minX > viewRect.x + viewRect.width ||
                  maxY < viewRect.y || minY > viewRect.y + viewRect.height);
     };
 
@@ -1254,6 +1272,7 @@ export default {
       const ctx = drawContext.value;
       const ratio = devicePixelRatio.value || 1;
       const gridMetrics = computeGridSteps(zoomLevel.value);
+      const rc = rough.canvas(ctx.canvas); // Reuse single rc for all dynamic draws
 
       ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
       ctx.clearRect(0, 0, canvasWidth.value, canvasHeight.value);
@@ -1277,7 +1296,8 @@ export default {
                 smoothingFactor.value,
                 imageCache.value,
                 undefined,
-                props.handwritingStylerOptions || {}
+                props.handwritingStylerOptions || {},
+                rc
              );
          }
       }
@@ -1304,11 +1324,8 @@ export default {
         });
       };
 
-      // Need strokes for connectors
-      let strokesToDraw = [];
-      if (yDrawings.value) {
-          strokesToDraw = yDrawings.value.toArray().map(map => map.toJSON());
-      }
+      // Reuse localScene for connector dots (avoid expensive toArray().toJSON() on every dynamic redraw)
+      const strokesToDraw = localScene;
 
       if (connectorsVisible.value) {
         const connectorElementIds = new Set();
@@ -1351,7 +1368,8 @@ export default {
           smoothingFactor.value,
           undefined,
           undefined,
-          props.handwritingStylerOptions || {}
+          props.handwritingStylerOptions || {},
+          rc
         );
       }
 
@@ -1611,11 +1629,6 @@ export default {
 
         teardownYjsConnection();
         selectedObjectId.value = null;
-
-        // Watch selection changes to update DOM elements
-        watch(selectedObjectId, () => {
-             refreshMovableElements();
-        });
 
         try {
             // Pass roomKey to connectToYjs for E2E encryption
@@ -2466,27 +2479,42 @@ export default {
       }
     };
 
-    const eraseElement = (indexOrId) => { // Can now accept index or ID
+    const eraseElement = (indexOrId) => {
       if (!ydoc.value || !yDrawings.value) return;
 
+      // Always resolve to a fresh index right before deletion to avoid race conditions
+      // in collaborative sessions where indices may shift between hover and delete.
       let elementIndex = -1;
-      if (typeof indexOrId === 'number') {
-        elementIndex = indexOrId;
-      } else if (typeof indexOrId === 'string') {
+      if (typeof indexOrId === 'string') {
+        // ID-based: safest approach
         elementIndex = yDrawings.value.toArray().findIndex(elMap => elMap.get('id') === indexOrId);
+      } else if (typeof indexOrId === 'number') {
+        // Index-based: verify the element still exists at this index
+        // For safety, get the element's ID first and re-find by ID
+        const elemAtIndex = indexOrId >= 0 && indexOrId < yDrawings.value.length
+          ? yDrawings.value.get(indexOrId) : null;
+        if (elemAtIndex) {
+          const id = elemAtIndex.get('id');
+          if (id) {
+            // Re-find by ID to get the actual current index
+            elementIndex = yDrawings.value.toArray().findIndex(elMap => elMap.get('id') === id);
+          } else {
+            elementIndex = indexOrId; // Fallback if element has no ID
+          }
+        }
       }
-      
+
       if (elementIndex !== -1 && elementIndex >= 0 && elementIndex < yDrawings.value.length) {
         debugLog(`[eraseElement] Removing element at index: ${elementIndex}`);
 
         ydoc.value.transact(() => {
           yDrawings.value.delete(elementIndex, 1);
-        }, 'local-erase'); 
+        }, 'local-erase');
         refreshMovableElements();
 
         nextTick(() => {
           if (undoManager.value) {
-             updateGlobalState(); 
+             updateGlobalState();
           }
         });
       } else {

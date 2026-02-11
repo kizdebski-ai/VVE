@@ -247,20 +247,30 @@
       @pointerenter="handleHoverEnter"
       @pointerleave="handleHoverLeave"
     >
-      <!-- Color Picker -->
-      <div class="property-group">
-        <div 
-          class="color-preview" 
+      <!-- Color Picker + Quick Swatches -->
+      <div class="property-group color-group">
+        <div
+          class="color-preview"
           :style="{ backgroundColor: currentColor }"
           @click="toggleColorPicker"
         ></div>
-        <input 
-          type="color" 
-          ref="colorInput" 
-          v-model="currentColor" 
+        <input
+          type="color"
+          ref="colorInput"
+          v-model="currentColor"
           @input="updateColor"
           class="hidden-color-input"
         >
+        <div class="quick-swatches">
+          <button
+            v-for="swatch in quickSwatches"
+            :key="swatch"
+            class="quick-swatch"
+            :style="{ backgroundColor: swatch }"
+            :class="{ active: currentColor === swatch }"
+            @click="selectColorSwatch(swatch)"
+          ></button>
+        </div>
       </div>
 
       <!-- Line Width Slider -->
@@ -409,12 +419,20 @@ const arrowStyleOptions = [
 const colorSwatches = [
   '#000000',
   '#4b5563',
+  '#ffffff',
   '#2563eb',
+  '#3b82f6',
+  '#06b6d4',
+  '#14b8a6',
   '#16a34a',
+  '#84cc16',
   '#f59e0b',
+  '#f97316',
   '#dc2626',
+  '#ec4899',
   '#7c3aed',
-  '#14b8a6'
+  '#8b5cf6',
+  '#a855f7'
 ];
 
 const fillColorSwatches = [
@@ -426,6 +444,12 @@ const fillColorSwatches = [
   '#ccfbf1', // teal-100
   '#f3f4f6', // gray-100
   '#ffffff'  // white
+];
+
+// Quick color swatches shown inline in the properties bar (subset of full palette)
+const quickSwatches = [
+  '#000000', '#dc2626', '#2563eb', '#16a34a',
+  '#f59e0b', '#7c3aed', '#ec4899', '#ffffff'
 ];
 
 const coordinateOptions = [
@@ -1006,6 +1030,37 @@ onBeforeUnmount(() => {
     font-size: 12px;
     color: var(--text-secondary);
     font-weight: 500;
+}
+
+/* Quick color swatches in properties bar */
+.color-group {
+  flex-wrap: wrap;
+}
+
+.quick-swatches {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.quick-swatch {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  cursor: pointer;
+  transition: transform 0.15s;
+  padding: 0;
+}
+
+.quick-swatch:hover {
+  transform: scale(1.2);
+  border-color: rgba(255, 255, 255, 0.5);
+}
+
+.quick-swatch.active {
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 0 1px var(--accent-primary);
 }
 </style>
 

@@ -1,5 +1,6 @@
 import express, { Request, type RequestHandler } from 'express';
 import cors from 'cors';
+import helmet from 'helmet';
 import * as fs from 'fs';
 import * as path from 'path';
 import { randomUUID } from 'crypto';
@@ -51,6 +52,12 @@ export interface CreateAppOptions {
 
 export const createHttpApp = ({ roomManager, aiSolver }: CreateAppOptions) => {
   const app = express();
+
+  // P2-FIX: Security headers via helmet
+  app.use(helmet({
+    contentSecurityPolicy: false, // CSP is complex with inline scripts/styles, disable for now
+    crossOriginEmbedderPolicy: false, // Allow embedding of external images (e.g. user-uploaded)
+  }));
 
   // SEC-004: Configurable CORS origin (defaults to open for dev, restrict via CORS_ORIGIN in production)
   const corsOrigin = process.env.CORS_ORIGIN;

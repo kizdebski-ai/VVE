@@ -23,7 +23,11 @@ if (!apiKey) {
 const messageSync = 0;
 const messageAwareness = 1;
 
-type ManagedSocket = WebSocket & { isAlive?: boolean };
+type ManagedSocket = WebSocket & {
+  isAlive?: boolean;
+  msgCount?: number;
+  msgWindowStart?: number;
+};
 type AwarenessChange = {
   added: number[];
   updated: number[];
@@ -129,9 +133,29 @@ const sendInitialSync = (room: RoomContext, ws: WebSocket) => {
   }
 };
 
-const handleMessage = (room: RoomContext, ws: WebSocket, data: Uint8Array) => {
+// SEC-002: Simple per-connection rate limiting
+const WS_RATE_LIMIT = 300; // max messages per window
+const WS_RATE_WINDOW_MS = 1000; // 1-second window
+
+const checkRateLimit = (ws: ManagedSocket): boolean => {
+  const now = Date.now();
+  if (!ws.msgWindowStart || now - ws.msgWindowStart > WS_RATE_WINDOW_MS) {
+    ws.msgWindowStart = now;
+    ws.msgCount = 1;
+    return true;
+  }
+  ws.msgCount = (ws.msgCount || 0) + 1;
+  return ws.msgCount <= WS_RATE_LIMIT;
+};
+
+const handleMessage = (room: RoomContext, ws: ManagedSocket, data: Uint8Array) => {
   if (!data || data.length === 0) {
     logger.debug('Ignoring empty WebSocket message');
+    return;
+  }
+
+  if (!checkRateLimit(ws)) {
+    logger.warn('WebSocket rate limit exceeded, dropping message');
     return;
   }
 
@@ -141,7 +165,7 @@ const handleMessage = (room: RoomContext, ws: WebSocket, data: Uint8Array) => {
   switch (messageType) {
     case messageSync: {
       try {
-        logger.info('Processing sync message', { size: payload.length });
+        logger.debug('Processing sync message', { size: payload.length });
         Y.applyUpdate(room.doc, payload, ws);
       } catch (error) {
         logger.warn('Failed to apply doc update', {
@@ -279,7 +303,16 @@ server.listen(config.port, config.host, () => {
 const shutdown = () => {
   logger.info('Shutting down server');
   clearInterval(pingInterval);
-  wss.clients.forEach((client) => client.terminate());
+  // BE-004: Graceful close instead of hard terminate
+  wss.clients.forEach((client) => {
+    if (client.readyState === WebSocket.OPEN) {
+      client.close(1001, 'Server shutting down');
+    }
+  });
+  // Force terminate any lingering connections after 3 seconds
+  setTimeout(() => {
+    wss.clients.forEach((client) => client.terminate());
+  }, 3000);
   server.close(() => process.exit(0));
 };
 

@@ -96,6 +96,12 @@
       @update:mode="setEraserMode"
     />
 
+    <!-- Connection loading indicator -->
+    <div v-if="isConnecting" class="connection-loading">
+      <div class="connection-spinner"></div>
+      <span>Connecting...</span>
+    </div>
+
     <!-- Status message -->
     <StatusMessage :message="statusMessage" />
 
@@ -303,9 +309,10 @@ export default {
         minWidth: '50px',
         minHeight: '1.2em',
         zIndex: 2000,
-        background: 'transparent', // Transparent for "on board" feel
-        border: 'none',            // No border
+        background: 'rgba(255, 255, 255, 0.05)',
+        border: '1px dashed rgba(99, 102, 241, 0.4)',
         outline: 'none',
+        borderRadius: '2px',
         resize: 'none',
         overflow: 'hidden',
         fontFamily: '"Kalam", cursive', // Hand-like font
@@ -327,6 +334,7 @@ export default {
     const lastPanPoint = ref(null);
     const statusMessage = ref('');
     const statusTimeout = ref(null);
+    const isConnecting = ref(false);
     const darkMode = ref(false);
     const eraserMode = ref('erase');
     const eraserSize = ref(30);
@@ -1117,6 +1125,8 @@ export default {
 
     // Local scene cache to avoid expensive Yjs toJSON calls
     let localScene = [];
+    const ELEMENT_COUNT_WARNING = 500;
+    let elementCountWarningShown = false;
 
     const updateLocalScene = (overrideObject = null) => {
         if (!yDrawings.value) {
@@ -1125,7 +1135,6 @@ export default {
         }
         // Map Yjs elements to local plain objects once
         const rawArray = yDrawings.value.toArray();
-        // debugLog(`[WhiteboardCanvas] updateLocalScene: processing ${rawArray.length} elements`);
         localScene = rawArray.map(map => {
             const json = map.toJSON();
             if (overrideObject && json.id === overrideObject.id) {
@@ -1133,6 +1142,14 @@ export default {
             }
             return json;
         });
+
+        // UX-006: Warn user when element count is getting high
+        if (rawArray.length >= ELEMENT_COUNT_WARNING && !elementCountWarningShown) {
+            elementCountWarningShown = true;
+            showToast(`Board has ${rawArray.length}+ elements. Performance may degrade.`, "warning");
+        } else if (rawArray.length < ELEMENT_COUNT_WARNING) {
+            elementCountWarningShown = false;
+        }
         
         // Also sync with helper modules if needed
         if (props.activeFeature === 'styleHandwriting' && handwritingStylerModule.value?.hasStylizedStrokes()) {
@@ -1564,21 +1581,27 @@ export default {
     };
 
     // Setup awareness listener to track other users
+    let awarenessRedrawScheduled = false;
     const setupAwarenessListener = () => {
         debugLog('[WhiteboardCanvas] setupAwarenessListener called');
         if (!yjsConnection.value?.awareness) {
             console.warn('[WhiteboardCanvas] No awareness available!');
             return;
         }
-        
+
         const awareness = yjsConnection.value.awareness;
         debugLog('[WhiteboardCanvas] Setting up awareness listener, clientID:', awareness.clientID);
-        
+
         // Listen for awareness changes (cursors, online users)
-        awareness.on('change', (changes) => {
-            debugLog('[WhiteboardCanvas] Awareness changed:', changes);
-            // Trigger redraw to show updated cursors
-            redrawCanvas(false); // Cursors are dynamic
+        // Throttled via rAF to avoid full dynamic redraw on every cursor move from every user
+        awareness.on('change', () => {
+            if (!awarenessRedrawScheduled) {
+                awarenessRedrawScheduled = true;
+                requestAnimationFrame(() => {
+                    awarenessRedrawScheduled = false;
+                    redrawCanvas(false); // Cursors are dynamic
+                });
+            }
         });
     };
 
@@ -1629,6 +1652,7 @@ export default {
 
         teardownYjsConnection();
         selectedObjectId.value = null;
+        isConnecting.value = true;
 
         try {
             // Pass roomKey to connectToYjs for E2E encryption
@@ -1665,6 +1689,8 @@ export default {
         } catch (error) {
             console.error("Failed to connect Yjs provider:", error);
             showToast("Error connecting to collaboration session.", "error");
+        } finally {
+            isConnecting.value = false;
         }
     };
 
@@ -3237,10 +3263,19 @@ export default {
        }
     };
 
+    const MAX_IMAGE_DATAURL_BYTES = 5 * 1024 * 1024; // 5 MB limit for base64 dataUrl
+
     const addImageFromDataUrl = (dataUrl) => {
         if (!ydoc.value || !yDrawings.value) {
             console.error("[addImageFromDataUrl] Error: ydoc or yDrawings not available!");
             showToast("Cannot add image - connection issue", "error");
+            return;
+        }
+
+        // SEC-003: Validate image size before syncing via Yjs
+        if (typeof dataUrl === 'string' && dataUrl.length > MAX_IMAGE_DATAURL_BYTES) {
+            const sizeMB = (dataUrl.length / (1024 * 1024)).toFixed(1);
+            showToast(`Image too large (${sizeMB} MB). Maximum is 5 MB.`, "error");
             return;
         }
 
@@ -4338,6 +4373,9 @@ export default {
       handleSnapGuidesUpdate,
       transformX,
       transformY,
+
+      // Connection state
+      isConnecting,
       
       applyGhostAnswer: (payload) => { 
             const stroke = mathRecognizerModule.value?.applyGhostAnswer();
@@ -4471,6 +4509,36 @@ const detachLineBindings = (lineId) => {
 .dark-mode .ai-assistant-toggle {
   background: #333;
   border-color: #555;
+}
+
+.connection-loading {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: rgba(0, 0, 0, 0.7);
+  color: white;
+  padding: 12px 24px;
+  border-radius: 8px;
+  z-index: 3000;
+  font-size: 14px;
+  pointer-events: none;
+}
+
+.connection-spinner {
+  width: 18px;
+  height: 18px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-top-color: white;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }
 </style>
 

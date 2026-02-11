@@ -915,12 +915,15 @@ export default {
       }
 
       // Konfiguracja UndoManager ze śledzeniem origin
+      // P0-FIX: Remove null/undefined from trackedOrigins to prevent capturing
+      // remote/internal transactions. Add captureTimeout: 0 to avoid grouping
+      // separate user actions into one undo step.
       undoManager.value = new Y.UndoManager(yDrawings.value, {
+        captureTimeout: 0,
         trackedOrigins: new Set([
-          null, undefined,
           'local-drawing', 'local-erase', 'local-clear', 'local-text', 'local-add-text', 'local-image', 'local-plot', 'local-coordsys',
           'local-movable-drag', 'local-movable-rotate', 'local-movable-resize',
-          'ai-align', 'ai-style', 'ai-math'
+          'clone-object', 'ai-align', 'ai-style', 'ai-math'
         ])
       });
 
@@ -2285,7 +2288,34 @@ export default {
             const transformedCoords = transformCoordinates(coords.offsetX, coords.offsetY);
             updateLocalAwarenessCursor(transformedCoords);
 
-            if (isDrawing.value) {
+            // P0-FIX: Eraser must work on touch (iPad) - replicate handleMouseMove eraser logic
+            if (currentTool.value === 'eraser') {
+                let foundIndex = -1;
+                if (yDrawings.value) {
+                    const elementsArray = yDrawings.value.toArray();
+                    for (let i = elementsArray.length - 1; i >= 0; i--) {
+                        const elementMap = elementsArray[i];
+                        try {
+                            const element = {};
+                            for (const [key, value] of elementMap.entries()) {
+                                element[key] = (value instanceof Y.Map || value instanceof Y.Array) ? value.toJSON() : value;
+                            }
+                            const hitPadding = Math.max((element.lineWidth || 2) / 2 + 5, eraserSize.value / 2);
+                            if (isPointInElement(transformedCoords, element, hitPadding)) {
+                                foundIndex = i;
+                                break;
+                            }
+                        } catch (_) { /* ignore */ }
+                    }
+                }
+                if (hoveredElementIndex.value !== foundIndex) {
+                    hoveredElementIndex.value = foundIndex;
+                    redrawCanvas(false);
+                }
+                if (isDrawing.value && foundIndex !== -1) {
+                    eraseElement(foundIndex);
+                }
+            } else if (isDrawing.value) {
                 draw(transformedCoords, false, event.timeStamp);
             }
         }
@@ -2664,8 +2694,8 @@ export default {
 
       // Check if the element is valid (e.g., has size)
       const isValidElement = preview.start && preview.end && (preview.start.x !== preview.end.x || preview.start.y !== preview.end.y);
-      // Pen needs at least two distinct points unless it was a Shift+Pen action
-      const isValidPen = preview.type === 'pen' && preview.points && preview.points.length >= 2 && !wasShiftPressed;
+      // P0-FIX: Allow single-point pen strokes (dots) - was >= 2, now >= 1
+      const isValidPen = preview.type === 'pen' && preview.points && preview.points.length >= 1 && !wasShiftPressed;
       // Shift+Pen is valid if we have the start point and the preview end point
       const isValidShiftPen = originalTool === 'pen' && wasShiftPressed && shiftStartPoint && preview.end && (shiftStartPoint.x !== preview.end.x || shiftStartPoint.y !== preview.end.y);
 
@@ -3775,10 +3805,9 @@ export default {
           testElement.set('end', endMap);
 
           yDrawings.value.push([testElement]);
-        });
+        }, 'local-drawing');
 
         nextTick(() => {
-          // debugLog("Test element dodany. canUndo =", undoManager.value?.canUndo()); // Commented out
           alert(`Test wykonany. canUndo = ${canUndo.value}`);
         });
       } catch (error) {

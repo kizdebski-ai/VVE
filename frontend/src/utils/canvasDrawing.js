@@ -109,7 +109,18 @@ export const drawElement = (
       // --- END OPTIMIZATION ---
 
       const points = element.points || [];
-      if (points.length < 2) break;
+      if (points.length === 0) break;
+      // P0-FIX: Render single-point strokes as dots
+      if (points.length === 1) {
+        const pt = Array.isArray(points[0]) ? { x: points[0][0], y: points[0][1] } : points[0];
+        context.save();
+        context.fillStyle = element.strokeColor || element.color || color;
+        context.beginPath();
+        context.arc(pt.x, pt.y, Math.max(lw / 2, 1.5), 0, Math.PI * 2);
+        context.fill();
+        context.restore();
+        break;
+      }
       const penStyle = element.penStyle || 'technical';
       const presetConfig = element.penConfig || (penStyleOptions.presets ? penStyleOptions.presets[penStyle] : {}) || {};
       const globalSmoothing = typeof penStyleOptions.smoothingFactor === 'number'

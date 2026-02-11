@@ -103,6 +103,11 @@
         @close="toggleDiagramPanel"
         @apply="handleDiagramApply"
       />
+      <ChemistryPanel
+        v-if="showChemistryPanel"
+        @close="toggleChemistryPanel"
+        @insert-element="handleAddElement"
+      />
 
       <!-- Floating Toolbar (Left) -->
       <div class="floating-toolbar">
@@ -136,6 +141,7 @@
           @toggle-diagram-panel="toggleDiagramPanel"
           @add-coordinate-system="handleAddCoordinateSystem"
           @toggle-calculator="toggleCalculator"
+          @toggle-chemistry-panel="toggleChemistryPanel"
           @toggle-debug="toggleDebugMode"
         />
       </div>
@@ -233,6 +239,7 @@ import MathGraphPanel from './components/MathGraphPanel.vue';
 import PhysicsGraphPanel from './components/PhysicsGraphPanel.vue';
 import DiagramPanel from './components/DiagramPanel.vue';
 import AIChatPanel from './components/AIChatPanel.vue';
+import ChemistryPanel from './components/ChemistryPanel.vue';
 import EncryptionStatus from './components/EncryptionStatus.vue';
 import GridAlignPanel from './components/GridAlignPanel.vue';
 import HandwritingStylerPanel from './components/HandwritingStylerPanel.vue';
@@ -265,6 +272,7 @@ export default {
     PhysicsGraphPanel,
     DiagramPanel,
     AIChatPanel,
+    ChemistryPanel,
     EncryptionStatus,
     GridAlignPanel,
     HandwritingStylerPanel
@@ -402,6 +410,7 @@ export default {
     const showMathGraphPanel = ref(false);
     const showPhysicsGraphPanel = ref(false);
     const showDiagramPanel = ref(false);
+    const showChemistryPanel = ref(false);
 
     const toggleMathGraphPanel = () => {
         showMathGraphPanel.value = !showMathGraphPanel.value;
@@ -424,6 +433,16 @@ export default {
         if (showDiagramPanel.value) {
           showMathGraphPanel.value = false;
           showPhysicsGraphPanel.value = false;
+          showChemistryPanel.value = false;
+        }
+    };
+
+    const toggleChemistryPanel = () => {
+        showChemistryPanel.value = !showChemistryPanel.value;
+        if (showChemistryPanel.value) {
+          showMathGraphPanel.value = false;
+          showPhysicsGraphPanel.value = false;
+          showDiagramPanel.value = false;
         }
     };
 
@@ -1367,6 +1386,8 @@ export default {
       showMathGraphPanel,
       showPhysicsGraphPanel,
       showDiagramPanel,
+      showChemistryPanel,
+      toggleChemistryPanel,
       handleAddElement,
       handleDiagramApply,
       handleAddCoordinateSystem: (type) => {

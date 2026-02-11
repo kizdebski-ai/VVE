@@ -199,6 +199,13 @@
         >
           <Calculator :size="20" />
         </button>
+        <button
+          class="tool-btn"
+          @click="$emit('toggle-chemistry-panel')"
+          title="Chemistry Helper (pH)"
+        >
+          <FlaskConical :size="20" />
+        </button>
         <div class="dropdown-trigger coordinate-trigger" ref="coordinateTriggerRef">
           <button 
             class="tool-btn" 
@@ -332,7 +339,8 @@ import {
   Cylinder,
   Cone,
   Pyramid,
-  Globe
+  Globe,
+  FlaskConical
 } from 'lucide-vue-next';
 
 const props = defineProps({
@@ -368,6 +376,7 @@ const emit = defineEmits([
   'toggle-diagram-panel',
   'add-coordinate-system',
   'toggle-calculator',
+  'toggle-chemistry-panel',
   'toggle-debug'
 ]);
 

@@ -387,10 +387,36 @@ Root `package.json` ma `y-protocols` i `@previewjs/config` - wygląda na przypad
 | 3 | `962f0f7a` | Debounce bumpActivity persistence writes | rooms.ts |
 | 4 | `ac020363` | Awareness throttle, WS rate limiting, image validation, UX | WhiteboardCanvas.vue, server.ts |
 | 5 | `c1f748bc` | Remove 21 dead code files | 21 plików |
-| 6 | _(current)_ | Root package.json cleanup, audit report update | package.json, AUDIT_REPORT.md |
+| 6 | `5610e898` | Root package.json cleanup, audit report update | package.json, AUDIT_REPORT.md |
+| 7 | `9a640a9b` | Remove debug console.log from frontend | GridAlignModule.js, App.vue, Calculator.vue, ColorPicker.vue |
+| 8 | `0c0ffdfd` | SEC-001 command injection fix, server hardening, server console.log cleanup | 12 plików serwera |
+| 9 | `e47aeb04` | P0: iPad eraser, undo grouping fix, single-click dots | WhiteboardCanvas.vue, canvasDrawing.js |
+| 10 | `3020f889` | P0: TopMenu gear on touch, pen normalization in MovableObject | TopMenu.vue, MovableObject.vue |
 
 ### Statystyki
-- **Naprawione problemy:** 21/30
+- **Naprawione problemy:** 30+/30+ (w tym P0 z feedback nauczycieli)
 - **Usunięte pliki:** 21
-- **Usunięte linie martwego kodu:** ~2300
-- **Nowe commity:** 6
+- **Usunięte linie martwego kodu:** ~2400+
+- **Nowe commity:** 10
+
+### Problemy naprawione w sesjach 2-3 (commity 8-10)
+- **SEC-001 CRITICAL:** Command injection w mathSolver.ts - zamiana exec() na execFile()
+- **SEC-004:** Konfigurowalny CORS via CORS_ORIGIN
+- **BE-005:** Globalne handlery błędów (unhandledRejection, uncaughtException)
+- **Rate limiter memory leak:** Periodyczne czyszczenie wygasłych bucketów
+- **Server console.log:** 50+ wywołań zamienione na strukturalny logger
+- **P0 #1:** Zębatka w TopMenu zawsze widoczna na urządzeniach dotykowych
+- **P0 #2:** Gumka działa na iPadzie (dodana logika eraser do handleTouchMove)
+- **P0 #5:** Pen strokes nie znikają przy przesuwaniu (normalizacja punktów w MovableObject)
+- **P0 #6:** Ctrl+Z cofa pojedyncze akcje (usunięto null/undefined z trackedOrigins, captureTimeout: 0)
+- **P0 #8:** Pojedyncze kliknięcia rysują kropki (points.length >= 1, renderowanie arc w canvasDrawing.js)
+
+### Pozostałe do naprawy (nice-to-have / P1-P2)
+- P1 #7: Shift + linia: snap do kątów 0/45/90°
+- P1 #9: Narzędzie "łapka" do panningu
+- P1 #10: Kolizja zoom controls z toolbarem na iPadzie
+- P1 #11: Rozszerzona paleta kolorów i presety
+- P2 #12: Import PDF do pisania po nim
+- P2: ARCH-001 - dekompozycja WhiteboardCanvas.vue na composables
+- P2: Code splitting (plotly.js 2.1MB chunk)
+- P2: Helmet.js security headers

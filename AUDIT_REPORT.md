@@ -399,11 +399,12 @@ Root `package.json` ma `y-protocols` i `@previewjs/config` - wygląda na przypad
 | 15 | `f29437f5` | stopCapturing after draw/erase/clear for precise undo | WhiteboardCanvas.vue |
 
 ### Statystyki
-- **Naprawione problemy:** 40+/40+ (w tym wszystkie P0 z feedback nauczycieli)
+- **Naprawione problemy:** 45+/45+ (w tym wszystkie P0/P1/P2 z feedback nauczycieli)
 - **Usunięte pliki:** 21
 - **Usunięte linie martwego kodu:** ~2400+
-- **Nowe commity:** 15
+- **Nowe commity:** 21 (na branchu fix/deep-audit-and-fixes)
 - **Bundle size reduction:** 2,104kB → 1,338kB (-36%)
+- **WhiteboardCanvas.vue:** 4682 → ~3819 linii (-18.4%, 4 composables wyekstrahowane)
 
 ### Problemy naprawione w sesjach 2-3 (commity 8-10)
 - **SEC-001 CRITICAL:** Command injection w mathSolver.ts - zamiana exec() na execFile()
@@ -430,7 +431,15 @@ Root `package.json` ma `y-protocols` i `@previewjs/config` - wygląda na przypad
 - **P2:** Code splitting: jsPDF lazy-loaded, manualChunks dla katex/yjs/roughjs
 - **P0 #6 (uzupełnienie):** stopCapturing() po finishDrawing/eraseElement/clearCanvas
 
-### Pozostałe do naprawy (P2 - rozwojowe)
-- P2 #12: Import PDF do pisania po nim
-- P2 #13-15: Chemia calculator, kalkulator naukowy UI, AI panel access control
-- P2: ARCH-001 - dekompozycja WhiteboardCanvas.vue na composables (~4500 linii)
+### Problemy naprawione w sesji 5 (commity 17-21)
+- **ARCH-001:** Dekompozycja WhiteboardCanvas.vue → 4 composables (useNotifications, useUndoRedo, useLineBindings, usePdfExport), -860 linii
+- **P2 #15:** Kontrola dostępu AI panel - studenci zablokowany (frontend gating + backend wsToken auth na /api/ai/chat i /api/ai/board-assistant)
+- **P2 #14:** Kalkulator naukowy rozszerzony o: asin/acos/atan, ln vs log10, e (Euler), |x| (abs), pamięć MS/MR/M+
+- **P2 #13:** Nowy ChemistryPanel - kalkulator pH/pOH z 3 trybami, wizualizacja skali pH, wstawianie LaTeX na tablicę
+- **P2 #12:** Import PDF do pisania po nim - pdfjs-dist (dynamic import), renderowanie stron do obrazów, max 20 stron
+- **Bug fix:** detachLineBindings zdefiniowany poza scope setup() (martwy kod) - przeniesiony do useLineBindings
+
+### Pozostałe do dalszego rozwoju
+- ARCH-001 kontynuacja: dalsze wyodrębnianie composables z WhiteboardCanvas.vue (wciąż ~3819 linii)
+- P2 #14 rozszerzenie: udostępnianie kalkulatora uczniom via Yjs (sharedUI)
+- Docelowy PDF import: upload na backend/S3 zamiast dataURL w Yjs

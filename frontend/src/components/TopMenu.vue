@@ -41,7 +41,12 @@
           <Upload :size="18" />
           <span>Import</span>
         </button>
-        
+        <button class="menu-btn" @click="triggerPdfImport" title="Import PDF as background">
+          <FileUp :size="18" />
+          <span>PDF</span>
+        </button>
+        <input ref="pdfFileInput" type="file" accept=".pdf" style="display:none" @change="handlePdfFileSelected" />
+
         <div class="divider-vertical"></div>
 
         <!-- Feature Toggles -->
@@ -150,6 +155,7 @@ import {
   Wand2, 
   Grid3X3, 
   FileDown,
+  FileUp,
   X,
   Maximize,
   Minimize
@@ -164,7 +170,7 @@ const props = defineProps({
 });
 
 // Define emits
-const emit = defineEmits(['clear-canvas', 'toggle-feature', 'open-room-manager', 'export-whiteboard', 'export-pdf-single', 'export-pdf-paged', 'import-whiteboard']);
+const emit = defineEmits(['clear-canvas', 'toggle-feature', 'open-room-manager', 'export-whiteboard', 'export-pdf-single', 'export-pdf-paged', 'import-whiteboard', 'import-pdf']);
 
 // P0-FIX: Detect touch device and keep gear always visible on touch
 const isTouchDevice = ref(false);
@@ -261,6 +267,20 @@ const toggleShortcuts = () => {
       // If closing shortcuts, allow normal hide behavior
       handleMouseLeave();
   }
+};
+
+const pdfFileInput = ref(null);
+const triggerPdfImport = () => {
+  pdfFileInput.value?.click();
+};
+const handlePdfFileSelected = (event) => {
+  const file = event.target.files[0];
+  if (file && file.type === 'application/pdf') {
+    emit('import-pdf', file);
+  }
+  event.target.value = '';
+  showMenu.value = false;
+  showGear.value = false;
 };
 
 const openRoomManager = () => {

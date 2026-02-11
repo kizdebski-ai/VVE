@@ -10,6 +10,7 @@
       @export-pdf-single="handleExportPdfSingle"
       @export-pdf-paged="handleExportPdfPaged"
       @import-whiteboard="showImportDialog = true"
+      @import-pdf="handleImportPdf"
       :active-feature="activeFeature"
      ></TopMenu>
     <!-- Canvas container takes full screen -->
@@ -251,6 +252,7 @@ import { buildRoomHash, createNewRoomUrl, parseRoomHash } from './lib/roomLink';
 import { generateEncryptionKey } from './lib/crypto';
 import 'katex/dist/katex.min.css';
 import { drawStyledPen, DEFAULT_PEN_PRESETS, makePreviewPoints } from './utils/penStyles';
+import { usePdfImport } from './composables/usePdfImport';
 import { Users, Share2, ChevronRight, ChevronLeft } from 'lucide-vue-next';
 
 // Debug logger
@@ -523,6 +525,13 @@ export default {
         console.warn('Whiteboard not ready to add element.', elementData);
       }
     };
+
+    const { importPdfFile } = usePdfImport({
+      addElementFromPanel: (data) => handleAddElement(data),
+      showToast: (msg, type, dur) => showNotification(msg, type),
+      debugLog: appDebugLog,
+    });
+    const handleImportPdf = (file) => importPdfFile(file);
 
     const handleDiagramApply = (diagramData) => {
       if (!diagramData?.nodes?.length) return;
@@ -1390,6 +1399,7 @@ export default {
       toggleChemistryPanel,
       handleAddElement,
       handleDiagramApply,
+      handleImportPdf,
       handleAddCoordinateSystem: (type) => {
         // Create default coordinate system element
         const elementData = {

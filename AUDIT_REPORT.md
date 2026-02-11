@@ -392,12 +392,18 @@ Root `package.json` ma `y-protocols` i `@previewjs/config` - wygląda na przypad
 | 8 | `0c0ffdfd` | SEC-001 command injection fix, server hardening, server console.log cleanup | 12 plików serwera |
 | 9 | `e47aeb04` | P0: iPad eraser, undo grouping fix, single-click dots | WhiteboardCanvas.vue, canvasDrawing.js |
 | 10 | `3020f889` | P0: TopMenu gear on touch, pen normalization in MovableObject | TopMenu.vue, MovableObject.vue |
+| 11 | `b079f423` | Docs: update AUDIT_REPORT.md with session 2-3 fix log | AUDIT_REPORT.md |
+| 12 | `a10cd3c9` | P0/P1: iPad color picker, export, angle snap, pan tool, zoom layout | ToolBar.vue, TopMenu.vue, WhiteboardCanvas.vue, ZoomPanControls.vue |
+| 13 | `fa5c1bb5` | Expanded color palette, quick-swatches, helmet.js security headers | ToolBar.vue, httpApp.ts, package.json |
+| 14 | `f0be978b` | Code splitting: main bundle 2.1MB→1.3MB (-36%) | WhiteboardCanvas.vue, vite.config.js, package.json |
+| 15 | `f29437f5` | stopCapturing after draw/erase/clear for precise undo | WhiteboardCanvas.vue |
 
 ### Statystyki
-- **Naprawione problemy:** 30+/30+ (w tym P0 z feedback nauczycieli)
+- **Naprawione problemy:** 40+/40+ (w tym wszystkie P0 z feedback nauczycieli)
 - **Usunięte pliki:** 21
 - **Usunięte linie martwego kodu:** ~2400+
-- **Nowe commity:** 10
+- **Nowe commity:** 15
+- **Bundle size reduction:** 2,104kB → 1,338kB (-36%)
 
 ### Problemy naprawione w sesjach 2-3 (commity 8-10)
 - **SEC-001 CRITICAL:** Command injection w mathSolver.ts - zamiana exec() na execFile()
@@ -411,12 +417,20 @@ Root `package.json` ma `y-protocols` i `@previewjs/config` - wygląda na przypad
 - **P0 #6:** Ctrl+Z cofa pojedyncze akcje (usunięto null/undefined z trackedOrigins, captureTimeout: 0)
 - **P0 #8:** Pojedyncze kliknięcia rysują kropki (points.length >= 1, renderowanie arc w canvasDrawing.js)
 
-### Pozostałe do naprawy (nice-to-have / P1-P2)
-- P1 #7: Shift + linia: snap do kątów 0/45/90°
-- P1 #9: Narzędzie "łapka" do panningu
-- P1 #10: Kolizja zoom controls z toolbarem na iPadzie
-- P1 #11: Rozszerzona paleta kolorów i presety
+### Problemy naprawione w sesji 4 (commity 12-15)
+- **P0 #3:** iPad color picker - input[type=color] touch-interactive, properties bar nie auto-hide na touch
+- **P0 #4:** Export Whiteboard - zaimplementowano brakujące getSnapshot() (Yjs state → base64)
+- **P0 #4:** PDF DPI 600→200, kompresja FAST zamiast NONE (anty-OOM na iPad)
+- **P1 #7:** Angle snapping 45° dla Shift+Pen i Shift+Line
+- **P1 #9:** Narzędzie Hand/Pan z klawiszem H i obsługą dotyku
+- **P1 #10:** Zoom controls przeniesione na prawy dół, responsive offset na touch/mobile
+- **P1 #11:** Paleta kolorów 8→16, quick-swatches w properties bar
+- **P2:** Helmet.js security headers (X-Frame-Options, X-Content-Type-Options, HSTS, etc.)
+- **P2:** Usunięto nieużywany plotly.js-dist-min
+- **P2:** Code splitting: jsPDF lazy-loaded, manualChunks dla katex/yjs/roughjs
+- **P0 #6 (uzupełnienie):** stopCapturing() po finishDrawing/eraseElement/clearCanvas
+
+### Pozostałe do naprawy (P2 - rozwojowe)
 - P2 #12: Import PDF do pisania po nim
-- P2: ARCH-001 - dekompozycja WhiteboardCanvas.vue na composables
-- P2: Code splitting (plotly.js 2.1MB chunk)
-- P2: Helmet.js security headers
+- P2 #13-15: Chemia calculator, kalkulator naukowy UI, AI panel access control
+- P2: ARCH-001 - dekompozycja WhiteboardCanvas.vue na composables (~4500 linii)

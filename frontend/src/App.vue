@@ -867,7 +867,6 @@ export default {
     };
 
     const handleExportPdfSingle = async () => {
-      console.log('[App] handleExportPdfSingle');
       if (whiteboard.value?.exportBoardAsPdf) {
         await whiteboard.value.exportBoardAsPdf();
       } else {
@@ -877,7 +876,6 @@ export default {
     };
 
     const handleExportPdfPaged = async () => {
-      console.log('[App] handleExportPdfPaged');
       if (whiteboard.value?.exportBoardAsPdfPaged) {
         await whiteboard.value.exportBoardAsPdfPaged();
       } else {

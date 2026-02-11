@@ -228,12 +228,10 @@ const calculate = () => {
         if (isSimple) {
              // If simple, format using Fraction config
              result.value = math.format(simplifiedResult, { fraction: 'ratio' });
-             console.log("Result from simplify:", result.value);
              return;
         } else {
             // If simplification is complex (e.g., sqrt(3)), display its string form
             result.value = simplifiedResult.toString();
-            console.log("Result from simplify (symbolic):", result.value);
             return;
         }
     } catch (simplifyError) {
@@ -244,7 +242,6 @@ const calculate = () => {
     // Fallback: Evaluate using Fraction configuration
     const evalResult = math.evaluate(expressionToProcess); // math is already configured for Fractions
     result.value = math.format(evalResult, { fraction: 'ratio' }); // Format as fraction
-    console.log("Result from fraction evaluation:", result.value);
 
   } catch (error) {
     console.error("Calculator error:", error);
@@ -256,12 +253,7 @@ const calculate = () => {
 const copyResult = () => {
   if (result.value && !result.value.startsWith('Error')) { // Check for error prefix
     copyToClipboard(result.value)
-      .then(() => {
-        console.log('Result copied!');
-      })
-      .catch(err => {
-        console.error('Failed to copy result:', err);
-      });
+      .catch(() => { /* clipboard copy failed silently */ });
   }
 };
 

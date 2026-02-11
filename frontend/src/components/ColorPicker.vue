@@ -126,7 +126,6 @@ export default {
       customColor.value = color; // Keep custom picker synced
       addToRecent(color);
       emit('update:modelValue', color); // Emit for v-model
-      console.log('ColorPicker: Wybrano kolor', color);
       showGrid.value = false; // Close grid after selection
     };
 

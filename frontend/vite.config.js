@@ -4,6 +4,18 @@ import vue from '@vitejs/plugin-vue'
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [vue()],
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          // Split large vendor libraries into separate chunks for better caching
+          'vendor-katex': ['katex'],
+          'vendor-roughjs': ['roughjs'],
+          'vendor-yjs': ['yjs', 'lib0'],
+        }
+      }
+    }
+  },
   server: {
     proxy: {
       '/api': {

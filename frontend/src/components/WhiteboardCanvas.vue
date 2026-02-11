@@ -141,7 +141,7 @@ import rough from 'roughjs';
 import * as Y from 'yjs';
 import { v4 as uuidv4 } from 'uuid';
 import katex from 'katex';
-import { jsPDF } from 'jspdf';
+// jsPDF loaded dynamically only when PDF export is triggered (code splitting)
 import 'katex/dist/katex.min.css';
 import { undoRedoState } from '../utils/undoRedoState';
 import Collaborators from './Collaborators.vue';
@@ -3650,6 +3650,8 @@ export default {
 
         ctx.restore();
 
+        // Dynamic import for code splitting - jsPDF is only loaded when needed
+        const { jsPDF } = await import('jspdf');
         const pdf = new jsPDF('portrait', 'pt', 'a4');
         const pageW = pdf.internal.pageSize.getWidth();
         const pageH = pdf.internal.pageSize.getHeight();
@@ -3740,6 +3742,8 @@ export default {
         const tilesX = Math.max(1, Math.ceil((sceneBounds.x2 - sceneBounds.x1) / TILE_W));
         const tilesY = Math.max(1, Math.ceil((sceneBounds.y2 - sceneBounds.y1) / TILE_H));
 
+        // Dynamic import for code splitting - jsPDF is only loaded when needed
+        const { jsPDF } = await import('jspdf');
         const pdf = new jsPDF('portrait', 'pt', 'a4');
         let isFirst = true;
 

@@ -19,7 +19,6 @@
     "marked": "^17.0.0",
     "mathjs": "^14.4.0",
     "perfect-freehand": "^1.2.2",
-    "plotly.js-dist-min": "^3.0.1",
     "roughjs": "^4.6.6",
     "tesseract.js": "^5.0.5",
     "uuid": "^11.1.0",

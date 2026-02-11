@@ -318,3 +318,13 @@ const shutdown = () => {
 
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
+
+// BE-005: Global error handlers to prevent silent crashes
+process.on('unhandledRejection', (reason) => {
+  logger.error('Unhandled promise rejection', { error: String(reason) });
+});
+
+process.on('uncaughtException', (error) => {
+  logger.error('Uncaught exception - shutting down', { error: error.message, stack: error.stack });
+  shutdown();
+});

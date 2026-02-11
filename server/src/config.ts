@@ -31,9 +31,6 @@ for (const dir of searchDirs) {
 // Config debug (only in development)
 const loadedNames = loadedEnvFiles.filter((entry) => entry.loaded).map((entry) => entry.path);
 const parsedKeys = loadedEnvFiles.flatMap((entry) => entry.parsedKeys);
-if (process.env.NODE_ENV !== 'production') {
-  console.log('Config: env files loaded:', loadedNames.length ? loadedNames.join(', ') : 'None');
-}
 
 export const config = {
   host: process.env.HOST || '0.0.0.0',

@@ -51,7 +51,11 @@ export interface CreateAppOptions {
 
 export const createHttpApp = ({ roomManager, aiSolver }: CreateAppOptions) => {
   const app = express();
-  app.use(cors());
+
+  // SEC-004: Configurable CORS origin (defaults to open for dev, restrict via CORS_ORIGIN in production)
+  const corsOrigin = process.env.CORS_ORIGIN;
+  app.use(cors(corsOrigin ? { origin: corsOrigin.split(',').map(o => o.trim()) } : undefined));
+
   // AI endpoints accept screenshots, so allow a slightly larger body size
   app.use(express.json({ limit: '20mb' }));
 
@@ -229,16 +233,7 @@ export const createHttpApp = ({ roomManager, aiSolver }: CreateAppOptions) => {
     } catch (error) {
       const err = error as any;
       const status = err instanceof HttpError && err.status ? err.status : 502;
-      logger.error('AI solver failed', { error: err.message, status, details: err.body });
-
-      // Write to debug log file
-      try {
-        const logPath = path.join(process.cwd(), 'debug_error.log');
-        const logEntry = `[${new Date().toISOString()}] Error: ${err.message}\nStack: ${err.stack}\n\n`;
-        fs.appendFileSync(logPath, logEntry);
-      } catch (e) {
-        console.error('Failed to write to debug log', e);
-      }
+      logger.error('AI solver failed', { error: err.message, status, details: err.body, stack: err.stack });
 
       res.status(status).json({ error: err.message || 'Failed to solve equation.', details: err.body });
     }

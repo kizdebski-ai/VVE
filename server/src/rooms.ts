@@ -167,12 +167,19 @@ export class RoomManager {
     };
   }
 
+  private saveDebounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
   private bumpActivity(room: RoomContext) {
     const timestamp = now();
     room.lastActive = timestamp;
     room.meta.lastActiveAt = timestamp;
-    // Debounce save?
-    this.saveRoom(room);
+    // Debounce persistence writes to avoid disk I/O on every access
+    const existing = this.saveDebounceTimers.get(room.id);
+    if (existing) clearTimeout(existing);
+    this.saveDebounceTimers.set(room.id, setTimeout(() => {
+      this.saveDebounceTimers.delete(room.id);
+      this.saveRoom(room);
+    }, 5000));
   }
 
   private async saveRoom(room: RoomContext) {

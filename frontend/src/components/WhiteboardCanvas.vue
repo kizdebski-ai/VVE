@@ -2148,7 +2148,8 @@ export default {
       }
 
       const shouldSpacePan = event.button === 0 && spacePanActive.value;
-      if (event.button === 1 || (event.button === 0 && event.altKey) || shouldSpacePan) { // Middle mouse, Alt+Left, or Space+Left
+      const shouldToolPan = event.button === 0 && currentTool.value === 'pan';
+      if (event.button === 1 || (event.button === 0 && event.altKey) || shouldSpacePan || shouldToolPan) { // Middle mouse, Alt+Left, Space+Left, or Pan tool
         isPanning.value = true;
         lastPanPoint.value = { ...transformedCoords, screenX: coords.offsetX, screenY: coords.offsetY };
         panStartedWithSpace.value = shouldSpacePan;
@@ -2287,6 +2288,15 @@ export default {
             const coords = getCoordinates(event);
             const transformedCoords = transformCoordinates(coords.offsetX, coords.offsetY);
             updateLocalAwarenessCursor(transformedCoords);
+
+            // P1-FIX: Pan tool panning via touch
+            if (isPanning.value && lastPanPoint.value) {
+                panOffset.value.x += coords.offsetX - lastPanPoint.value.screenX;
+                panOffset.value.y += coords.offsetY - lastPanPoint.value.screenY;
+                lastPanPoint.value = { ...transformedCoords, screenX: coords.offsetX, screenY: coords.offsetY };
+                redrawCanvas(true);
+                return;
+            }
 
             // P0-FIX: Eraser must work on touch (iPad) - replicate handleMouseMove eraser logic
             if (currentTool.value === 'eraser') {
@@ -2613,9 +2623,19 @@ export default {
                   preview.rawPoints = [baseStart];
               }
               const snappedStart = applySoftGridSnap(baseStart, null);
-              const snappedEnd = applySoftGridSnap(stampedCoords, baseStart);
+              // P1-FIX: Angle snapping to nearest 45° when Shift is held
+              const dx = stampedCoords.x - snappedStart.x;
+              const dy = stampedCoords.y - snappedStart.y;
+              const dist = Math.hypot(dx, dy);
+              const ANGLE_STEP = Math.PI / 4; // 45 degrees
+              const angle = Math.atan2(dy, dx);
+              const snappedAngle = Math.round(angle / ANGLE_STEP) * ANGLE_STEP;
+              const angleSnappedEnd = {
+                x: snappedStart.x + dist * Math.cos(snappedAngle),
+                y: snappedStart.y + dist * Math.sin(snappedAngle),
+              };
               preview.start = { x: snappedStart.x, y: snappedStart.y };
-              preview.end = { x: snappedEnd.x, y: snappedEnd.y };
+              preview.end = { x: angleSnappedEnd.x, y: angleSnappedEnd.y };
               delete preview.points; // Remove points array for line preview
           } else if (!shiftPressedAtStart.value) {
               // Normal pen drawing - ensure preview type is 'pen'
@@ -2653,9 +2673,23 @@ export default {
           const snappedCoords = applySoftGridSnap(stampedCoords, preview.start ? { ...preview.start, t: timestamp } : null);
           preview.end = { x: snappedCoords.x, y: snappedCoords.y };
 
+          // P1-FIX: Angle snapping for lines when Shift is held
+          if (preview.type === 'line' && isShiftPressed && preview.start) {
+              const dx = snappedCoords.x - preview.start.x;
+              const dy = snappedCoords.y - preview.start.y;
+              const dist = Math.hypot(dx, dy);
+              const ANGLE_STEP = Math.PI / 4; // 45 degrees
+              const angle = Math.atan2(dy, dx);
+              const snappedAngle = Math.round(angle / ANGLE_STEP) * ANGLE_STEP;
+              preview.end = {
+                  x: preview.start.x + dist * Math.cos(snappedAngle),
+                  y: preview.start.y + dist * Math.sin(snappedAngle),
+              };
+          }
+
           // Special handling for square aspect ratio during preview
           if (preview.type === 'square') {
-              const dx = Math.abs(snappedCoords.x - preview.start.x); // Use coords directly here
+              const dx = Math.abs(snappedCoords.x - preview.start.x);
               const dy = Math.abs(snappedCoords.y - preview.start.y);
               const size = Math.max(dx, dy);
               preview.end = {
@@ -2665,7 +2699,7 @@ export default {
           }
 
           // Live binding snap for lines to mimic Excalidraw connectors
-          if (preview.type === 'line') {
+          if (preview.type === 'line' && !isShiftPressed) {
               attachBindingsToLineDraft(preview);
           }
       }
@@ -3094,7 +3128,7 @@ export default {
         return;
       }
 
-      if (spacePanActive.value) {
+      if (spacePanActive.value || currentTool.value === 'pan') {
         drawCanvas.value.style.cursor = isPanning.value ? 'grabbing' : 'grab';
         return;
       }
@@ -3213,6 +3247,10 @@ export default {
         // Check for single letter keys to avoid interfering with other inputs if any check failed
         if (lowerKey === 'v') {
             setTool('select');
+            return;
+        }
+        if (lowerKey === 'h') {
+            setTool('pan');
             return;
         }
         if (lowerKey === 'p') {
@@ -3539,13 +3577,14 @@ export default {
     };
 
     // PDF export config
-    const EXPORT_DPI = 600; // Very high DPI for crisp zoom (up to ~1000%)
+    // P0-FIX: Reduced DPI from 600 to 200 to avoid OOM on iPad and reduce file size
+    const EXPORT_DPI = 200;
     const PAGE_SIZE_INCH = { w: 8.27, h: 11.69 }; // A4 portrait in inches
     const PAGE_PX = {
       w: Math.round(PAGE_SIZE_INCH.w * EXPORT_DPI),
       h: Math.round(PAGE_SIZE_INCH.h * EXPORT_DPI),
     };
-    const PDF_IMAGE_COMPRESSION = 'NONE'; // No extra compression to keep details sharp
+    const PDF_IMAGE_COMPRESSION = 'FAST'; // Use FAST compression to reduce PDF size
 
     const drawGridForExport = (ctx, bounds, scale, marginPx, pagePx) => {
       const pan = {
@@ -3763,9 +3802,25 @@ export default {
       }
     };
 
-    const getSerializableState = () => { return {}; }; // Placeholder
+    // P0-FIX: Implement getSnapshot (was missing, breaking Export Whiteboard)
+    const getSnapshot = () => {
+      if (!ydoc.value) return '';
+      try {
+        const stateUpdate = Y.encodeStateAsUpdate(ydoc.value);
+        // Convert Uint8Array to base64
+        let binary = '';
+        for (let i = 0; i < stateUpdate.length; i++) {
+          binary += String.fromCharCode(stateUpdate[i]);
+        }
+        return window.btoa(binary);
+      } catch (err) {
+        debugWarn('[getSnapshot] Error encoding state:', err);
+        return '';
+      }
+    };
+    const getSerializableState = () => { return getSnapshot(); };
     const loadState = (state) => { return false; }; // Placeholder
-    const exportAsText = () => { return ''; }; // Placeholder
+    const exportAsText = () => { return getSnapshot(); };
     const importFromText = (text) => { return false; }; // Placeholder
 
     const toggleDebug = (enabled) => {
@@ -4358,6 +4413,7 @@ export default {
       redo,
       clearCanvas,
       showToast,
+      getSnapshot,
       getSerializableState,
       loadState,
       exportAsText,

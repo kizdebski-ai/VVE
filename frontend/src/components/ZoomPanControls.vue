@@ -23,13 +23,21 @@ export default {
 .zoom-controls {
   position: absolute;
   bottom: 20px;
-  left: 20px;
+  right: 20px;
   display: flex;
   background-color: white;
   border-radius: 20px;
   padding: 5px;
   box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
   z-index: 10;
+}
+
+/* P1-FIX: On narrow/touch screens, move controls up to avoid toolbar collision */
+@media (max-width: 768px), (hover: none) {
+  .zoom-controls {
+    bottom: 80px;
+    right: 10px;
+  }
 }
 
 .zoom-btn {

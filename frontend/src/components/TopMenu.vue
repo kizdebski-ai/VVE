@@ -91,7 +91,7 @@
           </div>
           <div class="shortcut-item">
             <div class="shortcut-key">H</div>
-            <div class="shortcut-desc">Highlighter Tool</div>
+            <div class="shortcut-desc">Hand/Pan Tool</div>
           </div>
           <div class="shortcut-item">
             <div class="shortcut-key">E</div>

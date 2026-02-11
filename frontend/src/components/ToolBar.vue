@@ -300,6 +300,7 @@ import {
   Eraser,
   Type,
   MousePointer2,
+  Hand,
   Square,
   Circle as CircleIcon,
   Triangle,
@@ -362,6 +363,7 @@ const emit = defineEmits([
 
 const mainTools = [
   { name: 'select', label: 'Select (V)', icon: MousePointer2 },
+  { name: 'pan', label: 'Hand/Pan (H)', icon: Hand },
   { name: 'pen', label: 'Pen (P)', icon: Pencil },
   { name: 'text', label: 'Text (T)', icon: Type },
   { name: 'eraser', label: 'Eraser (E)', icon: Eraser }
@@ -440,6 +442,7 @@ const currentArrowStyle = ref(props.arrowStyle);
 const currentRoughness = ref(props.roughness);
 const currentEraserSize = ref(30);
 const propertiesVisible = ref(false);
+const isTouchDevice = ref(false);
 let hideTimer = null;
 
 const showShapesMenu = ref(false);
@@ -472,6 +475,7 @@ const shouldShowProperties = computed(() =>
 );
 
 const startHideTimer = () => {
+  if (isTouchDevice.value) return; // P0-FIX: Never auto-hide properties on touch devices
   clearTimeout(hideTimer);
   hideTimer = setTimeout(() => {
     propertiesVisible.value = false;
@@ -664,6 +668,11 @@ watch(() => props.orientation, () => {
 onMounted(() => {
   document.addEventListener('click', handleClickOutside);
   window.addEventListener('resize', handleResize);
+  // P0-FIX: Detect touch device and keep properties bar always visible
+  isTouchDevice.value = window.matchMedia('(hover: none)').matches || navigator.maxTouchPoints > 0;
+  if (isTouchDevice.value) {
+    propertiesVisible.value = true;
+  }
 });
 
 onBeforeUnmount(() => {
@@ -937,6 +946,7 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 10px;
+  position: relative;
 }
 
 .color-preview {
@@ -954,8 +964,13 @@ onBeforeUnmount(() => {
 
 .hidden-color-input {
   position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
   opacity: 0;
-  pointer-events: none;
+  cursor: pointer;
+  /* pointer-events enabled so iOS Safari can open the native picker on tap */
 }
 
 .slider-group {

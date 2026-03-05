@@ -476,6 +476,86 @@ export default {
     const undo = () => undoCore(() => redrawCanvas(true));
     const redo = () => redoCore(() => redrawCanvas(true));
 
+    // --- Helper Modules Composable (must be before useDrawingEngine because it provides getActiveModule) ---
+    const {
+      getActiveModule,
+      syncModulesWithYjs,
+      renderLatex,
+      applyMathAnswer,
+      alignToGrid,
+      groupStrokes,
+      applyStyleTransformation,
+      confirmStyleChanges,
+      cancelStyleChanges,
+      recognizeEquation,
+    } = useHelperModules({
+      gridAlignModule,
+      handwritingStylerModule,
+      mathRecognizerModule,
+      ydoc,
+      yDrawings,
+      yjsConnection,
+      zoomLevel,
+      undoManager,
+      updateGlobalState,
+      redrawCanvas: (...args) => redrawCanvas(...args),
+      refreshMovableElements: () => refreshMovableElements(),
+      getActiveFeature: () => props.activeFeature,
+      getGridAlignOptions: () => props.gridAlignOptions,
+      emit,
+      debugLog,
+      debugWarn,
+      showToast,
+    });
+
+    // --- Drawing Engine Composable ---
+    const {
+      currentElementPreview,
+      pointsBuffer,
+      snapIndicator,
+      shiftPressedAtStart,
+      startCoordsForShiftLine,
+      activePenPresetKey,
+      activePenPreset,
+      cancelActiveDrawing,
+      startDrawing,
+      draw,
+      finishDrawing,
+      eraseElement,
+    } = useDrawingEngine({
+      isDrawing,
+      currentTool,
+      currentColor,
+      currentLineWidth,
+      zoomLevel,
+      panOffset,
+      ydoc,
+      yDrawings,
+      yjsConnection,
+      undoManager,
+      smoothingFactor,
+      debugModeEnabled,
+      getCurrentShape: () => props.currentShape,
+      getCurrentLineStyle: () => props.currentLineStyle,
+      getCurrentRoughness: () => props.currentRoughness,
+      getCurrentFillColor: () => props.currentFillColor,
+      getCurrentArrowStyle: () => props.currentArrowStyle,
+      getActiveFeature: () => props.activeFeature,
+      getHandwritingStylerOptions: () => props.handwritingStylerOptions,
+      updateGlobalState,
+      redrawCanvas: (...args) => redrawCanvas(...args),
+      scheduleRedraw: (...args) => scheduleRedraw(...args),
+      refreshMovableElements: () => refreshMovableElements(),
+      openConfigPanel: (...args) => openConfigPanel(...args),
+      startInlineText: (...args) => startInlineText(...args),
+      attachBindingsToLineDraft,
+      getActiveModule,
+      emit,
+      debugLog,
+      debugWarn,
+      showToast,
+    });
+
     // --- Methods ---
 
     // renderLatex moved to useHelperModules composable
@@ -1513,7 +1593,7 @@ export default {
           const elementData = createCoordinateSystem3DElement(transformedCoords);
           addElementFromPanel(elementData);
         } else {
-          startDrawing(event);
+          startDrawing(event, getCoordinates, transformCoordinates);
         }
         return; 
       }
@@ -1977,18 +2057,14 @@ export default {
       zoomOut,
       resetZoom,
       setTool,
-      cancelActiveDrawing: () => {
-        if (!isDrawing.value) return false;
-        isDrawing.value = false;
-        return true;
-      },
+      cancelActiveDrawing,
       closeConfigPanel,
       undo,
       redo,
       updateCursor,
       resetSpacePanState,
       endTouchGesture,
-      applyMathAnswer: () => {},
+      applyMathAnswer,
       selectPenPreset: (presetKey) => emit('select-pen-preset', presetKey),
     });
 

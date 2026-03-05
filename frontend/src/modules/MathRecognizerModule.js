@@ -586,7 +586,20 @@ export default class MathRecognizerModule {
 
     ctx.fillStyle = `rgba(240, 240, 255, 0.9)`;
     ctx.beginPath();
-    ctx.roundRect(this.ghostAnswer.x - padding, this.ghostAnswer.y - bgHeight / 2, bgWidth, bgHeight, 8);
+    const rx = this.ghostAnswer.x - padding;
+    const ry = this.ghostAnswer.y - bgHeight / 2;
+    if (typeof ctx.roundRect === 'function') {
+      ctx.roundRect(rx, ry, bgWidth, bgHeight, 8);
+    } else {
+      // Fallback for browsers without roundRect support
+      const r = 8;
+      ctx.moveTo(rx + r, ry);
+      ctx.arcTo(rx + bgWidth, ry, rx + bgWidth, ry + bgHeight, r);
+      ctx.arcTo(rx + bgWidth, ry + bgHeight, rx, ry + bgHeight, r);
+      ctx.arcTo(rx, ry + bgHeight, rx, ry, r);
+      ctx.arcTo(rx, ry, rx + bgWidth, ry, r);
+      ctx.closePath();
+    }
     ctx.fill();
     ctx.strokeStyle = `rgba(100, 100, 255, 0.5)`;
     ctx.stroke();

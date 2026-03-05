@@ -3,7 +3,15 @@ import cors from 'cors';
 import helmet from 'helmet';
 import * as fs from 'fs';
 import * as path from 'path';
-import { randomUUID } from 'crypto';
+import { randomUUID, timingSafeEqual } from 'crypto';
+
+/** Timing-safe string comparison to prevent timing attacks on secrets */
+const timingSafeCompare = (a: string, b: string): boolean => {
+  const bufA = Buffer.from(a);
+  const bufB = Buffer.from(b);
+  if (bufA.length !== bufB.length) return false;
+  return timingSafeEqual(bufA, bufB);
+};
 
 import { logger } from './logger';
 import type { RoomManager } from './rooms';
@@ -124,7 +132,7 @@ export const createHttpApp = ({ roomManager, aiSolver }: CreateAppOptions) => {
     }
 
     const provided = readAdminSecret(req);
-    if (!provided || provided !== expectedSecret) {
+    if (!provided || !timingSafeCompare(provided, expectedSecret)) {
       res.status(401).json({ error: 'Unauthorized' });
       return;
     }
@@ -398,7 +406,13 @@ export const createHttpApp = ({ roomManager, aiSolver }: CreateAppOptions) => {
       const uploadsDir = process.env.UPLOAD_DIR || path.join(process.cwd(), 'data', 'uploads');
       const pathWithExt = fileId.endsWith('.pdf') ? fileId : `${fileId}.pdf`;
       const filePath = path.join(uploadsDir, pathWithExt);
-      if (!fs.existsSync(filePath)) {
+      // SEC: Prevent path traversal — resolved path must stay within uploadsDir
+      const resolvedPath = path.resolve(filePath);
+      const resolvedUploads = path.resolve(uploadsDir);
+      if (!resolvedPath.startsWith(resolvedUploads + path.sep) && resolvedPath !== resolvedUploads) {
+        throw new HttpError(403, 'Access denied.');
+      }
+      if (!fs.existsSync(resolvedPath)) {
         throw new HttpError(404, 'PDF file not found.');
       }
 

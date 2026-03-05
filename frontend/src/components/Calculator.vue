@@ -86,6 +86,7 @@ const math = create(all, {
 
 const currentExpression = ref('');
 const result = ref('');
+const statusMessage = ref(''); // 7.3: For clipboard feedback
 const calculatorRef = ref(null);
 const isScientificMode = ref(false);
 const memory = ref(0);
@@ -263,10 +264,33 @@ const calculate = () => {
 };
 
 
+// 7.3: Clipboard with fallback + toast feedback
 const copyResult = () => {
-  if (result.value && !result.value.startsWith('Error')) {
-    copyToClipboard(result.value)
-      .catch(() => { /* clipboard copy failed silently */ });
+  if (!result.value || result.value.startsWith('Error')) return;
+  const text = result.value;
+  const fallbackCopy = () => {
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.left = '-9999px';
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+      return true;
+    } catch { return false; }
+  };
+  if (navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(text)
+      .then(() => { statusMessage.value = 'Copied!'; setTimeout(() => statusMessage.value = '', 1500); })
+      .catch(() => {
+        if (fallbackCopy()) { statusMessage.value = 'Copied!'; setTimeout(() => statusMessage.value = '', 1500); }
+        else { statusMessage.value = 'Copy failed'; setTimeout(() => statusMessage.value = '', 2000); }
+      });
+  } else {
+    if (fallbackCopy()) { statusMessage.value = 'Copied!'; setTimeout(() => statusMessage.value = '', 1500); }
+    else { statusMessage.value = 'Copy failed'; setTimeout(() => statusMessage.value = '', 2000); }
   }
 };
 

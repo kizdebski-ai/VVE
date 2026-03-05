@@ -326,12 +326,12 @@ const captureSnapshot = async () => {
     document.querySelector('.whiteboard-container');
   if (!targetEl) return null;
 
+  // 7.2: Use finally block to guarantee opacity restore
+  const panel = document.querySelector('.ai-chat-panel');
   try {
-    const panel = document.querySelector('.ai-chat-panel');
     if (panel) panel.style.opacity = '0';
 
     const canvas = await html2canvas(targetEl, { useCORS: true, scale: 1 });
-    if (panel) panel.style.opacity = '1';
 
     const dataUrl = canvas.toDataURL('image/png');
     pendingSnapshot.value = dataUrl;
@@ -339,6 +339,8 @@ const captureSnapshot = async () => {
   } catch (error) {
     console.error('Snapshot failed:', error);
     return null;
+  } finally {
+    if (panel) panel.style.opacity = '1';
   }
 };
 
@@ -375,13 +377,13 @@ const sendMessage = async (mode = 'normal_chat') => {
 
   if (!text && !pendingSnapshot.value && mode === 'normal_chat') return;
 
-  if (mode === 'normal_chat') {
-    messages.value.push({
-      role: 'user',
-      content: text,
-      image: pendingSnapshot.value,
-    });
-  }
+  // 7.1: Save user message data but push to messages AFTER successful pre-checks
+  const userMsg = mode === 'normal_chat' ? {
+    role: 'user',
+    content: text,
+    image: pendingSnapshot.value,
+  } : null;
+  if (userMsg) messages.value.push(userMsg);
 
   const history = buildHistory();
   const screenshotDataUrl =
@@ -441,6 +443,11 @@ const sendMessage = async (mode = 'normal_chat') => {
     sentIntro.value = true;
   } catch (error) {
     console.error('AI Chat Error:', error);
+    // 7.1: Remove user message on error to avoid orphaned messages
+    if (userMsg) {
+      const idx = messages.value.indexOf(userMsg);
+      if (idx !== -1) messages.value.splice(idx, 1);
+    }
     const fallbackMessage =
       error && error.name === 'AbortError'
         ? 'AI nie odpowiedziało na czas. Spróbuj ponownie.'

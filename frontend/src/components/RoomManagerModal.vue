@@ -131,7 +131,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { archiveRoom, createRoom, fetchRooms, updateRoom } from '../services/roomService.js';
 
 const OWNER_SECRET_KEY = 'whiteboard_room_owner_secrets';
@@ -352,6 +352,12 @@ onMounted(() => {
   if (props.visible) {
     loadRooms();
   }
+});
+
+onBeforeUnmount(() => {
+  if (searchDebounce) clearTimeout(searchDebounce);
+  if (createHintTimer) clearTimeout(createHintTimer);
+  if (searchAbortController) searchAbortController.abort();
 });
 </script>
 

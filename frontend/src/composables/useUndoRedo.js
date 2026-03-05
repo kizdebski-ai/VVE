@@ -62,6 +62,7 @@ export function useUndoRedo({ ydoc, yDrawings }) {
         undoManager.value.redo();
         nextTick(() => {
           afterCallback?.();
+          updateGlobalState();
         });
       }
     } catch (err) { console.warn('[useUndoRedo] redo failed:', err); }

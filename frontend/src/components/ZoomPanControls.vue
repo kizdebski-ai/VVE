@@ -54,7 +54,7 @@ export default {
 }
 
 .zoom-btn:hover {
-  color: #4285f4;
+  color: var(--accent-primary, #2563eb);
 }
 
 .zoom-level {
@@ -66,17 +66,19 @@ export default {
   color: #333;
 }
 
-:deep(.dark-mode) .zoom-controls {
-  background-color: #333;
-  color: white;
-  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.4);
-}
+@media (prefers-color-scheme: dark) {
+  .zoom-controls {
+    background-color: #333;
+    color: white;
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.4);
+  }
 
-:deep(.dark-mode) .zoom-btn {
-  color: #f0f0f0;
-}
+  .zoom-btn {
+    color: #f0f0f0;
+  }
 
-:deep(.dark-mode) .zoom-level {
-  color: #f0f0f0;
+  .zoom-level {
+    color: #f0f0f0;
+  }
 }
 </style>

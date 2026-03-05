@@ -363,11 +363,7 @@ export default {
     const clipboardInput = ref(null);
     const imageCache = ref(new Map());
 
-    // --- PDF Export Composable ---
-    const {
-      exportBoardAsPdf, exportBoardAsPdfPaged,
-      getSnapshot, getSerializableState, loadState, exportAsText, importFromText,
-    } = usePdfExport({ yDrawings, ydoc, smoothingFactor, imageCache, showToast, debugLog, debugWarn });
+    // PDF Export Composable — moved after yDrawings/ydoc declaration (see below)
     // activePenPresetKey, activePenPreset moved to useDrawingEngine composable
     const movableElementTypes = new Set([
         'pen',
@@ -441,6 +437,13 @@ export default {
     const yDrawings = shallowRef(null);
     const activeRoomId = ref(null);
     const latestUsername = ref(props.username);
+
+    // --- PDF Export Composable (after yDrawings/ydoc are declared) ---
+    const {
+      exportBoardAsPdf, exportBoardAsPdfPaged,
+      getSnapshot, getSerializableState, loadState, exportAsText, importFromText,
+    } = usePdfExport({ yDrawings, ydoc, smoothingFactor, imageCache, showToast, debugLog, debugWarn });
+
     // --- Undo/Redo Composable (initialized after redrawCanvas is available) ---
     // Undo/redo composable needs to be called here, but undo/redo methods
     // will be wrapped later to include redrawCanvas callback.

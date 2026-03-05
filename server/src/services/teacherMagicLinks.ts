@@ -88,7 +88,7 @@ export const createTeacherMagicLink = async (
 
 export interface MagicLinkConsumeResult {
   success: boolean;
-  reason?: 'invalid' | 'expired' | 'used' | 'not_found';
+  reason?: 'invalid' | 'expired' | 'used';
   link?: TeacherMagicLinkRecord | undefined;
 }
 
@@ -116,7 +116,8 @@ export const consumeMagicLink = async (
   }
 
   if (!match) {
-    return { success: false, reason: candidates.length ? 'invalid' : 'not_found' };
+    // 4.9: Always return 'invalid' — don't leak whether teacher ID exists
+    return { success: false, reason: 'invalid' };
   }
 
   const userAgent = sanitizeUserAgent(meta?.userAgent);

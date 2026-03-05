@@ -55,6 +55,28 @@ export const config = {
   adminSecret: process.env.ADMIN_SECRET
 };
 
+// 4.1: Fail-fast if critical secrets are missing in production
+if (config.nodeEnv === 'production') {
+  const missing: string[] = [];
+  if (!process.env.TEACHER_SESSION_SECRET && !process.env.SESSION_SECRET) {
+    missing.push('TEACHER_SESSION_SECRET (or SESSION_SECRET)');
+  }
+  if (config.teacherSessionSecret === 'change-me-in-prod') {
+    missing.push('TEACHER_SESSION_SECRET (still using default fallback)');
+  }
+  if (!config.adminSecret) {
+    missing.push('ADMIN_SECRET');
+  }
+  if (!config.databaseUrl) {
+    missing.push('DATABASE_URL');
+  }
+  if (missing.length > 0) {
+    throw new Error(
+      `[config] Missing required secrets in production:\n  - ${missing.join('\n  - ')}\nSet these environment variables before starting the server.`
+    );
+  }
+}
+
 export const paths = {
   whiteboard: '/ws/whiteboard'
 };

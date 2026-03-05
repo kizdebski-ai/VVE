@@ -12,6 +12,7 @@ import { HttpError } from './services/httpError';
 import { callGrok, ChatMessage, type CallGrokOptions } from './services/grok';
 import { config } from './config';
 
+import { createRateLimiter } from './middleware/rateLimiter';
 import { createAiBoardAssistantRouter } from './routes/aiBoardAssistant';
 import { createAdminTeachersRouter } from './routes/adminTeachers';
 import { createTeacherAuthRouter } from './routes/teacherAuth';
@@ -54,15 +55,36 @@ export interface CreateAppOptions {
 export const createHttpApp = ({ roomManager, aiSolver }: CreateAppOptions) => {
   const app = express();
 
-  // P2-FIX: Security headers via helmet
+  // 4.6: Security headers via helmet with CSP enabled
   app.use(helmet({
-    contentSecurityPolicy: false, // CSP is complex with inline scripts/styles, disable for now
-    crossOriginEmbedderPolicy: false, // Allow embedding of external images (e.g. user-uploaded)
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
+        styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+        fontSrc: ["'self'", "https://fonts.gstatic.com", "data:"],
+        imgSrc: ["'self'", "data:", "blob:", "https:"],
+        connectSrc: ["'self'", "wss:", "ws:", "https://openrouter.ai"],
+        frameSrc: ["'none'"],
+        objectSrc: ["'none'"],
+        baseUri: ["'self'"],
+      },
+    },
+    crossOriginEmbedderPolicy: false, // Allow embedding of external images
   }));
 
-  // SEC-004: Configurable CORS origin (defaults to open for dev, restrict via CORS_ORIGIN in production)
+  // 4.4: Enforce CORS_ORIGIN in production (no wildcard allowed)
   const corsOrigin = process.env.CORS_ORIGIN;
-  app.use(cors(corsOrigin ? { origin: corsOrigin.split(',').map(o => o.trim()) } : undefined));
+  if (!corsOrigin && process.env.NODE_ENV === 'production') {
+    logger.warn('CORS_ORIGIN not set in production — CORS will be restrictive (no origin allowed)');
+  }
+  app.use(cors(
+    corsOrigin
+      ? { origin: corsOrigin.split(',').map(o => o.trim()), credentials: true }
+      : process.env.NODE_ENV === 'production'
+        ? { origin: false } // Block all cross-origin in production if not configured
+        : undefined // Open in development
+  ));
 
   // AI endpoints accept screenshots, so allow a slightly larger body size
   app.use(express.json({ limit: '20mb' }));
@@ -91,31 +113,28 @@ export const createHttpApp = ({ roomManager, aiSolver }: CreateAppOptions) => {
     next();
   });
 
+  // 4.3: Require admin secret ALWAYS (not just in production)
   const requireAdminSecret: RequestHandler = (req, res, next) => {
     const expectedSecret = config.adminSecret;
 
-    // In development, if no secret is configured, allow access
     if (!expectedSecret) {
-      const isProduction = process.env.NODE_ENV === 'production';
-      if (isProduction) {
-        logger.warn('Admin request blocked because admin secret is not configured', { path: req.path });
-        res.status(503).json({ error: 'Admin endpoints are not configured.' });
-        return;
-      }
-      // Allow in development without secret
-      logger.debug('Admin access allowed without secret (dev mode)', { path: req.path });
-      next();
+      logger.warn('Admin request blocked because ADMIN_SECRET is not configured', { path: req.path });
+      res.status(503).json({ error: 'Admin endpoints are not configured. Set ADMIN_SECRET.' });
       return;
     }
 
     const provided = readAdminSecret(req);
-    if (provided !== expectedSecret) {
+    if (!provided || provided !== expectedSecret) {
       res.status(401).json({ error: 'Unauthorized' });
       return;
     }
 
     next();
   };
+
+  // 4.5: Rate limit ALL AI endpoints (20 req/min per IP)
+  const aiRateLimiter = createRateLimiter({ windowMs: 60_000, max: 20 });
+  app.use('/api/ai', aiRateLimiter);
 
   // Register routers
   app.use('/api/ai/board-assistant', createAiBoardAssistantRouter(roomManager));
@@ -464,6 +483,13 @@ export const createHttpApp = ({ roomManager, aiSolver }: CreateAppOptions) => {
       logger.error('AI Vision Chat failed', { error: err.message });
       res.status(502).json({ error: err.message || 'Failed to process vision chat.' });
     }
+  });
+
+  // 4.8: Global error handler for uncaught async errors
+  app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+    logger.error('Unhandled route error', { error: err.message, stack: err.stack });
+    const status = (err as any).status || 500;
+    res.status(status).json({ error: err.message || 'Internal server error' });
   });
 
   return app;

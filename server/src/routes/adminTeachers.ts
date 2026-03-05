@@ -8,7 +8,8 @@ import { createOrGetPermanentToken } from '../services/teacherPermanentTokens';
 import { getOrCreateTeacher, findTeacherById, normalizeTeacherEmail, getAllTeachers } from '../services/teacherService';
 import { getDb } from '../db';
 
-const upload = multer({ storage: multer.memoryStorage() });
+// 4.7: Limit file upload size to 5MB
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
 const textParser = express.text({ type: ['text/csv', 'text/plain', 'application/csv'] });
 
 type ImportRow = { email: string; fullName?: string | null };

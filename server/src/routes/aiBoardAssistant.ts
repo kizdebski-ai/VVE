@@ -16,18 +16,20 @@ export const createAiBoardAssistantRouter = (roomManager: RoomManager) => {
             return;
         }
 
-        // P2-15: Verify board token – students are blocked from AI board assistant
+        // 4.2: Require board token — reject unauthenticated requests
         const boardToken = req.headers['x-board-token'] as string | undefined;
-        if (boardToken) {
-            const session = verifyBoardWsToken(boardToken);
-            if (!session) {
-                res.status(401).json({ error: 'Invalid or expired board token.' });
-                return;
-            }
-            if (session.role === 'student') {
-                res.status(403).json({ error: 'AI assistant is not available for students.' });
-                return;
-            }
+        if (!boardToken) {
+            res.status(401).json({ error: 'Board token is required.' });
+            return;
+        }
+        const session = verifyBoardWsToken(boardToken);
+        if (!session) {
+            res.status(401).json({ error: 'Invalid or expired board token.' });
+            return;
+        }
+        if (session.role === 'student') {
+            res.status(403).json({ error: 'AI assistant is not available for students.' });
+            return;
         }
 
         try {

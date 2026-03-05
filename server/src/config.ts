@@ -77,6 +77,13 @@ if (config.nodeEnv === 'production') {
   }
 }
 
+// C5: Warn in development mode about default secrets
+if (config.nodeEnv !== 'production' && config.teacherSessionSecret === 'change-me-in-prod') {
+  console.warn(
+    '[config] WARNING: Using default teacherSessionSecret. Set TEACHER_SESSION_SECRET env var for security.'
+  );
+}
+
 export const paths = {
   whiteboard: '/ws/whiteboard'
 };

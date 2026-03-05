@@ -157,7 +157,11 @@ export function usePdfExport({ yDrawings, ydoc, smoothingFactor, imageCache, sho
     });
 
     ctx.restore();
-    return off.toDataURL('image/png');
+    const dataUrl = off.toDataURL('image/png');
+    // Release canvas memory immediately
+    off.width = 0;
+    off.height = 0;
+    return dataUrl;
   };
 
   const exportBoardAsPdf = async () => {
@@ -211,8 +215,12 @@ export function usePdfExport({ yDrawings, ydoc, smoothingFactor, imageCache, sho
       const pdf = new jsPDF('portrait', 'pt', 'a4');
       const pageW = pdf.internal.pageSize.getWidth();
       const pageH = pdf.internal.pageSize.getHeight();
+      const imgData = offscreen.toDataURL('image/png');
+      // Release offscreen canvas memory
+      offscreen.width = 0;
+      offscreen.height = 0;
       pdf.addImage(
-        offscreen.toDataURL('image/png'),
+        imgData,
         'PNG',
         0, 0, pageW, pageH,
         undefined,

@@ -148,6 +148,32 @@ const checkRateLimit = (ws: ManagedSocket): boolean => {
   return ws.msgCount <= WS_RATE_LIMIT;
 };
 
+// H8: Per-IP connection limiting to prevent resource exhaustion
+const MAX_CONNECTIONS_PER_IP = 20;
+const ipConnectionCounts = new Map<string, number>();
+
+const getClientIp = (request: http.IncomingMessage): string => {
+  const forwarded = request.headers['x-forwarded-for'];
+  if (typeof forwarded === 'string') return forwarded.split(',')[0].trim();
+  return request.socket.remoteAddress || 'unknown';
+};
+
+const trackIpConnect = (ip: string): boolean => {
+  const current = ipConnectionCounts.get(ip) || 0;
+  if (current >= MAX_CONNECTIONS_PER_IP) return false;
+  ipConnectionCounts.set(ip, current + 1);
+  return true;
+};
+
+const trackIpDisconnect = (ip: string): void => {
+  const current = ipConnectionCounts.get(ip) || 0;
+  if (current <= 1) {
+    ipConnectionCounts.delete(ip);
+  } else {
+    ipConnectionCounts.set(ip, current - 1);
+  }
+};
+
 const handleMessage = (room: RoomContext, ws: ManagedSocket, data: Uint8Array) => {
   if (!data || data.length === 0) {
     logger.debug('Ignoring empty WebSocket message');
@@ -231,9 +257,19 @@ const server = http.createServer(app);
 const wss = new WebSocketServer({ server, maxPayload: 5 * 1024 * 1024 });
 
 wss.on('connection', (socket: ManagedSocket, request) => {
+  const clientIp = getClientIp(request);
+
+  // H8: Per-IP connection limiting
+  if (!trackIpConnect(clientIp)) {
+    logger.warn('Per-IP connection limit exceeded', { ip: clientIp, max: MAX_CONNECTIONS_PER_IP });
+    socket.close(1013, 'Too many connections');
+    return;
+  }
+
   (async () => {
     const parsed = parseWsParams(request.url);
     if (!parsed) {
+      trackIpDisconnect(clientIp);
       socket.close(1008, 'Invalid room');
       return;
     }
@@ -254,6 +290,7 @@ wss.on('connection', (socket: ManagedSocket, request) => {
     const session = token ? verifyBoardWsToken(token) : null;
     if (isBoardRoom) {
       if (!session || session.boardId !== roomId) {
+        trackIpDisconnect(clientIp);
         socket.close(1008, 'Unauthorized');
         return;
       }
@@ -276,14 +313,19 @@ wss.on('connection', (socket: ManagedSocket, request) => {
       handleMessage(room, socket, toUint8Array(raw));
     });
 
-    socket.on('close', () => removeConnection(roomId, room, socket));
+    socket.on('close', () => {
+      removeConnection(roomId, room, socket);
+      trackIpDisconnect(clientIp);
+    });
     // 5.3: Also remove connection on error to prevent leaked awareness states
     socket.on('error', (error) => {
       logger.warn('WebSocket error', { roomId, error: error.message });
       removeConnection(roomId, room, socket);
+      trackIpDisconnect(clientIp);
     });
   })().catch((error) => {
     logger.error('WebSocket connection failed', { error: (error as Error).message });
+    trackIpDisconnect(clientIp);
     socket.close(1011, 'Internal error');
   });
 });

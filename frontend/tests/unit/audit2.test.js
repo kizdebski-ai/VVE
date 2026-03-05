@@ -132,3 +132,55 @@ describe('H3: withAiMutex handles rejected promises', () => {
     expect(src).toContain('[useHelperModules] AI operation failed:');
   });
 });
+
+// ─── H8: Per-IP WebSocket connection limiting ────────────────────────────────
+
+describe('H8: Per-IP WebSocket connection limiting', () => {
+  const src = readServer('server.ts');
+
+  it('defines MAX_CONNECTIONS_PER_IP constant', () => {
+    expect(src).toContain('MAX_CONNECTIONS_PER_IP');
+  });
+
+  it('implements trackIpConnect and trackIpDisconnect', () => {
+    expect(src).toContain('trackIpConnect');
+    expect(src).toContain('trackIpDisconnect');
+  });
+
+  it('checks per-IP limit on WebSocket connection', () => {
+    expect(src).toContain('Too many connections');
+  });
+
+  it('decrements IP count on close/error/unauthorized', () => {
+    // Should have trackIpDisconnect in close handler, error handler, and early exits
+    const disconnectCalls = (src.match(/trackIpDisconnect/g) || []).length;
+    expect(disconnectCalls).toBeGreaterThanOrEqual(4);
+  });
+});
+
+// ─── Canvas memory cleanup in PDF export ─────────────────────────────────────
+
+describe('Canvas memory cleanup in usePdfExport', () => {
+  const src = readSrc('composables/usePdfExport.js');
+
+  it('resets offscreen canvas dimensions to release memory', () => {
+    expect(src).toContain('off.width = 0');
+    expect(src).toContain('offscreen.width = 0');
+  });
+});
+
+// ─── C5: Default secrets warning ─────────────────────────────────────────────
+
+describe('C5: Default secrets development warning', () => {
+  const src = readServer('config.ts');
+
+  it('warns about default teacherSessionSecret in dev mode', () => {
+    expect(src).toContain("'change-me-in-prod'");
+    expect(src).toContain('WARNING: Using default teacherSessionSecret');
+  });
+
+  it('fails fast in production when defaults are used', () => {
+    expect(src).toContain("config.nodeEnv === 'production'");
+    expect(src).toContain('still using default fallback');
+  });
+});

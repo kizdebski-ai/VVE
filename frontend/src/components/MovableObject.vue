@@ -4,14 +4,14 @@
     class="movable-object"
     :class="{ 'is-selected': isSelected, 'is-line-type': isLineType }"
     :style="objectStyle"
-    @mousedown.stop="handleLeftClickOnObject" 
-    @dblclick.stop="handleDoubleClick"
+    @pointerdown.stop="handleLeftClickOnObject" 
+    @dblclick.stop="handleDoubleClick" touch-action="none"
   >
     <!-- Rotation Handle -->
     <div
       v-if="isSelected && !isLineType"
       class="rotation-handle"
-      @mousedown.stop="startRotate"
+      @pointerdown.stop="startRotate"
     ></div>
 
     <!-- Line Endpoint Handles -->
@@ -19,29 +19,29 @@
       <div
         class="line-end-handle line-start-handle"
         :style="lineHandlePositions.start"
-        @mousedown.stop="startLineEndpointDrag($event, 'start')"
+        @pointerdown.stop="startLineEndpointDrag($event, 'start')"
       ></div>
       <div
         class="line-end-handle line-terminal-handle"
         :style="lineHandlePositions.end"
-        @mousedown.stop="startLineEndpointDrag($event, 'end')"
+        @pointerdown.stop="startLineEndpointDrag($event, 'end')"
       ></div>
     </div>
 
     <!-- Resize Handles -->
     <div v-else-if="isSelected" class="resize-handles">
-      <div class="resize-handle nw-handle" @mousedown.stop="startResize($event, 'nw')"></div>
-      <div class="resize-handle n-handle" @mousedown.stop="startResize($event, 'n')"></div>
-      <div class="resize-handle ne-handle" @mousedown.stop="startResize($event, 'ne')"></div>
-      <div class="resize-handle w-handle" @mousedown.stop="startResize($event, 'w')"></div>
-      <div class="resize-handle e-handle" @mousedown.stop="startResize($event, 'e')"></div>
-      <div class="resize-handle sw-handle" @mousedown.stop="startResize($event, 'sw')"></div>
-      <div class="resize-handle s-handle" @mousedown.stop="startResize($event, 's')"></div>
-      <div class="resize-handle se-handle" @mousedown.stop="startResize($event, 'se')"></div>
+      <div class="resize-handle nw-handle" @pointerdown.stop="startResize($event, 'nw')"></div>
+      <div class="resize-handle n-handle" @pointerdown.stop="startResize($event, 'n')"></div>
+      <div class="resize-handle ne-handle" @pointerdown.stop="startResize($event, 'ne')"></div>
+      <div class="resize-handle w-handle" @pointerdown.stop="startResize($event, 'w')"></div>
+      <div class="resize-handle e-handle" @pointerdown.stop="startResize($event, 'e')"></div>
+      <div class="resize-handle sw-handle" @pointerdown.stop="startResize($event, 'sw')"></div>
+      <div class="resize-handle s-handle" @pointerdown.stop="startResize($event, 's')"></div>
+      <div class="resize-handle se-handle" @pointerdown.stop="startResize($event, 'se')"></div>
     </div>
 
     <!-- Object Content -->
-    <div class="object-content" @mousedown.prevent.stop="startDragIfSelectedOrRequestSelect">
+    <div class="object-content" @pointerdown.prevent.stop="startDragIfSelectedOrRequestSelect">
       <template v-if="shouldRenderContent">
         <img
           v-if="objectData.type === 'image'"
@@ -718,8 +718,8 @@ const startDrag = (event: MouseEvent) => {
   initialMousePos.y = event.clientY;
   initialObjectState.x = objectData.x;
   initialObjectState.y = objectData.y;
-  document.addEventListener('mousemove', handleDrag);
-  document.addEventListener('mouseup', stopDrag);
+  document.addEventListener('pointermove', handleDrag);
+  document.addEventListener('pointerup', stopDrag);
 };
 
 const handleDrag = (event: MouseEvent) => {
@@ -793,8 +793,8 @@ const stopDrag = () => {
     isDragging.value = false;
     emit('interaction-end', objectData.id); // Notify end of interaction
     emit('update:snap-guides', []); // Clear guides
-    document.removeEventListener('mousemove', handleDrag);
-    document.removeEventListener('mouseup', stopDrag);
+    document.removeEventListener('pointermove', handleDrag);
+    document.removeEventListener('pointerup', stopDrag);
 
     // Commit changes to Yjs
     const totalDeltaX = objectData.x - initialObjectState.x;
@@ -827,8 +827,8 @@ const startRotate = (event: MouseEvent) => {
     startAngle.value = Math.atan2(event.clientY - objectCenter.y, event.clientX - objectCenter.x);
     initialObjectState.rotation = objectData.rotation;
     emit('interaction-start', objectData.id);
-    document.addEventListener('mousemove', handleRotate);
-    document.addEventListener('mouseup', stopRotate);
+    document.addEventListener('pointermove', handleRotate);
+    document.addEventListener('pointerup', stopRotate);
 };
 
 const handleRotate = (event: MouseEvent) => {
@@ -847,8 +847,8 @@ const stopRotate = () => {
   if (isRotating.value) {
     isRotating.value = false;
     emit('interaction-end', objectData.id);
-    document.removeEventListener('mousemove', handleRotate);
-    document.removeEventListener('mouseup', stopRotate);
+    document.removeEventListener('pointermove', handleRotate);
+    document.removeEventListener('pointerup', stopRotate);
 
     props.object.doc?.transact(() => {
       props.object.set('rotation', objectData.rotation);
@@ -894,8 +894,8 @@ const startResize = (event: MouseEvent, handle: string) => {
   initialGeometrySnapshot.points = clonePointsArray(props.object.get('points'));
 
   emit('interaction-start', objectData.id);
-  document.addEventListener('mousemove', handleResize);
-  document.addEventListener('mouseup', stopResize);
+  document.addEventListener('pointermove', handleResize);
+  document.addEventListener('pointerup', stopResize);
 };
 
 const startLineEndpointDrag = (event: MouseEvent, handle: 'start' | 'end') => {
@@ -925,8 +925,8 @@ const startLineEndpointDrag = (event: MouseEvent, handle: 'start' | 'end') => {
   }
   
   emit('interaction-start', objectData.id);
-  document.addEventListener('mousemove', handleLineResize); // Use handleLineResize instead of handleResize
-  document.addEventListener('mouseup', stopLineResize);
+  document.addEventListener('pointermove', handleLineResize);
+  document.addEventListener('pointerup', stopLineResize);
 };
 
 const handleLineResize = (event: MouseEvent) => {
@@ -977,8 +977,8 @@ const stopLineResize = () => {
   
   isResizing.value = false;
   emit('interaction-end', objectData.id);
-  document.removeEventListener('mousemove', handleLineResize);
-  document.removeEventListener('mouseup', stopLineResize);
+  document.removeEventListener('pointermove', handleLineResize);
+  document.removeEventListener('pointerup', stopLineResize);
 
   // Commit to Yjs with new point-based format
   props.object.doc?.transact(() => {
@@ -1212,8 +1212,8 @@ const stopResize = () => {
   currentResizeHandle.value = null;
   currentLineHandle.value = null;
 
-  document.removeEventListener('mousemove', handleResize);
-  document.removeEventListener('mouseup', stopResize);
+  document.removeEventListener('pointermove', handleResize);
+  document.removeEventListener('pointerup', stopResize);
 
   props.object.doc?.transact(() => {
     props.object.set('x', objectData.x);
@@ -1257,13 +1257,16 @@ onMounted(() => {
   props.object.observe(ymapObserver);
 });
 
+// 2.4: Use pointer events for touch support (cleanup)
 onUnmounted(() => {
-  document.removeEventListener('mousemove', handleDrag);
-  document.removeEventListener('mouseup', stopDrag);
-  document.removeEventListener('mousemove', handleRotate);
-  document.removeEventListener('mouseup', stopRotate);
-  document.removeEventListener('mousemove', handleResize);
-  document.removeEventListener('mouseup', stopResize);
+  document.removeEventListener('pointermove', handleDrag);
+  document.removeEventListener('pointerup', stopDrag);
+  document.removeEventListener('pointermove', handleRotate);
+  document.removeEventListener('pointerup', stopRotate);
+  document.removeEventListener('pointermove', handleResize);
+  document.removeEventListener('pointerup', stopResize);
+  document.removeEventListener('pointermove', handleLineResize);
+  document.removeEventListener('pointerup', stopLineResize);
   if (ymapObserver) props.object.unobserve(ymapObserver);
 });
 

@@ -218,13 +218,21 @@ export function usePdfExport({ yDrawings, ydoc, smoothingFactor, imageCache, sho
         undefined,
         PDF_IMAGE_COMPRESSION
       );
+      // 2.3: iOS Safari fallback — a.click() doesn't work on iOS
       const blob = pdf.output('blob');
       const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = 'whiteboard.pdf';
-      a.click();
-      URL.revokeObjectURL(url);
+      const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+        (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+      if (isIOS) {
+        // iOS: open blob in new tab (user can then save/share)
+        window.open(url, '_blank');
+      } else {
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'whiteboard.pdf';
+        a.click();
+      }
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
       showToast('Exported to PDF', 'success');
     } catch (err) {
       console.error('[exportBoardAsPdf] failed', err);
@@ -302,11 +310,17 @@ export function usePdfExport({ yDrawings, ydoc, smoothingFactor, imageCache, sho
 
       const blob = pdf.output('blob');
       const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = 'whiteboard-notes.pdf';
-      a.click();
-      URL.revokeObjectURL(url);
+      const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+        (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+      if (isIOS) {
+        window.open(url, '_blank');
+      } else {
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'whiteboard-notes.pdf';
+        a.click();
+      }
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
       showToast('Exported to PDF (notes)', 'success');
     } catch (err) {
       console.error('[exportBoardAsPdfPaged] failed', err);

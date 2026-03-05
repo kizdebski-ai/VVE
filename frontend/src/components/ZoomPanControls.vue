@@ -32,10 +32,10 @@ export default {
   z-index: 10;
 }
 
-/* P1-FIX: On narrow/touch screens, move controls up to avoid toolbar collision */
+/* 2.2: Use CSS variable for bottom offset (configurable by parent) */
 @media (max-width: 768px), (hover: none) {
   .zoom-controls {
-    bottom: 80px;
+    bottom: var(--zoom-controls-bottom, 80px);
     right: 10px;
   }
 }

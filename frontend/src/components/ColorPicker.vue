@@ -194,21 +194,34 @@ export default {
   margin: 0 auto;
 }
 
+/* 2.1: Viewport-aware positioning — auto-flip if grid overflows viewport */
 .colors-grid {
   position: absolute;
-  left: 100%; /* Position to the right of the button */
+  left: 100%;
   top: 0;
-  background-color: var(--toolbar-bg); /* Use toolbar background */
+  background-color: var(--toolbar-bg);
   border-radius: 8px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
   padding: 8px;
-  margin-left: 8px; /* Space from button */
-  z-index: 10; /* Above button, below floating options */
-  display: grid; /* Use grid directly */
+  margin-left: 8px;
+  z-index: 10;
+  display: grid;
   grid-template-columns: repeat(4, 1fr);
   gap: 6px;
   width: 144px;
   border: 1px solid var(--border-color);
+}
+
+/* On narrow screens / touch devices, position grid above/below instead of right */
+@media (max-width: 768px), (hover: none) {
+  .colors-grid {
+    left: 50%;
+    top: auto;
+    bottom: 100%;
+    transform: translateX(-50%);
+    margin-left: 0;
+    margin-bottom: 8px;
+  }
 }
 
 /* Removed hover style for grid */

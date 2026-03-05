@@ -183,6 +183,8 @@ export default class MathRecognizerModule {
     this.enabled = false;
     this.renderLatexFn = options.renderLatexFn || null;
     this.recognitionTimeout = null;
+    // 7.7: AbortController to cancel concurrent requests
+    this.abortController = null;
   }
 
   logDebug(...args) {
@@ -235,7 +237,10 @@ export default class MathRecognizerModule {
 
   async runLocalOcrAndSolve(imageBase64) {
     try {
-      const { data } = await Tesseract.recognize(imageBase64, 'eng');
+      // 5.2: Create worker explicitly so we can terminate it after use
+      const worker = await Tesseract.createWorker('eng');
+      const { data } = await worker.recognize(imageBase64);
+      await worker.terminate();
       const rawEquation = data?.text || '';
       const normalized = normalizeEquationText(rawEquation);
       if (!normalized) {
@@ -404,6 +409,13 @@ export default class MathRecognizerModule {
       return this;
     }
 
+    // 7.7: Abort previous concurrent request
+    if (this.abortController) {
+      this.abortController.abort();
+    }
+    this.abortController = new AbortController();
+    const signal = this.abortController.signal;
+
     this.recognitionStatus = 'Thinking...';
     this.latexEquation = '';
     this.solution = '';
@@ -438,7 +450,8 @@ export default class MathRecognizerModule {
           const backendBase = this.options.backendUrl.replace(/\/$/, '');
           const resp = await axios.post(
             `${backendBase}/api/ai/solve-equation/`,
-            payload
+            payload,
+            { signal } // 7.7: Pass abort signal
           );
 
           if (resp.data) {

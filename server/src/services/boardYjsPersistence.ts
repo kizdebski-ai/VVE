@@ -131,7 +131,8 @@ export class BoardYjsPersistence {
     if (!isBoard) return;
     try {
       const snapshot = Y.encodeStateAsUpdate(doc);
-      await getDb()('board_yjs_state')
+      const db = getDb();
+      await db('board_yjs_state')
         .insert({
           board_id: boardId,
           ydoc_state: Buffer.from(snapshot),
@@ -142,6 +143,17 @@ export class BoardYjsPersistence {
           ydoc_state: Buffer.from(snapshot),
           updated_at: new Date()
         });
+
+      // 6.1: Size-based compaction — prune incremental updates after snapshot
+      const deleted = await db('board_yjs_updates')
+        .where({ board_id: boardId })
+        .del();
+      if (deleted > 0) {
+        logger.debug('Compacted incremental updates after snapshot', {
+          boardId,
+          deletedRows: deleted
+        });
+      }
     } catch (error) {
       logger.error('Forced snapshot failed', {
         boardId,

@@ -11,7 +11,9 @@ export const getDb = (): Knex => {
     instance = knex({
       client: 'pg',
       connection: config.databaseUrl,
-      pool: { min: 0, max: 10 }
+      // 5.6: Increase pool limits; 5.9: add acquire timeout to avoid hanging queries
+      pool: { min: 2, max: 20 },
+      acquireConnectionTimeout: 10_000
     });
   }
   return instance;

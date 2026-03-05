@@ -50,7 +50,8 @@ export interface RoomContext {
   lastActive: number;
   initialized?: boolean;
   hydrated?: boolean;
-  hydrating?: boolean;
+  // 6.2: Promise-based hydration lock instead of boolean flag
+  hydrationPromise?: Promise<void>;
   meta: RoomMetadata;
 }
 
@@ -118,8 +119,7 @@ export class RoomManager {
         connections: new Map(),
         lastActive: meta.lastActiveAt || now(),
         initialized: false, // Will be set by initializeRoom on first connection
-        hydrated: false, // Mark as not yet loaded from disk
-        hydrating: false,
+        hydrated: false,
         meta
       };
       this.rooms.set(roomId, room);
@@ -151,7 +151,6 @@ export class RoomManager {
       lastActive: timestamp,
       initialized: false,
       hydrated: this.boardPersistence ? false : true,
-      hydrating: false,
       meta: {
         roomId,
         displayName: roomId,
@@ -215,32 +214,37 @@ export class RoomManager {
       created = true;
     }
 
-    if (room && room.hydrated === false && !room.hydrating) {
-      room.hydrating = true;
-      try {
-        const isBoard = this.boardPersistence
-          ? await this.boardPersistence.isBoardRoom(roomId)
-          : false;
+    // 6.2: Promise-based hydration lock — concurrent get() calls await the same promise
+    if (room && room.hydrated === false) {
+      if (!room.hydrationPromise) {
+        room.hydrationPromise = (async () => {
+          try {
+            const isBoard = this.boardPersistence
+              ? await this.boardPersistence.isBoardRoom(roomId)
+              : false;
 
-        if (isBoard && this.boardPersistence) {
-          await this.boardPersistence.hydrate(room);
-        } else {
-          const data = await this.persistence.loadRoom(roomId);
-          if (data) {
-            Y.applyUpdate(room.doc, Y.encodeStateAsUpdate(data.doc));
-            room.meta = data.meta;
-          } else {
-            await this.saveRoom(room);
+            if (isBoard && this.boardPersistence) {
+              await this.boardPersistence.hydrate(room);
+            } else {
+              const data = await this.persistence.loadRoom(roomId);
+              if (data) {
+                Y.applyUpdate(room.doc, Y.encodeStateAsUpdate(data.doc));
+                room.meta = data.meta;
+              } else {
+                await this.saveRoom(room);
+              }
+              room.hydrated = true;
+            }
+          } catch (err) {
+            logger.error(`Failed to hydrate room ${roomId}`, {
+              error: (err as Error).message
+            });
+          } finally {
+            room.hydrationPromise = undefined;
           }
-          room.hydrated = true;
-        }
-      } catch (err) {
-        logger.error(`Failed to hydrate room ${roomId}`, {
-          error: (err as Error).message
-        });
-      } finally {
-        room.hydrating = false;
+        })();
       }
+      await room.hydrationPromise;
     }
 
     this.bumpActivity(room);

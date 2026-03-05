@@ -23,7 +23,7 @@ export function useUndoRedo({ ydoc, yDrawings }) {
 
   const initializeUndoManager = () => {
     if (undoManager.value) {
-      try { undoManager.value.destroy(); } catch (_) { /* ignore */ }
+      try { undoManager.value.destroy(); } catch (err) { console.warn('[useUndoRedo] destroy failed:', err); }
       undoManager.value = null;
     }
 
@@ -53,7 +53,7 @@ export function useUndoRedo({ ydoc, yDrawings }) {
           updateGlobalState();
         });
       }
-    } catch (_) { /* ignore */ }
+    } catch (err) { console.warn('[useUndoRedo] undo failed:', err); }
   };
 
   const redo = (afterCallback) => {
@@ -64,7 +64,7 @@ export function useUndoRedo({ ydoc, yDrawings }) {
           afterCallback?.();
         });
       }
-    } catch (_) { /* ignore */ }
+    } catch (err) { console.warn('[useUndoRedo] redo failed:', err); }
   };
 
   const teardownUndoManager = () => {

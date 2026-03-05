@@ -36,6 +36,7 @@
         @update:solution="solution = $event"
         @update:has-char-groups="hasCharGroups = $event"
         @update:has-stylized-strokes="hasStylizedStrokes = $event"
+        @select-pen-preset="selectPenPreset"
       />
       <AIChatPanel
         v-if="roomId && userRole !== 'student'"
@@ -110,8 +111,14 @@
         @insert-element="handleAddElement"
       />
 
-      <!-- Floating Toolbar (Left) -->
-      <div class="floating-toolbar">
+      <!-- 3.4: Floating Toolbar (Left) with auto-hide toggle -->
+      <button v-if="toolbarCollapsed" class="toolbar-expand-btn glass-panel" @click="toggleToolbar" title="Show toolbar">
+        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
+      </button>
+      <div class="floating-toolbar" :class="{ 'toolbar-hidden': toolbarCollapsed }">
+        <button class="toolbar-collapse-btn" @click="toggleToolbar" title="Hide toolbar">
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>
+        </button>
         <ToolBar
           :active-tool="currentTool"
           :color="currentColor"
@@ -304,6 +311,12 @@ export default {
     const isCalculatorVisible = ref(false);
     const toggleCalculator = () => {
       isCalculatorVisible.value = !isCalculatorVisible.value;
+    };
+    // 3.4: Toolbar auto-hide toggle with localStorage persistence
+    const toolbarCollapsed = ref(localStorage.getItem('toolbar_collapsed') === 'true');
+    const toggleToolbar = () => {
+      toolbarCollapsed.value = !toolbarCollapsed.value;
+      localStorage.setItem('toolbar_collapsed', String(toolbarCollapsed.value));
     };
     const toggleUserInfoPanel = () => {
       userInfoCollapsed.value = !userInfoCollapsed.value;
@@ -1208,11 +1221,17 @@ export default {
       }
     };
 
-    watch(handwritingStylerOptions, () => {
+    // 5.8: Watch specific properties instead of deep watcher on entire options object
+    watch(() => handwritingStylerOptions.value.preset, () => {
       if (activeFeature.value === 'styleHandwriting') {
         queuePreviewRender();
       }
-    }, { deep: true });
+    });
+    watch(() => handwritingStylerOptions.value.smoothingFactor, () => {
+      if (activeFeature.value === 'styleHandwriting') {
+        queuePreviewRender();
+      }
+    });
 
     watch(currentColor, () => {
       if (activeFeature.value === 'styleHandwriting') {
@@ -1333,7 +1352,9 @@ export default {
       currentArrowStyle,
       currentRoughness,
       currentFillColor,
-      isCalculatorVisible, // Return state for modal
+      isCalculatorVisible,
+      toolbarCollapsed,
+      toggleToolbar,
       activeUsersCount,
       localClientId,
       formattedLastSaved,
@@ -1529,7 +1550,7 @@ body {
 
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
 
-  z-index: 2000;
+  z-index: var(--z-toast, 5000);
 
 }
 
@@ -1559,7 +1580,7 @@ body {
 
   background: rgba(0,0,0,0.8);
 
-  z-index: 9999;
+  z-index: var(--z-error-overlay, 9999);
 
   display: flex;
 
@@ -1653,11 +1674,68 @@ body {
 
   pointer-events: none;
 
-  z-index: 3000;
+  z-index: var(--z-toolbar, 3000);
+
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
 
 }
 
 
+
+/* 3.4: Toolbar collapse/expand */
+.floating-toolbar.toolbar-hidden {
+  transform: translateY(-50%) translateX(calc(-100% - 40px));
+  opacity: 0;
+  pointer-events: none;
+}
+
+.toolbar-collapse-btn {
+  position: absolute;
+  top: 4px;
+  right: -12px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 1px solid var(--border-subtle, #e2e8f0);
+  background: var(--bg-surface, white);
+  color: var(--text-secondary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+  pointer-events: auto;
+  transition: all 0.2s;
+}
+
+.toolbar-collapse-btn:hover {
+  background: var(--bg-base, #f1f5f9);
+  color: var(--text-primary);
+}
+
+.toolbar-expand-btn {
+  position: absolute;
+  left: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 1px solid var(--border-subtle, #e2e8f0);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: var(--z-toolbar, 3000);
+  color: var(--text-secondary);
+  transition: all 0.2s;
+}
+
+.toolbar-expand-btn:hover {
+  transform: translateY(-50%) scale(1.1);
+  color: var(--text-primary);
+}
 
 /* Floating User Info */
 .floating-user-info {
@@ -1667,7 +1745,7 @@ body {
   display: flex;
   align-items: center;
   gap: 16px; /* Increased from 12px to prevent overlap */
-  z-index: 3000;
+  z-index: var(--z-user-info, 3000);
   pointer-events: auto;
   transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
   
@@ -1702,7 +1780,7 @@ body {
   position: fixed;
   top: 20px;
   right: 20px;
-  z-index: 3001;
+  z-index: calc(var(--z-user-info, 3000) + 1);
   width: 40px;
   height: 40px;
   display: flex;
@@ -1873,7 +1951,7 @@ body {
   width: 420px;
   max-width: 92vw;
 
-  z-index: 1010;
+  z-index: var(--z-panel, 1010);
 
   display: flex;
 

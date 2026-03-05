@@ -227,7 +227,8 @@ boardPersistence.startCleanupJob();
 export const app = createHttpApp({ roomManager, aiSolver });
 
 const server = http.createServer(app);
-const wss = new WebSocketServer({ server });
+// 5.7: Limit max WebSocket payload to 5 MB to prevent memory abuse
+const wss = new WebSocketServer({ server, maxPayload: 5 * 1024 * 1024 });
 
 wss.on('connection', (socket: ManagedSocket, request) => {
   (async () => {
@@ -276,7 +277,11 @@ wss.on('connection', (socket: ManagedSocket, request) => {
     });
 
     socket.on('close', () => removeConnection(roomId, room, socket));
-    socket.on('error', (error) => logger.warn('WebSocket error', { roomId, error: error.message }));
+    // 5.3: Also remove connection on error to prevent leaked awareness states
+    socket.on('error', (error) => {
+      logger.warn('WebSocket error', { roomId, error: error.message });
+      removeConnection(roomId, room, socket);
+    });
   })().catch((error) => {
     logger.error('WebSocket connection failed', { error: (error as Error).message });
     socket.close(1011, 'Internal error');

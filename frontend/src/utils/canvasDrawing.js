@@ -8,6 +8,9 @@ import rough from 'roughjs';
 import * as math from 'mathjs';
 import { drawStyledPen } from './penStyles';
 
+// 1.2: Cache Rough.js instance per canvas (avoid recreating on every drawElement call)
+const roughCanvasCache = new WeakMap();
+
 // Throttle function to limit the rate of function calls
 export const throttle = (fn, delay) => {
   let lastCall = 0;
@@ -45,7 +48,15 @@ export const drawElement = (
 
 
   const type = element.type;
-  const rc = rcOverride || rough.canvas(context.canvas);
+  // 1.2: Reuse cached Rough.js instance for the same canvas
+  let rc = rcOverride;
+  if (!rc) {
+    rc = roughCanvasCache.get(context.canvas);
+    if (!rc) {
+      rc = rough.canvas(context.canvas);
+      roughCanvasCache.set(context.canvas, rc);
+    }
+  }
 
   // Base style
   const baseColor = element.strokeColor || element.color || '#000000';

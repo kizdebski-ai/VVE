@@ -128,7 +128,8 @@ import * as Y from 'yjs';
 import PlotRenderer from './PlotRenderer.vue';
 import rough from 'roughjs';
 import { drawElement } from '../utils/canvasDrawing';
-import katex from 'katex'; 
+import katex from 'katex';
+import DOMPurify from 'dompurify'; 
 
 interface MovableObjectData {
   id: string | number;
@@ -208,12 +209,13 @@ const renderLatex = (latexCode: string) => {
       .replace(/\$$/, '')
       .trim();
 
-    return katex.renderToString(cleanLatex, {
+    return DOMPurify.sanitize(katex.renderToString(cleanLatex, {
       displayMode: true,
       throwOnError: false
-    });
+    }));
   } catch (e) {
-    return `<span style="color: red;">LaTeX Error: ${latexCode}</span>`;
+    const safeCode = DOMPurify.sanitize(latexCode);
+    return `<span style="color: red;">LaTeX Error: ${safeCode}</span>`;
   }
 };
 

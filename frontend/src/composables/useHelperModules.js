@@ -32,8 +32,11 @@ export function useHelperModules({
   // 6.5: Simple mutex/queue to serialize AI transactions
   let aiOperationQueue = Promise.resolve();
   const withAiMutex = (fn) => {
-    aiOperationQueue = aiOperationQueue.then(fn, fn);
-    return aiOperationQueue;
+    const op = aiOperationQueue.then(fn, fn).catch((err) => {
+      console.warn('[useHelperModules] AI operation failed:', err);
+    });
+    aiOperationQueue = op;
+    return op;
   };
 
   // --- Module Access ---

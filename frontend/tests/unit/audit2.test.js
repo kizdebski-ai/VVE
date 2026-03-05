@@ -95,3 +95,40 @@ describe('H9: redo calls updateGlobalState', () => {
     expect(redoMatch).not.toBeNull();
   });
 });
+
+// ─── C3: XSS prevention in MovableObject.vue ─────────────────────────────────
+
+describe('C3: XSS prevention in MovableObject LaTeX rendering', () => {
+  const src = readSrc('components/MovableObject.vue');
+
+  it('imports DOMPurify', () => {
+    expect(src).toContain("import DOMPurify from 'dompurify'");
+  });
+
+  it('sanitizes katex renderToString output', () => {
+    expect(src).toContain('DOMPurify.sanitize(katex.renderToString(');
+  });
+
+  it('sanitizes error message latexCode to prevent XSS', () => {
+    expect(src).toContain('DOMPurify.sanitize(latexCode)');
+  });
+
+  it('does not use unsanitized latexCode in error HTML', () => {
+    // Ensure we don't have raw latexCode interpolated in template literal after "LaTeX Error:"
+    expect(src).not.toMatch(/LaTeX Error: \$\{latexCode\}/);
+  });
+});
+
+// ─── H3: withAiMutex unhandled rejection prevention ──────────────────────────
+
+describe('H3: withAiMutex handles rejected promises', () => {
+  const src = readSrc('composables/useHelperModules.js');
+
+  it('withAiMutex has .catch() handler', () => {
+    expect(src).toContain('.catch((err)');
+  });
+
+  it('withAiMutex logs warning on failure', () => {
+    expect(src).toContain('[useHelperModules] AI operation failed:');
+  });
+});

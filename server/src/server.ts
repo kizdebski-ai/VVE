@@ -154,7 +154,9 @@ const ipConnectionCounts = new Map<string, number>();
 
 const getClientIp = (request: http.IncomingMessage): string => {
   const forwarded = request.headers['x-forwarded-for'];
-  if (typeof forwarded === 'string') return forwarded.split(',')[0].trim();
+  if (typeof forwarded === 'string') {
+    return forwarded.split(',')[0]?.trim() || request.socket.remoteAddress || 'unknown';
+  }
   return request.socket.remoteAddress || 'unknown';
 };
 

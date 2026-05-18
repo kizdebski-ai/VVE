@@ -240,7 +240,7 @@ export class RoomManager {
               error: (err as Error).message
             });
           } finally {
-            room.hydrationPromise = undefined;
+            delete room.hydrationPromise;
           }
         })();
       }

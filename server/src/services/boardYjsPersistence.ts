@@ -25,6 +25,7 @@ type FlushState = {
 const SNAPSHOT_EVERY_UPDATES = 20;
 const SNAPSHOT_INTERVAL_MS = 10_000;
 const CLEANUP_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6h
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export class BoardYjsPersistence {
   private knownBoards = new Set<string>();
@@ -35,6 +36,10 @@ export class BoardYjsPersistence {
   async isBoardRoom(boardId: string): Promise<boolean> {
     if (this.knownBoards.has(boardId)) return true;
     if (this.missingBoards.has(boardId)) return false;
+    if (!UUID_PATTERN.test(boardId)) {
+      this.missingBoards.add(boardId);
+      return false;
+    }
     const row = await getDb()('boards').where({ id: boardId }).first('id');
     if (row) {
       this.knownBoards.add(boardId);

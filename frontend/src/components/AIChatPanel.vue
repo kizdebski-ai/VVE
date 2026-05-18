@@ -193,7 +193,7 @@
 </template>
 
 <script setup>
-import { ref, nextTick, onMounted, computed } from 'vue';
+import { ref, nextTick, computed } from 'vue';
 import {
   Sparkles,
   Minus,
@@ -531,9 +531,6 @@ const triggerAgentAction = async (prompt) => {
   }
 };
 
-onMounted(() => {
-  sendMessage('screenshot_intro');
-});
 </script>
 
 <style scoped>

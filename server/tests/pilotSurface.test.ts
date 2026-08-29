@@ -31,11 +31,15 @@ import type { EquationSolver } from '../src/services/aiSolver';
 import { createPilotAvailability } from '../src/pilot/availability';
 
 const stubBoardDb = () => {
-  const first = async () => undefined;
-  const where = () => ({ first });
-  const secondJoin = () => ({ where });
-  const firstJoin = () => ({ leftJoin: secondJoin });
-  const db = (table: string) => ({ leftJoin: firstJoin });
+  // Real knex builders stay chainable in any order (loadBoardFacts appends
+  // .where(...) after .first(...)), so the stub is one universal node whose
+  // every method returns itself and whose await resolves "no row".
+  const node: Record<string, unknown> = {};
+  for (const method of ['join', 'leftJoin', 'where', 'andWhere', 'on', 'andOnVal', 'orderBy', 'limit', 'select', 'first']) {
+    node[method] = () => node;
+  }
+  node.then = (resolve: (v: unknown) => unknown) => resolve(undefined);
+  const db = (_table: string) => node;
   (db as any).ref = (name: string) => ({ as: () => name });
   mockGetDb.mockReturnValue(db);
 };
@@ -136,10 +140,12 @@ describe('Pilot surface: excluded HTTP paths are uncallable in pilot mode', () =
     const login = await request(app).get('/teacher/login');
     expect(login.status).toBe(400);
 
-    // Board access stays reachable (404 without a real slug, not a missing route).
-    const board = await request(app).get('/board/does-not-exist');
+    // Board access stays reachable: with a presented token an unknown slug is
+    // a typed wrongTarget denial (404, Polish copy), not a missing route.
+    const board = await request(app).get('/board/does-not-exist?token=x');
     expect(board.status).toBe(404);
-    expect(board.body.error).toBe('Board not found.');
+    expect(board.body.error).toBe('Nie znaleziono tablicy.');
+    expect(board.body.reason).toBe('wrongTarget');
   });
 
   it('legacy rooms API stays available in development with the internal dev surface', async () => {

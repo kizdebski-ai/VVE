@@ -3,30 +3,27 @@ import path from 'path';
 import { Knex } from 'knex';
 
 import { getDb } from '../src/db';
+import { createCapabilityAccess } from '../src/pilot/capabilityAccess';
 import { createBoardForTeacher } from '../src/services/boardService';
-import {
-  createOrGetPermanentToken,
-  verifyTeacherPermanentToken
-} from '../src/services/teacherPermanentTokens';
 import { getOrCreateTeacher } from '../src/services/teacherService';
 import { PILOT_MANIFEST_VERSION } from '../src/pilot/availability';
 
 /**
- * Deterministic local Pilot fixture (VVE-100, slice S0).
+ * Deterministic local Pilot fixture (VVE-100, slice S0; re-routed in VVE-101).
  *
  * Seeds ONE teacher with ONE Managed Board into local PostgreSQL so
- * Playwright/browser tests can launch three contexts through the CURRENT
- * auth stack (VVE-101 re-routes it later):
+ * Playwright/browser tests can launch three contexts through the
+ * CapabilityAccess stack:
  *
- *   - Administrator: ADMIN_SECRET on /api/admin/teachers
- *   - Teacher:       the printed teacher access link (permanent link)
- *   - Student:       the printed board access link
+ *   - Administrator: passphrase login (ADMIN_PASSPHRASE → 12h session)
+ *   - Teacher:       the printed Teacher Access Link (one active, retrievable)
+ *   - Student:       the printed Board Access Link
  *
  * Determinism: fixed inputs (email, names, board title, twelve-month
  * validity). Re-running deletes the fixture teacher's boards and recreates
- * exactly one, so the seeded structure converges. Credentials are freshly
- * generated per run (the current stack regenerates permanent links on
- * demand) and written to server/data/pilot-fixture.json, which is
+ * exactly one, so the seeded structure converges. The Teacher Access Link is
+ * REUSED when already active (viewing never rotates — VVE-101), and
+ * credentials are written to server/data/pilot-fixture.json, which is
  * gitignored.
  */
 
@@ -49,8 +46,8 @@ export interface PilotFixture {
   teacherId: string;
   boardId: string;
   publicSlug: string;
-  /** ADMIN_SECRET the backend must run with for the Administrator context. */
-  adminSecret: string;
+  /** ADMIN_PASSPHRASE the backend must run with for the Administrator context. */
+  adminPassphrase: string;
   /** Teacher Access Link (opens the teacher login flow). */
   teacherAccessLink: string;
   /** Board Access Link (opens the student board entry). */
@@ -60,6 +57,7 @@ export interface PilotFixture {
 
 export const seedPilotFixture = async (): Promise<PilotFixture> => {
   const db: Knex = getDb();
+  const access = createCapabilityAccess();
 
   // Fixed organization (upsert by name keeps reruns deterministic).
   const existingOrg = await db('organizations').where({ name: FIXTURE_ORG_NAME }).first();
@@ -95,14 +93,24 @@ export const seedPilotFixture = async (): Promise<PilotFixture> => {
   await db('boards').where({ teacher_id: teacher.id }).del();
   await db('students').where({ teacher_id: teacher.id }).del();
 
-  // Teacher Access Link through the current stack's permanent-token service.
-  const permanent = await createOrGetPermanentToken(teacher.id);
-  // Fail loudly rather than emit a fixture whose link cannot log in (the
-  // current stack regenerates tokens on demand, so a mismatch here means the
-  // seed and the stored credential diverged).
-  const verified = await verifyTeacherPermanentToken(teacher.id, permanent.token);
-  if (!verified) {
-    throw new Error('Seeded Teacher Access Link failed verification against the stored hash.');
+  // Exactly ONE active retrievable Teacher Access Link; re-seeding REUSES the
+  // existing link (side-effect-free) instead of rotating it.
+  const linkResult = await access.createOrReuseTeacherAccessLink({
+    email: FIXTURE_TEACHER_EMAIL,
+    internalLabel: FIXTURE_TEACHER_NAME,
+    organizationId: orgId
+  });
+  if (!linkResult.ok) {
+    throw new Error(`Seeding the Teacher Access Link failed: ${linkResult.reason}`);
+  }
+  // Fail loudly rather than emit a fixture whose link cannot log in.
+  const decision = await access.decide({
+    credential: { kind: 'teacherAccessLink', token: linkResult.token },
+    action: 'teacher.openDashboard',
+    now: new Date()
+  });
+  if (!decision.granted) {
+    throw new Error(`Seeded Teacher Access Link was denied by CapabilityAccess: ${decision.reason}`);
   }
 
   // One Managed Board, twelve-month validity, one student label.
@@ -115,8 +123,8 @@ export const seedPilotFixture = async (): Promise<PilotFixture> => {
   });
 
   // The board access link targets the app origin (config.teacherAppBaseUrl),
-  // same origin the permanent link uses.
-  const appBase = new URL(permanent.url).origin;
+  // same origin the teacher access link uses.
+  const appBase = new URL(linkResult.accessLink).origin;
   const boardAccessLink = `${appBase}/board/${board.public_slug}?token=${studentToken}`;
 
   const fixture: PilotFixture = {
@@ -125,8 +133,8 @@ export const seedPilotFixture = async (): Promise<PilotFixture> => {
     teacherId: teacher.id,
     boardId: board.id,
     publicSlug: board.public_slug as string,
-    adminSecret: process.env.ADMIN_SECRET || '',
-    teacherAccessLink: permanent.url,
+    adminPassphrase: process.env.ADMIN_PASSPHRASE || '',
+    teacherAccessLink: linkResult.accessLink,
     boardAccessLink,
     validUntil: new Date(board.valid_until as Date).toISOString()
   };
@@ -155,9 +163,9 @@ if (isCli) {
       );
       process.exit(1);
     }
-    if (!process.env.ADMIN_SECRET) {
+    if (!process.env.ADMIN_PASSPHRASE) {
       console.error(
-        '[pilot-fixture] ADMIN_SECRET is required; the backend must run with the same value.'
+        '[pilot-fixture] ADMIN_PASSPHRASE is required; the backend must run with the same value.'
       );
       process.exit(1);
     }
@@ -176,7 +184,7 @@ if (isCli) {
     console.log(`[pilot-fixture] Board:    ${FIXTURE_BOARD_TITLE} (valid until ${fixture.validUntil})`);
     console.log('');
     console.log('Browser contexts:');
-    console.log(`  Administrator: run the backend with ADMIN_SECRET, panel at ${new URL(fixture.teacherAccessLink).origin}/admin/teachers`);
+    console.log(`  Administrator: passphrase login at ${new URL(fixture.teacherAccessLink).origin}/admin/teachers`);
     console.log(`  Teacher:       ${fixture.teacherAccessLink}`);
     console.log(`  Student:       ${fixture.boardAccessLink}`);
     console.log('');

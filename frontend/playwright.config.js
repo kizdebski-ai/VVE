@@ -42,11 +42,10 @@ export default defineConfig({
       timeout: 120_000,
       env: {
         ...process.env,
-        // Same-origin API/WS through the Vite dev proxy; the admin panel
-        // reads this build-time secret for its x-admin-secret header.
-        VITE_BACKEND_URL: 'http://localhost:5173',
-        VITE_ADMIN_SECRET: pilotE2eEnv.ADMIN_SECRET,
-      },
+        // Same-origin API/WS through the Vite dev proxy; the Administrator
+        // logs in with the passphrase (no build-time secret in the frontend).
+        VITE_BACKEND_URL: 'http://localhost:5173'
+      }
     },
   ],
 });

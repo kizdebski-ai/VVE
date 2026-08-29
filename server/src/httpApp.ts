@@ -1,15 +1,7 @@
-import express, { Request, type RequestHandler } from 'express';
+import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
-import { randomUUID, timingSafeEqual } from 'crypto';
-
-/** Timing-safe string comparison to prevent timing attacks on secrets */
-const timingSafeCompare = (a: string, b: string): boolean => {
-  const bufA = Buffer.from(a);
-  const bufB = Buffer.from(b);
-  if (bufA.length !== bufB.length) return false;
-  return timingSafeEqual(bufA, bufB);
-};
+import { randomUUID } from 'crypto';
 
 import { logger } from './logger';
 import type { RoomManager } from './rooms';
@@ -20,20 +12,19 @@ import {
   type FeatureId,
   type RuntimeEnvironment
 } from './pilot/availability';
+import { createCapabilityAccess } from './pilot/capabilityAccess';
+import { requireAdminCapability } from './pilot/capabilityHttpAdapters';
 import { config } from './config';
 
 import { createRateLimiter } from './middleware/rateLimiter';
 import { createAiRoutesRouter } from './routes/aiRoutes';
 import { createAiBoardAssistantRouter } from './routes/aiBoardAssistant';
 import { createRoomsApiRouter } from './routes/roomsRoutes';
+import { createAdminAuthRouter } from './routes/adminAuth';
 import { createAdminTeachersRouter } from './routes/adminTeachers';
 import { createTeacherAuthRouter } from './routes/teacherAuth';
 import { createTeacherBoardsRouter } from './routes/teacherBoards';
 import { createBoardAccessRouter } from './routes/boardAccess';
-
-const readAdminSecret = (req: Request) =>
-  (req.headers['x-admin-secret'] as string) ||
-  (typeof req.query.adminSecret === 'string' ? req.query.adminSecret : undefined);
 
 export interface CreateAppOptions {
   roomManager: RoomManager;
@@ -46,13 +37,16 @@ export interface CreateAppOptions {
    */
   environment?: RuntimeEnvironment;
   devSurface?: boolean;
+  /** CapabilityAccess dependency; defaults to the process-wide instance. */
+  capabilityAccess?: ReturnType<typeof createCapabilityAccess>;
 }
 
-export const createHttpApp = ({ roomManager, aiSolver, environment, devSurface }: CreateAppOptions) => {
+export const createHttpApp = ({ roomManager, aiSolver, environment, devSurface, capabilityAccess }: CreateAppOptions) => {
   const app = express();
 
   const resolvedEnvironment: RuntimeEnvironment = environment ?? config.pilotEnvironment;
   const resolvedDevSurface: boolean = devSurface ?? config.devSurface;
+  const access = capabilityAccess ?? createCapabilityAccess();
 
   // One availability decision source for route registration (Module 9).
   const availability = createPilotAvailability();
@@ -146,37 +140,21 @@ export const createHttpApp = ({ roomManager, aiSolver, environment, devSurface }
     next();
   });
 
-  // 4.3: Require admin secret ALWAYS (not just in production)
-  const requireAdminSecret: RequestHandler = (req, res, next) => {
-    const expectedSecret = config.adminSecret;
-
-    if (!expectedSecret) {
-      logger.warn('Admin request blocked because ADMIN_SECRET is not configured', { path: req.path });
-      res.status(503).json({ error: 'Admin endpoints are not configured. Set ADMIN_SECRET.' });
-      return;
-    }
-
-    const provided = readAdminSecret(req);
-    if (!provided || !timingSafeCompare(provided, expectedSecret)) {
-      res.status(401).json({ error: 'Unauthorized' });
-      return;
-    }
-
-    next();
-  };
-
   // Register routers — every group goes through the PilotAvailability manifest.
+  // Administrator surface: passphrase → 12h session (ADR-0005); every teacher
+  // management operation enforces the session server-side via decide().
   register('http.adminTeachers', () => {
-    app.use('/api/admin/teachers', requireAdminSecret, createAdminTeachersRouter());
+    app.use('/api/admin', createAdminAuthRouter(access));
+    app.use('/api/admin/teachers', requireAdminCapability(access), createAdminTeachersRouter(access));
   });
   register('http.teacherAuth', () => {
-    app.use(createTeacherAuthRouter());
+    app.use(createTeacherAuthRouter(access));
   });
   register('http.teacherBoards', () => {
-    app.use('/api/teacher/boards', createTeacherBoardsRouter());
+    app.use('/api/teacher/boards', createTeacherBoardsRouter(access));
   });
   register('http.boardAccess', () => {
-    app.use(createBoardAccessRouter());
+    app.use(createBoardAccessRouter(access));
   });
   register('http.ai', () => {
     // 4.5: Rate limit ALL AI endpoints (20 req/min per IP)

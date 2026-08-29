@@ -52,7 +52,17 @@ export const config = {
   teacherAppBaseUrl: process.env.TEACHER_APP_BASE_URL || process.env.APP_BASE_URL || 'https://app.whitevue.com',
   teacherSessionSecret: process.env.TEACHER_SESSION_SECRET || process.env.SESSION_SECRET || 'change-me-in-prod',
   teacherSessionCookie: process.env.TEACHER_SESSION_COOKIE || 'teacher_session',
-  adminSecret: process.env.ADMIN_SECRET,
+  // Administrator access (ADR-0005): one shared passphrase exchanged for a
+  // signed twelve-hour HttpOnly session. The passphrase is NEVER accepted in
+  // a URL or query string — only in the POST /api/admin/session body.
+  adminPassphrase: process.env.ADMIN_PASSPHRASE,
+  adminSessionSecret: process.env.ADMIN_SESSION_SECRET || process.env.TEACHER_SESSION_SECRET || process.env.SESSION_SECRET || 'change-me-in-prod',
+  adminSessionCookie: process.env.ADMIN_SESSION_COOKIE || 'vve_admin_session',
+  adminSessionTtlMs: Number(process.env.ADMIN_SESSION_TTL_MS || 12 * 60 * 60 * 1000),
+  // Login rate limit (per client key, enforced inside CapabilityAccess).
+  adminLoginMax: Number(process.env.ADMIN_LOGIN_MAX || 5),
+  adminLoginWindowMs: Number(process.env.ADMIN_LOGIN_WINDOW_MS || 60_000),
+  boardWsSecret: process.env.BOARD_WS_SECRET || process.env.TEACHER_SESSION_SECRET || process.env.SESSION_SECRET || 'change-me',
   // PilotAvailability inputs (Module 9): the production-like deployment is the
   // Pilot surface; local development keeps excluded features behind the
   // intentional internal VVE_DEV_SURFACE flag. Never settable by request input.
@@ -75,8 +85,11 @@ if (config.nodeEnv === 'production') {
   if (config.teacherSessionSecret === 'change-me-in-prod') {
     missing.push('TEACHER_SESSION_SECRET (still using default fallback)');
   }
-  if (!config.adminSecret) {
-    missing.push('ADMIN_SECRET');
+  if (!config.adminPassphrase) {
+    missing.push('ADMIN_PASSPHRASE (shared Administrator passphrase, ADR-0005)');
+  }
+  if (config.adminSessionSecret === 'change-me-in-prod') {
+    missing.push('ADMIN_SESSION_SECRET (still using default fallback)');
   }
   if (!config.databaseUrl) {
     missing.push('DATABASE_URL');

@@ -72,15 +72,23 @@ describe('C4: roundRect browser compatibility', () => {
   });
 });
 
-// ─── H6: Timing-safe admin secret comparison ────────────────────────────────
+// ─── H6: Timing-safe credential comparison (VVE-101) ────────────────────────
 
-describe('H6: Timing-safe admin secret comparison', () => {
-  it('httpApp.ts uses timingSafeEqual for admin secret', () => {
-    const src = readServer('httpApp.ts');
+describe('H6: Timing-safe credential comparison', () => {
+  it('CapabilityAccess compares credentials in constant time', () => {
+    // VVE-101 moved every credential comparison behind CapabilityAccess;
+    // the constant-time compare lives there now, not in route files.
+    const src = readServer('pilot/capabilityAccess.ts');
     expect(src).toContain('timingSafeEqual');
-    expect(src).toContain('timingSafeCompare');
-    // Should NOT use direct !== for admin secret
-    expect(src).not.toMatch(/provided\s*!==\s*expectedSecret/);
+    expect(src).toContain('const safeEqual');
+    expect(src).toContain('safeEqual(passphrase, config.adminPassphrase)');
+  });
+
+  it('httpApp.ts no longer reads a raw admin secret from headers or query', () => {
+    const src = readServer('httpApp.ts');
+    expect(src).not.toContain('x-admin-secret');
+    expect(src).not.toContain('adminSecret');
+    expect(src).not.toContain('readAdminSecret');
   });
 });
 

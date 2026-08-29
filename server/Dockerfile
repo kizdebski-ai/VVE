@@ -6,7 +6,9 @@ COPY package*.json ./
 RUN npm ci
 
 COPY tsconfig.json ./
+COPY knexfile.ts ./
 COPY src ./src
+COPY migrations ./migrations
 
 RUN npm run build
 
@@ -25,7 +27,11 @@ RUN npm ci --omit=dev
 # Ensure data directory exists for persistence
 RUN mkdir -p /data
 
+# Copy compiled code
 COPY --from=builder /app/dist ./dist
+
+# Copy pure JavaScript migrations (not TypeScript!)
+COPY migrations-js ./migrations-js
 
 EXPOSE 8000
 

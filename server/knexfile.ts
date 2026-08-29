@@ -3,12 +3,14 @@ import dotenv from "dotenv";
 
 dotenv.config();
 
+const isProduction = process.env.NODE_ENV === 'production';
+
 const config: Knex.Config = {
     client: "pg",
     connection: process.env.DATABASE_URL as string,
     migrations: {
-        directory: "./migrations",
-        extension: "ts",
+        directory: isProduction ? "./migrations" : "./migrations",
+        extension: isProduction ? "js" : "ts",
     },
 };
 

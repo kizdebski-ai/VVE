@@ -143,6 +143,23 @@ const permanentLinks = reactive({});
 const loadingLinks = reactive({});
 const apiBase = resolveBackendBaseUrl();
 
+// Admin secret for authorizing admin API calls
+const adminSecret = import.meta.env.VITE_ADMIN_SECRET || '';
+
+// Debug log - helps identify if VITE_ADMIN_SECRET is set during build
+console.log('[AdminTeachersPanel] Admin secret status:', {
+  isSet: !!adminSecret,
+  length: adminSecret.length,
+  prefix: adminSecret ? adminSecret.substring(0, 4) + '...' : 'NOT_SET',
+  apiBase
+});
+
+// Helper to get headers with admin authorization
+const adminHeaders = (extra = {}) => ({
+  'x-admin-secret': adminSecret,
+  ...extra
+});
+
 const copy = (t) => {
   navigator.clipboard.writeText(t);
 };
@@ -153,10 +170,12 @@ const fetchPermanentLink = async (teacherId) => {
   
   loadingLinks[teacherId] = true;
   try {
-    const res = await fetch(`${apiBase}/api/admin/teachers/${teacherId}/permanent-link`, { method: 'POST' });
+    const res = await fetch(`${apiBase}/api/admin/teachers/${teacherId}/permanent-link`, { method: 'POST', headers: adminHeaders() });
     const data = await res.json();
     if (data.permanentLink) {
       permanentLinks[teacherId] = data.permanentLink;
+    } else if (data.error) {
+      console.error('[AdminTeachersPanel] Permanent link error:', data.error);
     }
   } catch (e) {
     console.error('Failed to fetch permanent link:', e);
@@ -168,8 +187,15 @@ const fetchPermanentLink = async (teacherId) => {
 const loadTeachers = async () => {
   loading.value = true;
   try {
-    const res = await fetch(`${apiBase}/api/admin/teachers`);
+    const res = await fetch(`${apiBase}/api/admin/teachers`, { headers: adminHeaders() });
     const data = await res.json();
+    
+    if (!res.ok) {
+      console.error('[AdminTeachersPanel] API error:', { status: res.status, data });
+      alert(`Błąd API (${res.status}): ${data.error || 'Nieznany błąd'}. Sprawdź czy VITE_ADMIN_SECRET i ADMIN_SECRET są poprawnie ustawione na Railway.`);
+      return;
+    }
+    
     teachers.value = data.teachers || [];
     
     // Automatically fetch permanent links for all teachers
@@ -185,7 +211,7 @@ const submitManual = async () => {
   submitting.value = true;
   try {
     const res = await fetch(`${apiBase}/api/admin/teachers/import`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      method: 'POST', headers: adminHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify(manual.value)
     });
     const data = await res.json();
@@ -207,7 +233,7 @@ const submitManual = async () => {
 const generateLink = async (tid) => {
   generating.value = tid;
   try {
-    const res = await fetch(`${apiBase}/api/admin/teachers/${tid}/permanent-link`, { method: 'POST' });
+    const res = await fetch(`${apiBase}/api/admin/teachers/${tid}/permanent-link`, { method: 'POST', headers: adminHeaders() });
     const data = await res.json();
     if(data.permanentLink) permanentLinks[tid] = data.permanentLink;
     loadTeachers();
@@ -222,7 +248,7 @@ const submitCsv = async () => {
   submitting.value = true;
   try {
     const fd = new FormData(); fd.append('file', file.value);
-    await fetch(`${apiBase}/api/admin/teachers/import`, { method: 'POST', body: fd });
+    await fetch(`${apiBase}/api/admin/teachers/import`, { method: 'POST', headers: adminHeaders(), body: fd });
     loadTeachers(); file.value = null;
   } catch(e){ alert('Błąd importu'); }
   finally { submitting.value = false; }

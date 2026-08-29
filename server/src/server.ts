@@ -11,6 +11,7 @@ import { createHttpApp } from './httpApp';
 import { OpenRouterEquationSolver } from './services/aiSolver';
 import { verifyBoardWsToken } from './services/boardTokens';
 import { BoardYjsPersistence } from './services/boardYjsPersistence';
+import { getDb } from './db';
 
 // Startup config check (no secrets logged)
 const apiKey = process.env.OPENROUTER_API_KEY;
@@ -345,9 +346,29 @@ const pingInterval = setInterval(() => {
   roomManager.cleanup(config.roomTtlMs);
 }, config.pingIntervalMs);
 
-server.listen(config.port, config.host, () => {
-  logger.info('Realtime backend ready', { host: config.host, port: config.port, path: paths.whiteboard });
-});
+// Run migrations and start server
+const startServer = async () => {
+  try {
+    // Run migrations programmatically
+    if (config.databaseUrl) {
+      const db = getDb();
+      console.log('[Server] Running database migrations...');
+      const result = await db.migrate.latest();
+      console.log('[Server] Migrations completed:', result);
+    } else {
+      console.log('[Server] No DATABASE_URL, skipping migrations');
+    }
+  } catch (error) {
+    console.error('[Server] Migration failed:', error);
+    // Continue anyway - tables might already exist
+  }
+
+  server.listen(config.port, config.host, () => {
+    logger.info('Realtime backend ready', { host: config.host, port: config.port, path: paths.whiteboard });
+  });
+};
+
+startServer();
 
 const shutdown = () => {
   logger.info('Shutting down server');

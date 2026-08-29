@@ -1,7 +1,7 @@
 ---
 id: VVE-101
 title: Capability links and Administrator flow
-status: open
+status: closed
 labels:
   - ready-for-agent
   - "implementation:ticket"
@@ -23,3 +23,25 @@ Implement section `S1 - Capability Links and Administrator Flow` in [VVE Deep Mo
 ## Resolution evidence
 
 Return the shared HTTP and WebSocket access-decision matrix, migration evidence, Administrator and Teacher browser flows, regeneration and revocation tests, Polish error states, proof that list/view is side-effect-free, deleted legacy secret paths, and the focused commit.
+
+## Resolution
+
+Delivered the CapabilityAccess Interface (`server/src/pilot/capabilityAccess.ts`) with HTTP adapters (`server/src/pilot/capabilityHttpAdapters.ts`) shared by HTTP routes and WebSocket admission. Administrator signs in for a 12-hour session per ADR-0005; teacher access links are retrievable with a single active link per teacher per ADR-0008; regeneration and deactivation operate on a durable credential version (hashed share tokens, so rotation revokes old links); WebSocket admission fails closed (`server/src/wsAdmission.ts`); the fixture uses the Public Teacher Identity `Dawid Furmaniuk - Matsin`.
+
+Commits: 42b6343 (server: CapabilityAccess module, admin session, teacher access links), 6817818 (frontend: administrator console and teacher dashboard through CapabilityAccess). Merged into this branch as 9e1026c.
+
+Gate results:
+
+- Server build clean; server tests 64/64.
+- Frontend build clean; frontend tests 114/114.
+- Playwright E2E 6/6 (three-context spine through the new flows).
+- Pilot fixture idempotent re-seed yields the same teacher token.
+- Fail-fast preflight 3/3.
+- Access-decision matrix 16/16, including cross-board denial, WS fail-closed admission, side-effect-free list/view, and regeneration/deactivation proofs.
+
+Recorded deviations:
+
+1. Logout only clears the cookie client-side (no server-side session invalidation).
+2. Inactive teacher links surface 403 (not a dedicated inactive state).
+3. The CSV import endpoint is kept alongside the JSON route.
+4. The readOnly session downgrade was removed in favor of plain denials.

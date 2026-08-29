@@ -9,7 +9,8 @@ import { RoomManager, RoomContext } from './rooms';
 import { FilePersistence } from './persistence';
 import { createHttpApp } from './httpApp';
 import { OpenRouterEquationSolver } from './services/aiSolver';
-import { verifyBoardWsToken } from './services/boardTokens';
+import { createCapabilityAccess } from './pilot/capabilityAccess';
+import { createWsAdmission } from './wsAdmission';
 import { BoardYjsPersistence } from './services/boardYjsPersistence';
 import { getDb } from './db';
 
@@ -253,7 +254,15 @@ const boardPersistence = new BoardYjsPersistence();
 const roomManager = new RoomManager(persistence, boardPersistence);
 const aiSolver = new OpenRouterEquationSolver();
 boardPersistence.startCleanupJob();
-export const app = createHttpApp({ roomManager, aiSolver });
+// VVE-101: one CapabilityAccess instance owns every authorization decision
+// for HTTP and WebSocket. Legacy peer rooms remain reachable only on the
+// development surface with the internal dev flag (ADR-0010).
+const capabilityAccess = createCapabilityAccess();
+const wsAdmission = createWsAdmission(
+  capabilityAccess,
+  config.pilotEnvironment === 'development' && config.devSurface
+);
+export const app = createHttpApp({ roomManager, aiSolver, capabilityAccess });
 
 const server = http.createServer(app);
 // 5.7: Limit max WebSocket payload to 5 MB to prevent memory abuse
@@ -278,25 +287,15 @@ wss.on('connection', (socket: ManagedSocket, request) => {
     }
 
     const { roomId, token } = parsed;
-    let isBoardRoom = false;
-    try {
-      isBoardRoom = await boardPersistence.isBoardRoom(roomId);
-    } catch (error) {
-      logger.error('Board lookup failed for WebSocket', {
-        roomId,
-        error: (error as Error).message
-      });
-      // Fail open for non-board rooms to preserve basic realtime when DB is down.
-      isBoardRoom = false;
-    }
 
-    const session = token ? verifyBoardWsToken(token) : null;
-    if (isBoardRoom) {
-      if (!session || session.boardId !== roomId) {
-        trackIpDisconnect(clientIp);
-        socket.close(1008, 'Unauthorized');
-        return;
-      }
+    // VVE-101: admission goes through CapabilityAccess.decide() — fail-closed
+    // on every database error (the previous fail-open path is deleted), with
+    // expiry/revocation/credential-version re-verified at admission time.
+    const admission = await wsAdmission.admit(roomId, token);
+    if (!admission.admitted) {
+      trackIpDisconnect(clientIp);
+      socket.close(admission.closeCode, admission.closeReason);
+      return;
     }
 
     const { room, created } = await roomManager.get(roomId);

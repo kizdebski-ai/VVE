@@ -6,7 +6,7 @@ import { logger } from '../logger';
 import type { EquationSolver } from '../services/aiSolver';
 import { HttpError } from '../services/httpError';
 import { ChatMessage, callGrok, type CallGrokOptions } from '../services/grok';
-import { verifyBoardWsToken } from '../services/boardTokens';
+import { verifyBoardWsToken } from '../pilot/capabilityAccess';
 
 /**
  * AI HTTP surface (solve-equation, chat, PDF analysis, diagrams, vision).

@@ -6,14 +6,14 @@ import knex, { Knex } from 'knex';
 /**
  * Real-PostgreSQL proof of the VVE-100 fixture spine: the deterministic local
  * Managed Board fixture and the admin→teacher→board→student flow through the
- * CURRENT auth stack, on the Pilot HTTP surface.
+ * CapabilityAccess stack (VVE-101), on the Pilot HTTP surface.
  *
  * The suite owns an isolated schema (created/dropped per run) in the local
  * test database, so it never shares state with another suite or with the
  * seeded local fixture database contents.
  */
 
-const { schemaName, adminSecret } = vi.hoisted(() => {
+const { schemaName, adminPassphrase } = vi.hoisted(() => {
   const base =
     process.env.PILOT_FLOW_DATABASE_URL ||
     process.env.DATABASE_URL ||
@@ -26,15 +26,18 @@ const { schemaName, adminSecret } = vi.hoisted(() => {
   // getDb()/config read the environment at first import, so the schema-scoped
   // DATABASE_URL (and secrets) must be set before any app module loads.
   process.env.DATABASE_URL = url.toString();
-  const admin = 'pilot-flow-admin-secret';
-  process.env.ADMIN_SECRET = admin;
+  const admin = 'pilot-flow-admin-passphrase';
+  process.env.ADMIN_PASSPHRASE = admin;
   process.env.TEACHER_SESSION_SECRET = 'pilot-flow-session-secret';
+  process.env.ADMIN_SESSION_SECRET = 'pilot-flow-admin-session-secret';
+  process.env.BOARD_WS_SECRET = 'pilot-flow-ws-secret';
   process.env.TEACHER_APP_BASE_URL = 'http://app.test';
-  return { schemaName: name, adminSecret: admin };
+  return { schemaName: name, adminPassphrase: admin };
 });
 
 import { up as initialSchemaUp } from '../migrations/20241129000000_initial_schema';
 import { up as permanentTokenUp } from '../migrations/20241207000000_add_teacher_permanent_token';
+import { up as capabilityAccessUp } from '../migrations/20260829000000_capability_access';
 import { createHttpApp } from '../src/httpApp';
 import { getDb } from '../src/db';
 import { RoomManager } from '../src/rooms';
@@ -81,6 +84,7 @@ describe.skipIf(!hasPostgres)('Pilot fixture: deterministic Managed Board fixtur
     });
     await initialSchemaUp(schemaKnex);
     await permanentTokenUp(schemaKnex);
+    await capabilityAccessUp(schemaKnex);
   });
 
   afterAll(async () => {
@@ -101,27 +105,28 @@ describe.skipIf(!hasPostgres)('Pilot fixture: deterministic Managed Board fixtur
       environment: 'pilot'
     });
 
-  it('drives admin → teacher → board → student through the current auth stack on the pilot surface', async () => {
+  it('drives admin → teacher → board → student through CapabilityAccess on the pilot surface', async () => {
     const app = createPilotApp();
 
     const flow = await driveCurrentStackLessonFlow(app, {
-      adminSecret,
+      adminPassphrase,
       teacherEmail: 'flow-teacher@vve-pilot.local',
       teacherFullName: 'Flow Teacher',
       boardTitle: 'Flow Board'
     });
 
-    // Administrator step produced a retrievable teacher access link.
-    expect(flow.teacherAccessPath).toMatch(/^\/teacher\/login\?token=.+&id=.+&permanent=1$/);
+    // Administrator step produced a retrievable Teacher Access Link.
+    expect(flow.teacherAccessPath).toMatch(/^\/teacher\/login\?token=[A-Za-z0-9_-]+$/);
 
     // Teacher step produced a session cookie and board facts.
     expect(flow.teacherSessionCookie).toMatch(/^teacher_session=/);
     expect(flow.boardId).toMatch(/^[0-9a-f-]{36}$/);
     expect(flow.publicSlug).toBeTruthy();
 
-    // Student step: board facts with the Public Teacher Identity and a ws token.
+    // Student step: board facts with the exact Public Teacher Identity and a
+    // scoped ws admission token.
     expect(flow.studentBoard.role).toBe('student');
-    expect(flow.studentBoard.teacherName).toBe('Dawid Furmaniuk');
+    expect(flow.studentBoard.teacherName).toBe('Dawid Furmaniuk - Matsin');
     expect(flow.studentBoard.wsToken).toBeTruthy();
 
     // The same board recognizes the teacher session with the teacher role.
@@ -142,15 +147,16 @@ describe.skipIf(!hasPostgres)('Pilot fixture: deterministic Managed Board fixtur
     expect(lobbyRes.status).toBe(404);
   });
 
-  it('is deterministic: re-running the flow for the same teacher converges to one teacher', async () => {
+  it('is deterministic: re-running the flow for the same teacher converges to one teacher and one active link', async () => {
     const db = getDb();
     const before = await db('teachers').where({ email: 'flow-teacher@vve-pilot.local' }).first();
     expect(before).toBeTruthy();
 
-    // Re-run the flow for the same teacher (admin import is idempotent).
+    // Re-run the flow for the same teacher (admin create-or-reuse is
+    // idempotent and NEVER rotates the existing link).
     const app = createPilotApp();
     const second = await driveCurrentStackLessonFlow(app, {
-      adminSecret,
+      adminPassphrase,
       teacherEmail: 'flow-teacher@vve-pilot.local',
       boardTitle: 'Flow Board 2'
     });
@@ -161,5 +167,11 @@ describe.skipIf(!hasPostgres)('Pilot fixture: deterministic Managed Board fixtur
 
     const boards = await db('boards').where({ teacher_id: before.id });
     expect(boards).toHaveLength(2);
+
+    // Exactly one active Teacher Access Link, and it is the one the second
+    // run received (viewing/creating did not rotate it).
+    const activeLinks = await db('teacher_access_links').where({ teacher_id: before.id, is_active: true });
+    expect(activeLinks).toHaveLength(1);
+    expect(second.teacherAccessPath).toContain(activeLinks[0].token);
   });
 });

@@ -5,7 +5,7 @@ import { runBoardAgent } from '../ai/agent/boardAgent';
 import { RoomManager } from '../rooms';
 import { config } from '../config';
 import { logger } from '../logger';
-import { verifyBoardWsToken } from '../services/boardTokens';
+import { verifyBoardWsToken } from '../pilot/capabilityAccess';
 
 export const createAiBoardAssistantRouter = (roomManager: RoomManager) => {
     const router = Router();

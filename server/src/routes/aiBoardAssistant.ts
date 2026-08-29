@@ -11,12 +11,8 @@ export const createAiBoardAssistantRouter = (roomManager: RoomManager) => {
     const router = Router();
 
     router.post('/', async (req, res) => {
-        if (!config.aiBoardAssistantEnabled) {
-            res.status(503).json({ error: 'AI Board Assistant is disabled.' });
-            return;
-        }
-
-        // 4.2: Require board token — reject unauthenticated requests
+        // 4.2: Require board token — reject unauthenticated requests FIRST,
+        // so AI availability never changes who may call the endpoint.
         const boardToken = req.headers['x-board-token'] as string | undefined;
         if (!boardToken) {
             res.status(401).json({ error: 'Board token is required.' });
@@ -29,6 +25,11 @@ export const createAiBoardAssistantRouter = (roomManager: RoomManager) => {
         }
         if (session.role === 'student') {
             res.status(403).json({ error: 'AI assistant is not available for students.' });
+            return;
+        }
+
+        if (!config.aiBoardAssistantEnabled) {
+            res.status(503).json({ error: 'AI Board Assistant is disabled.' });
             return;
         }
 

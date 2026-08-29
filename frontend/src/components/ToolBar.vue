@@ -12,9 +12,10 @@
       <!-- Tools Group -->
       <div class="tool-group" :class="{ vertical: orientation === 'vertical' }">
         <button
-          v-for="tool in mainTools"
+          v-for="tool in visibleMainTools"
           :key="tool.name"
           class="tool-btn"
+          :data-tool-id="tool.feature"
           :class="{ active: currentTool === tool.name }"
           @click="selectTool(tool.name)"
           :title="tool.label"
@@ -27,14 +28,15 @@
 
       <!-- Shapes Group -->
       <div class="tool-group" :class="{ vertical: orientation === 'vertical' }">
-        <div class="dropdown-trigger" ref="dropdownTriggerRef">
+        <div class="dropdown-trigger" ref="dropdownTriggerRef" v-if="can('tool.shapes')">
           <button
             type="button"
             class="tool-btn"
+            data-tool-id="tool.shapes"
             ref="shapesTriggerRef"
             :class="{ active: isShapeTool(currentTool) }"
             @click.stop="toggleShapesMenu"
-            title="Shapes"
+            title="Kształty"
           >
             <component :is="currentShapeIcon" :size="20" />
             <ChevronDown :size="12" class="dropdown-arrow" />
@@ -153,13 +155,13 @@
 
       <!-- Actions Group -->
       <div class="tool-group" :class="{ vertical: orientation === 'vertical' }">
-        <button class="tool-btn" @click="$emit('undo')" title="Undo (Ctrl+Z)">
+        <button v-if="can('tool.undo')" class="tool-btn" data-tool-id="tool.undo" @click="$emit('undo')" title="Cofnij (Ctrl+Z)">
           <Undo2 :size="20" />
         </button>
-        <button class="tool-btn" @click="$emit('redo')" title="Redo (Ctrl+Y)">
+        <button v-if="can('tool.redo')" class="tool-btn" data-tool-id="tool.redo" @click="$emit('redo')" title="Ponów (Ctrl+Y)">
           <Redo2 :size="20" />
         </button>
-        <button class="tool-btn danger" @click="$emit('clear')" title="Clear Canvas">
+        <button v-if="can('tool.clearBoard')" class="tool-btn danger" data-tool-id="tool.clearBoard" @click="$emit('clear')" title="Wyczyść tablicę">
           <Trash2 :size="20" />
         </button>
       </div>
@@ -168,50 +170,63 @@
 
       <!-- Features Group -->
       <div class="tool-group" :class="{ vertical: orientation === 'vertical' }">
+        <!-- Rendered in PilotAvailability manifest order (VVE-100): the UI
+             enumeration test asserts this group equals manifest.tools. -->
         <button
+          v-if="can('panel.calculator')"
           class="tool-btn"
-          :class="{ active: isMathPanelOpen }"
-          @click="$emit('toggle-math-panel')"
-          title="Math Function Panel"
-        >
-          <LineChart :size="20" />
-        </button>
-        <button
-          class="tool-btn"
-          :class="{ active: isPhysicsPanelOpen }"
-          @click="$emit('toggle-physics-panel')"
-          title="Physics Plot Panel"
-        >
-          <Activity :size="20" />
-        </button>
-        <button
-          class="tool-btn"
-          :class="{ active: isDiagramPanelOpen }"
-          @click="$emit('toggle-diagram-panel')"
-          title="AI Diagram Panel"
-        >
-          <GitBranch :size="20" />
-        </button>
-        <button
-          class="tool-btn"
+          data-tool-id="panel.calculator"
           @click="$emit('toggle-calculator')"
-          title="Scientific Calculator"
+          title="Kalkulator naukowy"
         >
           <Calculator :size="20" />
         </button>
         <button
+          v-if="can('panel.mathGraph')"
           class="tool-btn"
+          data-tool-id="panel.mathGraph"
+          :class="{ active: isMathPanelOpen }"
+          @click="$emit('toggle-math-panel')"
+          title="Wykres funkcji"
+        >
+          <LineChart :size="20" />
+        </button>
+        <button
+          v-if="can('panel.physicsGraph')"
+          class="tool-btn"
+          data-tool-id="panel.physicsGraph"
+          :class="{ active: isPhysicsPanelOpen }"
+          @click="$emit('toggle-physics-panel')"
+          title="Wykres fizyczny"
+        >
+          <Activity :size="20" />
+        </button>
+        <button
+          v-if="can('experiment.ai')"
+          class="tool-btn"
+          data-tool-id="experiment.ai"
+          :class="{ active: isDiagramPanelOpen }"
+          @click="$emit('toggle-diagram-panel')"
+          title="Diagram (AI)"
+        >
+          <GitBranch :size="20" />
+        </button>
+        <button
+          v-if="can('experiment.chemistry')"
+          class="tool-btn"
+          data-tool-id="experiment.chemistry"
           @click="$emit('toggle-chemistry-panel')"
-          title="Chemistry Helper (pH)"
+          title="Chemia (pH)"
         >
           <FlaskConical :size="20" />
         </button>
-        <div class="dropdown-trigger coordinate-trigger" ref="coordinateTriggerRef">
-          <button 
-            class="tool-btn" 
+        <div v-if="can('panel.coordinateSystem')" class="dropdown-trigger coordinate-trigger" ref="coordinateTriggerRef">
+          <button
+            class="tool-btn"
+            data-tool-id="panel.coordinateSystem"
             :class="{ active: showCoordinateMenu }"
             @click.stop="toggleCoordinateMenu"
-            title="Add Coordinate System"
+            title="Dodaj układ współrzędnych"
           >
             <Axis3d :size="20" />
             <ChevronDown :size="12" class="dropdown-arrow" />
@@ -236,11 +251,11 @@
         </div>
       </div>
       
-      <div class="divider" :class="{ horizontal: orientation === 'vertical' }"></div>
+      <div class="divider" v-if="can('dev.debugControls')" :class="{ horizontal: orientation === 'vertical' }"></div>
 
       <!-- Settings Group -->
-      <div class="tool-group" :class="{ vertical: orientation === 'vertical' }">
-          <button class="tool-btn" @click="$emit('toggle-debug')" title="Debug Info">
+      <div v-if="can('dev.debugControls')" class="tool-group" :class="{ vertical: orientation === 'vertical' }">
+          <button class="tool-btn" data-tool-id="dev.debugControls" @click="$emit('toggle-debug')" title="Debug Info">
             <Bug :size="20" />
           </button>
       </div>
@@ -312,6 +327,7 @@
 
 <script setup>
 import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue';
+import { featureAvailable } from '../services/pilotSurface';
 import {
   Pencil,
   Eraser,
@@ -345,8 +361,9 @@ import {
 
 const props = defineProps({
   activeTool: { type: String, default: 'pen' },
+  role: { type: String, default: 'developer' },
   color: { type: String, default: '#000000' },
-  fillColor: { type: String, default: null },
+  fillColor: { type: null, default: null },
   lineWidth: { type: Number, default: 2 },
   lineStyle: { type: String, default: 'solid' },
   arrowStyle: { type: String, default: 'none' },
@@ -380,13 +397,19 @@ const emit = defineEmits([
   'toggle-debug'
 ]);
 
+// Tool visibility is decided by the shared PilotAvailability manifest
+// (VVE-100): the rendered buttons are exactly the manifest's visible tools
+// for the current role and environment.
+const can = (featureId) => featureAvailable(featureId, props.role);
+
 const mainTools = [
-  { name: 'select', label: 'Select (V)', icon: MousePointer2 },
-  { name: 'pan', label: 'Hand/Pan (H)', icon: Hand },
-  { name: 'pen', label: 'Pen (P)', icon: Pencil },
-  { name: 'text', label: 'Text (T)', icon: Type },
-  { name: 'eraser', label: 'Eraser (E)', icon: Eraser }
+  { name: 'select', label: 'Zaznaczanie (V)', icon: MousePointer2, feature: 'tool.select' },
+  { name: 'pan', label: 'Przesuwanie (H)', icon: Hand, feature: 'tool.pan' },
+  { name: 'pen', label: 'Pióro (P)', icon: Pencil, feature: 'tool.pen' },
+  { name: 'text', label: 'Tekst (T)', icon: Type, feature: 'tool.text' },
+  { name: 'eraser', label: 'Gumka (E)', icon: Eraser, feature: 'tool.eraser' }
 ];
+const visibleMainTools = computed(() => mainTools.filter((tool) => can(tool.feature)));
 
 const shapeOptions = [
   { tool: 'rectangle', label: 'Rectangle', icon: Square },

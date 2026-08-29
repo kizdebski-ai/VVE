@@ -1,8 +1,8 @@
 <template>
   <div id="app" :class="{ 'dark-mode': darkMode }">
-    <Lobby v-if="!roomId" @join="handleJoinRoom" />
-    <template v-else-if="roomKey">
+    <template v-if="roomId && roomKey">
     <TopMenu
+      :role="effectiveRole"
       @clear-canvas="handleClearCanvas"
       @toggle-feature="toggleFeature"
       @open-room-manager="handleOpenRoomManager"
@@ -39,13 +39,13 @@
         @select-pen-preset="selectPenPreset"
       />
       <AIChatPanel
-        v-if="roomId && userRole !== 'student'"
+        v-if="can('experiment.ai')"
         :whiteboard-ref="whiteboard?.containerRef?.value || null"
         :room-id="roomId"
         :ws-token="storedWsToken"
       />
        <GridAlignPanel
-         v-if="activeFeature === 'gridAlign'"
+         v-if="activeFeature === 'gridAlign' && can('experiment.gridAlign')"
          :options="gridAlignOptions"
          @update:options="gridAlignOptions = $event"
          @close="toggleFeature(null)"
@@ -66,29 +66,8 @@
          @action="triggerWhiteboardAction"
        />
 
-       <div v-if="activeFeature === 'mathRecognizer'" class="feature-panel math-recognizer-panel">
-         <div class="panel-header">
-           <span>Math Recognizer</span>
-           <button class="close-button" @click="toggleFeature(null)">X</button>
-         </div>
-         <div class="panel-content">
-           <button class="action-button" @click="triggerWhiteboardAction('recognizeEquation')">Recognize Equation</button>
-           <div class="status-display">Status: {{ recognitionStatus }}</div>
-           <div v-if="latexEquation" class="latex-preview-container">
-             LaTeX: <span id="latex-render-output"></span> <!-- Target for KaTeX -->
-           </div>
-           <div v-if="solution" class="status-display">Solution: {{ solution }}</div>
-           <button class="action-button" @click="triggerWhiteboardAction('applyGhostAnswer')" :disabled="!solution || solution.startsWith('Blad') || solution.startsWith('Nie mozna')">Apply Answer (Shift+Enter)</button>
-           <div class="slider-container">
-             <label>Ghost Opacity: {{ mathRecognizerOptions.ghostOpacity }}</label>
-             <input type="range" min="0" max="1" step="0.05" v-model.number="mathRecognizerOptions.ghostOpacity">
-           </div>
-           <div class="checkbox-container">
-             <input type="checkbox" id="show-hint" v-model="mathRecognizerOptions.showHint">
-             <label for="show-hint">Show AI Hint</label>
-           </div>
-       </div>
-      </div>
+      <!-- Math recognizer (AI OCR solving) is excluded from the Pilot surface;
+           it has no trigger while `experiment.ai` is unavailable. -->
 
       <MathGraphPanel
         v-if="showMathGraphPanel"
@@ -101,12 +80,12 @@
         @plot-data="handleAddElement"
       />
       <DiagramPanel
-        v-if="showDiagramPanel"
+        v-if="showDiagramPanel && can('experiment.ai')"
         @close="toggleDiagramPanel"
         @apply="handleDiagramApply"
       />
       <ChemistryPanel
-        v-if="showChemistryPanel"
+        v-if="showChemistryPanel && can('experiment.chemistry')"
         @close="toggleChemistryPanel"
         @insert-element="handleAddElement"
       />
@@ -121,6 +100,7 @@
         </button>
         <ToolBar
           :active-tool="currentTool"
+          :role="effectiveRole"
           :color="currentColor"
           :fill-color="currentFillColor"
           :line-width="currentLineWidth"
@@ -168,28 +148,36 @@
 
       <div class="floating-user-info glass-panel" :class="{ collapsed: userInfoCollapsed }">
         <div class="username-container">
-          <input 
-            type="text" 
-            v-model="username" 
+          <input
+            v-if="can('dev.editParticipantNames')"
+            type="text"
+            v-model="username"
             placeholder="Guest"
             class="username-input"
             @blur="updateUsername"
           />
+          <span v-else class="username-static" :title="username">{{ username }}</span>
         </div>
-        
+
         <div class="divider-vertical"></div>
 
         <div class="user-count" title="Online users">
           <div class="status-dot"></div>
           <span>{{ activeUsersCount }} Online</span>
         </div>
-        
-        <button class="share-btn" @click="shareRoom">
+
+        <button v-if="can('dev.legacyPeerRooms')" class="share-btn" @click="shareRoom">
           <component :is="ShareIcon" :size="16" />
           <span>Share</span>
         </button>
 
-        <button class="debug-btn" @click="toggleDebugMode" :class="{ active: debugMode }" title="Toggle Debug">
+        <button
+          v-if="can('dev.debugControls')"
+          class="debug-btn"
+          @click="toggleDebugMode"
+          :class="{ active: debugMode }"
+          title="Toggle Debug"
+        >
           D
         </button>
 
@@ -198,15 +186,18 @@
         </button>
       </div>
     </div>
-    
-    <!-- Dialogs -->
-    <ImportDialog 
-      :show="showImportDialog" 
+
+    <!-- Dialogs: raw board JSON import/export is a developer tool (ADR: Pilot
+         users rely on PDF). -->
+    <ImportDialog
+      v-if="can('dev.rawBoardTransfer')"
+      :show="showImportDialog"
       @close="showImportDialog = false"
       @import="handleImportState"
     />
-    <ExportDialog 
-      :show="showExportDialog" 
+    <ExportDialog
+      v-if="can('dev.rawBoardTransfer')"
+      :show="showExportDialog"
       :export-text="exportedState"
       @close="showExportDialog = false"
       @copy="copyToClipboard"
@@ -217,9 +208,11 @@
       @update:isVisible="val => isCalculatorVisible = val"
     />
 
-    <EncryptionStatus />
+    <EncryptionStatus v-if="can('dev.encryptionClaims')" />
 
     </template>
+    <Lobby v-else-if="can('dev.legacyPeerRooms')" @join="handleJoinRoom" />
+    <PilotUnavailable v-else />
 
     <!-- Global Error Display -->
     <div v-if="globalError" class="global-error-overlay">
@@ -255,12 +248,14 @@ import * as Y from 'yjs';
 import { undoRedoState as globalUndoRedoState } from './utils/undoRedoState';
 
 import katex from 'katex';
-import { buildRoomHash, createNewRoomUrl, parseRoomHash } from './lib/roomLink';
+import { buildRoomHash, parseRoomHash } from './lib/roomLink';
 import { generateEncryptionKey } from './lib/crypto';
 import 'katex/dist/katex.min.css';
 import { drawStyledPen, DEFAULT_PEN_PRESETS, makePreviewPoints } from './utils/penStyles';
 import { usePdfImport } from './composables/usePdfImport';
 import { Users, Share2, ChevronRight, ChevronLeft } from 'lucide-vue-next';
+import PilotUnavailable from './views/PilotUnavailable.vue';
+import { featureAvailable } from './services/pilotSurface';
 
 // Debug logger
 const appDebugLog = (msg, ...args) => {
@@ -284,15 +279,26 @@ export default {
     ChemistryPanel,
     EncryptionStatus,
     GridAlignPanel,
-    HandwritingStylerPanel
+    HandwritingStylerPanel,
+    PilotUnavailable
   },
   setup() {
     // --- State ---
     const whiteboard = ref(null);
-    const toolbar = ref(null); // Ref for the toolbar component
+    const toolbar = ref(null); // Ref for ToolBar component
     const roomId = ref(null);
     const roomKey = ref(null);
     const userRole = ref(null); // null = peer room (no role), 'teacher' | 'student'
+
+    // --- Pilot surface (shared manifest, Module 9) ---
+    // Every conditional mount consults the same manifest version the server
+    // uses; in the Pilot build excluded features resolve unavailable, so no
+    // control, panel, dialog or provider call exists for them.
+    const effectiveRole = computed(() =>
+      userRole.value === 'teacher' || userRole.value === 'student' ? userRole.value : 'developer'
+    );
+    const can = (featureId, role = effectiveRole.value) =>
+      featureAvailable(featureId, role);
     const username = ref(localStorage.getItem('username') || 'Guest');
     const updateUsername = () => {
       localStorage.setItem('username', username.value);
@@ -827,7 +833,7 @@ export default {
     };
 
     const handleClearCanvas = () => {
-      if (confirm('Are you sure you want to clear the canvas? This cannot be undone.')) {
+      if (confirm('Wyczyścić całą tablicę? Tej operacji nie można cofnąć.')) {
         whiteboard.value?.clearCanvas?.({ skipConfirm: true });
       }
     };
@@ -1278,8 +1284,14 @@ export default {
           appDebugLog(`App mounted with board token. Room ID: ${roomId.value}, role: ${userRole.value}`);
           return;
         }
-        
-        // Standard encrypted room access
+
+        // Legacy peer-room access (development dev surface only). The Pilot
+        // never auto-bootstraps a room on `/`: Root.vue only mounts App for a
+        // board session, and the Lobby below is dev-only.
+        if (!can('dev.legacyPeerRooms', 'developer')) {
+          appDebugLog('Legacy peer rooms unavailable in this environment');
+          return;
+        }
         const parsedHash = parseRoomHash(window.location.hash);
         if (parsedHash) {
           roomId.value = parsedHash.roomId;
@@ -1289,16 +1301,10 @@ export default {
           roomId.value = queryRoom;
           await ensureRoomKey();
           updateRoomUrlHash();
-        } else {
-          const newUrl = await createNewRoomUrl();
-          const newParsed = parseRoomHash(new URL(newUrl).hash);
-          if (newParsed) {
-            roomId.value = newParsed.roomId;
-            roomKey.value = newParsed.roomKey;
-          }
-          window.history.replaceState({}, '', newUrl);
         }
-        localStorage.setItem('last_room_id', roomId.value);
+        if (roomId.value) {
+          localStorage.setItem('last_room_id', roomId.value);
+        }
         appDebugLog(`App mounted. Room ID: ${roomId.value}`);
       };
 
@@ -1328,6 +1334,8 @@ export default {
       ShareIcon: Share2,
       ChevronRightIcon: ChevronRight,
       ChevronLeftIcon: ChevronLeft,
+      can,
+      effectiveRole,
       whiteboard,
       toolbar,
       lastSaved,

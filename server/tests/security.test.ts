@@ -33,10 +33,11 @@ class StubSolver implements EquationSolver {
   async solveEquation(): Promise<string> { return '42'; }
 }
 
-const createTestApp = () =>
+const createTestApp = (options: { environment?: 'development' | 'pilot'; devSurface?: boolean } = {}) =>
   createHttpApp({
     roomManager: new RoomManager(),
-    aiSolver: new StubSolver()
+    aiSolver: new StubSolver(),
+    ...options
   });
 
 describe('4.3: Admin auth requires secret ALWAYS', () => {
@@ -57,13 +58,22 @@ describe('4.3: Admin auth requires secret ALWAYS', () => {
   });
 });
 
-describe('4.2: AI board assistant requires token', () => {
+describe('4.2: AI board assistant availability and auth gating', () => {
   beforeEach(() => {
     mockVerifyBoardWsToken.mockReset();
   });
 
-  it('rejects request without x-board-token header', async () => {
-    const app = createTestApp();
+  it('is not registered in pilot mode (404, not 503/401)', async () => {
+    // ADR-0007: the whole AI route family is unreachable in the Pilot.
+    const app = createTestApp({ environment: 'pilot', devSurface: true });
+    const res = await request(app)
+      .post('/api/ai/board-assistant')
+      .send({ boardId: 'test', message: 'hello' });
+    expect(res.status).toBe(404);
+  });
+
+  it('rejects request without x-board-token header (development)', async () => {
+    const app = createTestApp({ environment: 'development', devSurface: true });
     const res = await request(app)
       .post('/api/ai/board-assistant')
       .send({ boardId: 'test', message: 'hello' });
@@ -71,9 +81,9 @@ describe('4.2: AI board assistant requires token', () => {
     expect(res.body.error).toMatch(/token.*required/i);
   });
 
-  it('rejects request with invalid token', async () => {
+  it('rejects request with invalid token (development)', async () => {
     mockVerifyBoardWsToken.mockReturnValue(null);
-    const app = createTestApp();
+    const app = createTestApp({ environment: 'development', devSurface: true });
     const res = await request(app)
       .post('/api/ai/board-assistant')
       .set('x-board-token', 'invalid-token')
@@ -81,9 +91,9 @@ describe('4.2: AI board assistant requires token', () => {
     expect(res.status).toBe(401);
   });
 
-  it('rejects student role', async () => {
+  it('rejects student role (development)', async () => {
     mockVerifyBoardWsToken.mockReturnValue({ role: 'student', boardId: 'test' });
-    const app = createTestApp();
+    const app = createTestApp({ environment: 'development', devSurface: true });
     const res = await request(app)
       .post('/api/ai/board-assistant')
       .set('x-board-token', 'student-token')
@@ -93,8 +103,8 @@ describe('4.2: AI board assistant requires token', () => {
 });
 
 describe('4.5: Rate limiter on AI endpoints', () => {
-  it('returns 429 after exceeding limit', async () => {
-    const app = createTestApp();
+  it('returns 429 after exceeding limit (development dev surface)', async () => {
+    const app = createTestApp({ environment: 'development', devSurface: true });
 
     // The AI rate limiter allows 20 req/min per IP
     // We'll send 22 requests to /api/ai/solve-equation/ (which has its own handler)
@@ -105,6 +115,17 @@ describe('4.5: Rate limiter on AI endpoints', () => {
     }
     // At least one should be 429
     expect(results).toContain(429);
+  });
+
+  it('does not register the AI rate limiter in pilot mode', async () => {
+    const app = createTestApp({ environment: 'pilot' });
+    const results: number[] = [];
+    for (let i = 0; i < 22; i++) {
+      const res = await request(app).post('/api/ai/solve-equation/').send({ equation: '1+1' });
+      results.push(res.status);
+    }
+    expect(results).not.toContain(429);
+    expect(results.every((status) => status === 404)).toBe(true);
   });
 });
 

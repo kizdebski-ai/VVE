@@ -53,8 +53,9 @@ describe('C1: Composable wiring in WhiteboardCanvas', () => {
 // ─── C2: Path traversal fix ─────────────────────────────────────────────────
 
 describe('C2: Path traversal prevention in analyze-pdf', () => {
-  it('httpApp.ts validates resolved path stays within uploads dir', () => {
-    const src = readServer('httpApp.ts');
+  it('aiRoutes.ts validates resolved path stays within uploads dir', () => {
+    // The analyze-pdf handler moved out of httpApp.ts into the AI router.
+    const src = readServer('routes/aiRoutes.ts');
     expect(src).toContain('path.resolve(filePath)');
     expect(src).toContain('path.resolve(uploadsDir)');
     expect(src).toContain('resolvedPath.startsWith(');

@@ -52,7 +52,18 @@ export const config = {
   teacherAppBaseUrl: process.env.TEACHER_APP_BASE_URL || process.env.APP_BASE_URL || 'https://app.whitevue.com',
   teacherSessionSecret: process.env.TEACHER_SESSION_SECRET || process.env.SESSION_SECRET || 'change-me-in-prod',
   teacherSessionCookie: process.env.TEACHER_SESSION_COOKIE || 'teacher_session',
-  adminSecret: process.env.ADMIN_SECRET
+  adminSecret: process.env.ADMIN_SECRET,
+  // PilotAvailability inputs (Module 9): the production-like deployment is the
+  // Pilot surface; local development keeps excluded features behind the
+  // intentional internal VVE_DEV_SURFACE flag. Never settable by request input.
+  // VVE_PILOT_SURFACE=1 forces the Pilot surface without NODE_ENV=production
+  // (used by local pilots/E2E where production fail-fast checks do not apply).
+  pilotEnvironment: (process.env.VVE_PILOT_SURFACE === '1' || process.env.NODE_ENV === 'production'
+    ? 'pilot'
+    : 'development') as 'pilot' | 'development',
+  devSurface:
+    process.env.NODE_ENV !== 'production' &&
+    (process.env.VVE_DEV_SURFACE === '1' || process.env.VVE_DEV_SURFACE === 'true')
 };
 
 // 4.1: Fail-fast if critical secrets are missing in production

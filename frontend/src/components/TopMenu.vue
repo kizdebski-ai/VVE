@@ -17,31 +17,31 @@
     <!-- Actual Menu (Visible on gear click) -->
     <transition name="slide-fade">
       <div v-if="showMenu" class="top-menu glass-panel" @mouseenter="cancelHide" @mouseleave="handleMouseLeave">
-        <button class="menu-btn" @click="toggleFullscreen" :title="isFullscreen ? 'Exit Fullscreen' : 'Enter Fullscreen'">
+        <button class="menu-btn" @click="toggleFullscreen" :title="isFullscreen ? 'Pełny ekran — wyłącz' : 'Pełny ekran'">
           <component :is="isFullscreen ? Minimize : Maximize" :size="18" />
-          <span>{{ isFullscreen ? 'Exit Full' : 'Fullscreen' }}</span>
+          <span>{{ isFullscreen ? 'Zamknij pełny ekran' : 'Pełny ekran' }}</span>
         </button>
-        <button class="menu-btn" @click="emitClear" title="Clear Board">
+        <button v-if="can('tool.clearBoard')" class="menu-btn" @click="emitClear" title="Wyczyść tablicę">
           <Trash2 :size="18" />
-          <span>Clear</span>
+          <span>Wyczyść</span>
         </button>
-        <button class="menu-btn" @click="toggleShortcuts" title="Keyboard Shortcuts">
+        <button class="menu-btn" @click="toggleShortcuts" title="Skróty klawiszowe">
            <Keyboard :size="18" />
-          <span>Shortcuts</span>
+          <span>Skróty</span>
         </button>
-        <button class="menu-btn" @click="openRoomManager" title="Manage Rooms">
+        <button v-if="can('dev.legacyPeerRooms')" class="menu-btn" @click="openRoomManager" title="Zarządzaj pokojami">
           <LayoutGrid :size="18" />
-          <span>Rooms</span>
+          <span>Pokoje</span>
         </button>
-        <button class="menu-btn" @click="emit('export-whiteboard')" title="Export Whiteboard">
+        <button v-if="can('dev.rawBoardTransfer')" class="menu-btn" @click="emit('export-whiteboard')" title="Eksportuj tablicę (JSON)">
           <Download :size="18" />
-          <span>Export</span>
+          <span>Eksport</span>
         </button>
-        <button class="menu-btn" @click="emit('import-whiteboard')" title="Import Whiteboard">
+        <button v-if="can('dev.rawBoardTransfer')" class="menu-btn" @click="emit('import-whiteboard')" title="Importuj tablicę (JSON)">
           <Upload :size="18" />
           <span>Import</span>
         </button>
-        <button class="menu-btn" @click="triggerPdfImport" title="Import PDF as background">
+        <button v-if="can('panel.pdfImport')" class="menu-btn" @click="triggerPdfImport" title="Zaimportuj PDF jako tło">
           <FileUp :size="18" />
           <span>PDF</span>
         </button>
@@ -51,25 +51,27 @@
 
         <!-- Feature Toggles -->
         <button
+          v-if="can('panel.inputStyle')"
           class="menu-btn"
           :class="{ 'active-feature': props.activeFeature === 'styleHandwriting' }"
           @click="emit('toggle-feature', 'styleHandwriting')"
-          title="Handwriting Styler (Experimental)"
+          title="Styl pisania"
         >
           <Wand2 :size="18" />
-          <span>Style</span>
+          <span>Styl</span>
         </button>
         <button
+          v-if="can('experiment.gridAlign')"
           class="menu-btn"
           :class="{ 'active-feature': props.activeFeature === 'gridAlign' }"
           @click="emit('toggle-feature', 'gridAlign')"
-          title="Grid Align (Experimental)"
+          title="Grid Align (eksperymentalne)"
         >
           <Grid3X3 :size="18" />
-          <span>Align</span>
+          <span>Wyrównaj</span>
         </button>
-        <div class="menu-btn pdf-menu-wrapper" @mouseenter="showPdfMenu = true" @mouseleave="showPdfMenu = false">
-          <button class="menu-btn" @click="emitPdfExport('single')" title="Export to PDF (A4)">
+        <div v-if="can('panel.pdfExport')" class="menu-btn pdf-menu-wrapper" @mouseenter="showPdfMenu = true" @mouseleave="showPdfMenu = false">
+          <button class="menu-btn" @click="emitPdfExport('single')" title="Eksportuj do PDF (A4)">
             <FileDown :size="18" />
             <span>PDF</span>
           </button>
@@ -145,29 +147,37 @@
 
 <script setup>
 import { ref, defineProps, defineEmits, onMounted, onBeforeUnmount } from 'vue';
-import { 
-  Settings, 
-  Trash2, 
-  Keyboard, 
-  LayoutGrid, 
-  Download, 
-  Upload, 
-  Wand2, 
-  Grid3X3, 
+import {
+  Settings,
+  Trash2,
+  Keyboard,
+  LayoutGrid,
+  Download,
+  Upload,
+  Wand2,
+  Grid3X3,
   FileDown,
   FileUp,
   X,
   Maximize,
   Minimize
 } from 'lucide-vue-next';
+import { featureAvailable } from '../services/pilotSurface';
 
 // Define props
 const props = defineProps({
   activeFeature: {
     type: String,
     default: null
+  },
+  role: {
+    type: String,
+    default: 'developer'
   }
 });
+
+// Menu item visibility follows the shared PilotAvailability manifest (VVE-100).
+const can = (featureId) => featureAvailable(featureId, props.role);
 
 // Define emits
 const emit = defineEmits(['clear-canvas', 'toggle-feature', 'open-room-manager', 'export-whiteboard', 'export-pdf-single', 'export-pdf-paged', 'import-whiteboard', 'import-pdf']);

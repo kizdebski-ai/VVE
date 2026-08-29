@@ -1,93 +1,36 @@
 import { test, expect } from '@playwright/test';
 
-test.describe('WhiteVue App - Basic Loading', () => {
-
-  test('homepage loads without crashing', async ({ page }) => {
+// The Pilot surface removed the `/` product entry: no lobby, no automatic
+// peer-room bootstrap (ADR-0010). The dev build keeps the dev surface OFF by
+// default, so direct navigation to `/` must land on the unavailable page.
+test.describe('Pilot surface: direct navigation on /', () => {
+  test('shows the unavailable page instead of a lobby or auto-created room', async ({ page }) => {
     const errors = [];
     page.on('pageerror', (err) => errors.push(err.message));
 
     await page.goto('/', { waitUntil: 'networkidle' });
 
-    // Should not have Vue/JS setup errors
+    await expect(page.getByRole('heading', { name: 'Ta strona nie jest dostępna' })).toBeVisible();
+
+    // No whiteboard was auto-created or mounted.
+    expect(await page.locator('canvas').count()).toBe(0);
+    expect(page.url().includes('room=')).toBe(false);
+
     const criticalErrors = errors.filter(
       (e) => e.includes('Cannot access') || e.includes('is not defined') || e.includes('is not a function')
     );
     expect(criticalErrors).toHaveLength(0);
   });
 
-  test('canvas element exists and is visible', async ({ page }) => {
-    await page.goto('/', { waitUntil: 'networkidle' });
+  test('the __dev flag opens the legacy developer surface in a development build only', async ({ page }) => {
+    // In development builds, `?__dev=1` is the intentional internal flag for
+    // the legacy peer-room surface (ADR-0010). In the Pilot build the same
+    // parameter does nothing — covered by the unit suite against the shared
+    // manifest (PILOT_ENVIRONMENT === 'pilot' ignores the flag entirely).
+    await page.goto('/?__dev=1', { waitUntil: 'networkidle' });
 
-    // Wait for the app to mount
-    await page.waitForTimeout(2000);
-
-    // The whiteboard canvas should exist
-    const canvas = page.locator('canvas');
-    await expect(canvas.first()).toBeVisible({ timeout: 10000 });
-  });
-
-  test('toolbar is visible', async ({ page }) => {
-    await page.goto('/', { waitUntil: 'networkidle' });
-    await page.waitForTimeout(2000);
-
-    // Look for toolbar-like elements (buttons or tool icons)
-    const toolbar = page.locator('.toolbar, .tools-panel, [class*="toolbar"], [class*="tool"]');
-    const count = await toolbar.count();
-    expect(count).toBeGreaterThan(0);
-  });
-
-  test('no unhandled errors during setup', async ({ page }) => {
-    const consoleErrors = [];
-    page.on('console', (msg) => {
-      if (msg.type() === 'error') {
-        consoleErrors.push(msg.text());
-      }
-    });
-
-    await page.goto('/', { waitUntil: 'networkidle' });
-    await page.waitForTimeout(3000);
-
-    // Filter out expected errors (e.g. WebSocket connection attempts to backend)
-    const criticalErrors = consoleErrors.filter(
-      (e) =>
-        !e.includes('WebSocket') &&
-        !e.includes('ERR_CONNECTION_REFUSED') &&
-        !e.includes('Failed to fetch') &&
-        !e.includes('net::') &&
-        (e.includes('ReferenceError') ||
-         e.includes('TypeError') ||
-         e.includes('Cannot access') ||
-         e.includes('is not a function') ||
-         e.includes('Unhandled error during execution of setup'))
-    );
-    expect(criticalErrors).toHaveLength(0);
-  });
-
-  test('can interact with canvas (pointer events)', async ({ page }) => {
-    await page.goto('/', { waitUntil: 'networkidle' });
-    await page.waitForTimeout(2000);
-
-    const canvas = page.locator('canvas').first();
-    await expect(canvas).toBeVisible({ timeout: 10000 });
-
-    // Get canvas bounding box
-    const box = await canvas.boundingBox();
-    if (!box) return;
-
-    // Click on canvas center - should not throw
-    const centerX = box.x + box.width / 2;
-    const centerY = box.y + box.height / 2;
-
-    await page.mouse.click(centerX, centerY);
-
-    // Draw a stroke
-    await page.mouse.move(centerX - 50, centerY - 50);
-    await page.mouse.down();
-    await page.mouse.move(centerX + 50, centerY + 50, { steps: 10 });
-    await page.mouse.up();
-
-    // Should not have crashed
-    const canvas2 = page.locator('canvas').first();
-    await expect(canvas2).toBeVisible();
+    // The legacy Lobby appears for developers; it never shows for students.
+    await expect(page.locator('body')).toBeVisible();
+    expect(await page.getByRole('heading', { name: 'Ta strona nie jest dostępna' }).count()).toBe(0);
   });
 });

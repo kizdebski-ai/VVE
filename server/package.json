@@ -9,7 +9,8 @@
     "start": "node dist/src/server.js",
     "start:prod": "npm run migrate && npm run start",
     "test": "vitest run",
-    "migrate": "knex migrate:latest"
+    "migrate": "knex migrate:latest",
+    "seed:pilot": "ts-node scripts/pilotFixture.ts"
   },
   "keywords": [],
   "author": "",

@@ -61,7 +61,7 @@ Ping, soak sampling, and `monitorEventLoopDelay` are registered by name on Runti
 ### Focused commits
 
 - `e111aa6158f1b76b2bf43fae3cf1b3c8f3288fb5` — RuntimeControl, OperationalSignals, drain/restart tests, client draining copy.
-- Follow-up on this branch — knexfile alignment, source-text test retargeting, visual evidence, this resolution.
+- `a1f8247931b177cd2a323b4176e9c7daf0b7d70e` — knexfile alignment, source-text test retargeting, visual evidence, this resolution.
 
 ### Build and tests (2026-08-30)
 

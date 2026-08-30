@@ -45,3 +45,5 @@ Recorded deviations:
 2. Inactive teacher links surface 403 (not a dedicated inactive state).
 3. The CSV import endpoint is kept alongside the JSON route.
 4. The readOnly session downgrade was removed in favor of plain denials.
+
+Known limitation (post-merge verification, 2026-08-30): the Playwright regeneration spec is not idempotent against the persistent pilot database. It ends by deactivating its ad-hoc teacher `e2e-regen@vve-pilot.local` and never removes it, so a second run on the same volume fails (the add-teacher path `createOrReuseTeacherAccessLink` reuses the existing inactive teacher and issues a fresh active link without checking `is_active`; the link then correctly fails closed with 403, but the spec expects the dashboard). After deleting the leftover teacher row, the full suite passes 6/6. Access control itself held fail-closed throughout; follow-up candidates: make the spec self-cleaning and have `createOrReuseTeacherAccessLink` refuse (or reactivate explicitly) for inactive teachers.

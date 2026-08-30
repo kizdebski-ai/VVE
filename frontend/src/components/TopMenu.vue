@@ -9,7 +9,7 @@
               @click="toggleMenu"
               @mouseenter="cancelHide"
               @mouseleave="handleMouseLeave"
-              title="Settings">
+              title="Ustawienia">
         <Settings :size="20" />
       </button>
     </transition>
@@ -86,59 +86,63 @@
      <!-- Keyboard shortcuts info dialog -->
     <div v-if="showShortcutsInfo" class="shortcuts-dialog glass-panel">
        <div class="shortcuts-dialog-header">
-        <h3>Keyboard Shortcuts</h3>
-         <button class="close-btn" @click="toggleShortcuts">
+        <h3>Skróty klawiszowe</h3>
+         <button class="close-btn" aria-label="Zamknij skróty" @click="toggleShortcuts">
             <X :size="20" />
          </button>
        </div>
        <div class="shortcuts-list">
           <div class="shortcut-item">
             <div class="shortcut-key">P</div>
-            <div class="shortcut-desc">Pen Tool</div>
+            <div class="shortcut-desc">Pióro</div>
           </div>
           <div class="shortcut-item">
             <div class="shortcut-key">H</div>
-            <div class="shortcut-desc">Hand/Pan Tool</div>
+            <div class="shortcut-desc">Przesuwanie tablicy</div>
           </div>
           <div class="shortcut-item">
             <div class="shortcut-key">E</div>
-            <div class="shortcut-desc">Eraser Tool</div>
+            <div class="shortcut-desc">Gumka</div>
           </div>
           <div class="shortcut-item">
-            <div class="shortcut-key">S</div>
-            <div class="shortcut-desc">Shapes Tool</div>
+            <div class="shortcut-key">V</div>
+            <div class="shortcut-desc">Zaznaczanie</div>
           </div>
           <div class="shortcut-item">
             <div class="shortcut-key">T</div>
-            <div class="shortcut-desc">Text Tool</div>
+            <div class="shortcut-desc">Tekst</div>
           </div>
           <div class="shortcut-item">
-            <div class="shortcut-key">I</div>
-            <div class="shortcut-desc">Image Tool</div>
+            <div class="shortcut-key">S / L</div>
+            <div class="shortcut-desc">Kształt / linia</div>
           </div>
           <div class="shortcut-item">
             <div class="shortcut-key">Ctrl+Z</div>
-            <div class="shortcut-desc">Undo</div>
+            <div class="shortcut-desc">Cofnij</div>
           </div>
           <div class="shortcut-item">
             <div class="shortcut-key">Ctrl+Y</div>
-            <div class="shortcut-desc">Redo</div>
+            <div class="shortcut-desc">Ponów</div>
           </div>
           <div class="shortcut-item">
             <div class="shortcut-key">Delete</div>
-            <div class="shortcut-desc">Delete Selected Element</div>
+            <div class="shortcut-desc">Usuń zaznaczony obiekt</div>
           </div>
           <div class="shortcut-item">
             <div class="shortcut-key">Ctrl+V</div>
-            <div class="shortcut-desc">Paste Image from Clipboard</div>
+            <div class="shortcut-desc">Wklej obraz ze schowka</div>
           </div>
           <div class="shortcut-item">
-            <div class="shortcut-key">Alt+Click+Drag</div>
-            <div class="shortcut-desc">Pan Canvas</div>
+            <div class="shortcut-key">Shift+K</div>
+            <div class="shortcut-desc">Kalkulator</div>
           </div>
           <div class="shortcut-item">
-            <div class="shortcut-key">Scroll Wheel</div>
-            <div class="shortcut-desc">Zoom In/Out</div>
+            <div class="shortcut-key">Shift+F / Shift+Y</div>
+            <div class="shortcut-desc">Wykres funkcji / fizyczny</div>
+          </div>
+          <div class="shortcut-item">
+            <div class="shortcut-key">+ / − / 0</div>
+            <div class="shortcut-desc">Powiększ / pomniejsz / wyzeruj widok</div>
           </div>
         </div>
     </div>

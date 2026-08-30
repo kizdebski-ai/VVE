@@ -26,6 +26,8 @@ export type SessionResult =
   | { ok: true }
   | { ok: false; reason: CommandFailure['reason'] | 'readOnly'; message: string };
 
+export type LessonPanel = 'calculator' | 'mathGraph' | 'physicsGraph';
+
 export interface WhiteboardSession {
   execute(command: BoardCommand): SessionResult;
   undo(): boolean;
@@ -40,6 +42,10 @@ export interface WhiteboardSession {
   panBy(dx: number, dy: number): Readonly<SessionViewport>;
   zoomAt(screenX: number, screenY: number, zoom: number): Readonly<SessionViewport>;
   resetViewport(): Readonly<SessionViewport>;
+  /** Local panel state; setting one panel atomically closes the previous one. */
+  setActivePanel(panel: LessonPanel | null): LessonPanel | null;
+  togglePanel(panel: LessonPanel): LessonPanel | null;
+  activePanel(): LessonPanel | null;
   newObjectId(): string;
   /** True while this session may write (synchronized or local board). */
   isEditable(): boolean;
@@ -59,6 +65,7 @@ export interface CreateWhiteboardSessionOptions {
   isEditable?: () => boolean;
   initialViewport?: SessionViewport;
   onHistoryChange?: (state: { canUndo: boolean; canRedo: boolean }) => void;
+  onPanelChange?: (panel: LessonPanel | null) => void;
 }
 
 /** Polish copy for the user-facing failure surface (spec: Polish UI text). */
@@ -95,6 +102,7 @@ export const createWhiteboardSession = (
   undoManager.on('stack-cleared', notifyHistory);
   let selection: string | null = null;
   let viewport: SessionViewport = options.initialViewport ?? { zoom: 1, panX: 0, panY: 0 };
+  let activePanel: LessonPanel | null = null;
 
   const commitViewport = (next: SessionViewport): Readonly<SessionViewport> => {
     if (
@@ -166,6 +174,17 @@ export const createWhiteboardSession = (
       });
     },
     resetViewport: () => commitViewport({ zoom: 1, panX: 0, panY: 0 }),
+    setActivePanel: (panel) => {
+      activePanel = panel;
+      options.onPanelChange?.(activePanel);
+      return activePanel;
+    },
+    togglePanel: (panel) => {
+      activePanel = activePanel === panel ? null : panel;
+      options.onPanelChange?.(activePanel);
+      return activePanel;
+    },
+    activePanel: () => activePanel,
     newObjectId: () => {
       if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
         return crypto.randomUUID();
@@ -176,6 +195,7 @@ export const createWhiteboardSession = (
     role,
     dispose: () => {
       selection = null;
+      activePanel = null;
       undoManager.off('stack-item-added', notifyHistory);
       undoManager.off('stack-item-popped', notifyHistory);
       undoManager.off('stack-cleared', notifyHistory);

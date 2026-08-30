@@ -79,7 +79,7 @@
       @keydown.enter.stop="handleInlineTextEnter"
       @keydown.stop
       @mousedown.stop
-      placeholder="Type here..."
+      placeholder="Wpisz tekst…"
     ></textarea>
 
     <!-- Zoom and pan controls -->
@@ -100,7 +100,7 @@
     <!-- Connection loading indicator -->
     <div v-if="isConnecting" class="connection-loading">
       <div class="connection-spinner"></div>
-      <span>Connecting...</span>
+      <span>Łączenie…</span>
     </div>
 
     <div
@@ -267,6 +267,7 @@ export default {
     'update:has-char-groups',
     'update:has-stylized-strokes',
     'update:active-users',
+    'update:lesson-panel',
     'select-pen-preset'
   ],
   setup(props, { emit, expose }) {
@@ -645,36 +646,60 @@ export default {
       activeConfigPanel.value = null;
     };
 
+    const setLessonPanel = (panel) => session.value?.setActivePanel(panel) ?? null;
+    const toggleLessonPanel = (panel) => session.value?.togglePanel(panel) ?? null;
+
+    const deleteSelectedObject = () => {
+      if (!selectedObjectId.value) return false;
+      if (!canMutateDocument()) {
+        denyReadOnlyMutation();
+        return false;
+      }
+      const result = session.value?.execute({
+        kind: 'delete',
+        ids: [String(selectedObjectId.value)]
+      });
+      if (!result?.ok) {
+        if (result) showToast(result.message, 'error');
+        return false;
+      }
+      session.value?.select(null);
+      selectedObjectId.value = null;
+      refreshMovableElements();
+      updateGlobalState();
+      redrawCanvas(true);
+      return true;
+    };
+
     // Method to add a plot/coord system from panel data
     const addElementFromPanel = (elementData) => {
-      if (!canMutateDocument()) return denyReadOnlyMutation();
+      if (!canMutateDocument()) {
+        denyReadOnlyMutation();
+        return false;
+      }
       if (!session.value || !elementData || !elementData.type) {
         console.error("Invalid data received from panel or session not ready", elementData);
         closeConfigPanel();
-        return;
+        return false;
       }
 
       try {
         const object = { ...elementData };
         if (!object.id) object.id = uuidv4();
-
-        // Mirror geometry for MovableObject overlays (extension types keep
-        // their `position` payload until VVE-106 canonicalizes them)
-        const hasPosition = object.position && typeof object.position.x === 'number' && typeof object.position.y === 'number';
-        if (hasPosition) {
-          object.x = object.position.x;
-          object.y = object.position.y;
+        const width = Number.isFinite(object.width) ? object.width : 400;
+        const height = Number.isFinite(object.height) ? object.height : 300;
+        if (!Number.isFinite(object.x) || !Number.isFinite(object.y)) {
+          const center = getViewportCenter();
+          object.x = center.x - width / 2;
+          object.y = center.y - height / 2;
         }
-        if (object.type === 'coordinateSystem3D' && typeof object.size === 'number') {
-          const planeSize = object.size * 1.2;
-          object.width = planeSize;
-          object.height = planeSize;
-        }
+        object.width = width;
+        object.height = height;
 
         const result = session.value.execute({ kind: 'add', object });
         if (!result.ok) {
           showToast(result.message, 'error');
-          return;
+          return false;
         }
         refreshMovableElements();
 
@@ -682,6 +707,7 @@ export default {
           updateGlobalState();
           redrawCanvas(true); // Redraw to show the new element
         });
+        return true;
       } finally {
         closeConfigPanel(); // Close panel after adding
       }
@@ -716,7 +742,7 @@ export default {
         // UX-006: Warn user when element count is getting high
         if (rawArray.length >= ELEMENT_COUNT_WARNING && !elementCountWarningShown) {
             elementCountWarningShown = true;
-            showToast(`Board has ${rawArray.length}+ elements. Performance may degrade.`, "warning");
+            showToast(`Tablica ma ponad ${rawArray.length} obiektów i może działać wolniej.`, "warning");
         } else if (rawArray.length < ELEMENT_COUNT_WARNING) {
             elementCountWarningShown = false;
         }
@@ -1272,7 +1298,8 @@ export default {
                 canUndo.value = nextCanUndo;
                 canRedo.value = nextCanRedo;
                 undoRedoState.update(nextCanUndo, nextCanRedo);
-              }
+              },
+              onPanelChange: (panel) => emit('update:lesson-panel', panel)
             });
 
             yDrawings.value.observeDeep(handleYjsUpdate);
@@ -2110,6 +2137,7 @@ export default {
       endTouchGesture,
       applyMathAnswer,
       selectPenPreset: (presetKey) => emit('select-pen-preset', presetKey),
+      deleteSelection: deleteSelectedObject,
     });
 
     // --- Other Actions ---
@@ -2578,6 +2606,9 @@ export default {
       configPanelCoords,
       closeConfigPanel,
       addElementFromPanel,
+      setLessonPanel,
+      toggleLessonPanel,
+      deleteSelectedObject,
 
       // MovableObject handlers & selection state
       handleObjectUpdate,

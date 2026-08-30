@@ -38,6 +38,7 @@
         @update:has-char-groups="hasCharGroups = $event"
         @update:has-stylized-strokes="hasStylizedStrokes = $event"
         @update:active-users="handleActiveUsers"
+        @update:lesson-panel="activeLessonPanel = $event"
         @select-pen-preset="selectPenPreset"
       />
       <AIChatPanel
@@ -72,14 +73,14 @@
            it has no trigger while `experiment.ai` is unavailable. -->
 
       <MathGraphPanel
-        v-if="showMathGraphPanel"
-        @close="toggleMathGraphPanel"
-        @plot-function="handleAddElement"
+        v-if="showMathGraphPanel && can('panel.mathGraph')"
+        @close="requestLessonPanel(null)"
+        @plot-function="handlePlotElement('mathGraph', $event)"
       />
       <PhysicsGraphPanel
-        v-if="showPhysicsGraphPanel"
-        @close="togglePhysicsGraphPanel"
-        @plot-data="handleAddElement"
+        v-if="showPhysicsGraphPanel && can('panel.physicsGraph')"
+        @close="requestLessonPanel(null)"
+        @plot-data="handlePlotElement('physicsGraph', $event)"
       />
       <DiagramPanel
         v-if="showDiagramPanel && can('experiment.ai')"
@@ -93,11 +94,11 @@
       />
 
       <!-- 3.4: Floating Toolbar (Left) with auto-hide toggle -->
-      <button v-if="toolbarCollapsed" class="toolbar-expand-btn glass-panel" @click="toggleToolbar" title="Show toolbar">
+      <button v-if="toolbarCollapsed" class="toolbar-expand-btn glass-panel" @click="toggleToolbar" title="Pokaż pasek narzędzi">
         <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
       </button>
       <div class="floating-toolbar" :class="{ 'toolbar-hidden': toolbarCollapsed }">
-        <button class="toolbar-collapse-btn" @click="toggleToolbar" title="Hide toolbar">
+        <button class="toolbar-collapse-btn" @click="toggleToolbar" title="Ukryj pasek narzędzi">
           <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>
         </button>
         <ToolBar
@@ -112,6 +113,7 @@
           :roughness="currentRoughness"
           :is-math-panel-open="showMathGraphPanel"
           :is-physics-panel-open="showPhysicsGraphPanel"
+          :is-calculator-open="activeLessonPanel === 'calculator'"
           :is-diagram-panel-open="showDiagramPanel"
           orientation="vertical"
           @update:activeTool="handleToolChange"
@@ -142,7 +144,7 @@
           v-if="userInfoCollapsed"
           class="user-info-toggle-btn glass-panel"
           @click="toggleUserInfoPanel"
-          title="Show user panel"
+          title="Pokaż panel uczestników"
         >
           <component :is="UsersIcon" :size="20" />
         </button>
@@ -163,9 +165,9 @@
 
         <div class="divider-vertical"></div>
 
-        <div class="user-count" title="Online users">
+        <div class="user-count" title="Uczestnicy online">
           <div class="status-dot"></div>
-          <span>{{ activeUsersCount }} Online</span>
+          <span>{{ activeUsersCount }} online</span>
         </div>
 
         <button v-if="can('dev.legacyPeerRooms')" class="share-btn" @click="shareRoom">
@@ -183,7 +185,7 @@
           D
         </button>
 
-        <button class="minimize-btn" @click="toggleUserInfoPanel" title="Hide">
+        <button class="minimize-btn" @click="toggleUserInfoPanel" title="Ukryj">
            <component :is="ChevronRightIcon" :size="18" />
         </button>
       </div>
@@ -205,9 +207,10 @@
       @copy="copyToClipboard"
     />
     <CalculatorModal
-      :is-visible="isCalculatorVisible"
-      @close="isCalculatorVisible = false"
-      @update:isVisible="val => isCalculatorVisible = val"
+      v-if="can('panel.calculator')"
+      :is-visible="activeLessonPanel === 'calculator'"
+      @close="requestLessonPanel(null)"
+      @update:isVisible="val => { if (!val) requestLessonPanel(null) }"
     />
 
     <EncryptionStatus v-if="can('dev.encryptionClaims')" />
@@ -316,10 +319,7 @@ export default {
     const darkMode = ref(localStorage.getItem('darkMode') === 'true');
     const debugMode = ref(false);
     const userInfoCollapsed = ref(false);
-    const isCalculatorVisible = ref(false);
-    const toggleCalculator = () => {
-      isCalculatorVisible.value = !isCalculatorVisible.value;
-    };
+    const activeLessonPanel = ref(null);
     // 3.4: Toolbar auto-hide toggle with localStorage persistence
     const toolbarCollapsed = ref(localStorage.getItem('toolbar_collapsed') === 'true');
     const toggleToolbar = () => {
@@ -432,33 +432,36 @@ export default {
       } catch { return null; }
     };
 
-    // Graph Panels
-    const showMathGraphPanel = ref(false);
-    const showPhysicsGraphPanel = ref(false);
+    // WhiteboardSession owns required lesson-panel exclusivity; App mirrors
+    // the selected panel solely to mount the corresponding Vue adapter.
+    const showMathGraphPanel = computed(() => activeLessonPanel.value === 'mathGraph');
+    const showPhysicsGraphPanel = computed(() => activeLessonPanel.value === 'physicsGraph');
     const showDiagramPanel = ref(false);
     const showChemistryPanel = ref(false);
 
-    const toggleMathGraphPanel = () => {
-        showMathGraphPanel.value = !showMathGraphPanel.value;
-        if (showMathGraphPanel.value) {
-          showPhysicsGraphPanel.value = false;
-          showDiagramPanel.value = false;
-        }
+    const requestLessonPanel = (panel) => {
+      if (panel !== null) {
+        activeFeature.value = null;
+        showDiagramPanel.value = false;
+        showChemistryPanel.value = false;
+      }
+      const sessionResult = panel === null
+        ? whiteboard.value?.setLessonPanel?.(null)
+        : whiteboard.value?.toggleLessonPanel?.(panel);
+      activeLessonPanel.value = sessionResult === undefined
+        ? (panel === activeLessonPanel.value ? null : panel)
+        : sessionResult;
+      return activeLessonPanel.value;
     };
 
-    const togglePhysicsGraphPanel = () => {
-        showPhysicsGraphPanel.value = !showPhysicsGraphPanel.value;
-        if (showPhysicsGraphPanel.value) {
-          showMathGraphPanel.value = false;
-          showDiagramPanel.value = false;
-        }
-    };
+    const toggleCalculator = () => requestLessonPanel('calculator');
+    const toggleMathGraphPanel = () => requestLessonPanel('mathGraph');
+    const togglePhysicsGraphPanel = () => requestLessonPanel('physicsGraph');
 
     const toggleDiagramPanel = () => {
         showDiagramPanel.value = !showDiagramPanel.value;
         if (showDiagramPanel.value) {
-          showMathGraphPanel.value = false;
-          showPhysicsGraphPanel.value = false;
+          requestLessonPanel(null);
           showChemistryPanel.value = false;
         }
     };
@@ -466,8 +469,7 @@ export default {
     const toggleChemistryPanel = () => {
         showChemistryPanel.value = !showChemistryPanel.value;
         if (showChemistryPanel.value) {
-          showMathGraphPanel.value = false;
-          showPhysicsGraphPanel.value = false;
+          requestLessonPanel(null);
           showDiagramPanel.value = false;
         }
     };
@@ -544,10 +546,32 @@ export default {
 
     const handleAddElement = (elementData) => {
       if (whiteboard.value?.addElementFromPanel) {
-        whiteboard.value.addElementFromPanel(elementData);
+        return whiteboard.value.addElementFromPanel(elementData);
       } else {
         console.warn('Whiteboard not ready to add element.', elementData);
+        return false;
       }
+    };
+
+    const handlePlotElement = (panel, elementData) => {
+      const added = handleAddElement(elementData);
+      if (added) requestLessonPanel(null);
+      return added;
+    };
+
+    const handleAddCoordinateSystem = (type = '2d') => {
+      const is3d = type === '3d';
+      return handleAddElement({
+        type: is3d ? 'coordinateSystem3D' : 'coordinateSystem2D',
+        width: is3d ? 320 : 400,
+        height: is3d ? 320 : 300,
+        color: '#1f2937',
+        lineWidth: 2,
+        grid: true,
+        xLabel: 'x',
+        yLabel: 'y',
+        ...(is3d ? { zLabel: 'z' } : {})
+      });
     };
 
     const { importPdfFile } = usePdfImport({
@@ -1165,6 +1189,7 @@ export default {
 
     // --- Feature Methods ---
     const toggleFeature = (featureName) => {
+      if (featureName) requestLessonPanel(null);
       if (activeFeature.value === featureName) {
         activeFeature.value = null; // Toggle off if clicking the same feature
       } else {
@@ -1187,15 +1212,30 @@ export default {
 
     // --- Keyboard Shortcuts ---
     const handleGlobalKeyDown = (event) => {
-      // Ignore if typing in an input
-      if (event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA') return;
-
-      // Shift + K for Calculator
-      if (event.shiftKey && event.key.toUpperCase() === 'K') {
+      if (event.key === 'Escape' && activeLessonPanel.value) {
         event.preventDefault();
-        toggleCalculator();
+        requestLessonPanel(null);
+        return;
       }
-      // Add other global shortcuts here if needed
+      // Ignore if typing in an input
+      if (
+        event.target?.tagName === 'INPUT' ||
+        event.target?.tagName === 'TEXTAREA' ||
+        event.target?.isContentEditable
+      ) return;
+
+      if (!event.ctrlKey && !event.metaKey && !event.altKey && event.shiftKey) {
+        const panelShortcuts = {
+          K: 'calculator',
+          F: 'mathGraph',
+          Y: 'physicsGraph'
+        };
+        const panel = panelShortcuts[event.key.toUpperCase()];
+        if (panel) {
+          event.preventDefault();
+          requestLessonPanel(panel);
+        }
+      }
     };
 
     const handleJoinRoom = async (id) => {
@@ -1366,7 +1406,7 @@ export default {
       currentArrowStyle,
       currentRoughness,
       currentFillColor,
-      isCalculatorVisible,
+      activeLessonPanel,
       toolbarCollapsed,
       toggleToolbar,
       activeUsersCount,
@@ -1424,6 +1464,7 @@ export default {
       toggleFeature,
       toggleMathGraphPanel,
       togglePhysicsGraphPanel,
+      requestLessonPanel,
       toggleDiagramPanel,
       triggerWhiteboardAction,
       handleJoinRoom,
@@ -1433,19 +1474,10 @@ export default {
       showChemistryPanel,
       toggleChemistryPanel,
       handleAddElement,
+      handlePlotElement,
       handleDiagramApply,
       handleImportPdf,
-      handleAddCoordinateSystem: (type) => {
-        // Create default coordinate system element
-        const elementData = {
-          type: type === '2d' ? 'coordinateSystem2D' : 'coordinateSystem3D',
-          position: { x: 100, y: 100 },
-          width: 400,
-          height: 300,
-          // Add default properties if needed
-        };
-        handleAddElement(elementData);
-      }
+      handleAddCoordinateSystem
       // Need to add computed for renderedLatex if KaTeX is used here
     };
   }

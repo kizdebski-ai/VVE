@@ -343,9 +343,11 @@ test.describe('Pilot fixture: Administrator, Teacher, Student browser contexts',
     await first.getByRole('button', { name: 'Kreskowana' }).click();
     await first.getByRole('button', { name: 'Trójkąt' }).click();
     const canvasBox = await first.locator('canvas.draw-layer').boundingBox();
-    await first.mouse.move(canvasBox.x + 180, canvasBox.y + 180);
+    // Stay below the floating properties bar so the real canvas receives the
+    // complete direct-manipulation gesture.
+    await first.mouse.move(canvasBox.x + 180, canvasBox.y + 320);
     await first.mouse.down();
-    await first.mouse.move(canvasBox.x + 300, canvasBox.y + 280, { steps: 6 });
+    await first.mouse.move(canvasBox.x + 300, canvasBox.y + 420, { steps: 6 });
     await first.mouse.up();
     await expect(second.locator('[data-object-type="triangle"]')).toBeVisible({ timeout: 5_000 });
 

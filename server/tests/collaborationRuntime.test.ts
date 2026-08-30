@@ -226,7 +226,35 @@ describe('CollaborationRuntime acknowledgement oracle', () => {
     await expect(handle.receive(mutation('failed-op', 'x', 'y'))).rejects.toBeInstanceOf(CollaborationFailure);
     expect(transport.frames.some((frame) => frame.kind === 'acknowledgement')).toBe(false);
   });
+
+  it('drain flushes acknowledged state, closes transports, and rejects new admissions', async () => {
+    const store = new InMemoryBoardDocumentStore();
+    const runtime = createCollaborationRuntime({ store });
+    const transport = new MemoryTransport();
+    const handle = await runtime.connect(connection(), transport);
+    await handle.receive(mutation('drain-op', 'kept', 'yes'));
+    const digest = (await runtime.inspect(BOARD_A)).digest;
+
+    const report = await runtime.drain({
+      deadline: new Date(Date.now() + 1_000),
+      reason: 'controlled restart'
+    });
+    expect(report.complete).toBe(true);
+    expect(report.boards).toBe(1);
+    expect(transport.frames.some((frame) => frame.kind === 'serverDraining')).toBe(true);
+    expect(transport.closed).toMatchObject({ code: 1012 });
+    expect(runtime.stats().draining).toBe(true);
+
+    await expect(runtime.connect(connection(), new MemoryTransport())).rejects.toMatchObject({
+      code: 'draining'
+    });
+
+    const restarted = createCollaborationRuntime({ store });
+    await restarted.connect(connection(), new MemoryTransport());
+    expect((await restarted.inspect(BOARD_A)).digest).toBe(digest);
+  });
 });
+
 
 describe('CollaborationRuntime document authority (S4)', () => {
   const boardMutation = (

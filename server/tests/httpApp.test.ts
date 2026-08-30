@@ -46,6 +46,16 @@ describe('HTTP API', () => {
     expect(res.body.status).toBe('ok');
   });
 
+  it('separates liveness from readiness when no RuntimeControl gateway is injected', async () => {
+    const app = createTestApp();
+    const live = await request(app).get('/live');
+    expect(live.status).toBe(200);
+    expect(live.body.live).toBe(true);
+    const ready = await request(app).get('/ready');
+    expect(ready.status).toBe(200);
+    expect(ready.body.ready).toBe(true);
+  });
+
   it('creates and retrieves rooms (development dev surface only)', async () => {
     const app = createTestApp();
     const createRes = await request(app).post('/api/rooms/').send({ roomId: 'demo', displayName: 'Demo' });

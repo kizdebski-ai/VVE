@@ -155,7 +155,27 @@ describe('acknowledged collaboration client', () => {
     vi.useRealTimers();
   });
 
-  it('applies a versioned remote update without re-sending it', () => {
+  it('becomes read-only immediately on a server-draining frame and reconnects', () => {
+    vi.useFakeTimers();
+    const statuses: string[] = [];
+    const connection = connectToYjs('board-1', { wsToken: 'managed-token', onStatus: (status) => statuses.push(status) });
+    const first = FakeWebSocket.instances[0]!;
+    first.open();
+    first.receive(serverFrame(collaborationMessage.synchronizationComplete));
+    expect(connection.isEditable()).toBe(true);
+
+    first.receive(serverFrame(collaborationMessage.serverDraining, new TextEncoder().encode('Server restarting')));
+    expect(connection.isEditable()).toBe(false);
+    expect(statuses).toContain('draining');
+
+    vi.advanceTimersByTime(1_000);
+    const second = FakeWebSocket.instances[1]!;
+    second.open();
+    expect(connection.isEditable()).toBe(false);
+    second.receive(serverFrame(collaborationMessage.synchronizationComplete));
+    expect(connection.isEditable()).toBe(true);
+    vi.useRealTimers();
+  });
     const connection = connectToYjs('board-1', { wsToken: 'managed-token' });
     const socket = FakeWebSocket.instances[0]!;
     socket.open();

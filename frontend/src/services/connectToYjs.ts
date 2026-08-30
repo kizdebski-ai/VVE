@@ -59,7 +59,8 @@ export type ConnectionStatus =
   | 'connecting'
   | 'connected'
   | 'reconnecting'
-  | 'disconnected';
+  | 'disconnected'
+  | 'draining';
 
 export interface YjsConnection {
   ydoc: Y.Doc;
@@ -290,6 +291,7 @@ export function connectToYjs(roomId: string, options?: ConnectOptions): YjsConne
         }
         case collaborationMessage.serverDraining:
           editable = false;
+          setStatus('draining');
           socket?.close(4012, 'Server restarting');
           break;
       }

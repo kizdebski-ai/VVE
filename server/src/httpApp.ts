@@ -26,6 +26,14 @@ import { createAdminTeachersRouter } from './routes/adminTeachers';
 import { createTeacherAuthRouter } from './routes/teacherAuth';
 import { createTeacherBoardsRouter } from './routes/teacherBoards';
 import { createBoardAccessRouter } from './routes/boardAccess';
+import type { OperationalSignals, OperationalSnapshot } from './pilot/operationalSignals';
+
+export interface RuntimeHealthGateway {
+  live(): boolean;
+  ready(): boolean;
+  checks(): { database: boolean; persistence: boolean };
+  snapshot(): OperationalSnapshot;
+}
 
 export interface CreateAppOptions {
   roomManager: RoomManager;
@@ -42,9 +50,12 @@ export interface CreateAppOptions {
   capabilityAccess?: ReturnType<typeof createCapabilityAccess>;
   /** BoardLifecycle dependency (VVE-102); defaults to an instance over the process db + CapabilityAccess. */
   boardLifecycle?: BoardLifecycle;
+  /** Truthful liveness/readiness owned by RuntimeControl (VVE-108). */
+  health?: RuntimeHealthGateway;
+  signals?: OperationalSignals;
 }
 
-export const createHttpApp = ({ roomManager, aiSolver, environment, devSurface, capabilityAccess, boardLifecycle }: CreateAppOptions) => {
+export const createHttpApp = ({ roomManager, aiSolver, environment, devSurface, capabilityAccess, boardLifecycle, health, signals }: CreateAppOptions) => {
   const app = express();
 
   const resolvedEnvironment: RuntimeEnvironment = environment ?? config.pilotEnvironment;
@@ -138,14 +149,22 @@ export const createHttpApp = ({ roomManager, aiSolver, environment, devSurface, 
     next();
   });
 
-  // Lightweight request logging for sensitive routes
+  // Lightweight request logging for sensitive routes — path and method only.
   app.use((req, _res, next) => {
-    const correlationId = (req as any).correlationId;
+    const correlationId = (req as any).correlationId as string | undefined;
     if (
       req.path.startsWith('/api/teacher/boards') ||
       req.path.startsWith('/board/')
     ) {
-      logger.info('HTTP request', { path: req.path, method: req.method, correlationId });
+      if (signals) {
+        signals.record({
+          name: 'process.phase',
+          ...(typeof correlationId === 'string' ? { correlationId } : {}),
+          dimensions: { phase: 'http', method: req.method, path: req.path }
+        });
+      } else {
+        logger.info('HTTP request', { path: req.path, method: req.method, correlationId });
+      }
     }
     next();
   });
@@ -180,17 +199,53 @@ export const createHttpApp = ({ roomManager, aiSolver, environment, devSurface, 
   // Basic root status page so Railway shows a friendly message instead of "Cannot GET /"
   app.get('/', (_, res) => {
     res.json({
-      status: 'ok',
+      status: health?.ready() ? 'ready' : 'ok',
       message: 'WhiteVue realtime backend is running.',
       pilotSurface: manifest.serverRoutes,
-      endpoints: ['/health', '/ws/whiteboard/:roomId']
+      endpoints: ['/live', '/ready', '/health', '/ws/whiteboard/:roomId']
+    });
+  });
+
+  app.get('/live', (_, res) => {
+    const live = health ? health.live() : true;
+    res.status(live ? 200 : 503).json({ live, status: live ? 'live' : 'stopped' });
+  });
+
+  app.get('/ready', (_, res) => {
+    if (!health) {
+      res.json({ live: true, ready: true, status: 'ready' });
+      return;
+    }
+    const live = health.live();
+    const ready = health.ready();
+    const checks = health.checks();
+    const soak = health.snapshot();
+    res.status(ready ? 200 : 503).json({
+      live,
+      ready,
+      status: ready ? 'ready' : 'not-ready',
+      checks,
+      soak
     });
   });
 
   app.get('/health', (_, res) => {
-    res.json({
-      status: 'ok',
-      rooms: roomManager.listRooms({ includeArchived: true, limit: 10 }).length
+    if (!health) {
+      res.json({
+        status: 'ok',
+        live: true,
+        ready: true
+      });
+      return;
+    }
+    const live = health.live();
+    const ready = health.ready();
+    const checks = health.checks();
+    res.status(ready ? 200 : 503).json({
+      status: ready ? 'ok' : 'not-ready',
+      live,
+      ready,
+      checks
     });
   });
 

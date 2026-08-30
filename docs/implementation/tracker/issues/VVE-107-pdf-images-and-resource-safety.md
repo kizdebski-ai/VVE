@@ -55,7 +55,7 @@ Documented in `resourceLimits.ts` and overridable via `VVE_MAX_*` / `ADMIN_LOGIN
 ### Focused commits
 
 - `1be7c02` — ArtifactPipeline + ResourceGovernor implementation
-- follow-up on this branch — e2e file-input placement, Polish pluralization, Browser screenshots, ticket resolution
+- `cf222e3` — e2e file-input placement, Polish pluralization, Browser screenshots, ticket resolution
 
 ### Tests and builds
 

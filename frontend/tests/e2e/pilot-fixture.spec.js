@@ -387,6 +387,90 @@ test.describe('Pilot fixture: Administrator, Teacher, Student browser contexts',
     await teacherContext.close();
   });
 
+  test('lesson panels remain focused and inside desktop and iPad portrait viewports', async ({ browser }) => {
+    const profiles = [
+      { name: 'desktop', viewport: { width: 1440, height: 900 }, hasTouch: false },
+      { name: 'ipad-portrait', viewport: { width: 768, height: 1024 }, hasTouch: true }
+    ];
+
+    for (const profile of profiles) {
+      const context = await browser.newContext({
+        viewport: profile.viewport,
+        hasTouch: profile.hasTouch,
+        isMobile: profile.hasTouch,
+        reducedMotion: 'reduce'
+      });
+      const page = await context.newPage();
+      const browserErrors = [];
+      page.on('console', (message) => {
+        if (message.type() === 'error') browserErrors.push(message.text());
+      });
+      page.on('pageerror', (error) => browserErrors.push(error.message));
+
+      await page.goto(fixture.boardAccessLink);
+      await page.getByRole('button', { name: 'Dołącz do lekcji' }).click();
+      await expect(page.locator('canvas.static-layer')).toBeVisible({ timeout: 20_000 });
+      await expect(page.getByTestId('collaboration-read-only')).toBeHidden({ timeout: 5_000 });
+
+      await page.locator('[data-tool-id="panel.mathGraph"]').click();
+      const mathPanel = page.getByRole('dialog', { name: 'Wykres funkcji' });
+      await expect(mathPanel).toBeVisible();
+      await expect(mathPanel.getByLabel('Funkcja f(x)')).toBeFocused();
+      await mathPanel.getByLabel('Od').fill('5');
+      await mathPanel.getByLabel('Do').fill('-5');
+      await mathPanel.getByRole('button', { name: 'Dodaj wykres' }).click();
+      await expect(mathPanel.getByRole('alert')).toHaveText('Początek zakresu musi być mniejszy od końca.');
+
+      await page.locator('[data-tool-id="panel.physicsGraph"]').click();
+      await expect(mathPanel).toBeHidden();
+      const physicsPanel = page.getByRole('dialog', { name: 'Wykres fizyczny' });
+      await expect(physicsPanel).toBeVisible();
+      await expect(physicsPanel.getByLabel(/Punkty danych/)).toBeFocused();
+      await physicsPanel.getByLabel(/Punkty danych/).fill('0,0');
+      await physicsPanel.getByRole('button', { name: 'Dodaj wykres' }).click();
+      await expect(physicsPanel.getByRole('alert')).toHaveText('Podaj co najmniej dwa poprawne punkty.');
+
+      const panelBox = await physicsPanel.boundingBox();
+      expect(panelBox).not.toBeNull();
+      expect(panelBox.x).toBeGreaterThanOrEqual(0);
+      expect(panelBox.y).toBeGreaterThanOrEqual(0);
+      expect(panelBox.x + panelBox.width).toBeLessThanOrEqual(profile.viewport.width);
+      expect(panelBox.y + panelBox.height).toBeLessThanOrEqual(profile.viewport.height);
+      const layout = await page.evaluate(() => ({
+        innerWidth: window.innerWidth,
+        scrollWidth: document.documentElement.scrollWidth
+      }));
+      expect(layout.scrollWidth).toBeLessThanOrEqual(layout.innerWidth);
+
+      if (process.env.VVE_CAPTURE_VISUALS === '1') {
+        await page.screenshot({
+          path: path.resolve(
+            path.dirname(fileURLToPath(import.meta.url)),
+            '..',
+            '..',
+            '..',
+            'docs',
+            'implementation',
+            `VVE-106-${profile.name}.png`
+          ),
+          fullPage: true
+        });
+      }
+
+      await page.keyboard.press('Escape');
+      await expect(physicsPanel).toBeHidden();
+      await page.locator('[data-tool-id="panel.calculator"]').click();
+      const calculator = page.getByRole('dialog', { name: 'Kalkulator naukowy' });
+      await expect(calculator).toBeVisible();
+      await expect(calculator.locator(':focus')).toHaveCount(1);
+      await page.keyboard.press('Escape');
+      await expect(calculator).toBeHidden();
+
+      expect(browserErrors).toEqual([]);
+      await context.close();
+    }
+  });
+
   test('Administrator signs in with the passphrase; viewing the list never rotates links', async ({ browser }) => {
     const context = await browser.newContext();
     const page = await context.newPage();

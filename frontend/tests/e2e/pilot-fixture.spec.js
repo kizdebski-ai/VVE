@@ -369,7 +369,8 @@ test.describe('Pilot fixture: Administrator, Teacher, Student browser contexts',
 
     // The real PDF action renders and downloads the scene containing all
     // VVE-106 objects.
-    await first.locator('.top-menu-container').hover();
+    await first.locator('.hover-trigger-area').hover();
+    await expect(first.locator('.gear-btn')).toBeVisible();
     await first.locator('.gear-btn').click();
     const downloadPromise = first.waitForEvent('download');
     await first.locator('.pdf-menu-wrapper > button').click();

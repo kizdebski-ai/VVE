@@ -57,16 +57,23 @@ export const ARTIFACT_MESSAGE_PL: Record<ArtifactMessageKey, string> = {
   'artifact.working': 'Importowanie materiału…'
 };
 
+export const polishPageCount = (count: number): string => {
+  const n = Math.abs(count);
+  const mod10 = n % 10;
+  const mod100 = n % 100;
+  if (n === 1) return '1 stronę';
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return `${count} strony`;
+  return `${count} stron`;
+};
+
 export const polishArtifactMessage = (key: ArtifactMessageKey, extras?: { committed?: number; total?: number }): string => {
   if (key === 'artifact.cancelled' && extras?.committed) {
-    return extras.committed === 1
-      ? 'Anulowano import. Zapisano 1 stronę.'
-      : `Anulowano import. Zapisano ${extras.committed} stron.`;
+    return `Anulowano import. Zapisano ${polishPageCount(extras.committed)}.`;
   }
   if (key === 'artifact.committedPartial' && extras?.committed != null) {
     return extras.total
       ? `Import przerwany. Zapisano ${extras.committed} z ${extras.total} stron.`
-      : `Import przerwany. Zapisano ${extras.committed} stron.`;
+      : `Import przerwany. Zapisano ${polishPageCount(extras.committed)}.`;
   }
   if (key === 'artifact.working' && extras?.total) {
     if (extras.total === 1) return 'Importowanie materiału…';
@@ -76,7 +83,7 @@ export const polishArtifactMessage = (key: ArtifactMessageKey, extras?: { commit
   }
   if (key === 'artifact.importComplete' && extras?.committed && extras.total) {
     if (extras.total === 1 && extras.committed === 1) return 'Zaimportowano obraz na tablicę.';
-    return `Zaimportowano ${extras.committed} stron z PDF.`;
+    return `Zaimportowano ${polishPageCount(extras.committed)} z PDF.`;
   }
   return ARTIFACT_MESSAGE_PL[key];
 };

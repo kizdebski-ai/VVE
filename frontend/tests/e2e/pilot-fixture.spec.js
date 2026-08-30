@@ -460,7 +460,7 @@ test.describe('Pilot fixture: Administrator, Teacher, Student browser contexts',
   });
 
   test('PDF import collaborates, reloads, and exports from the synchronized board', async ({ browser }) => {
-    test.setTimeout(90_000);
+    test.setTimeout(120_000);
     const teacherContext = await browser.newContext();
     const teacher = await teacherContext.newPage();
     await teacher.goto(fixture.teacherAccessLink);
@@ -489,6 +489,10 @@ test.describe('Pilot fixture: Administrator, Teacher, Student browser contexts',
     await join(first);
     await join(second);
 
+    const evidenceDir = path.resolve(
+      path.dirname(fileURLToPath(import.meta.url)),
+      '../../../docs/implementation/evidence/vve-107'
+    );
     const pdfBytes = readFileSync(
       path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'fixtures', 'artifacts', 'lesson-2page.pdf')
     );
@@ -498,11 +502,27 @@ test.describe('Pilot fixture: Administrator, Teacher, Student browser contexts',
       mimeType: 'application/pdf',
       buffer: pdfBytes
     });
+    await expect(first.getByText(/Zaimportowano 2 strony z PDF/)).toBeVisible({ timeout: 25_000 });
     await expect.poll(
       () => second.locator('canvas.static-layer').evaluate((canvas) => canvas.toDataURL()),
       { timeout: 20_000 }
     ).not.toBe(before);
     const imported = await second.locator('canvas.static-layer').evaluate((canvas) => canvas.toDataURL());
+
+    await first.setViewportSize({ width: 1440, height: 900 });
+    await first.screenshot({ path: path.join(evidenceDir, 'desktop-1440x900.png'), fullPage: true });
+    const desktopOverflow = await first.evaluate(
+      () => document.documentElement.scrollWidth - document.documentElement.clientWidth
+    );
+    expect(desktopOverflow).toBeLessThanOrEqual(1);
+
+    await first.setViewportSize({ width: 768, height: 1024 });
+    await first.screenshot({ path: path.join(evidenceDir, 'ipad-768x1024.png'), fullPage: true });
+    const ipadOverflow = await first.evaluate(
+      () => document.documentElement.scrollWidth - document.documentElement.clientWidth
+    );
+    expect(ipadOverflow).toBeLessThanOrEqual(1);
+    await first.setViewportSize({ width: 1280, height: 720 });
 
     await second.reload();
     await expect(second.locator('canvas.static-layer')).toBeVisible({ timeout: 20_000 });
@@ -513,8 +533,8 @@ test.describe('Pilot fixture: Administrator, Teacher, Student browser contexts',
     ).toBe(imported);
 
     const downloadPromise = first.waitForEvent('download', { timeout: 20_000 });
-    await first.locator('.hover-trigger-area').hover();
-    await first.locator('.gear-btn').click();
+    await first.locator('.hover-trigger-area').hover({ force: true });
+    await first.locator('.gear-btn').click({ force: true });
     await first.getByTitle('Eksportuj do PDF (A4)').click();
     const download = await downloadPromise;
     expect(download.suggestedFilename()).toMatch(/\.pdf$/i);

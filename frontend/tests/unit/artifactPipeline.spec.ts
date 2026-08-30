@@ -3,7 +3,7 @@ import * as Y from 'yjs';
 
 import { createArtifactPipeline, deliverPdfArtifact } from '@/board/artifactPipeline';
 import { ArtifactCodecError } from '@/board/artifactCodecs';
-import { detectArtifactFormat, polishArtifactMessage } from '@pilot/artifactContract';
+import { detectArtifactFormat, polishArtifactMessage, polishPageCount } from '@pilot/artifactContract';
 import { createResourceGovernor } from '@pilot/resourceGovernor';
 import { createResourceLimits } from '@pilot/resourceLimits';
 import { createWhiteboardSession } from '@/board/whiteboardSession';
@@ -71,6 +71,9 @@ describe('ArtifactPipeline Interface', () => {
     const heic = new Uint8Array(32);
     heic.set([0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70, 0x68, 0x65, 0x69, 0x63], 0);
     expect(detectArtifactFormat(heic)).toMatchObject({ mime: 'image/heic', bestEffort: true });
+    expect(polishPageCount(1)).toBe('1 stronę');
+    expect(polishPageCount(2)).toBe('2 strony');
+    expect(polishPageCount(5)).toBe('5 stron');
   });
 
   it('imports a multi-page PDF in order with preserved proportions', async () => {
@@ -89,7 +92,7 @@ describe('ArtifactPipeline Interface', () => {
       events.push(event);
     }
     expect(events.at(-1)).toMatchObject({ phase: 'done', committed: 2 });
-    expect(events.at(-1).message).toMatch(/2 stron/);
+    expect(events.at(-1).message).toMatch(/2 strony/);
     const snapshot = session.snapshot();
     expect(snapshot).toHaveLength(2);
     expect(snapshot[0]).toMatchObject({ type: 'image', width: 400, height: 600, y: 80 });

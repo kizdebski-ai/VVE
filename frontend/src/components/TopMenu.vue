@@ -45,14 +45,6 @@
           <FileUp :size="18" />
           <span>PDF</span>
         </button>
-        <input
-          ref="pdfFileInput"
-          type="file"
-          accept=".pdf,application/pdf,image/png,image/jpeg,image/webp,image/svg+xml,.png,.jpg,.jpeg,.webp,.svg"
-          style="display:none"
-          data-testid="artifact-file-input"
-          @change="handlePdfFileSelected"
-        />
 
         <div class="divider-vertical"></div>
 
@@ -89,6 +81,15 @@
         </div>
       </div>
     </transition>
+
+    <input
+      ref="pdfFileInput"
+      type="file"
+      accept=".pdf,application/pdf,image/png,image/jpeg,image/webp,image/svg+xml,.png,.jpg,.jpeg,.webp,.svg"
+      style="display:none"
+      data-testid="artifact-file-input"
+      @change="handlePdfFileSelected"
+    />
 
      <!-- Keyboard shortcuts info dialog -->
     <div v-if="showShortcutsInfo" class="shortcuts-dialog glass-panel">

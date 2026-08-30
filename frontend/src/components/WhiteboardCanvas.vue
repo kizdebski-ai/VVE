@@ -2039,9 +2039,7 @@ export default {
     };
 
     const selectObject = (objectId) => {
-      // This was the old @select handler from MovableObject.
-      // Its primary selection role is now handled by handleObjectSelectionRequest or right-click.
-      debugLog('[WhiteboardCanvas] selectObject (old handler) called with ID:', objectId);
+      handleObjectSelectionRequest(objectId);
     };
 
 

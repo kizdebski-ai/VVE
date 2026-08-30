@@ -57,8 +57,10 @@
                     <button
                       v-for="shape in shapeOptions"
                       :key="shape.tool"
+                      type="button"
                       class="shape-btn"
                       :class="{ active: isShapeActive(shape) }"
+                      :aria-label="shape.label"
                       @click="selectShape(shape)"
                       :title="shape.label"
                     >

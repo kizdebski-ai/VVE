@@ -262,8 +262,7 @@ const calculate = () => {
             result.value = simplifiedResult.toString();
             return;
         }
-    } catch (simplifyError) {
-        console.warn("Simplification failed, falling back to fraction evaluation:", simplifyError);
+    } catch {
         // Proceed to fraction evaluation if simplification fails
     }
 

@@ -460,11 +460,13 @@ export const validateBoardObject = (value: unknown): ValidationResult => {
     if (!isBoundedString(object.expression, 1_024)) {
       return fail('invalidContent', 'A mathematical graph needs a bounded expression.');
     }
+    const range = object.xRange;
     if (
-      !Array.isArray(object.xRange) ||
-      object.xRange.length !== 2 ||
-      !object.xRange.every(isCoordinate) ||
-      object.xRange[0] >= object.xRange[1]
+      !Array.isArray(range) ||
+      range.length !== 2 ||
+      !isCoordinate(range[0]) ||
+      !isCoordinate(range[1]) ||
+      range[0] >= range[1]
     ) {
       return fail('invalidGeometry', 'The mathematical graph range is invalid.');
     }

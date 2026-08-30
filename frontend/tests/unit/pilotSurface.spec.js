@@ -85,7 +85,7 @@ describe('Pilot surface: manifest-driven UI enumeration', () => {
     await wrapper.get('[data-tool-id="tool.shapes"]').trigger('click');
     await nextTick();
     expect(document.querySelector('.shapes-popover')?.textContent).toContain('Kształty');
-    expect(document.querySelector('.shapes-popover')?.textContent).toContain('Linia');
+    expect(document.querySelector('.shapes-popover [aria-label="Linia"]')).not.toBeNull();
 
     await wrapper.get('[data-tool-id="panel.coordinateSystem"]').trigger('click');
     await nextTick();

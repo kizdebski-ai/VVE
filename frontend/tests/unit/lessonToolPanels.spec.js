@@ -92,11 +92,14 @@ describe('VVE-106 lesson tool panels', () => {
     const previousHeight = window.innerHeight;
     Object.defineProperty(window, 'innerWidth', { configurable: true, value: 768 });
     Object.defineProperty(window, 'innerHeight', { configurable: true, value: 1024 });
+    const host = document.createElement('div');
+    document.body.appendChild(host);
 
     try {
       const wrapper = mount(DraggablePanel, {
         props: { initialX: 2_000, initialY: 2_000, width: '380px', ariaLabel: 'Test' },
-        slots: { default: '<button>Akcja</button>' }
+        slots: { default: '<button>Akcja</button>' },
+        attachTo: host
       });
       await nextTick();
       await nextTick();
@@ -111,6 +114,7 @@ describe('VVE-106 lesson tool panels', () => {
       else delete HTMLElement.prototype.offsetHeight;
       Object.defineProperty(window, 'innerWidth', { configurable: true, value: previousWidth });
       Object.defineProperty(window, 'innerHeight', { configurable: true, value: previousHeight });
+      host.remove();
     }
   });
 });

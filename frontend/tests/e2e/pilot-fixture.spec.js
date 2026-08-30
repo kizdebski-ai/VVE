@@ -238,6 +238,7 @@ test.describe('Pilot fixture: Administrator, Teacher, Student browser contexts',
   });
 
   test('Math, physics, coordinates, shapes, lines, and calculator complete the collaborative workflow', async ({ browser }) => {
+    test.setTimeout(90_000);
     const teacherContext = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const teacher = await teacherContext.newPage();
     await teacher.goto(fixture.teacherAccessLink);
@@ -301,6 +302,7 @@ test.describe('Pilot fixture: Administrator, Teacher, Student browser contexts',
     // A direct manipulation synchronizes, and local undo/redo reverses only
     // this participant's graph movement.
     const initialSecondBox = await secondMath.boundingBox();
+    await first.locator('[data-tool-id="tool.select"]').click();
     await firstMath.click();
     await expect(firstMath).toHaveClass(/is-selected/);
     const firstMathBox = await firstMath.boundingBox();

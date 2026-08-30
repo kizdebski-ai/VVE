@@ -98,9 +98,9 @@
     />
 
     <!-- Connection loading indicator -->
-    <div v-if="isConnecting" class="connection-loading">
+    <div v-if="isConnecting" class="connection-loading" data-testid="connection-loading">
       <div class="connection-spinner"></div>
-      <span>Connecting...</span>
+      <span>{{ connectionBanner }}</span>
     </div>
 
     <div
@@ -111,7 +111,7 @@
       data-testid="collaboration-read-only"
     >
       <span class="read-only-dot" aria-hidden="true"></span>
-      Tylko podgląd — czekamy na bezpieczną synchronizację
+      {{ readOnlyBanner }}
     </div>
 
     <!-- Status message -->
@@ -460,6 +460,20 @@ export default {
     const collaborationReadOnly = computed(() =>
       Boolean(props.wsToken) && connectionStatus.value !== 'connected'
     );
+    const connectionBanner = computed(() =>
+      connectionStatus.value === 'draining'
+        ? 'Serwer jest restartowany. Twoja praca zostanie przywrócona.'
+        : 'Łączenie...'
+    );
+    const readOnlyBanner = computed(() => {
+      if (connectionStatus.value === 'draining') {
+        return 'Serwer jest restartowany. Twoja praca zostanie przywrócona.';
+      }
+      if (connectionStatus.value === 'disconnected' || connectionStatus.value === 'reconnecting') {
+        return 'Tylko podgląd — brak połączenia';
+      }
+      return 'Tylko podgląd — czekamy na bezpieczną synchronizację';
+    });
     const canMutateDocument = () =>
       !props.wsToken || yjsConnection.value?.isEditable?.() === true;
     const denyReadOnlyMutation = () => {
@@ -1237,7 +1251,7 @@ export default {
               },
               onStatus: (status) => {
                 connectionStatus.value = status;
-                isConnecting.value = status === 'connecting' || status === 'reconnecting';
+                isConnecting.value = status === 'connecting' || status === 'reconnecting' || status === 'draining';
                 if (status !== 'connected') {
                   // A stroke that started before network loss must not be
                   // committed after the session becomes read-only.
@@ -2528,6 +2542,8 @@ export default {
       yjsConnection,
       connectionStatus,
       collaborationReadOnly,
+      connectionBanner,
+      readOnlyBanner,
       canUndo,
       canRedo,
       selectedObjectId,
@@ -2806,6 +2822,14 @@ export default {
   border-top-color: white;
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .connection-spinner {
+    animation: none;
+    border-top-color: white;
+    opacity: 0.85;
+  }
 }
 
 @keyframes spin {

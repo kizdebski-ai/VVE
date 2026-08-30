@@ -52,9 +52,9 @@ describe('3.5: ColorPicker click-outside handler', () => {
 // ─── Section 5: Memory Leaks ─────────────────────────────────────────────────
 
 describe('5.7: WebSocket max payload', () => {
-  it('server.ts sets maxPayload on WebSocketServer', () => {
+  it('realtime listener sets maxPayload on WebSocketServer', () => {
     const src = readFileSync(
-      resolve(__dirname, '../../../server/src/server.ts'),
+      resolve(__dirname, '../../../server/src/pilot/realtimeListener.ts'),
       'utf-8'
     );
     expect(src).toContain('maxPayload');

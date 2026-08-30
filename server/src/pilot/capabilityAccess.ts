@@ -4,6 +4,7 @@ import { config } from '../config';
 import { getDb } from '../db';
 import { logger } from '../logger';
 import { normalizeTeacherEmail } from '../services/teacherService';
+import type { OperationalSignals } from './operationalSignals';
 
 /**
  * CapabilityAccess — Module 1 of the VVE Pilot deep-module design (slice S1).
@@ -249,6 +250,8 @@ export interface CreateCapabilityAccessOptions {
   /** Administrator login rate limit; defaults come from config (5/min). */
   loginMax?: number;
   loginWindowMs?: number;
+  /** Content-free operational events (VVE-108). */
+  signals?: OperationalSignals;
 }
 
 export interface CapabilityAccess {
@@ -281,6 +284,7 @@ export const createCapabilityAccess = (options: CreateCapabilityAccessOptions = 
   const db = () => options.db ?? getDb();
   const loginMax = options.loginMax ?? config.adminLoginMax;
   const loginWindowMs = options.loginWindowMs ?? config.adminLoginWindowMs;
+  const signals = options.signals;
 
   // ---- Administrator login rate limiting (hidden inside the module) -------
   const loginBuckets = new Map<string, { count: number; resetAt: number }>();
@@ -810,13 +814,62 @@ export const createCapabilityAccess = (options: CreateCapabilityAccessOptions = 
     }
   };
 
+  const decideWithSignals: CapabilityAccess['decide'] = async (input) => {
+    const decision = await decide(input);
+    signals?.record({
+      name: 'access.decision',
+      dimensions: {
+        action: input.action,
+        granted: decision.granted,
+        reason: decision.granted ? 'granted' : decision.reason,
+        role: decision.granted ? decision.role : 'none',
+        credentialKind: input.credential.kind
+      }
+    });
+    return decision;
+  };
+
+  const createOrReuseWithSignals: CapabilityAccess['createOrReuseTeacherAccessLink'] = async (input) => {
+    const result = await createOrReuseTeacherAccessLink(input);
+    signals?.record({
+      name: 'access.credential',
+      dimensions: {
+        operation: 'createOrReuseTeacherAccessLink',
+        ok: result.ok
+      }
+    });
+    return result;
+  };
+
+  const regenerateWithSignals: CapabilityAccess['regenerateTeacherAccessLink'] = async (teacherId, now) => {
+    const result = await regenerateTeacherAccessLink(teacherId, now);
+    signals?.record({
+      name: 'access.credential',
+      dimensions: { operation: 'regenerateTeacherAccessLink', ok: result.ok }
+    });
+    return result;
+  };
+
+  const deactivateWithSignals: CapabilityAccess['deactivateTeacher'] = async (teacherId, now) => {
+    const result = await deactivateTeacher(teacherId, now);
+    signals?.record({
+      name: 'access.credential',
+      dimensions: {
+        operation: 'deactivateTeacher',
+        ok: result.ok,
+        reason: result.ok ? 'ok' : result.reason
+      }
+    });
+    return result;
+  };
+
   return {
-    decide,
+    decide: decideWithSignals,
     exchangeAdministratorPassphrase,
     verifyAdministratorSessionToken,
-    createOrReuseTeacherAccessLink,
-    regenerateTeacherAccessLink,
-    deactivateTeacher,
+    createOrReuseTeacherAccessLink: createOrReuseWithSignals,
+    regenerateTeacherAccessLink: regenerateWithSignals,
+    deactivateTeacher: deactivateWithSignals,
     listTeacherAccessLinks
   };
 };

@@ -287,6 +287,33 @@ describe('WhiteboardCanvas.vue', () => {
       await nextTick();
       expect(wrapper.find('[data-testid="collaboration-read-only"]').exists()).toBe(true);
     });
+
+    it('shows Polish restart copy while the server is draining', async () => {
+      wrapper.unmount();
+      let connectionOptions;
+      connectToYjs.mockImplementation((_roomId, options) => {
+        connectionOptions = options;
+        return {
+          ydoc: mockYDoc,
+          yDrawings: mockYDrawings,
+          awareness: mockAwareness,
+          disconnect: vi.fn(),
+          isEditable: () => false,
+        };
+      });
+      wrapper = mount(WhiteboardCanvas, {
+        props: { roomId: 'managed-board', wsToken: 'managed-token', role: 'student' },
+      });
+      await nextTick();
+      connectionOptions.onStatus('draining');
+      await nextTick();
+      expect(wrapper.find('[data-testid="connection-loading"]').text()).toContain(
+        'Serwer jest restartowany'
+      );
+      expect(wrapper.find('[data-testid="collaboration-read-only"]').text()).toContain(
+        'Twoja praca zostanie przywrócona'
+      );
+    });
   });
 
 });

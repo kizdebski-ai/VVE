@@ -10,6 +10,7 @@ import {
   createBoardDocument,
   type BoardDocument
 } from './boardDocument';
+import type { OperationalSignals } from './operationalSignals';
 
 export type ClientFrame =
   | { kind: 'mutation'; operationId: string; update: Uint8Array }
@@ -227,6 +228,13 @@ export interface CreateCollaborationRuntimeOptions {
   idleMs?: number;
   compactAfterOperations?: number;
   crashInjector?: (point: CrashPoint) => Promise<void> | void;
+  signals?: OperationalSignals;
+}
+
+export interface CollaborationRuntimeStats {
+  boards: number;
+  connections: number;
+  draining: boolean;
 }
 
 export interface CollaborationRuntime {
@@ -235,6 +243,7 @@ export interface CollaborationRuntime {
   unloadIdle(): Promise<string[]>;
   closeBoard(boardId: string, reason: string): Promise<boolean>;
   drain(input: { deadline: Date; reason: string }): Promise<{ boards: number; connections: number; complete: boolean }>;
+  stats(): CollaborationRuntimeStats;
 }
 
 const validOperationId = (value: string): boolean =>
@@ -251,6 +260,7 @@ export const createCollaborationRuntime = (
   const now = options.now ?? Date.now;
   const idleMs = options.idleMs ?? 30_000;
   const compactAfterOperations = options.compactAfterOperations ?? 20;
+  const signals = options.signals;
   const rooms = new Map<string, LiveBoard>();
   const hydration = new Map<string, Promise<LiveBoard>>();
   let draining = false;
@@ -353,6 +363,24 @@ export const createCollaborationRuntime = (
       }
       await transport.send({ kind: 'synchronizationComplete', digest: room.document.digest() });
       live.synchronized = true;
+      signals?.record({
+        name: 'session.admission',
+        dimensions: { role: input.grant.role, action: input.grant.action }
+      });
+      signals?.record({
+        name: 'sync.complete',
+        dimensions: { connections: room.connections.size }
+      });
+      signals?.measure({
+        name: 'board.digest',
+        value: room.document.digest(),
+        dimensions: { boardId: input.boardId }
+      });
+      signals?.measure({ name: 'boards.active', value: rooms.size });
+      signals?.measure({
+        name: 'connections.active',
+        value: Array.from(rooms.values()).reduce((sum, item) => sum + item.connections.size, 0)
+      });
     } catch (error) {
       room.connections.delete(live);
       throw new CollaborationFailure('internal', (error as Error).message);
@@ -363,6 +391,10 @@ export const createCollaborationRuntime = (
       live.closed = true;
       room.connections.delete(live);
       room.lastActive = now();
+      signals?.record({
+        name: 'session.close',
+        dimensions: { reason: reason.slice(0, 80), remaining: room.connections.size }
+      });
       if (live.awarenessClientIds.size) {
         const removed = Array.from(live.awarenessClientIds);
         removeAwarenessStates(room.awareness, removed, live);
@@ -443,9 +475,19 @@ export const createCollaborationRuntime = (
         }
 
         let append: AppendResult;
+        const persistStarted = now();
         try {
           append = await options.store.append(input.boardId, frame.operationId, frame.update);
+          signals?.measure({
+            name: 'persistence.latencyMs',
+            value: Math.max(0, now() - persistStarted)
+          });
+          signals?.measure({ name: 'update.bytes', value: frame.update.length });
         } catch (error) {
+          signals?.record({
+            name: 'persistence.error',
+            dimensions: { stage: 'append', error: (error as Error).message.slice(0, 120) }
+          });
           if (error instanceof CollaborationFailure) throw error;
           throw new CollaborationFailure('persistenceUnavailable', (error as Error).message);
         }
@@ -479,11 +521,24 @@ export const createCollaborationRuntime = (
           digest: room.document.digest(),
           duplicate: append.duplicate
         });
+        signals?.record({
+          name: 'sync.acknowledgement',
+          dimensions: { duplicate: append.duplicate, sequence: room.lastSequence }
+        });
+        signals?.measure({
+          name: 'board.digest',
+          value: room.document.digest(),
+          dimensions: { boardId: input.boardId }
+        });
 
         if (!append.duplicate) room.operationsSinceCompaction += 1;
         if (room.operationsSinceCompaction >= compactAfterOperations) {
           await options.store.compact(input.boardId, room.document.encode(), room.lastSequence);
           room.operationsSinceCompaction = 0;
+          signals?.record({
+            name: 'persistence.compact',
+            dimensions: { cutoff: room.lastSequence }
+          });
         }
         return { accepted: true, operationId: frame.operationId, duplicate: append.duplicate };
       });
@@ -541,22 +596,59 @@ export const createCollaborationRuntime = (
 
   const drain: CollaborationRuntime['drain'] = async ({ deadline, reason }) => {
     draining = true;
+    signals?.record({ name: 'process.phase', dimensions: { phase: 'collaborationDrain', reason } });
     let connectionCount = 0;
+    let complete = true;
     for (const [boardId, room] of rooms) {
-      connectionCount += room.connections.size;
-      for (const connection of room.connections) {
-        await connection.transport.send({ kind: 'serverDraining', reason });
+      if (now() > deadline.getTime()) {
+        complete = false;
+        break;
       }
-      await serial(room, async () => {
-        await options.store.compact(boardId, room.document.encode(), room.lastSequence);
-      });
+      connectionCount += room.connections.size;
+      for (const connection of Array.from(room.connections)) {
+        try {
+          await connection.transport.send({ kind: 'serverDraining', reason });
+        } catch {
+          // Drain continues even if one transport is already gone.
+        }
+      }
+      try {
+        await serial(room, async () => {
+          await options.store.compact(boardId, room.document.encode(), room.lastSequence);
+        });
+        signals?.record({
+          name: 'persistence.compact',
+          dimensions: { cutoff: room.lastSequence, reason: 'drain' }
+        });
+      } catch (error) {
+        complete = false;
+        signals?.record({
+          name: 'persistence.error',
+          dimensions: { stage: 'drain-compact', error: (error as Error).message.slice(0, 120) }
+        });
+      }
+      for (const connection of Array.from(room.connections)) {
+        connection.closed = true;
+        try {
+          await connection.transport.close(1012, reason);
+        } catch {
+          // already closed
+        }
+      }
+      room.connections.clear();
     }
     return {
       boards: rooms.size,
       connections: connectionCount,
-      complete: now() <= deadline.getTime()
+      complete: complete && now() <= deadline.getTime()
     };
   };
 
-  return { connect, inspect, unloadIdle, closeBoard, drain };
+  const stats = (): CollaborationRuntimeStats => ({
+    boards: rooms.size,
+    connections: Array.from(rooms.values()).reduce((sum, room) => sum + room.connections.size, 0),
+    draining
+  });
+
+  return { connect, inspect, unloadIdle, closeBoard, drain, stats };
 };

@@ -289,4 +289,12 @@ describe('WhiteboardCanvas.vue', () => {
     });
   });
 
+  describe('ArtifactPipeline overlay', () => {
+    it('keeps progress hidden until import starts and exposes importArtifactFile', () => {
+      expect(wrapper.find('[data-testid="artifact-progress"]').exists()).toBe(false);
+      expect(typeof wrapper.vm.importArtifactFile).toBe('function');
+      expect(typeof wrapper.vm.exportBoardAsPdf).toBe('function');
+    });
+  });
+
 });

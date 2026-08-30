@@ -136,35 +136,27 @@ describe('H3: withAiMutex handles rejected promises', () => {
 
 // ─── H8: Per-IP WebSocket connection limiting ────────────────────────────────
 
-describe('H8: Per-IP WebSocket connection limiting', () => {
+describe('H8: ResourceGovernor owns WebSocket occupancy', () => {
   const src = readServer('server.ts');
 
-  it('defines MAX_CONNECTIONS_PER_IP constant', () => {
-    expect(src).toContain('MAX_CONNECTIONS_PER_IP');
+  it('constructs ResourceGovernor and passes it to collaboration', () => {
+    expect(src).toContain('createResourceGovernor');
+    expect(src).toContain('resourceGovernor');
   });
 
-  it('implements trackIpConnect and trackIpDisconnect', () => {
-    expect(src).toContain('trackIpConnect');
-    expect(src).toContain('trackIpDisconnect');
-  });
-
-  it('checks per-IP limit on WebSocket connection', () => {
+  it('rejects overload with a bounded Polish connection close', () => {
     expect(src).toContain('Too many connections');
   });
-
-  // Connection release is now idempotent through one local releaseIp()
-  // closure. Counting source occurrences would reward duplicated cleanup;
-  // runtime connection behavior is covered at the CollaborationRuntime seam.
 });
 
 // ─── Canvas memory cleanup in PDF export ─────────────────────────────────────
 
-describe('Canvas memory cleanup in usePdfExport', () => {
-  const src = readSrc('composables/usePdfExport.js');
+describe('Canvas memory cleanup in ArtifactPipeline export', () => {
+  const src = readSrc('board/artifactPipeline.ts');
 
   it('resets offscreen canvas dimensions to release memory', () => {
-    expect(src).toContain('off.width = 0');
-    expect(src).toContain('offscreen.width = 0');
+    expect(src).toContain('canvas.width = 0');
+    expect(src).toContain('canvas.height = 0');
   });
 });
 

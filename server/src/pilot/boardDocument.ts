@@ -6,6 +6,7 @@ import {
   validateBoardObject,
   type BoardRole
 } from './boardScene';
+import { MEASURED_RESOURCE_LIMITS } from './resourceLimits';
 
 export type OperationOrigin =
   | { kind: 'hydrate' }
@@ -67,7 +68,7 @@ export const createBoardDocument = (
   options: CreateBoardDocumentOptions = {}
 ): BoardDocument => {
   const doc = new Y.Doc();
-  const maxUpdateBytes = options.maxUpdateBytes ?? 5 * 1024 * 1024;
+  const maxUpdateBytes = options.maxUpdateBytes ?? MEASURED_RESOURCE_LIMITS.maxDocumentUpdateBytes;
 
   if (options.initialState?.length) {
     Y.applyUpdate(doc, options.initialState, 'hydrate');

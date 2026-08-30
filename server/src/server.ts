@@ -21,6 +21,8 @@ import {
 import { createPostgresBoardDocumentStore } from './pilot/postgresBoardDocumentStore';
 import { decodeClientFrame, encodeServerFrame } from './pilot/collaborationProtocol';
 import { getDb } from './db';
+import { createResourceGovernor } from './pilot/resourceGovernor';
+import { resourceLimitsFromEnv } from './pilot/resourceLimits';
 
 // Startup config check (no secrets logged)
 const apiKey = process.env.OPENROUTER_API_KEY;
@@ -135,25 +137,6 @@ const sendInitialSync = (room: RoomContext, ws: WebSocket) => {
   }
 };
 
-// SEC-002: Simple per-connection rate limiting
-const WS_RATE_LIMIT = 300; // max messages per window
-const WS_RATE_WINDOW_MS = 1000; // 1-second window
-
-const checkRateLimit = (ws: ManagedSocket): boolean => {
-  const now = Date.now();
-  if (!ws.msgWindowStart || now - ws.msgWindowStart > WS_RATE_WINDOW_MS) {
-    ws.msgWindowStart = now;
-    ws.msgCount = 1;
-    return true;
-  }
-  ws.msgCount = (ws.msgCount || 0) + 1;
-  return ws.msgCount <= WS_RATE_LIMIT;
-};
-
-// H8: Per-IP connection limiting to prevent resource exhaustion
-const MAX_CONNECTIONS_PER_IP = 20;
-const ipConnectionCounts = new Map<string, number>();
-
 const getClientIp = (request: http.IncomingMessage): string => {
   const forwarded = request.headers['x-forwarded-for'];
   if (typeof forwarded === 'string') {
@@ -162,29 +145,23 @@ const getClientIp = (request: http.IncomingMessage): string => {
   return request.socket.remoteAddress || 'unknown';
 };
 
-const trackIpConnect = (ip: string): boolean => {
-  const current = ipConnectionCounts.get(ip) || 0;
-  if (current >= MAX_CONNECTIONS_PER_IP) return false;
-  ipConnectionCounts.set(ip, current + 1);
-  return true;
+const resourceGovernor = createResourceGovernor({ limits: resourceLimitsFromEnv() });
+
+const checkRateLimit = (clientKey: string): boolean => {
+  const decision = resourceGovernor.admit(
+    { kind: 'message', bytes: 1, clientKey },
+    { now: Date.now() }
+  );
+  return decision.decision === 'allow' || decision.decision === 'allowWithBudget';
 };
 
-const trackIpDisconnect = (ip: string): void => {
-  const current = ipConnectionCounts.get(ip) || 0;
-  if (current <= 1) {
-    ipConnectionCounts.delete(ip);
-  } else {
-    ipConnectionCounts.set(ip, current - 1);
-  }
-};
-
-const handleMessage = (room: RoomContext, ws: ManagedSocket, data: Uint8Array) => {
+const handleMessage = (room: RoomContext, ws: ManagedSocket, data: Uint8Array, clientKey: string) => {
   if (!data || data.length === 0) {
     logger.debug('Ignoring empty WebSocket message');
     return;
   }
 
-  if (!checkRateLimit(ws)) {
+  if (!checkRateLimit(clientKey)) {
     logger.warn('WebSocket rate limit exceeded, dropping message');
     return;
   }
@@ -257,10 +234,11 @@ const aiSolver = new OpenRouterEquationSolver();
 // VVE-101: one CapabilityAccess instance owns every authorization decision
 // for HTTP and WebSocket. Legacy peer rooms remain reachable only on the
 // development surface with the internal dev flag (ADR-0010).
-const capabilityAccess = createCapabilityAccess();
+const capabilityAccess = createCapabilityAccess({ resourceGovernor });
 const collaborationRuntime = createCollaborationRuntime({
   store: createPostgresBoardDocumentStore(),
-  idleMs: config.roomTtlMs
+  idleMs: config.roomTtlMs,
+  resourceGovernor
 });
 // VVE-102: one BoardLifecycle instance owns every durable lifecycle fact.
 // The old BoardYjsPersistence cleanup job (Yjs-only deletion after ~15
@@ -280,33 +258,26 @@ const wsAdmission = createWsAdmission(
   capabilityAccess,
   config.pilotEnvironment === 'development' && config.devSurface
 );
-export const app = createHttpApp({ roomManager, aiSolver, capabilityAccess, boardLifecycle });
+export const app = createHttpApp({
+  roomManager,
+  aiSolver,
+  capabilityAccess,
+  boardLifecycle,
+  resourceGovernor
+});
 
 const server = http.createServer(app);
-// 5.7: Limit max WebSocket payload to 5 MB to prevent memory abuse
-const wss = new WebSocketServer({ server, maxPayload: 5 * 1024 * 1024 });
+const wss = new WebSocketServer({
+  server,
+  maxPayload: resourceGovernor.limits().maxWebsocketPayloadBytes
+});
 
 wss.on('connection', (socket: ManagedSocket, request) => {
   const clientIp = getClientIp(request);
 
-  // H8: Per-IP connection limiting
-  if (!trackIpConnect(clientIp)) {
-    logger.warn('Per-IP connection limit exceeded', { ip: clientIp, max: MAX_CONNECTIONS_PER_IP });
-    socket.close(1013, 'Too many connections');
-    return;
-  }
-
-  let ipTracked = true;
-  const releaseIp = () => {
-    if (!ipTracked) return;
-    ipTracked = false;
-    trackIpDisconnect(clientIp);
-  };
-
   (async () => {
     const parsed = parseWsParams(request.url);
     if (!parsed) {
-      releaseIp();
       socket.close(1008, 'Invalid room');
       return;
     }
@@ -318,7 +289,6 @@ wss.on('connection', (socket: ManagedSocket, request) => {
     // expiry/revocation/credential-version re-verified at admission time.
     const admission = await wsAdmission.admit(roomId, token);
     if (!admission.admitted) {
-      releaseIp();
       socket.close(admission.closeCode, admission.closeReason);
       return;
     }
@@ -330,7 +300,6 @@ wss.on('connection', (socket: ManagedSocket, request) => {
 
     if (isManagedBoardRoomId(roomId)) {
       if (!token) {
-        releaseIp();
         socket.close(1008, 'Unauthorized');
         return;
       }
@@ -344,28 +313,35 @@ wss.on('connection', (socket: ManagedSocket, request) => {
         },
         close: async (code, reason) => {
           if (socket.readyState === WebSocket.OPEN) socket.close(code, reason);
-        }
+        },
+        bufferedBytes: () => socket.bufferedAmount
       };
 
       let handle: ConnectionHandle | null = null;
-      handle = await collaborationRuntime.connect(
-        {
-          boardId: roomId,
-          grant: admission.decision,
-          revalidate: async () => (await wsAdmission.admit(roomId, token)).admitted
-        },
-        transport
-      );
+      try {
+        handle = await collaborationRuntime.connect(
+          {
+            boardId: roomId,
+            grant: admission.decision,
+            clientKey: clientIp,
+            revalidate: async () => (await wsAdmission.admit(roomId, token)).admitted
+          },
+          transport
+        );
+      } catch (error) {
+        const failure = error instanceof CollaborationFailure ? error : null;
+        if (failure?.code === 'resource') {
+          socket.close(1013, failure.message.slice(0, 120));
+          return;
+        }
+        throw error;
+      }
       logger.info('Managed Board client synchronized', {
         boardId: roomId,
         role: admission.decision.role
       });
 
       socket.on('message', (raw) => {
-        if (!checkRateLimit(socket)) {
-          socket.close(1013, 'Rate limit exceeded');
-          return;
-        }
         Promise.resolve()
           .then(() => decodeClientFrame(toUint8Array(raw)))
           .then((frame) => handle?.receive(frame))
@@ -380,6 +356,8 @@ wss.on('connection', (socket: ManagedSocket, request) => {
               socket.close(1013, 'Persistence unavailable');
             } else if (failure?.code === 'malformed') {
               socket.close(1008, 'Malformed frame');
+            } else if (failure?.code === 'resource') {
+              socket.close(1013, failure.message.slice(0, 120));
             } else {
               socket.close(1011, 'Internal error');
             }
@@ -387,17 +365,26 @@ wss.on('connection', (socket: ManagedSocket, request) => {
       });
       socket.on('close', () => {
         handle?.close('socket closed').catch(() => undefined);
-        releaseIp();
       });
       socket.on('error', (error) => {
         logger.warn('Managed Board WebSocket error', { boardId: roomId, error: error.message });
         handle?.close('socket error').catch(() => undefined);
-        releaseIp();
       });
       return;
     }
 
     // Developer-only legacy peer room.
+    const legacyAdmit = resourceGovernor.admit(
+      { kind: 'connection', clientKey: clientIp, boardId: roomId },
+      { now: Date.now() }
+    );
+    if (legacyAdmit.decision !== 'allow' && legacyAdmit.decision !== 'allowWithBudget') {
+      socket.close(1013, 'Too many connections');
+      return;
+    }
+    const releaseLegacy = () =>
+      resourceGovernor.observe({ kind: 'connectionClosed', clientKey: clientIp, boardId: roomId });
+
     const { room, created } = await roomManager.get(roomId);
     initializeRoom(room);
 
@@ -407,22 +394,20 @@ wss.on('connection', (socket: ManagedSocket, request) => {
     sendInitialSync(room, socket);
 
     socket.on('message', (raw) => {
-      handleMessage(room, socket, toUint8Array(raw));
+      handleMessage(room, socket, toUint8Array(raw), clientIp);
     });
 
     socket.on('close', () => {
       removeConnection(roomId, room, socket);
-      releaseIp();
+      releaseLegacy();
     });
-    // 5.3: Also remove connection on error to prevent leaked awareness states
     socket.on('error', (error) => {
       logger.warn('WebSocket error', { roomId, error: error.message });
       removeConnection(roomId, room, socket);
-      releaseIp();
+      releaseLegacy();
     });
   })().catch((error) => {
     logger.error('WebSocket connection failed', { error: (error as Error).message });
-    releaseIp();
     socket.close(1011, 'Internal error');
   });
 });

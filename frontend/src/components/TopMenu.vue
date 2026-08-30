@@ -41,11 +41,10 @@
           <Upload :size="18" />
           <span>Import</span>
         </button>
-        <button v-if="can('panel.pdfImport')" class="menu-btn" @click="triggerPdfImport" title="Zaimportuj PDF jako tło">
+        <button v-if="can('panel.pdfImport')" class="menu-btn" data-testid="pdf-import-button" @click="triggerPdfImport" title="Zaimportuj PDF lub obraz">
           <FileUp :size="18" />
           <span>PDF</span>
         </button>
-        <input ref="pdfFileInput" type="file" accept=".pdf" style="display:none" @change="handlePdfFileSelected" />
 
         <div class="divider-vertical"></div>
 
@@ -82,6 +81,15 @@
         </div>
       </div>
     </transition>
+
+    <input
+      ref="pdfFileInput"
+      type="file"
+      accept=".pdf,application/pdf,image/png,image/jpeg,image/webp,image/svg+xml,.png,.jpg,.jpeg,.webp,.svg"
+      style="display:none"
+      data-testid="artifact-file-input"
+      @change="handlePdfFileSelected"
+    />
 
      <!-- Keyboard shortcuts info dialog -->
     <div v-if="showShortcutsInfo" class="shortcuts-dialog glass-panel">
@@ -285,7 +293,7 @@ const triggerPdfImport = () => {
 };
 const handlePdfFileSelected = (event) => {
   const file = event.target.files[0];
-  if (file && file.type === 'application/pdf') {
+  if (file) {
     emit('import-pdf', file);
   }
   event.target.value = '';

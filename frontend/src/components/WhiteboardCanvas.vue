@@ -117,6 +117,15 @@
     <!-- Status message -->
     <StatusMessage :message="statusMessage" />
 
+    <ArtifactProgress
+      :visible="artifactProgress.visible"
+      :message="artifactProgress.message"
+      :current="artifactProgress.current"
+      :total="artifactProgress.total"
+      :cancellable="artifactProgress.cancellable"
+      @cancel="cancelArtifactWork"
+    />
+
     <!-- Clipboard handler -->
     <input 
       ref="clipboardInput"
@@ -158,6 +167,7 @@ import 'katex/dist/katex.min.css';
 import Collaborators from './Collaborators.vue';
 import ZoomPanControls from './ZoomPanControls.vue';
 import EraserModeControls from './EraserModeControls.vue';
+import ArtifactProgress from './ArtifactProgress.vue';
 import StatusMessage from './StatusMessage.vue';
 // Helper modules
 import GridAlignModule from '../modules/GridAlignModule.js';
@@ -170,7 +180,6 @@ import { connectToYjs } from '../services/connectToYjs';
 import { drawElement, throttle, isPointInElement, distanceToSegment } from '../utils/canvasDrawing.js';
 import { isPointInRotatedRectangle } from '../utils/geometry.js';
 import {
-  createImageElement,
   getCursorStyle,
   createCoordinateSystem2DElement,
   createCoordinateSystem3DElement
@@ -179,6 +188,10 @@ import { drawGrid as drawUtilGrid, computeGridSteps } from '../utils/canvasGrid.
 import MovableObject from './MovableObject.vue';
 import { useNotifications } from '../composables/useNotifications';
 import { createWhiteboardSession } from '../board/whiteboardSession';
+import { createArtifactPipeline, deliverPdfArtifact } from '../board/artifactPipeline';
+import { ArtifactCodecError } from '../board/artifactCodecs';
+import { polishArtifactMessage } from '@pilot/artifactContract';
+import { createResourceGovernor } from '@pilot/resourceGovernor';
 import { normalizeBoardObject } from '@pilot/boardScene';
 import { undoRedoState } from '../utils/undoRedoState';
 import { useLineBindings } from '../composables/useLineBindings';
@@ -234,6 +247,7 @@ export default {
     ZoomPanControls,
     EraserModeControls,
     StatusMessage,
+    ArtifactProgress,
     MovableObject, // Register MovableObject
   },
   props: {
@@ -502,9 +516,120 @@ export default {
 
     // --- PDF Export Composable (after yDrawings/ydoc are declared) ---
     const {
-      exportBoardAsPdf, exportBoardAsPdfPaged,
       getSnapshot, getSerializableState, loadState, exportAsText, importFromText,
-    } = usePdfExport({ session, yDrawings, ydoc, smoothingFactor, imageCache, showToast, debugLog, debugWarn });
+    } = usePdfExport({ ydoc, debugWarn });
+
+    const artifactGovernor = createResourceGovernor();
+    const artifactPipeline = createArtifactPipeline({
+      governor: artifactGovernor,
+      clientKey: 'whiteboard',
+      drawScene: (ctx, elements) => {
+        elements.forEach((element) => {
+          drawElement(ctx, element, false, smoothingFactor.value, imageCache.value);
+        });
+      }
+    });
+    const artifactProgress = reactive({
+      visible: false,
+      message: '',
+      current: 0,
+      total: 1,
+      cancellable: false
+    });
+    let artifactAbort = null;
+    const cancelArtifactWork = () => artifactAbort?.abort();
+    const resetArtifactProgress = () => {
+      artifactProgress.visible = false;
+      artifactProgress.message = '';
+      artifactProgress.current = 0;
+      artifactProgress.total = 1;
+      artifactProgress.cancellable = false;
+    };
+    const applyArtifactProgress = (event) => {
+      artifactProgress.visible = event.phase !== 'done';
+      artifactProgress.message = event.message;
+      artifactProgress.current = event.current;
+      artifactProgress.total = Math.max(1, event.total);
+      artifactProgress.cancellable = event.phase === 'planning' || event.phase === 'decoding' || event.phase === 'committing';
+      if (event.phase === 'done' || event.phase === 'failed' || event.phase === 'cancelled') {
+        showToast(event.message, event.phase === 'done' ? 'success' : event.phase === 'cancelled' ? 'warning' : 'error', 4000);
+        window.setTimeout(resetArtifactProgress, event.phase === 'done' ? 400 : 1200);
+      }
+    };
+    const artifactTarget = (origin) => ({
+      newObjectId: () => session.value?.newObjectId() ?? `img-${Date.now()}`,
+      origin,
+      isEditable: () => canMutateDocument(),
+      addImage: (object) => {
+        if (!session.value) return { ok: false, message: polishArtifactMessage('artifact.readOnlyMutation') };
+        const result = session.value.execute({ kind: 'add', object });
+        if (result.ok) {
+          refreshMovableElements();
+          nextTick(() => {
+            redrawCanvas(true);
+            updateGlobalState();
+          });
+        }
+        return result;
+      }
+    });
+    const runArtifactImport = async (bytes, fileName, declaredMime, origin) => {
+      if (!canMutateDocument()) return denyReadOnlyMutation();
+      artifactAbort?.abort();
+      artifactAbort = new AbortController();
+      try {
+        const plan = await artifactPipeline.planImport({ bytes, fileName, declaredMime });
+        let last = null;
+        for await (const event of artifactPipeline.import(plan, artifactTarget(origin), artifactAbort.signal)) {
+          last = event;
+          applyArtifactProgress(event);
+        }
+        return last;
+      } catch (error) {
+        const key = error instanceof ArtifactCodecError ? error.key : 'artifact.importFailed';
+        const message = error instanceof ArtifactCodecError ? error.message : polishArtifactMessage(key);
+        showToast(message, 'error', 4000);
+        resetArtifactProgress();
+        return null;
+      }
+    };
+    const importArtifactFile = async (file) => {
+      if (!file) return;
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const origin = {
+        x: (canvasWidth.value / 2 - panOffset.value.x) / zoomLevel.value - 80,
+        y: 80 + (0 - panOffset.value.y) / zoomLevel.value
+      };
+      return runArtifactImport(bytes, file.name, file.type, origin);
+    };
+    const exportBoardWithPipeline = async (mode) => {
+      const elements = session.value?.snapshot() ?? [];
+      artifactAbort?.abort();
+      artifactAbort = new AbortController();
+      artifactProgress.visible = true;
+      artifactProgress.message = 'Przygotowywanie PDF…';
+      artifactProgress.current = 0;
+      artifactProgress.total = 1;
+      artifactProgress.cancellable = true;
+      try {
+        const artifact = await artifactPipeline.export(elements, {
+          mode,
+          signal: artifactAbort.signal
+        });
+        await deliverPdfArtifact(artifact);
+        showToast(mode === 'paged' ? 'Wyeksportowano notatki do PDF.' : 'Wyeksportowano tablicę do PDF.', 'success');
+      } catch (error) {
+        const message =
+          error instanceof ArtifactCodecError
+            ? error.message
+            : polishArtifactMessage('artifact.exportFailed');
+        showToast(message, 'error', 4000);
+      } finally {
+        resetArtifactProgress();
+      }
+    };
+    const exportBoardAsPdf = () => exportBoardWithPipeline('single');
+    const exportBoardAsPdfPaged = () => exportBoardWithPipeline('paged');
     const canUndo = ref(false);
     const canRedo = ref(false);
     const updateGlobalState = () => {
@@ -1226,12 +1351,14 @@ export default {
             const connection = await connectToYjs(normalizedRoomId, {
               wsToken: props.wsToken || undefined,
               onMutationDenied: (denial) => {
-                // Defense-in-depth path: the session enforces the same rules
-                // locally, so an honest client should never see this.
                 showToast(
-                  denial.reason === 'forbidden'
-                    ? 'Serwer odrzucił operację: tylko nauczyciel może wyczyścić tablicę.'
-                    : 'Serwer odrzucił nieprawidłową operację.',
+                  denial.messageKey
+                    ? polishArtifactMessage(denial.messageKey)
+                    : denial.reason === 'forbidden'
+                      ? 'Serwer odrzucił operację: tylko nauczyciel może wyczyścić tablicę.'
+                      : denial.reason === 'resource'
+                        ? polishArtifactMessage('resource.updateTooLarge')
+                        : 'Serwer odrzucił nieprawidłową operację.',
                   'error'
                 );
               },
@@ -2122,9 +2249,14 @@ export default {
        for (let i = 0; i < items.length; i++) {
          if (items[i].type.indexOf('image') !== -1) {
            const blob = items[i].getAsFile();
-           const reader = new FileReader();
-           reader.onload = (e) => addImageFromDataUrl(e.target.result);
-           reader.readAsDataURL(blob);
+           if (!blob) return;
+           const origin = {
+             x: (canvasWidth.value / 2 - panOffset.value.x) / zoomLevel.value,
+             y: (canvasHeight.value / 2 - panOffset.value.y) / zoomLevel.value
+           };
+           blob.arrayBuffer().then((buffer) =>
+             runArtifactImport(new Uint8Array(buffer), blob.name || 'schowek', blob.type, origin)
+           );
            return;
          }
        }
@@ -2137,68 +2269,20 @@ export default {
        }
     };
 
-    const MAX_IMAGE_DATAURL_BYTES = 5 * 1024 * 1024; // 5 MB limit for base64 dataUrl
-
     const addImageFromDataUrl = (dataUrl) => {
         if (!canMutateDocument()) return denyReadOnlyMutation();
-        if (!session.value) {
-            console.error("[addImageFromDataUrl] Error: session not available!");
-            showToast("Cannot add image - connection issue", "error");
+        if (typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image/')) {
+            showToast(polishArtifactMessage('artifact.unsupportedType'), 'error');
             return;
         }
-
-        // SEC-003: Validate image size before syncing via Yjs
-        if (typeof dataUrl === 'string' && dataUrl.length > MAX_IMAGE_DATAURL_BYTES) {
-            const sizeMB = (dataUrl.length / (1024 * 1024)).toFixed(1);
-            showToast(`Image too large (${sizeMB} MB). Maximum is 5 MB.`, "error");
-            return;
-        }
-
-        const centerX = (canvasWidth.value / 2 - panOffset.value.x) / zoomLevel.value;
-        const centerY = (canvasHeight.value / 2 - panOffset.value.y) / zoomLevel.value;
-
-        createImageElement(dataUrl, centerX, centerY)
-            .then(imageData => {
-                imageData.id = session.value.newObjectId();
-
-                try {
-                    const result = session.value.execute({
-                      kind: 'add',
-                      object: {
-                        id: imageData.id,
-                        type: 'image',
-                        timestamp: Date.now(),
-                        x: imageData.x,
-                        y: imageData.y,
-                        src: imageData.dataUrl,
-                        width: imageData.width,
-                        height: imageData.height,
-                        rotation: 0
-                      }
-                    });
-                    if (!result.ok) {
-                      showToast(result.message, 'error');
-                      return;
-                    }
-                    refreshMovableElements();
-
-                    nextTick(() => {
-                        redrawCanvas();
-                        updateGlobalState();
-                    });
-
-                    // Show success message
-                    showToast("Image added successfully", "success");
-                }
-                catch (error) {
-                    console.error("[addImageFromDataUrl] Error adding image:", error);
-                    showToast("Failed to add image", "error");
-                }
-            })
-            .catch(error => {
-                console.error("[addImageFromDataUrl] Error creating image:", error);
-                showToast("Failed to process image", "error");
-            });
+        const origin = {
+            x: (canvasWidth.value / 2 - panOffset.value.x) / zoomLevel.value,
+            y: (canvasHeight.value / 2 - panOffset.value.y) / zoomLevel.value
+        };
+        fetch(dataUrl)
+          .then((response) => response.arrayBuffer())
+          .then((buffer) => runArtifactImport(new Uint8Array(buffer), 'obraz', undefined, origin))
+          .catch(() => showToast(polishArtifactMessage('artifact.decodeFailed'), 'error'));
     };
 
     // --- Undo/Redo Methods --- (Replaced by Fragment 1)
@@ -2451,6 +2535,7 @@ export default {
   });
 
     onBeforeUnmount(() => {
+      artifactAbort?.abort();
       if (rafId) cancelAnimationFrame(rafId);
       window.removeEventListener('resize', handleResize);
       window.removeEventListener('keydown', handleKeyDown);
@@ -2525,6 +2610,7 @@ export default {
       eraserMode,
       notifications,
       statusMessage,
+      artifactProgress,
       yjsConnection,
       connectionStatus,
       collaborationReadOnly,
@@ -2568,6 +2654,8 @@ export default {
       exportBoardAsPdf,
       exportBoardAsPdfPaged,
       addImageFromDataUrl,
+      importArtifactFile,
+      cancelArtifactWork,
       getViewportCenter,
       toggleDebug,
       redrawCanvas,

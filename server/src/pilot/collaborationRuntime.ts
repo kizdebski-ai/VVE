@@ -10,6 +10,11 @@ import {
   createBoardDocument,
   type BoardDocument
 } from './boardDocument';
+import {
+  createResourceGovernor,
+  polishResourceMessage,
+  type ResourceGovernor
+} from './resourceGovernor';
 
 export type ClientFrame =
   | { kind: 'mutation'; operationId: string; update: Uint8Array }
@@ -25,7 +30,8 @@ export type CollaborationDenial =
   | 'forbidden'
   | 'persistenceUnavailable'
   | 'draining'
-  | 'internal';
+  | 'internal'
+  | 'resource';
 
 export type ServerFrame =
   | { kind: 'sync'; update: Uint8Array }
@@ -33,12 +39,13 @@ export type ServerFrame =
   | { kind: 'update'; operationId: string; update: Uint8Array }
   | { kind: 'acknowledgement'; operationId: string; digest: string; duplicate: boolean }
   | { kind: 'awareness'; update: Uint8Array }
-  | { kind: 'denial'; reason: CollaborationDenial; operationId?: string }
+  | { kind: 'denial'; reason: CollaborationDenial; operationId?: string; messageKey?: string }
   | { kind: 'serverDraining'; reason: string };
 
 export interface CollaborationTransport {
   send(frame: ServerFrame): Promise<void> | void;
   close(code: number, reason: string): Promise<void> | void;
+  bufferedBytes?: () => number;
 }
 
 export interface AuthenticatedConnection {
@@ -46,6 +53,8 @@ export interface AuthenticatedConnection {
   grant: AccessGrant;
   /** Re-runs CapabilityAccess against durable state for every mutation. */
   revalidate(): Promise<boolean>;
+  /** IP or other occupancy key for ResourceGovernor. */
+  clientKey?: string;
 }
 
 export interface ConnectionHandle {
@@ -200,6 +209,7 @@ type LiveConnection = {
   synchronized: boolean;
   closed: boolean;
   awarenessClientIds: Set<number>;
+  clientKey: string;
 };
 
 type LiveBoard = {
@@ -227,6 +237,7 @@ export interface CreateCollaborationRuntimeOptions {
   idleMs?: number;
   compactAfterOperations?: number;
   crashInjector?: (point: CrashPoint) => Promise<void> | void;
+  resourceGovernor?: ResourceGovernor;
 }
 
 export interface CollaborationRuntime {
@@ -251,6 +262,7 @@ export const createCollaborationRuntime = (
   const now = options.now ?? Date.now;
   const idleMs = options.idleMs ?? 30_000;
   const compactAfterOperations = options.compactAfterOperations ?? 20;
+  const governor = options.resourceGovernor ?? createResourceGovernor();
   const rooms = new Map<string, LiveBoard>();
   const hydration = new Map<string, Promise<LiveBoard>>();
   let draining = false;
@@ -268,6 +280,10 @@ export const createCollaborationRuntime = (
       } catch (error) {
         throw new CollaborationFailure('persistenceUnavailable', (error as Error).message);
       }
+      const hydrationBytes =
+        stored.snapshot.byteLength +
+        stored.operations.reduce((sum, operation) => sum + operation.update.byteLength, 0);
+      governor.admit({ kind: 'boardHydration', bytes: hydrationBytes, boardId }, { now: now() });
       const document = createBoardDocument({ initialState: stored.snapshot });
       for (const operation of stored.operations.sort((a, b) => a.sequence - b.sequence)) {
         const result = document.apply(operation.update, { kind: 'hydrate' });
@@ -331,13 +347,45 @@ export const createCollaborationRuntime = (
       throw new CollaborationFailure('revoked', 'The durable grant is no longer active.');
     }
 
-    const room = await hydrate(input.boardId);
+    const clientKey = input.clientKey && input.clientKey.length > 0 ? input.clientKey : 'anonymous';
+    const connectionAdmit = governor.admit(
+      { kind: 'connection', clientKey, boardId: input.boardId },
+      { now: now() }
+    );
+    if (connectionAdmit.decision !== 'allow' && connectionAdmit.decision !== 'allowWithBudget') {
+      throw new CollaborationFailure(
+        'resource',
+        polishResourceMessage(
+          'messageKey' in connectionAdmit ? connectionAdmit.messageKey : 'resource.connectionLimit'
+        )
+      );
+    }
+
+    let slotHeld = true;
+    const releaseSlot = () => {
+      if (!slotHeld) return;
+      slotHeld = false;
+      governor.observe({
+        kind: 'connectionClosed',
+        clientKey,
+        boardId: input.boardId
+      });
+    };
+
+    let room: LiveBoard;
+    try {
+      room = await hydrate(input.boardId);
+    } catch (error) {
+      releaseSlot();
+      throw error;
+    }
     const live: LiveConnection = {
       input,
       transport,
       synchronized: false,
       closed: false,
-      awarenessClientIds: new Set()
+      awarenessClientIds: new Set(),
+      clientKey
     };
     room.connections.add(live);
     room.lastActive = now();
@@ -355,6 +403,7 @@ export const createCollaborationRuntime = (
       live.synchronized = true;
     } catch (error) {
       room.connections.delete(live);
+      releaseSlot();
       throw new CollaborationFailure('internal', (error as Error).message);
     }
 
@@ -362,6 +411,7 @@ export const createCollaborationRuntime = (
       if (live.closed) return;
       live.closed = true;
       room.connections.delete(live);
+      releaseSlot();
       room.lastActive = now();
       if (live.awarenessClientIds.size) {
         const removed = Array.from(live.awarenessClientIds);
@@ -425,6 +475,27 @@ export const createCollaborationRuntime = (
         return { accepted: false, reason: 'revoked' };
       }
 
+      const messageAdmit = governor.admit(
+        { kind: 'message', bytes: frame.update.byteLength, clientKey, boardId: input.boardId },
+        { now: now() }
+      );
+      if (messageAdmit.decision !== 'allow' && messageAdmit.decision !== 'allowWithBudget') {
+        const messageKey =
+          'messageKey' in messageAdmit ? messageAdmit.messageKey : 'resource.messageRate';
+        await transport.send({ kind: 'denial', reason: 'resource', operationId: frame.operationId, messageKey });
+        return { accepted: false, reason: 'resource' };
+      }
+      const updateAdmit = governor.admit(
+        { kind: 'documentUpdate', bytes: frame.update.byteLength, clientKey, boardId: input.boardId },
+        { now: now() }
+      );
+      if (updateAdmit.decision !== 'allow' && updateAdmit.decision !== 'allowWithBudget') {
+        const messageKey =
+          'messageKey' in updateAdmit ? updateAdmit.messageKey : 'resource.updateTooLarge';
+        await transport.send({ kind: 'denial', reason: 'resource', operationId: frame.operationId, messageKey });
+        return { accepted: false, reason: 'resource' };
+      }
+
       return serial(room, async () => {
         const shadow = createBoardDocument({ initialState: room.document.encode() });
         const validation = shadow.apply(frame.update, {
@@ -434,11 +505,22 @@ export const createCollaborationRuntime = (
         });
         shadow.destroy();
         if (!validation.ok) {
-          // A mutation-level denial keeps the connection open: the client
-          // rolls back exactly this operation and stays synchronized.
           const reason: CollaborationDenial =
-            validation.reason === 'forbiddenCommand' ? 'forbidden' : 'malformed';
-          await transport.send({ kind: 'denial', reason, operationId: frame.operationId });
+            validation.reason === 'forbiddenCommand'
+              ? 'forbidden'
+              : validation.reason === 'resourceViolation'
+                ? 'resource'
+                : 'malformed';
+          const denial: ServerFrame =
+            reason === 'resource'
+              ? {
+                  kind: 'denial',
+                  reason,
+                  operationId: frame.operationId,
+                  messageKey: 'resource.updateTooLarge'
+                }
+              : { kind: 'denial', reason, operationId: frame.operationId };
+          await transport.send(denial);
           return { accepted: false, reason };
         }
 
@@ -463,13 +545,38 @@ export const createCollaborationRuntime = (
         await options.crashInjector?.('afterApplyBeforeBroadcast');
 
         for (const peer of room.connections) {
-          if (peer !== live && !peer.closed) {
-            await peer.transport.send({
-              kind: 'update',
-              operationId: frame.operationId,
-              update: frame.update
+          if (peer === live || peer.closed) continue;
+          const buffered = peer.transport.bufferedBytes?.() ?? 0;
+          const slow = governor.admit(
+            {
+              kind: 'slowClientBuffer',
+              bytes: buffered + frame.update.byteLength,
+              clientKey: peer.clientKey,
+              boardId: input.boardId
+            },
+            { now: now() }
+          );
+          if (slow.decision === 'reject' || slow.decision === 'retryAfter' || slow.decision === 'readOnly') {
+            peer.closed = true;
+            room.connections.delete(peer);
+            governor.observe({
+              kind: 'connectionClosed',
+              clientKey: peer.clientKey,
+              boardId: input.boardId
             });
+            await peer.transport.send({
+              kind: 'denial',
+              reason: 'resource',
+              messageKey: 'resource.slowClient'
+            });
+            await peer.transport.close(1013, 'Slow consumer');
+            continue;
           }
+          await peer.transport.send({
+            kind: 'update',
+            operationId: frame.operationId,
+            update: frame.update
+          });
         }
         await options.crashInjector?.('afterBroadcastBeforeAcknowledgement');
 
@@ -532,6 +639,11 @@ export const createCollaborationRuntime = (
     }
     for (const connection of connections) {
       connection.closed = true;
+      governor.observe({
+        kind: 'connectionClosed',
+        clientKey: connection.clientKey,
+        boardId
+      });
       await connection.transport.send({ kind: 'denial', reason: 'revoked' });
       await connection.transport.close(1008, reason);
     }

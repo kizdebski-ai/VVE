@@ -45,16 +45,16 @@ describe('1.8: Coordinate validation', () => {
 });
 
 describe('1.10: Image loading timeout', () => {
-  it('createImageElement source has timeout', async () => {
+  it('ArtifactPipeline decode path times out and releases the object URL', async () => {
     const fs = await import('fs');
     const path = await import('path');
     const source = fs.readFileSync(
-      path.resolve(__dirname, '../../src/utils/canvasTools.js'),
+      path.resolve(__dirname, '../../src/board/artifactCodecs.ts'),
       'utf-8'
     );
     expect(source).toContain('setTimeout');
-    expect(source).toContain('10_000');
-    expect(source).toContain('clearTimeout');
+    expect(source).toContain('12_000');
+    expect(source).toContain('revokeObjectURL');
   });
 });
 

@@ -458,4 +458,89 @@ test.describe('Pilot fixture: Administrator, Teacher, Student browser contexts',
     await context.close();
     await adminContext.close();
   });
+
+  test('PDF import collaborates, reloads, and exports from the synchronized board', async ({ browser }) => {
+    test.setTimeout(120_000);
+    const teacherContext = await browser.newContext();
+    const teacher = await teacherContext.newPage();
+    await teacher.goto(fixture.teacherAccessLink);
+    await expect(teacher.getByRole('heading', { name: 'Moje tablice' })).toBeVisible({ timeout: 15_000 });
+
+    const boardLabel = `E2E PDF ${Date.now()}`;
+    await teacher.getByRole('button', { name: 'Nowa tablica ucznia' }).click();
+    await teacher.getByLabel('Etykieta ucznia / grupy').fill(boardLabel);
+    await teacher.getByLabel('Temat lekcji (opcjonalnie)').fill('Import PDF');
+    await teacher.getByRole('button', { name: 'Utwórz tablicę' }).click();
+    const freshLink = teacher.locator('.modal-panel .keyway.fresh .keyway-channel');
+    await expect(freshLink).toBeVisible({ timeout: 10_000 });
+    const boardAccessLink = (await freshLink.innerText()).trim();
+    await teacher.locator('.modal-foot').getByRole('button', { name: 'Zamknij' }).click();
+
+    const firstContext = await browser.newContext();
+    const secondContext = await browser.newContext();
+    const first = await firstContext.newPage();
+    const second = await secondContext.newPage();
+    const join = async (page) => {
+      await page.goto(boardAccessLink);
+      await page.getByRole('button', { name: 'Dołącz do lekcji' }).click();
+      await expect(page.locator('canvas.static-layer')).toBeVisible({ timeout: 20_000 });
+      await expect(page.getByTestId('collaboration-read-only')).toBeHidden({ timeout: 5_000 });
+    };
+    await join(first);
+    await join(second);
+
+    const evidenceDir = path.resolve(
+      path.dirname(fileURLToPath(import.meta.url)),
+      '../../../docs/implementation/evidence/vve-107'
+    );
+    const pdfBytes = readFileSync(
+      path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'fixtures', 'artifacts', 'lesson-2page.pdf')
+    );
+    const before = await second.locator('canvas.static-layer').evaluate((canvas) => canvas.toDataURL());
+    await first.locator('[data-testid="artifact-file-input"]').setInputFiles({
+      name: 'karta.pdf',
+      mimeType: 'application/pdf',
+      buffer: pdfBytes
+    });
+    await expect(first.getByText(/Zaimportowano 2 strony z PDF/)).toBeVisible({ timeout: 25_000 });
+    await expect.poll(
+      () => second.locator('canvas.static-layer').evaluate((canvas) => canvas.toDataURL()),
+      { timeout: 20_000 }
+    ).not.toBe(before);
+    const imported = await second.locator('canvas.static-layer').evaluate((canvas) => canvas.toDataURL());
+
+    await first.setViewportSize({ width: 1440, height: 900 });
+    await first.screenshot({ path: path.join(evidenceDir, 'desktop-1440x900.png'), fullPage: true });
+    const desktopOverflow = await first.evaluate(
+      () => document.documentElement.scrollWidth - document.documentElement.clientWidth
+    );
+    expect(desktopOverflow).toBeLessThanOrEqual(1);
+
+    await first.setViewportSize({ width: 768, height: 1024 });
+    await first.screenshot({ path: path.join(evidenceDir, 'ipad-768x1024.png'), fullPage: true });
+    const ipadOverflow = await first.evaluate(
+      () => document.documentElement.scrollWidth - document.documentElement.clientWidth
+    );
+    expect(ipadOverflow).toBeLessThanOrEqual(1);
+    await first.setViewportSize({ width: 1280, height: 720 });
+
+    await second.reload();
+    await expect(second.locator('canvas.static-layer')).toBeVisible({ timeout: 20_000 });
+    await expect(second.getByTestId('collaboration-read-only')).toBeHidden({ timeout: 5_000 });
+    await expect.poll(
+      () => second.locator('canvas.static-layer').evaluate((canvas) => canvas.toDataURL()),
+      { timeout: 8_000 }
+    ).toBe(imported);
+
+    const downloadPromise = first.waitForEvent('download', { timeout: 20_000 });
+    await first.locator('.hover-trigger-area').hover({ force: true });
+    await first.locator('.gear-btn').click({ force: true });
+    await first.getByTitle('Eksportuj do PDF (A4)').click();
+    const download = await downloadPromise;
+    expect(download.suggestedFilename()).toMatch(/\.pdf$/i);
+
+    await firstContext.close();
+    await secondContext.close();
+    await teacherContext.close();
+  });
 });

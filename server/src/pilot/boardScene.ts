@@ -13,6 +13,7 @@
 //   distinguishable from ordinary deletion and reserved for the Teacher;
 // - validation bounds coordinates, point counts, string sizes and image size.
 import * as Y from 'yjs';
+import { MEASURED_RESOURCE_LIMITS } from './resourceLimits';
 
 export type BoardRole = 'teacher' | 'student' | 'developer';
 
@@ -82,7 +83,7 @@ export const SCENE_LIMITS = {
   maxFontSize: 400,
   minFontSize: 4,
   maxRoughness: 3,
-  maxImageSrcBytes: 5 * 1024 * 1024,
+  maxImageSrcBytes: MEASURED_RESOURCE_LIMITS.maxImageDataUrlChars,
   maxExtensionJsonBytes: 512 * 1024,
   maxPenConfigJsonBytes: 4 * 1024
 } as const;

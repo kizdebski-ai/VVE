@@ -52,7 +52,7 @@ Delivered one Pointer Event `InputPipeline` on `slice/vve-105` (base `slice/vve-
 - `a44f1d2` feat(input): add Pointer Event InputPipeline with Mysz/Pióro styles
 - `948df06` test(input): cover Input Style persistence, cancel, and p95 evidence
 - `6ef110d` fix(input): expose pointer auto-select handler from App setup
-- resolution and Browser evidence on this branch tip (hash filled after commit)
+- `2c9f926` docs(vve-105): record InputPipeline resolution and Browser evidence
 
 ### Build and tests
 

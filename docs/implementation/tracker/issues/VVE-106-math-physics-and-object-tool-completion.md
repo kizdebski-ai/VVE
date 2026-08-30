@@ -91,6 +91,7 @@ have focused unit or browser coverage.
 - `97d79e6`, `859d16f`, `4ee1ee3` — deterministic real-input E2E gestures
 - `f9639fd` — responsive panel browser coverage
 - `8d7431a` — iPad panel stacking and topmost interaction
+- `e460fc5`, `d306584` — visual resolution evidence and browser-console gate
 
 ### Verification
 
@@ -99,7 +100,7 @@ have focused unit or browser coverage.
   capability, lifecycle and document-store suites.
 - Frontend production build: passed (3,178 modules transformed).
 - Frontend Vitest: 13 files, 137/137 tests passed.
-- Full Pilot Playwright: 11/11 tests passed in 39.6 s.
+- Full Pilot Playwright: 11/11 tests passed in 35.9 s.
 - Stateful lesson-tool Playwright scenario: passed twice consecutively against
   the same PostgreSQL database without cleanup (1/1 each, 11.9 s and 11.7 s).
 - Focused desktop/iPad panel run: passed for 1440x900 and 768x1024 with

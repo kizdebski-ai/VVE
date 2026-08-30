@@ -4,7 +4,6 @@ import * as Y from 'yjs';
 import { Awareness } from 'y-protocols/awareness';
 import { PersistenceLayer } from './persistence';
 import { logger } from './logger';
-import { BoardYjsPersistence } from './services/boardYjsPersistence';
 
 export interface RoomMetadata {
   roomId: string;
@@ -89,11 +88,9 @@ const now = () => Date.now();
 export class RoomManager {
   private rooms = new Map<string, RoomContext>();
   private persistence: PersistenceLayer;
-  private boardPersistence: BoardYjsPersistence | undefined;
 
-  constructor(persistence?: PersistenceLayer, boardPersistence?: BoardYjsPersistence) {
+  constructor(persistence?: PersistenceLayer) {
     this.persistence = persistence ?? new InMemoryPersistence();
-    this.boardPersistence = boardPersistence ?? undefined;
     this.loadFromPersistence();
   }
 
@@ -150,7 +147,7 @@ export class RoomManager {
       connections: new Map(),
       lastActive: timestamp,
       initialized: false,
-      hydrated: this.boardPersistence ? false : true,
+      hydrated: false,
       meta: {
         roomId,
         displayName: roomId,
@@ -219,22 +216,14 @@ export class RoomManager {
       if (!room.hydrationPromise) {
         room.hydrationPromise = (async () => {
           try {
-            const isBoard = this.boardPersistence
-              ? await this.boardPersistence.isBoardRoom(roomId)
-              : false;
-
-            if (isBoard && this.boardPersistence) {
-              await this.boardPersistence.hydrate(room);
+            const data = await this.persistence.loadRoom(roomId);
+            if (data) {
+              Y.applyUpdate(room.doc, Y.encodeStateAsUpdate(data.doc));
+              room.meta = data.meta;
             } else {
-              const data = await this.persistence.loadRoom(roomId);
-              if (data) {
-                Y.applyUpdate(room.doc, Y.encodeStateAsUpdate(data.doc));
-                room.meta = data.meta;
-              } else {
-                await this.saveRoom(room);
-              }
-              room.hydrated = true;
+              await this.saveRoom(room);
             }
+            room.hydrated = true;
           } catch (err) {
             logger.error(`Failed to hydrate room ${roomId}`, {
               error: (err as Error).message
@@ -343,6 +332,24 @@ export class RoomManager {
     room.doc.destroy();
     this.rooms.delete(roomId);
     this.persistence.deleteRoom(roomId);
+    return true;
+  }
+
+  /**
+   * Close every live socket of one room (VVE-102): BoardLifecycle calls this
+   * after a durable access end commits so connected clients are dropped
+   * promptly instead of lingering until their next admission. The durable
+   * transaction — not this notification — is authoritative; the regular
+   * close/error handlers still perform connection cleanup.
+   */
+  closeRoomSockets(roomId: string, reason = 'Access ended'): boolean {
+    const room = this.rooms.get(roomId);
+    if (!room) return false;
+    for (const [client] of room.connections) {
+      if (client.readyState === WebSocket.OPEN) {
+        client.close(1008, reason);
+      }
+    }
     return true;
   }
 

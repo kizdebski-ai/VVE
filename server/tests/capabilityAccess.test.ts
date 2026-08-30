@@ -44,6 +44,7 @@ const { schemaName, adminPassphrase } = vi.hoisted(() => {
 import { up as initialSchemaUp } from '../migrations/20241129000000_initial_schema';
 import { up as permanentTokenUp } from '../migrations/20241207000000_add_teacher_permanent_token';
 import { up as capabilityAccessUp } from '../migrations/20260829000000_capability_access';
+import { up as boardLifecycleUp } from '../migrations/20260830000000_board_lifecycle';
 import { createCapabilityAccess, issueBoardWsToken, issueTeacherSessionToken } from '../src/pilot/capabilityAccess';
 import { createWsAdmission } from '../src/wsAdmission';
 import { createHttpApp } from '../src/httpApp';
@@ -128,7 +129,6 @@ describe.skipIf(!hasPostgres)('CapabilityAccess decision matrix (local PostgreSQ
     await db('boards').insert({
       id,
       teacher_id: params.teacherId,
-      student_id: null,
       title: `Board ${params.suffix}`,
       public_slug: slug,
       student_token: params.studentToken,
@@ -148,6 +148,7 @@ describe.skipIf(!hasPostgres)('CapabilityAccess decision matrix (local PostgreSQ
     await initialSchemaUp(schemaKnex);
     await permanentTokenUp(schemaKnex);
     await capabilityAccessUp(schemaKnex);
+    await boardLifecycleUp(schemaKnex);
     db = getDb();
 
     // ---- Durable state -----------------------------------------------------

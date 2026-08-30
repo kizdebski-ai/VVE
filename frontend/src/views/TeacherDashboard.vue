@@ -4,104 +4,186 @@
       <div>
         <p class="eyebrow">WhiteVue Pilot</p>
         <h1 class="dash-title">Moje tablice</h1>
-        <p class="muted">Twórz lekcje i zarządzaj dostępem uczniów.</p>
+        <p class="muted">Tablica prywatna, tablice uczniów i ich linki — w jednym miejscu.</p>
       </div>
       <div class="head-tools">
-        <button class="soft-btn quiet icon" :disabled="loading" title="Odśwież" @click="refresh">
+        <button class="soft-btn quiet icon" :disabled="loading" title="Odśwież" @click="fetchBoards">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.3"/></svg>
         </button>
-        <button class="soft-btn accent" @click="showCreate = true">Nowa tablica</button>
+        <button class="soft-btn accent" @click="showCreate = true">Nowa tablica ucznia</button>
       </div>
     </header>
 
-    <main class="soft-card list-card">
-      <div class="filters">
-        <input v-model="query" type="text" class="soft-input search" placeholder="Szukaj ucznia lub tematu…" />
-        <div class="soft-select-well">
-          <select v-model="statusFilter" class="soft-select">
-            <option value="all">Wszystkie statusy</option>
-            <option value="active">Aktywne</option>
-            <option value="archived">Zarchiwizowane</option>
-            <option value="expired">Po terminie</option>
-          </select>
-        </div>
-      </div>
-
-      <!-- Load failure is an ERROR state, never a masked empty list. -->
-      <div v-if="loadError" class="list-state">
+    <!-- Load failure is an ERROR state, never a masked empty list. -->
+    <div v-if="loadError" class="soft-card list-card">
+      <div class="list-state">
         <p class="soft-alert wide" role="alert">{{ loadError }}</p>
         <button class="soft-btn quiet" @click="fetchBoards">Spróbuj ponownie</button>
       </div>
+    </div>
 
-      <div v-else-if="loading" class="list-state">
+    <div v-else-if="loading" class="soft-card list-card">
+      <div class="list-state">
         <div class="spinner-well"><div class="spinner"></div></div>
         <p class="muted">Ładowanie tablic…</p>
       </div>
+    </div>
 
-      <div v-else-if="!filteredBoards.length" class="list-state">
-        <p class="muted">Brak tablic do wyświetlenia.</p>
-        <p class="muted small">Utwórz pierwszą tablicę przyciskiem „Nowa tablica”.</p>
-      </div>
+    <main v-else class="dash-grid">
+      <!-- ============ Personal Board: one, lazy, never student-accessible ============ -->
+      <aside class="rail">
+        <section v-if="personalBoard" class="soft-card personal-card">
+          <div class="row-id">
+            <span class="status-pip on"></span>
+            <div>
+              <h2 class="card-title">{{ personalBoard.title || 'Tablica prywatna' }}</h2>
+              <p class="row-sub">Bez terminu ważności</p>
+            </div>
+          </div>
+          <p class="muted small personal-note">
+            Twoja prywatna przestrzeń na przygotowanie lekcji. Uczniowie nigdy nie mają do niej dostępu.
+          </p>
+          <button class="soft-btn accent full" @click="openBoard(personalBoard.entryPath)">Otwórz tablicę prywatną</button>
+        </section>
 
-      <ul v-else class="board-rows">
-        <li v-for="board in filteredBoards" :key="board.id" class="board-row" :class="{ off: board.archived_at }">
-          <div class="row-main">
-            <div class="row-id">
-              <span class="status-pip" :class="pipClass(board)"></span>
-              <div>
-                <p class="row-name">{{ board.title || 'Bez tytułu' }}</p>
-                <p class="row-sub mono">Uczeń: {{ board.student_name || 'bez etykiety' }}</p>
+        <section class="soft-card hint-card">
+          <h2 class="card-title">Jak działają tablice</h2>
+          <ul class="hint-list">
+            <li>Każda tablica ucznia działa 12 miesięcy od utworzenia — data widoczna przy każdej tablicy.</li>
+            <li>Kopiowanie linku niczego nie zmienia. Nowy link generujesz świadomie — stary natychmiast przestaje działać.</li>
+            <li>Zakończenie dostępu odbiera go natychmiast, a tablica jest trwale usuwana po 7 dniach. Nie ma przycisku cofania.</li>
+          </ul>
+        </section>
+      </aside>
+
+      <!-- ============ Managed Boards list ============ -->
+      <section class="soft-card list-card">
+        <div class="list-head">
+          <h2 class="card-title">Tablice uczniów</h2>
+          <div class="list-tools">
+            <span class="muted mono">{{ managedBoards.length }} {{ managedBoards.length === 1 ? 'tablica' : 'tablic' }}</span>
+          </div>
+        </div>
+
+        <div class="filters">
+          <input v-model="query" type="text" class="soft-input search" placeholder="Szukaj etykiety lub tematu…" />
+          <div class="soft-select-well">
+            <select v-model="statusFilter" class="soft-select" aria-label="Filtr statusu">
+              <option value="all">Wszystkie statusy</option>
+              <option value="active">Aktywne</option>
+              <option value="ended">Zakończone</option>
+            </select>
+          </div>
+        </div>
+
+        <div v-if="!filteredBoards.length" class="list-state">
+          <p class="muted">Brak tablic do wyświetlenia.</p>
+          <p class="muted small">Utwórz pierwszą tablicę przyciskiem „Nowa tablica ucznia”.</p>
+        </div>
+
+        <ul v-else class="board-rows">
+          <li
+            v-for="board in filteredBoards"
+            :key="board.boardId"
+            class="board-row"
+            :class="{ off: board.state === 'ended' }"
+          >
+            <div class="row-main">
+              <div class="row-id">
+                <span class="status-pip" :class="board.state === 'ended' ? 'off' : 'on'"></span>
+                <div>
+                  <p class="row-name">{{ board.title || 'Bez tematu' }}</p>
+                  <p class="row-sub mono">Uczeń / grupa: {{ board.studentLabel || 'bez etykiety' }}</p>
+                </div>
+              </div>
+              <div class="row-side">
+                <p v-if="board.state === 'active'" class="row-date mono" :class="{ late: daysLeft(board.validUntil) < 31 }">
+                  Ważna do: {{ formatDate(board.validUntil) }}
+                </p>
+                <span v-if="board.state === 'ended'" class="pill">Dostęp zakończony</span>
+                <span v-else-if="daysLeft(board.validUntil) < 31" class="pill late">Wygasa za {{ daysLeft(board.validUntil) }} dni</span>
+                <span v-else class="pill ok">Aktywna</span>
               </div>
             </div>
-            <div class="row-side">
-              <p class="row-date mono" :class="{ late: daysLeft(board.valid_until) < 3 && !board.archived_at }">
-                {{ formatDate(board.valid_until) }}
+
+            <!-- Deletion countdown for ended boards: no recovery control exists. -->
+            <p v-if="board.state === 'ended'" class="ended-note mono">
+              Trwałe usunięcie za {{ board.deletesInDays }} {{ deletionDaysWord(board.deletesInDays) }} ({{ formatDate(board.deleteAfter) }}). Dostępu nie można przywrócić.
+            </p>
+
+            <!-- Keyway: the ONE active Board Access Link — copy only, never rotated by viewing. -->
+            <div v-else class="keyway">
+              <div class="keyway-top">
+                <span class="keyway-label">Link dostępu dla ucznia</span>
+                <div class="keyway-actions">
+                  <button
+                    class="soft-btn mini"
+                    :class="{ copied: copiedId === board.boardId }"
+                    @click="copy(board.boardAccessLink, board.boardId)"
+                  >
+                    {{ copiedId === board.boardId ? 'Skopiowano' : 'Kopiuj' }}
+                  </button>
+                  <button class="soft-btn mini quiet2" title="Otwórz tablicę" @click="openBoard(board.entryPath)">Otwórz</button>
+                </div>
+              </div>
+              <div class="keyway-channel">{{ board.boardAccessLink }}</div>
+            </div>
+
+            <div v-if="board.state === 'active'" class="row-actions">
+              <button class="soft-btn quiet warn" @click="beginAction(board, 'regenerate')">Wygeneruj nowy link</button>
+              <button class="soft-btn quiet danger" @click="beginAction(board, 'end')">Zakończ dostęp</button>
+            </div>
+
+            <!-- Inline destructive confirmation — never a surprise mutation. -->
+            <div v-if="pending && pending.boardId === board.boardId" class="confirm-well" role="alertdialog" aria-live="assertive">
+              <p class="confirm-text">
+                {{
+                  pending.kind === 'regenerate'
+                    ? 'Wygenerować nowy link? Obecny link natychmiast przestanie działać — uczniowie muszą otrzymać nowy. Materiały tablicy pozostaną bez zmian.'
+                    : 'Zakończyć dostęp do tablicy? Utraci on natychmiast, a tablica zostanie trwale usunięta po 7 dniach. Nie da się tego cofnąć.'
+                }}
               </p>
-              <span v-if="board.archived_at" class="pill">Archiwum</span>
-              <span v-else-if="isExpired(board)" class="pill late">Po terminie</span>
-              <span v-else class="pill ok">Aktywna</span>
-            </div>
-          </div>
-
-          <!-- Keyway: the current Board Access Link — copy only, never rotated by viewing. -->
-          <div class="keyway">
-            <div class="keyway-top">
-              <span class="keyway-label">Link dostępu dla ucznia</span>
-              <div class="keyway-actions">
-                <button
-                  class="soft-btn mini"
-                  :class="{ copied: copiedId === board.id }"
-                  @click="copy(board.student_url, board.id)"
-                >
-                  {{ copiedId === board.id ? 'Skopiowano' : 'Kopiuj' }}
+              <div class="confirm-row">
+                <button class="soft-btn accent" :disabled="actionPending" @click="confirmAction">
+                  {{ actionPending ? 'Wykonywanie…' : 'Potwierdzam' }}
                 </button>
-                <button class="soft-btn mini quiet2" title="Otwórz podgląd tablicy" @click="openBoard(board.student_url)">Podgląd</button>
+                <button class="soft-btn quiet" :disabled="actionPending" @click="cancelAction">Anuluj</button>
               </div>
+              <p v-if="actionError" class="soft-alert wide">{{ actionError }}</p>
             </div>
-            <div class="keyway-channel">{{ board.student_url }}</div>
-          </div>
-        </li>
-      </ul>
+
+            <!-- Fresh credential well after a successful regeneration. -->
+            <div v-if="freshLinkBoardId === board.boardId && freshLink" class="keyway fresh">
+              <div class="keyway-top">
+                <span class="keyway-label">Nowy link dostępu dla ucznia</span>
+                <button class="soft-btn mini" :class="{ copied: copiedId === 'fresh' }" @click="copy(freshLink, 'fresh')">
+                  {{ copiedId === 'fresh' ? 'Skopiowano' : 'Kopiuj' }}
+                </button>
+              </div>
+              <div class="keyway-channel">{{ freshLink }}</div>
+            </div>
+          </li>
+        </ul>
+      </section>
     </main>
 
-    <!-- Create modal -->
+    <!-- Create modal: Student Label is the only required input; validity is fixed. -->
     <div v-if="showCreate" class="modal-backdrop" @click.self="closeCreate">
       <div class="soft-card modal-panel">
         <header class="modal-head">
-          <h2 class="card-title">Nowa tablica</h2>
+          <h2 class="card-title">Nowa tablica ucznia</h2>
           <button class="soft-btn quiet icon" title="Zamknij" @click="closeCreate">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
           </button>
         </header>
 
         <label class="field-label" for="board-label">Etykieta ucznia / grupy</label>
-        <input id="board-label" ref="labelInput" v-model="form.studentName" type="text" class="soft-input" placeholder="np. Kowalski — grupa A" @keydown.enter="createBoard" />
+        <input id="board-label" ref="labelInput" v-model="form.studentLabel" type="text" class="soft-input" placeholder="np. Kowalski — grupa A" @keydown.enter="createBoard" />
 
         <label class="field-label" for="board-title">Temat lekcji (opcjonalnie)</label>
         <input id="board-title" v-model="form.title" type="text" class="soft-input" placeholder="np. Ułamki zwykłe" @keydown.enter="createBoard" />
 
-        <label class="field-label" for="board-valid">Ważne do (opcjonalnie)</label>
-        <input id="board-valid" v-model="form.validUntil" type="date" class="soft-input" />
+        <p class="fineprint">Tablica będzie aktywna przez 12 miesięcy od utworzenia.</p>
 
         <div v-if="createError" class="soft-alert" role="alert">{{ createError }}</div>
 
@@ -117,7 +199,7 @@
 
         <footer class="modal-foot">
           <button class="soft-btn quiet" @click="closeCreate">Zamknij</button>
-          <button v-if="!createResult" class="soft-btn accent" :disabled="!form.studentName || creating" @click="createBoard">
+          <button v-if="!createResult" class="soft-btn accent" :disabled="!form.studentLabel || creating" @click="createBoard">
             {{ creating ? 'Tworzenie…' : 'Utwórz tablicę' }}
           </button>
         </footer>
@@ -131,27 +213,38 @@ import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue';
 import { resolveBackendBaseUrl } from '../services/backendUrl';
 
 /**
- * Teacher dashboard (VVE-101): every request runs through the CapabilityAccess
- * HTTP adapter — a regenerated link or a deactivated teacher ends the session
- * on the very next request, surfaced here as a Polish error state instead of
- * a silently empty list. The student Board Access Link is COPY-ONLY: viewing
- * the dashboard never rotates it (story 18).
+ * Teacher dashboard (VVE-102). Every request runs through the CapabilityAccess
+ * HTTP adapter; board facts and lifecycle commands come from the
+ * BoardLifecycle interface. The Board Access Link is COPY-ONLY: viewing the
+ * dashboard never rotates it. Regeneration and End Board Access are explicit,
+ * confirmed actions — the Pilot exposes no renewal, recovery or restore.
+ * The Personal Board appears automatically (lazy creation on first visit)
+ * and is teacher-only.
  */
 const apiBase = resolveBackendBaseUrl();
 
-const boards = ref([]);
+const personalBoard = ref(null);
+const managedBoards = ref([]);
 const loading = ref(false);
 const loadError = ref('');
+
 const showCreate = ref(false);
 const creating = ref(false);
 const createError = ref('');
 const createResult = ref(null);
+
 const query = ref('');
-const statusFilter = ref('active');
+const statusFilter = ref('all');
 const copiedId = ref(null);
 const labelInput = ref(null);
 
-const form = reactive({ studentName: '', title: '', validUntil: '' });
+const form = reactive({ studentLabel: '', title: '' });
+
+const pending = ref(null); // { boardId, kind: 'regenerate' | 'end' }
+const actionPending = ref(false);
+const actionError = ref('');
+const freshLink = ref('');
+const freshLinkBoardId = ref(null);
 
 const readError = async (res, fallback) => {
   try {
@@ -172,7 +265,8 @@ const fetchBoards = async () => {
       return;
     }
     const data = await res.json();
-    boards.value = Array.isArray(data.boards) ? data.boards : [];
+    personalBoard.value = data.personalBoard ?? null;
+    managedBoards.value = Array.isArray(data.boards) ? data.boards : [];
   } catch {
     loadError.value = 'Brak połączenia z serwerem. Nie udało się pobrać tablic.';
   } finally {
@@ -181,10 +275,9 @@ const fetchBoards = async () => {
 };
 
 onMounted(fetchBoards);
-const refresh = () => fetchBoards();
 
-const daysLeft = (d) => (d ? Math.ceil((new Date(d) - new Date()) / (1000 * 60 * 60 * 24)) : 999);
-const isExpired = (b) => b.valid_until && new Date(b.valid_until) < new Date();
+const daysLeft = (d) => (d ? Math.max(0, Math.ceil((new Date(d) - new Date()) / (1000 * 60 * 60 * 24))) : 9999);
+const deletionDaysWord = (n) => (n === 1 ? 'dzień' : 'dni');
 const formatDate = (d) => {
   try {
     return d ? new Date(d).toLocaleDateString('pl-PL') : '—';
@@ -192,18 +285,16 @@ const formatDate = (d) => {
     return '—';
   }
 };
-const pipClass = (b) => (b.archived_at ? 'off' : isExpired(b) ? 'late' : 'on');
 
 const filteredBoards = computed(() => {
   const q = query.value.toLowerCase().trim();
-  return boards.value
+  return managedBoards.value
     .filter((b) => {
-      if (statusFilter.value === 'active' && (b.archived_at || isExpired(b))) return false;
-      if (statusFilter.value === 'archived' && !b.archived_at) return false;
-      if (statusFilter.value === 'expired' && !isExpired(b)) return false;
-      return !q || `${b.title} ${b.student_name}`.toLowerCase().includes(q);
+      if (statusFilter.value === 'active' && b.state !== 'active') return false;
+      if (statusFilter.value === 'ended' && b.state !== 'ended') return false;
+      return !q || `${b.title} ${b.studentLabel}`.toLowerCase().includes(q);
     })
-    .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 });
 
 const copy = async (text, id) => {
@@ -215,7 +306,13 @@ const copy = async (text, id) => {
   copiedId.value = id;
   setTimeout(() => (copiedId.value = null), 2000);
 };
-const openBoard = (url) => window.open(url, '_blank');
+
+const openBoard = (path) => {
+  if (!path) return;
+  const url = new URL(path, window.location.origin);
+  url.searchParams.set('from', 'dashboard');
+  window.open(url.toString(), '_blank');
+};
 
 const createBoard = async () => {
   creating.value = true;
@@ -225,16 +322,16 @@ const createBoard = async () => {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ studentName: form.studentName, title: form.title, validUntil: form.validUntil })
+      body: JSON.stringify({ studentLabel: form.studentLabel, title: form.title })
     });
     if (!res.ok) {
       createError.value = await readError(res, 'Nie udało się utworzyć tablicy.');
       return;
     }
+    // QA P1-2: the response field is the REAL, immediately working link.
     createResult.value = await res.json();
-    form.studentName = '';
+    form.studentLabel = '';
     form.title = '';
-    form.validUntil = '';
     fetchBoards();
   } catch {
     createError.value = 'Brak połączenia z serwerem. Nie udało się utworzyć tablicy.';
@@ -256,6 +353,45 @@ watch(showCreate, (val) => {
     nextTick(() => labelInput.value?.focus());
   }
 });
+
+const beginAction = (board, kind) => {
+  actionError.value = '';
+  pending.value = { boardId: board.boardId, kind };
+};
+
+const cancelAction = () => {
+  pending.value = null;
+  actionError.value = '';
+};
+
+const confirmAction = async () => {
+  if (!pending.value) return;
+  actionPending.value = true;
+  actionError.value = '';
+  const { boardId, kind } = pending.value;
+  try {
+    const path = kind === 'regenerate' ? `/api/teacher/boards/${boardId}/regenerate-access` : `/api/teacher/boards/${boardId}/end-access`;
+    const res = await fetch(`${apiBase}${path}`, { method: 'POST', credentials: 'include' });
+    if (!res.ok) {
+      actionError.value = await readError(res, 'Nie udało się wykonać operacji.');
+      return;
+    }
+    const body = await res.json();
+    pending.value = null;
+    if (kind === 'regenerate') {
+      freshLink.value = body.studentLink;
+      freshLinkBoardId.value = boardId;
+    } else {
+      freshLink.value = '';
+      freshLinkBoardId.value = null;
+    }
+    fetchBoards();
+  } catch {
+    actionError.value = 'Brak połączenia z serwerem. Nie udało się wykonać operacji.';
+  } finally {
+    actionPending.value = false;
+  }
+};
 </script>
 
 <style scoped>
@@ -291,14 +427,24 @@ watch(showCreate, (val) => {
 .muted.small { font-size: 12.5px; }
 .mono { font-family: 'SF Mono', ui-monospace, Menlo, monospace; font-size: 12px; }
 
-.dash-head { max-width: 1080px; margin: 0 auto 32px; display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; }
+.dash-head { max-width: 1160px; margin: 0 auto 32px; display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; }
 .dash-title { font-size: 27px; font-weight: 800; margin: 0 0 8px; }
 .head-tools { display: flex; gap: 12px; }
 
 .soft-card { background: var(--soft-surface); border-radius: 20px; box-shadow: var(--raise); }
 .card-title { font-size: 15.5px; font-weight: 700; margin: 0; }
 
-.list-card { max-width: 1080px; margin: 0 auto; padding: 24px 26px 28px; }
+.dash-grid { max-width: 1160px; margin: 0 auto; display: grid; grid-template-columns: 300px 1fr; gap: 24px; align-items: start; }
+.rail { display: flex; flex-direction: column; gap: 20px; }
+
+.personal-card { padding: 22px 24px; display: flex; flex-direction: column; gap: 14px; }
+.personal-note { margin: 0; }
+.hint-card { padding: 20px 24px; }
+.hint-list { margin: 12px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 8px; color: var(--soft-ink-2); font-size: 12.5px; line-height: 1.55; }
+
+.list-card { padding: 24px 26px 28px; min-height: 320px; }
+.list-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px; }
+.list-tools { display: flex; align-items: center; gap: 12px; }
 .filters { display: flex; gap: 16px; margin-bottom: 22px; }
 .search { flex: 0 1 320px; }
 .soft-select-well { border-radius: 12px; box-shadow: var(--press); }
@@ -360,8 +506,12 @@ watch(showCreate, (val) => {
 .soft-btn.mini { padding: 6px 12px; font-size: 11.5px; }
 .soft-btn.mini.copied { color: var(--soft-ok); }
 .soft-btn.mini.quiet2 { color: var(--soft-ink-3); }
+.soft-btn.warn { color: var(--soft-late); }
+.soft-btn.danger { color: var(--soft-danger); }
+.full { width: 100%; }
 
 .field-label { display: block; font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--soft-ink-2); margin: 16px 0 8px; }
+.fineprint { font-size: 12px; color: var(--soft-ink-3); margin: 14px 0 0; }
 
 .soft-alert { border-radius: 12px; padding: 11px 14px; font-size: 13px; font-weight: 600; color: var(--soft-danger); box-shadow: var(--press-deep); margin: 0; }
 .soft-alert.wide { margin: 0; }
@@ -382,11 +532,12 @@ watch(showCreate, (val) => {
 .status-pip { width: 11px; height: 11px; border-radius: 50%; flex: none; }
 .status-pip.on { background: var(--soft-ok); box-shadow: inset 2px 2px 3px rgba(10, 60, 38, 0.45), inset -2px -2px 3px rgba(160, 235, 200, 0.8); }
 .status-pip.off { background: var(--soft-ink-3); }
-.status-pip.late { background: var(--soft-late); }
 
 .pill { font-size: 10.5px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; border-radius: 99px; padding: 4px 10px; box-shadow: var(--press-deep); color: var(--soft-ink-2); }
 .pill.ok { color: var(--soft-ok); }
 .pill.late { color: var(--soft-late); }
+
+.ended-note { margin: 12px 0 0; color: var(--soft-danger); font-size: 11.5px; line-height: 1.6; }
 
 .keyway { margin-top: 14px; border-radius: 14px; padding: 11px 14px 13px; box-shadow: var(--press-deep); }
 .keyway.fresh { box-shadow: var(--press-deep), 0 0 0 2px rgba(31, 138, 91, 0.35); }
@@ -394,6 +545,12 @@ watch(showCreate, (val) => {
 .keyway-label { font-size: 10.5px; font-weight: 800; letter-spacing: 0.14em; text-transform: uppercase; color: var(--soft-ink-3); }
 .keyway-actions { display: flex; gap: 8px; }
 .keyway-channel { font-family: 'SF Mono', ui-monospace, Menlo, monospace; font-size: 11.5px; line-height: 1.6; color: var(--soft-ink-2); word-break: break-all; user-select: all; }
+
+.row-actions { display: flex; gap: 10px; margin-top: 14px; flex-wrap: wrap; }
+
+.confirm-well { margin-top: 14px; border-radius: 14px; padding: 14px 16px; box-shadow: var(--press-deep); }
+.confirm-text { margin: 0 0 12px; font-size: 13px; font-weight: 600; color: var(--soft-ink); line-height: 1.55; }
+.confirm-row { display: flex; gap: 10px; }
 
 /* Modal */
 .modal-backdrop { position: fixed; inset: 0; background: rgba(28, 39, 57, 0.32); backdrop-filter: blur(3px); display: flex; align-items: center; justify-content: center; z-index: 100; padding: 20px; }
@@ -405,6 +562,9 @@ watch(showCreate, (val) => {
 .spinner { width: 20px; height: 20px; border-radius: 50%; border: 3px solid rgba(47, 111, 237, 0.2); border-top-color: var(--soft-accent); animation: soft-spin 0.9s linear infinite; }
 @keyframes soft-spin { to { transform: rotate(360deg); } }
 
+@media (max-width: 960px) {
+  .dash-grid { grid-template-columns: 1fr; }
+}
 @media (max-width: 720px) {
   .dash-head { flex-direction: column; align-items: flex-start; }
   .filters { flex-direction: column; }

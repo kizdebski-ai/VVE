@@ -61,6 +61,75 @@ test.describe('Pilot fixture: Administrator, Teacher, Student browser contexts',
     await context.close();
   });
 
+  test('Two Student sessions converge, disconnect becomes read-only, reconnect and reload preserve the acknowledged lesson', async ({ browser }) => {
+    const firstContext = await browser.newContext();
+    const secondContext = await browser.newContext();
+    const first = await firstContext.newPage();
+    const second = await secondContext.newPage();
+
+    const join = async (page) => {
+      await page.goto(fixture.boardAccessLink);
+      await page.getByRole('button', { name: 'Dołącz do lekcji' }).click();
+      await expect(page.locator('canvas.static-layer')).toBeVisible({ timeout: 20_000 });
+      await expect(page.getByTestId('collaboration-read-only')).toBeHidden({ timeout: 5_000 });
+    };
+    await join(first);
+    await join(second);
+
+    // Presence is hydrated for a later join and converges on both devices.
+    await expect(first.getByText('2 Online')).toBeVisible({ timeout: 5_000 });
+    await expect(second.getByText('2 Online')).toBeVisible({ timeout: 5_000 });
+
+    const secondCanvas = second.locator('canvas.static-layer');
+    const beforeRemote = await secondCanvas.evaluate((canvas) => canvas.toDataURL());
+    const drawCanvas = first.locator('canvas.draw-layer');
+    const box = await drawCanvas.boundingBox();
+    expect(box).not.toBeNull();
+    const startX = box.x + box.width * 0.52;
+    const startY = box.y + box.height * 0.56;
+    await first.mouse.move(startX, startY);
+    await first.mouse.down();
+    await first.mouse.move(startX + 70, startY + 35, { steps: 10 });
+    await first.mouse.up();
+
+    // Same Board Access Link in another session receives the durable update.
+    await expect.poll(
+      () => secondCanvas.evaluate((canvas) => canvas.toDataURL()),
+      { timeout: 5_000 }
+    ).not.toBe(beforeRemote);
+    const acknowledgedView = await secondCanvas.evaluate((canvas) => canvas.toDataURL());
+
+    // Network loss changes the session to read-only well inside the 2 s gate.
+    const disconnectedAt = Date.now();
+    await secondContext.setOffline(true);
+    await expect(second.getByTestId('collaboration-read-only')).toBeVisible({ timeout: 2_000 });
+    expect(Date.now() - disconnectedAt).toBeLessThan(2_000);
+
+    const whileOffline = await secondCanvas.evaluate((canvas) => canvas.toDataURL());
+    const offlineBox = await second.locator('canvas.draw-layer').boundingBox();
+    await second.mouse.move(offlineBox.x + 420, offlineBox.y + 360);
+    await second.mouse.down();
+    await second.mouse.move(offlineBox.x + 480, offlineBox.y + 390, { steps: 6 });
+    await second.mouse.up();
+    expect(await secondCanvas.evaluate((canvas) => canvas.toDataURL())).toBe(whileOffline);
+
+    // Editing returns only after the fresh synchronization-complete frame.
+    await secondContext.setOffline(false);
+    await expect(second.getByTestId('collaboration-read-only')).toBeHidden({ timeout: 5_000 });
+
+    // A fresh page hydrates snapshot + durable log to the same visible state.
+    await second.reload();
+    await expect(second.locator('canvas.static-layer')).toBeVisible({ timeout: 20_000 });
+    await expect(second.getByTestId('collaboration-read-only')).toBeHidden({ timeout: 5_000 });
+    await expect.poll(
+      () => second.locator('canvas.static-layer').evaluate((canvas) => canvas.toDataURL()),
+      { timeout: 5_000 }
+    ).toBe(acknowledgedView);
+
+    await firstContext.close();
+    await secondContext.close();
+  });
+
   test('Administrator signs in with the passphrase; viewing the list never rotates links', async ({ browser }) => {
     const context = await browser.newContext();
     const page = await context.newPage();
@@ -106,10 +175,13 @@ test.describe('Pilot fixture: Administrator, Teacher, Student browser contexts',
     await expect(adminPage.getByRole('heading', { name: 'Nauczyciele i linki dostępu' })).toBeVisible({ timeout: 10000 });
 
     // Add a dedicated teacher so the fixture teacher's link stays untouched.
-    await adminPage.getByLabel('Adres email').fill('e2e-regen@vve-pilot.local');
+    // Unique per run: a previous run DEACTIVATED its teacher, and reuse
+    // never reactivates — a fresh identity keeps the test re-runnable.
+    const regenEmail = `e2e-regen-${Date.now()}@vve-pilot.local`;
+    await adminPage.getByLabel('Adres email').fill(regenEmail);
     await adminPage.getByLabel('Etykieta wewnętrzna (opcjonalnie)').fill('E2E Regeneracja');
     await adminPage.getByRole('button', { name: 'Dodaj i wygeneruj link' }).click();
-    const newRow = adminPage.locator('.teacher-row', { hasText: 'e2e-regen@vve-pilot.local' });
+    const newRow = adminPage.locator('.teacher-row', { hasText: regenEmail });
     await expect(newRow).toBeVisible({ timeout: 10000 });
 
     // The fresh link opens the teacher dashboard in a separate context.
@@ -156,6 +228,127 @@ test.describe('Pilot fixture: Administrator, Teacher, Student browser contexts',
     await expect(deniedPage.getByText(/wyłączon/i).first()).toBeVisible({ timeout: 10000 });
 
     await teacherContext.close();
+    await adminContext.close();
+  });
+
+  test('Board lifecycle on the dashboard: Personal Board, create with Student Label, copy, regenerate, end access', async ({ browser }) => {
+    const adminContext = await browser.newContext();
+    const adminPage = await adminContext.newPage();
+
+    // A DEDICATED teacher per run (unique email): the first dashboard visit
+    // must lazily create the Personal Board and start from an empty list.
+    const teacherEmail = `e2e-lifecycle-${Date.now()}@vve-pilot.local`;
+    await adminPage.goto('/admin/teachers');
+    await adminPage.getByLabel('Hasło administratora').fill(adminPassphrase);
+    await adminPage.getByRole('button', { name: 'Odblokuj panel' }).click();
+    await expect(adminPage.getByRole('heading', { name: 'Nauczyciele i linki dostępu' })).toBeVisible({ timeout: 10000 });
+    await adminPage.getByLabel('Adres email').fill(teacherEmail);
+    await adminPage.getByLabel('Etykieta wewnętrzna (opcjonalnie)').fill('E2E Cykl życia');
+    await adminPage.getByRole('button', { name: 'Dodaj i wygeneruj link' }).click();
+    const teacherRow = adminPage.locator('.teacher-row', { hasText: teacherEmail });
+    await expect(teacherRow).toBeVisible({ timeout: 10000 });
+    const teacherLink = (await teacherRow.locator('.keyway-channel').innerText()).trim();
+
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    await page.goto(teacherLink);
+    await expect(page.getByRole('heading', { name: 'Moje tablice' })).toBeVisible({ timeout: 15000 });
+
+    // Personal Board: lazily created on the first visit, no expiry, enterable.
+    await expect(page.getByText('Bez terminu ważności')).toBeVisible({ timeout: 10000 });
+    await expect(page.getByRole('button', { name: 'Otwórz tablicę prywatną' })).toBeVisible();
+
+    // No Managed Boards yet.
+    await expect(page.getByText('Brak tablic do wyświetlenia.')).toBeVisible();
+
+    // Create a Managed Board: the Student Label is required and validity is
+    // FIXED at twelve months (stated in the modal, shown per row afterwards).
+    await page.getByRole('button', { name: 'Nowa tablica ucznia' }).click();
+    await expect(page.getByText('Tablica będzie aktywna przez 12 miesięcy od utworzenia.')).toBeVisible();
+    await page.getByLabel('Etykieta ucznia / grupy').fill('Kowalski — grupa A');
+    await page.getByLabel('Temat lekcji (opcjonalnie)').fill('E2E tablica cyklu życia');
+    await page.getByRole('button', { name: 'Utwórz tablicę' }).click();
+
+    // QA P1-2: the creation result shows the REAL, working link.
+    const modalFresh = page.locator('.modal-panel .keyway.fresh');
+    await expect(modalFresh).toBeVisible({ timeout: 10000 });
+    const studentLink = (await modalFresh.locator('.keyway-channel').innerText()).trim();
+    expect(studentLink).toContain('/board/');
+    await page.locator('.modal-foot').getByRole('button', { name: 'Zamknij' }).click();
+
+    // The row appears with the Student Label, expiry date and active state.
+    const row = page.locator('.board-row', { hasText: 'Kowalski — grupa A' });
+    await expect(row).toBeVisible({ timeout: 10000 });
+    await expect(row).toContainText('E2E tablica cyklu życia');
+    await expect(row).toContainText('Ważna do:');
+    await expect(row.locator('.pill.ok')).toHaveText('Aktywna');
+
+    // Copy is side-effect-free: the label flips, the link does not change.
+    const linkBefore = (await row.locator('.keyway-channel').innerText()).trim();
+    expect(linkBefore).toContain('/board/');
+    await row.getByRole('button', { name: 'Kopiuj' }).click();
+    await expect(row.getByRole('button', { name: 'Skopiowano' })).toBeVisible();
+    await expect(row.locator('.keyway-channel')).toHaveText(linkBefore);
+
+    // The created link works for a STUDENT — a fresh context WITHOUT the
+    // teacher session cookie (the owning teacher's cookie takes precedence
+    // over the link token and would mask the student's view).
+    const studentContext = await browser.newContext();
+    const studentPage = await studentContext.newPage();
+    await studentPage.goto(studentLink);
+    await expect(studentPage.getByRole('heading', { name: 'E2E tablica cyklu życia' })).toBeVisible({ timeout: 10000 });
+    await studentContext.close();
+
+    // Regeneration is explicit, confirmed, and the old link dies immediately
+    // while the row (and its data) stays.
+    await row.getByRole('button', { name: 'Wygeneruj nowy link' }).click();
+    await expect(row.getByText(/Wygenerować nowy link\?/)).toBeVisible();
+    await row.getByRole('button', { name: 'Potwierdzam' }).click();
+    const freshKeyway = row.locator('.keyway.fresh');
+    await expect(freshKeyway).toBeVisible({ timeout: 10000 });
+    const regeneratedLink = (await freshKeyway.locator('.keyway-channel').innerText()).trim();
+    expect(regeneratedLink).not.toBe(linkBefore);
+    await expect(row.locator('.pill.ok')).toHaveText('Aktywna');
+
+    const staleContext = await browser.newContext();
+    const stalePage = await staleContext.newPage();
+    await stalePage.goto(studentLink);
+    // The old token is a mismatch (regeneration replaced it in place), so
+    // the entry is denied as invalid — in Polish, immediately.
+    await expect(stalePage.getByText('Nieprawidłowy link lub sesja.')).toBeVisible({ timeout: 10000 });
+    await staleContext.close();
+
+    const regeneratedContext = await browser.newContext();
+    const regeneratedPage = await regeneratedContext.newPage();
+    await regeneratedPage.goto(regeneratedLink);
+    await expect(regeneratedPage.getByRole('heading', { name: 'E2E tablica cyklu życia' })).toBeVisible({ timeout: 10000 });
+    await regeneratedPage.getByRole('button', { name: 'Dołącz do lekcji' }).click();
+    await expect(regeneratedPage.locator('canvas.static-layer')).toBeVisible({ timeout: 20_000 });
+    await expect(regeneratedPage.getByTestId('collaboration-read-only')).toBeHidden({ timeout: 5_000 });
+
+    // Ending access is explicit and confirmed: the state flips immediately,
+    // the deletion countdown appears and NO recovery control is offered.
+    await row.getByRole('button', { name: 'Zakończ dostęp' }).click();
+    await expect(row.getByText(/Zakończyć dostęp do tablicy\?/)).toBeVisible();
+    await row.getByRole('button', { name: 'Potwierdzam' }).click();
+    await expect(row.locator('.pill')).toHaveText('Dostęp zakończony', { timeout: 10000 });
+    await expect(row.locator('.ended-note')).toContainText('Dostępu nie można przywrócić.');
+    await expect(row.getByRole('button', { name: 'Wygeneruj nowy link' })).toHaveCount(0);
+    await expect(row.getByRole('button', { name: 'Zakończ dostęp' })).toHaveCount(0);
+
+    // The durable lifecycle transaction actively closes an already-open
+    // collaboration session; it becomes read-only before any reconnect can
+    // be admitted with the revoked credential.
+    await expect(regeneratedPage.getByTestId('collaboration-read-only')).toBeVisible({ timeout: 2_000 });
+
+    const endedContext = await browser.newContext();
+    const endedPage = await endedContext.newPage();
+    await endedPage.goto(regeneratedLink);
+    await expect(endedPage.getByText('Dostęp został unieważniony.')).toBeVisible({ timeout: 10000 });
+    await endedContext.close();
+    await regeneratedContext.close();
+
+    await context.close();
     await adminContext.close();
   });
 });

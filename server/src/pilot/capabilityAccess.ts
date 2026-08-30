@@ -146,9 +146,11 @@ type TeacherRow = {
 type BoardFactsRow = {
   id: string;
   teacher_id: string;
+  kind: 'personal' | 'managed';
   public_slug: string | null;
   student_token: string | null;
-  valid_until: Date;
+  /** Managed Boards: created + 12 months. Personal Boards: null (VVE-102). */
+  valid_until: Date | null;
   access_ended_at: Date | null;
   delete_after: Date | null;
   deleted_at: Date | null;
@@ -302,6 +304,7 @@ export const createCapabilityAccess = (options: CreateCapabilityAccessOptions = 
       .first(
         'b.id',
         'b.teacher_id',
+        'b.kind',
         'b.public_slug',
         'b.student_token',
         'b.valid_until',
@@ -324,7 +327,9 @@ export const createCapabilityAccess = (options: CreateCapabilityAccessOptions = 
     if (board.access_ended_at) {
       return deny(action, 'revoked');
     }
-    if (new Date(board.valid_until) <= now) {
+    // Personal Boards never expire (valid_until IS NULL); Managed Boards
+    // expire exactly at their twelve-month boundary.
+    if (board.valid_until && new Date(board.valid_until) <= now) {
       return deny(action, 'expired');
     }
     if (!board.teacher_is_active) {
@@ -489,7 +494,7 @@ export const createCapabilityAccess = (options: CreateCapabilityAccessOptions = 
         teacherId: board.teacher_id,
         boardId: board.id,
         credentialVersion: board.teacher_credential_version,
-        validUntil: new Date(board.valid_until)
+        validUntil: board.valid_until ? new Date(board.valid_until) : null
       });
     }
 
@@ -520,7 +525,7 @@ export const createCapabilityAccess = (options: CreateCapabilityAccessOptions = 
         teacherId: board.teacher_id,
         boardId: board.id,
         credentialVersion: board.access_credential_version,
-        validUntil: new Date(board.valid_until)
+        validUntil: board.valid_until ? new Date(board.valid_until) : null
       });
     }
 
@@ -585,7 +590,7 @@ export const createCapabilityAccess = (options: CreateCapabilityAccessOptions = 
       teacherId: board.teacher_id,
       boardId: board.id,
       credentialVersion: wsClaims.role === 'teacher' ? board.teacher_credential_version : board.access_credential_version,
-      validUntil: new Date(board.valid_until)
+      validUntil: board.valid_until ? new Date(board.valid_until) : null
     });
   };
 

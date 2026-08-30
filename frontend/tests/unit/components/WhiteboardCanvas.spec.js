@@ -249,4 +249,42 @@ describe('WhiteboardCanvas.vue', () => {
     });
   });
 
+  describe('Acknowledged collaboration read-only gate', () => {
+    it('blocks mutations until synchronization-complete and returns to read-only on disconnect', async () => {
+      wrapper.unmount();
+      let connectionOptions;
+      let editable = false;
+      connectToYjs.mockImplementation((_roomId, options) => {
+        connectionOptions = options;
+        return {
+          ydoc: mockYDoc,
+          yDrawings: mockYDrawings,
+          awareness: mockAwareness,
+          disconnect: vi.fn(),
+          isEditable: () => editable,
+        };
+      });
+
+      wrapper = mount(WhiteboardCanvas, {
+        props: { roomId: 'managed-board', wsToken: 'managed-token' },
+      });
+      await nextTick();
+
+      expect(wrapper.find('[data-testid="collaboration-read-only"]').exists()).toBe(true);
+      const before = mockYDrawings.length;
+      wrapper.vm.clearCanvas({ skipConfirm: true });
+      expect(mockYDrawings.length).toBe(before);
+
+      editable = true;
+      connectionOptions.onStatus('connected');
+      await nextTick();
+      expect(wrapper.find('[data-testid="collaboration-read-only"]').exists()).toBe(false);
+
+      editable = false;
+      connectionOptions.onStatus('disconnected');
+      await nextTick();
+      expect(wrapper.find('[data-testid="collaboration-read-only"]').exists()).toBe(true);
+    });
+  });
+
 });

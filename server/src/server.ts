@@ -10,8 +10,16 @@ import { FilePersistence } from './persistence';
 import { createHttpApp } from './httpApp';
 import { OpenRouterEquationSolver } from './services/aiSolver';
 import { createCapabilityAccess } from './pilot/capabilityAccess';
-import { createWsAdmission } from './wsAdmission';
-import { BoardYjsPersistence } from './services/boardYjsPersistence';
+import { createBoardLifecycle } from './pilot/boardLifecycle';
+import { createWsAdmission, isManagedBoardRoomId } from './wsAdmission';
+import {
+  CollaborationFailure,
+  createCollaborationRuntime,
+  type ConnectionHandle,
+  type CollaborationTransport
+} from './pilot/collaborationRuntime';
+import { createPostgresBoardDocumentStore } from './pilot/postgresBoardDocumentStore';
+import { decodeClientFrame, encodeServerFrame } from './pilot/collaborationProtocol';
 import { getDb } from './db';
 
 // Startup config check (no secrets logged)
@@ -89,14 +97,6 @@ const initializeRoom = (room: RoomContext) => {
     room.meta.lastActiveAt = timestamp;
     room.lastActive = timestamp;
     logger.debug('Generated update', { size: update.length, originIsWs: origin instanceof WebSocket });
-    boardPersistence
-      .recordUpdate(room.id, update, room.doc)
-      .catch((error) =>
-        logger.error('Failed to persist Yjs update', {
-          boardId: room.id,
-          error: (error as Error).message
-        })
-      );
     broadcast(room, messageSync, update, origin as WebSocket | null);
   });
 
@@ -250,19 +250,37 @@ const parseWsParams = (
 };
 
 const persistence = new FilePersistence(config.dataDir);
-const boardPersistence = new BoardYjsPersistence();
-const roomManager = new RoomManager(persistence, boardPersistence);
+// Legacy peer rooms are a separate developer-only surface. Managed Boards
+// never enter RoomManager or its raw-frame persistence path (VVE-103).
+const roomManager = new RoomManager(persistence);
 const aiSolver = new OpenRouterEquationSolver();
-boardPersistence.startCleanupJob();
 // VVE-101: one CapabilityAccess instance owns every authorization decision
 // for HTTP and WebSocket. Legacy peer rooms remain reachable only on the
 // development surface with the internal dev flag (ADR-0010).
 const capabilityAccess = createCapabilityAccess();
+const collaborationRuntime = createCollaborationRuntime({
+  store: createPostgresBoardDocumentStore(),
+  idleMs: config.roomTtlMs
+});
+// VVE-102: one BoardLifecycle instance owns every durable lifecycle fact.
+// The old BoardYjsPersistence cleanup job (Yjs-only deletion after ~15
+// months, board row left behind) is deleted: purge happens through the
+// module's seven-day schedule.
+const boardLifecycle = createBoardLifecycle({
+  access: capabilityAccess,
+  onBoardsAccessEnded: (boardIds) =>
+    Promise.all(
+      boardIds.map((boardId) =>
+        collaborationRuntime.closeBoard(boardId, 'Dostęp do tablicy został zakończony')
+      )
+    ).then(() => undefined)
+});
+boardLifecycle.startDeletionSweep();
 const wsAdmission = createWsAdmission(
   capabilityAccess,
   config.pilotEnvironment === 'development' && config.devSurface
 );
-export const app = createHttpApp({ roomManager, aiSolver, capabilityAccess });
+export const app = createHttpApp({ roomManager, aiSolver, capabilityAccess, boardLifecycle });
 
 const server = http.createServer(app);
 // 5.7: Limit max WebSocket payload to 5 MB to prevent memory abuse
@@ -278,10 +296,17 @@ wss.on('connection', (socket: ManagedSocket, request) => {
     return;
   }
 
+  let ipTracked = true;
+  const releaseIp = () => {
+    if (!ipTracked) return;
+    ipTracked = false;
+    trackIpDisconnect(clientIp);
+  };
+
   (async () => {
     const parsed = parseWsParams(request.url);
     if (!parsed) {
-      trackIpDisconnect(clientIp);
+      releaseIp();
       socket.close(1008, 'Invalid room');
       return;
     }
@@ -293,18 +318,88 @@ wss.on('connection', (socket: ManagedSocket, request) => {
     // expiry/revocation/credential-version re-verified at admission time.
     const admission = await wsAdmission.admit(roomId, token);
     if (!admission.admitted) {
-      trackIpDisconnect(clientIp);
+      releaseIp();
       socket.close(admission.closeCode, admission.closeReason);
       return;
     }
-
-    const { room, created } = await roomManager.get(roomId);
-    initializeRoom(room);
 
     socket.isAlive = true;
     socket.on('pong', () => {
       socket.isAlive = true;
     });
+
+    if (isManagedBoardRoomId(roomId)) {
+      if (!token) {
+        releaseIp();
+        socket.close(1008, 'Unauthorized');
+        return;
+      }
+
+      const transport: CollaborationTransport = {
+        send: async (frame) => {
+          if (socket.readyState !== WebSocket.OPEN) {
+            throw new Error('WebSocket is not open.');
+          }
+          socket.send(encodeServerFrame(frame), { binary: true });
+        },
+        close: async (code, reason) => {
+          if (socket.readyState === WebSocket.OPEN) socket.close(code, reason);
+        }
+      };
+
+      let handle: ConnectionHandle | null = null;
+      handle = await collaborationRuntime.connect(
+        {
+          boardId: roomId,
+          grant: admission.decision,
+          revalidate: async () => (await wsAdmission.admit(roomId, token)).admitted
+        },
+        transport
+      );
+      logger.info('Managed Board client synchronized', {
+        boardId: roomId,
+        role: admission.decision.role
+      });
+
+      socket.on('message', (raw) => {
+        if (!checkRateLimit(socket)) {
+          socket.close(1013, 'Rate limit exceeded');
+          return;
+        }
+        Promise.resolve()
+          .then(() => decodeClientFrame(toUint8Array(raw)))
+          .then((frame) => handle?.receive(frame))
+          .catch(async (error) => {
+            const failure = error instanceof CollaborationFailure ? error : null;
+            logger.warn('Managed Board frame rejected', {
+              boardId: roomId,
+              reason: failure?.code ?? 'internal',
+              error: (error as Error).message
+            });
+            if (failure?.code === 'persistenceUnavailable') {
+              socket.close(1013, 'Persistence unavailable');
+            } else if (failure?.code === 'malformed') {
+              socket.close(1008, 'Malformed frame');
+            } else {
+              socket.close(1011, 'Internal error');
+            }
+          });
+      });
+      socket.on('close', () => {
+        handle?.close('socket closed').catch(() => undefined);
+        releaseIp();
+      });
+      socket.on('error', (error) => {
+        logger.warn('Managed Board WebSocket error', { boardId: roomId, error: error.message });
+        handle?.close('socket error').catch(() => undefined);
+        releaseIp();
+      });
+      return;
+    }
+
+    // Developer-only legacy peer room.
+    const { room, created } = await roomManager.get(roomId);
+    initializeRoom(room);
 
     room.connections.set(socket, new Set());
     logger.info('Client connected', { roomId, clients: room.connections.size, created });
@@ -317,17 +412,17 @@ wss.on('connection', (socket: ManagedSocket, request) => {
 
     socket.on('close', () => {
       removeConnection(roomId, room, socket);
-      trackIpDisconnect(clientIp);
+      releaseIp();
     });
     // 5.3: Also remove connection on error to prevent leaked awareness states
     socket.on('error', (error) => {
       logger.warn('WebSocket error', { roomId, error: error.message });
       removeConnection(roomId, room, socket);
-      trackIpDisconnect(clientIp);
+      releaseIp();
     });
   })().catch((error) => {
     logger.error('WebSocket connection failed', { error: (error as Error).message });
-    trackIpDisconnect(clientIp);
+    releaseIp();
     socket.close(1011, 'Internal error');
   });
 });
@@ -343,6 +438,9 @@ const pingInterval = setInterval(() => {
     socket.ping();
   });
   roomManager.cleanup(config.roomTtlMs);
+  collaborationRuntime.unloadIdle().catch((error) =>
+    logger.error('Managed Board idle unload failed', { error: (error as Error).message })
+  );
 }, config.pingIntervalMs);
 
 // Run migrations and start server
@@ -369,9 +467,19 @@ const startServer = async () => {
 
 startServer();
 
-const shutdown = () => {
+let shutdownStarted = false;
+const shutdown = async () => {
+  if (shutdownStarted) return;
+  shutdownStarted = true;
   logger.info('Shutting down server');
   clearInterval(pingInterval);
+  boardLifecycle.stopDeletionSweep();
+  await collaborationRuntime.drain({
+    deadline: new Date(Date.now() + 3_000),
+    reason: 'Server restarting'
+  }).catch((error) =>
+    logger.error('Collaboration drain failed', { error: (error as Error).message })
+  );
   // BE-004: Graceful close instead of hard terminate
   wss.clients.forEach((client) => {
     if (client.readyState === WebSocket.OPEN) {
@@ -395,5 +503,5 @@ process.on('unhandledRejection', (reason) => {
 
 process.on('uncaughtException', (error) => {
   logger.error('Uncaught exception - shutting down', { error: error.message, stack: error.stack });
-  shutdown();
+  void shutdown();
 });

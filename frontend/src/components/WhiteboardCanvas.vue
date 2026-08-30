@@ -2,7 +2,7 @@
   <div
     ref="containerRef"
     class="whiteboard-container"
-    :class="{ 'dark-mode': darkMode }"
+    :class="{ 'dark-mode': darkMode, 'collaboration-read-only': collaborationReadOnly }"
   >
     <div v-if="debugMode" style="position: absolute; top: 5px; left: 5px; z-index: 9999;
      background: rgba(0,0,0,0.7); color: white; padding: 5px; border-radius: 4px; font-size: 12px;">
@@ -47,7 +47,7 @@
       :zoom-level="zoomLevel"
       :pan-offset="panOffset"
       :is-selected="elementMap.get('id') === selectedObjectId"
-      :interaction-enabled="currentTool === 'select'"
+      :interaction-enabled="currentTool === 'select' && !collaborationReadOnly"
       @update:object="handleObjectUpdate"
       @request-select="handleObjectSelectionRequest"
       @clone-object="handleCloneObject"
@@ -100,6 +100,17 @@
     <div v-if="isConnecting" class="connection-loading">
       <div class="connection-spinner"></div>
       <span>Connecting...</span>
+    </div>
+
+    <div
+      v-if="collaborationReadOnly"
+      class="connection-read-only"
+      role="status"
+      aria-live="polite"
+      data-testid="collaboration-read-only"
+    >
+      <span class="read-only-dot" aria-hidden="true"></span>
+      Tylko podgląd — czekamy na bezpieczną synchronizację
     </div>
 
     <!-- Status message -->
@@ -248,6 +259,7 @@ export default {
     'update:solution',
     'update:has-char-groups',
     'update:has-stylized-strokes',
+    'update:active-users',
     'select-pen-preset'
   ],
   setup(props, { emit, expose }) {
@@ -437,6 +449,16 @@ export default {
     const yDrawings = shallowRef(null);
     const activeRoomId = ref(null);
     const latestUsername = ref(props.username);
+    const connectionStatus = ref(props.wsToken ? 'connecting' : 'connected');
+    const collaborationReadOnly = computed(() =>
+      Boolean(props.wsToken) && connectionStatus.value !== 'connected'
+    );
+    const canMutateDocument = () =>
+      !props.wsToken || yjsConnection.value?.isEditable?.() === true;
+    const denyReadOnlyMutation = () => {
+      showToast('Tablica jest tylko do odczytu do czasu zakończenia synchronizacji.', 'warning');
+      return false;
+    };
 
     // --- PDF Export Composable (after yDrawings/ydoc are declared) ---
     const {
@@ -476,8 +498,8 @@ export default {
     // moved to useLineBindings composable
     // updateGlobalState, initializeUndoManager, undo, redo moved to useUndoRedo composable
     // Wrap undo/redo with redrawCanvas callback (redrawCanvas is defined later via closure)
-    const undo = () => undoCore(() => redrawCanvas(true));
-    const redo = () => redoCore(() => redrawCanvas(true));
+    const undo = () => canMutateDocument() ? undoCore(() => redrawCanvas(true)) : denyReadOnlyMutation();
+    const redo = () => canMutateDocument() ? redoCore(() => redrawCanvas(true)) : denyReadOnlyMutation();
 
     // --- Helper Modules Composable (must be before useDrawingEngine because it provides getActiveModule) ---
     const {
@@ -580,6 +602,7 @@ export default {
 
     // Method to add a plot/coord system from panel data
     const addElementFromPanel = (elementData) => {
+      if (!canMutateDocument()) return denyReadOnlyMutation();
       if (!ydoc.value || !yDrawings.value || !elementData || !elementData.type) {
         console.error("Invalid data received from panel or Yjs not ready", elementData);
         closeConfigPanel();
@@ -1119,7 +1142,14 @@ export default {
 
         // Listen for awareness changes (cursors, online users)
         // Throttled via rAF to avoid full dynamic redraw on every cursor move from every user
+        const publishActiveUsers = () => {
+            emit('update:active-users', Array.from(awareness.getStates().entries()).map(([clientId, state]) => ({
+                clientId,
+                user: state?.user || null
+            })));
+        };
         awareness.on('change', () => {
+            publishActiveUsers();
             if (!awarenessRedrawScheduled) {
                 awarenessRedrawScheduled = true;
                 requestAnimationFrame(() => {
@@ -1128,6 +1158,7 @@ export default {
                 });
             }
         });
+        publishActiveUsers();
     };
 
     const teardownYjsConnection = () => {
@@ -1143,6 +1174,7 @@ export default {
         yDrawings.value = null;
         activeRoomId.value = null;
         movableElements.value = [];
+        emit('update:active-users', []);
     };
 
     const handleYjsUpdate = (event) => {
@@ -1178,6 +1210,16 @@ export default {
             const connection = await connectToYjs(normalizedRoomId, {
               wsToken: props.wsToken || undefined,
               onStatus: (status) => {
+                connectionStatus.value = status;
+                isConnecting.value = status === 'connecting' || status === 'reconnecting';
+                if (status !== 'connected') {
+                  // A stroke that started before network loss must not be
+                  // committed after the session becomes read-only.
+                  isDrawing.value = false;
+                  currentElementPreview.value = null;
+                  inlineTextEditor.visible = false;
+                  inlineTextEditor.value = '';
+                }
                 if (typeof props.onConnectionStatus === 'function') {
                   props.onConnectionStatus(status);
                 }
@@ -1208,8 +1250,6 @@ export default {
         } catch (error) {
             console.error("Failed to connect Yjs provider:", error);
             showToast("Error connecting to collaboration session.", "error");
-        } finally {
-            isConnecting.value = false;
         }
     };
 
@@ -1481,6 +1521,8 @@ export default {
         return;
       }
 
+      if (!canMutateDocument()) return;
+
       if (isDrawing.value && currentTool.value !== 'eraser') {
         draw(transformedCoords, e.shiftKey, e.timeStamp); // Pass shift key state
       } else if (currentTool.value === 'eraser') {
@@ -1557,6 +1599,8 @@ export default {
         updateCursor();
         return;
       }
+
+      if (!canMutateDocument()) return denyReadOnlyMutation();
       
       if (event.button === 0) { // Left-click
         if (currentTool.value === 'select') {
@@ -1614,6 +1658,13 @@ export default {
         updateCursor();
         return;
       }
+      if (!canMutateDocument()) {
+        isDrawing.value = false;
+        currentElementPreview.value = null;
+        snapIndicator.value = null;
+        redrawCanvas(false);
+        return;
+      }
       if (isDrawing.value) {
          if (currentTool.value === 'eraser') {
              isDrawing.value = false;
@@ -1642,7 +1693,11 @@ export default {
         updateCursor();
       }
       if (isDrawing.value) {
-        finishDrawing();
+        if (canMutateDocument()) finishDrawing();
+        else {
+          isDrawing.value = false;
+          currentElementPreview.value = null;
+        }
       }
        if (yjsConnection.value?.awareness) {
            yjsConnection.value.awareness.setLocalStateField('cursor', null);
@@ -1697,6 +1752,8 @@ export default {
                 redrawCanvas(true);
                 return;
             }
+
+            if (!canMutateDocument()) return;
 
             // P0-FIX: Eraser must work on touch (iPad) - replicate handleMouseMove eraser logic
             if (currentTool.value === 'eraser') {
@@ -1823,6 +1880,11 @@ export default {
 
     const finalizeInlineText = () => {
       if (!inlineTextEditor.visible) return;
+      if (!canMutateDocument()) {
+        inlineTextEditor.visible = false;
+        inlineTextEditor.value = '';
+        return denyReadOnlyMutation();
+      }
       
       const text = inlineTextEditor.value.trim();
       if (text) {
@@ -1847,6 +1909,7 @@ export default {
     // LINE_TOOLS, draw, finishDrawing moved to useDrawingEngine composable
 
     const handleObjectUpdate = (updatedYMap) => {
+      if (!canMutateDocument()) return denyReadOnlyMutation();
       if (!updatedYMap) return;
 
       // Check if it's a Y.Map (committed update) or plain object (local drag override)
@@ -1893,6 +1956,7 @@ export default {
     };
 
     const handleCloneObject = (objectData) => {
+      if (!canMutateDocument()) return denyReadOnlyMutation();
       if (!ydoc.value || !yDrawings.value) return;
       const sourceId = objectData?.id;
       const sourceMap = yDrawings.value.toArray().find(map => map.get('id') === sourceId);
@@ -2074,6 +2138,7 @@ export default {
     // --- Other Actions ---
     const handlePaste = (event) => {
        event.preventDefault();
+       if (!canMutateDocument()) return denyReadOnlyMutation();
        const items = (event.clipboardData || window.clipboardData).items;
        if (!items || !ydoc.value) return;
 
@@ -2098,6 +2163,7 @@ export default {
     const MAX_IMAGE_DATAURL_BYTES = 5 * 1024 * 1024; // 5 MB limit for base64 dataUrl
 
     const addImageFromDataUrl = (dataUrl) => {
+        if (!canMutateDocument()) return denyReadOnlyMutation();
         if (!ydoc.value || !yDrawings.value) {
             console.error("[addImageFromDataUrl] Error: ydoc or yDrawings not available!");
             showToast("Cannot add image - connection issue", "error");
@@ -2175,6 +2241,7 @@ export default {
 
     // --- Public methods exposed via ref ---
     const clearCanvas = (options = {}) => {
+        if (!canMutateDocument()) return denyReadOnlyMutation();
         const skipConfirm = options?.skipConfirm === true;
         if (!ydoc.value || !yDrawings.value) {
             showToast("Canvas is not ready to clear yet.", "warning");
@@ -2506,6 +2573,8 @@ export default {
       notifications,
       statusMessage,
       yjsConnection,
+      connectionStatus,
+      collaborationReadOnly,
       canUndo,
       canRedo,
       selectedObjectId,
@@ -2729,6 +2798,53 @@ export default {
   pointer-events: none;
 }
 
+.connection-read-only {
+  position: absolute;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 3100;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: calc(100% - 32px);
+  padding: 9px 14px;
+  border: 1px solid rgba(180, 125, 25, 0.28);
+  border-radius: 999px;
+  background: rgba(255, 248, 225, 0.94);
+  color: #704d0b;
+  box-shadow: 0 8px 24px rgba(74, 50, 8, 0.14);
+  backdrop-filter: blur(12px);
+  font-size: 13px;
+  font-weight: 650;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.read-only-dot {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: #d6941b;
+  box-shadow: 0 0 0 4px rgba(214, 148, 27, 0.14);
+}
+
+.dark-mode .connection-read-only {
+  border-color: rgba(236, 181, 72, 0.32);
+  background: rgba(49, 39, 20, 0.94);
+  color: #f6d58f;
+}
+
+@media (max-width: 720px) {
+  .connection-read-only {
+    top: 10px;
+    max-width: calc(100% - 20px);
+    white-space: normal;
+    text-align: center;
+  }
+}
+
 .connection-spinner {
   width: 18px;
   height: 18px;
@@ -2783,4 +2899,3 @@ export default {
   color: #94a3b8;
 }
 </style>
-

@@ -1,25 +1,46 @@
 import { Router } from 'express';
 import { logger } from '../logger';
 import type { CapabilityAccess } from '../pilot/capabilityAccess';
+import type { BoardLifecycle, LifecycleFailureReason, LifecycleResult } from '../pilot/boardLifecycle';
 import { requireTeacherCapability } from '../pilot/capabilityHttpAdapters';
-import { createBoardForTeacher, listBoardsForTeacher, updateBoard } from '../services/boardService';
-import { findTeacherById } from '../services/teacherService';
 import { createRateLimiter } from '../middleware/rateLimiter';
 
-const parseDate = (value: unknown): Date | null => {
-  if (typeof value !== 'string') return null;
-  const ts = Date.parse(value);
-  if (Number.isNaN(ts)) return null;
-  return new Date(ts);
+/**
+ * Teacher dashboard board management through the BoardLifecycle Interface
+ * (VVE-102). Every request is authorized through
+ * CapabilityAccess.decide('teacher.openDashboard') first; the lifecycle
+ * commands then re-verify ownership and board state against durable state.
+ *
+ *  - GET / lazily ensures the Personal Board (idempotent + concurrent-safe)
+ *    and returns the dashboard view — expiry dates, states and the ONE
+ *    current Board Access Link (copy without rotation).
+ *  - POST / creates a Managed Board. Validity is FIXED at 12 months; the
+ *    transport carries no validity input at all. The response's `studentLink`
+ *    is the REAL working Board Access Link (QA P1-2: the old field mismatch
+ *    showed a dead URL after creation).
+ *  - POST /:id/regenerate-access rotates the credential atomically.
+ *  - POST /:id/end-access ends access immediately and schedules deletion
+ *    after seven days. No renewal, recovery or restore route exists.
+ */
+
+const FAILURE_HTTP: Record<LifecycleFailureReason, { status: number; message: string }> = {
+  notFound: { status: 404, message: 'Nie znaleziono tablicy.' },
+  notOwner: { status: 404, message: 'Nie znaleziono tablicy.' },
+  alreadyEnded: { status: 409, message: 'Dostęp do tej tablicy został już zakończony.' },
+  inactive: { status: 403, message: 'Konto nauczyciela zostało wyłączone.' },
+  storageUnavailable: { status: 503, message: 'Usługa chwilowo niedostępna. Spróbuj ponownie za chwilę.' },
+  invalidLabel: { status: 400, message: 'Podaj etykietę ucznia lub grupy (1–120 znaków).' }
 };
 
-/**
- * Teacher dashboard board management. Every request is authorized through
- * CapabilityAccess.decide('teacher.openDashboard'), which re-verifies the
- * durable teacher active flag and credential version — a regenerated link or
- * a deactivated teacher kills the session on the very next request.
- */
-export const createTeacherBoardsRouter = (access: CapabilityAccess) => {
+const respondWithResult = (res: import('express').Response, result: LifecycleResult): void => {
+  if (result.ok) {
+    return;
+  }
+  const mapped = FAILURE_HTTP[result.reason];
+  res.status(mapped.status).json({ error: mapped.message, reason: result.reason });
+};
+
+export const createTeacherBoardsRouter = (access: CapabilityAccess, lifecycle: BoardLifecycle) => {
   const router = Router();
 
   router.use(requireTeacherCapability(access));
@@ -31,68 +52,110 @@ export const createTeacherBoardsRouter = (access: CapabilityAccess) => {
     })
   );
 
+  // Dashboard: lazy Personal Board + full board list with lifecycle states.
   router.get('/', async (req, res) => {
     const teacherId = req.capabilityGrant!.teacherId!;
-    try {
-      const boards = await listBoardsForTeacher(teacherId);
-      res.json({ boards });
-    } catch (error) {
-      logger.error('Failed to list boards', { teacherId, error: (error as Error).message });
-      res.status(503).json({ error: 'Nie udało się pobrać tablic. Spróbuj ponownie.' });
+    const now = new Date();
+
+    const ensured = await lifecycle.execute({ kind: 'ensurePersonalBoard', teacherId }, now);
+    if (!ensured.ok) {
+      respondWithResult(res, ensured);
+      return;
     }
+
+    const view = await lifecycle.view({ kind: 'teacherDashboard', teacherId }, now);
+    if ('error' in view || view.kind !== 'teacherDashboard') {
+      res.status(503).json({ error: 'Nie udało się pobrać tablic. Spróbuj ponownie.' });
+      return;
+    }
+
+    res.json({
+      personalBoard: view.personalBoard,
+      boards: view.managedBoards
+    });
   });
 
+  // Create a Managed Board: twelve-month validity, one Owning Teacher, one
+  // Board Access credential, Student Label stored internally.
   router.post('/', async (req, res) => {
     const teacherId = req.capabilityGrant!.teacherId!;
-    const teacher = await findTeacherById(teacherId);
-    if (!teacher) {
-      res.status(401).json({ error: 'Sesja nauczyciela jest nieprawidłowa.' });
+    const body = req.body ?? {};
+    const studentLabel = typeof body.studentLabel === 'string' ? body.studentLabel : '';
+    const title = typeof body.title === 'string' ? body.title : null;
+
+    const result = await lifecycle.execute(
+      { kind: 'createManagedBoard', teacherId, studentLabel, title },
+      new Date()
+    );
+
+    if (!result.ok) {
+      respondWithResult(res, result);
       return;
     }
-    const body = req.body ?? {};
-    const title = typeof body.title === 'string' ? body.title : null;
-    const studentName = typeof body.studentName === 'string' ? body.studentName : null;
-    const validUntil = parseDate(body.validUntil);
+    if (result.command !== 'createManagedBoard') {
+      res.status(500).json({ error: 'Nieoczekiwany wynik operacji.' });
+      return;
+    }
 
-    const result = await createBoardForTeacher({
-      teacherId,
-      organizationId: teacher.organization_id ?? null,
-      title,
-      studentName,
-      validUntil
-    });
-
+    logger.info('Managed Board created', { teacherId, boardId: result.board.boardId });
     res.status(201).json({
-      boardId: result.board.id,
-      studentUrl: result.studentUrl,
-      publicSlug: result.board.public_slug,
-      validUntil: result.board.valid_until
+      boardId: result.board.boardId,
+      publicSlug: result.board.publicSlug,
+      studentLink: result.boardAccessLink,
+      validUntil: result.board.validUntil
     });
   });
 
-  router.patch('/:id', async (req, res) => {
+  // Explicit regeneration: the old credential dies atomically, all board
+  // data and Yjs state are preserved.
+  router.post('/:id/regenerate-access', async (req, res) => {
     const teacherId = req.capabilityGrant!.teacherId!;
-    const body = req.body ?? {};
+    const result = await lifecycle.execute(
+      { kind: 'regenerateBoardAccess', teacherId, boardId: req.params.id },
+      new Date()
+    );
 
-    const params: import('../services/boardService').UpdateBoardParams = {};
-    if (body.title !== undefined) {
-      params.title = typeof body.title === 'string' ? body.title : null;
+    if (!result.ok) {
+      respondWithResult(res, result);
+      return;
     }
-    if (body.validUntil !== undefined) {
-      params.validUntil = parseDate(body.validUntil);
-    }
-    if (body.archived !== undefined) {
-      params.archivedAt = body.archived ? new Date() : null;
-    }
-
-    const updated = await updateBoard(req.params.id, teacherId, params);
-
-    if (!updated) {
-      res.status(404).json({ error: 'Nie znaleziono tablicy.' });
+    if (result.command !== 'regenerateBoardAccess') {
+      res.status(500).json({ error: 'Nieoczekiwany wynik operacji.' });
       return;
     }
 
-    res.json({ board: updated });
+    res.json({
+      boardId: result.board.boardId,
+      studentLink: result.boardAccessLink,
+      validUntil: result.board.validUntil,
+      note: 'Poprzedni link przestał działać natychmiast. Tablica i wszystkie materiały pozostały bez zmian.'
+    });
+  });
+
+  // End Board Access: access ends immediately, deletion is scheduled seven
+  // days out, and no recovery control exists.
+  router.post('/:id/end-access', async (req, res) => {
+    const teacherId = req.capabilityGrant!.teacherId!;
+    const result = await lifecycle.execute(
+      { kind: 'endBoardAccess', teacherId, boardId: req.params.id },
+      new Date()
+    );
+
+    if (!result.ok) {
+      respondWithResult(res, result);
+      return;
+    }
+    if (result.command !== 'endBoardAccess') {
+      res.status(500).json({ error: 'Nieoczekiwany wynik operacji.' });
+      return;
+    }
+
+    res.json({
+      boardId: result.board.boardId,
+      accessEndedAt: result.board.accessEndedAt,
+      deleteAfter: result.board.deleteAfter,
+      note: 'Dostęp ucznia został zakończony. Tablica zostanie trwale usunięta po 7 dniach.'
+    });
   });
 
   return router;

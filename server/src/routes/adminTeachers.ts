@@ -3,6 +3,7 @@ import multer from 'multer';
 import { parse } from 'csv-parse/sync';
 import { logger } from '../logger';
 import type { CapabilityAccess } from '../pilot/capabilityAccess';
+import type { BoardLifecycle } from '../pilot/boardLifecycle';
 
 // 4.7: Limit file upload size to 5MB
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
@@ -78,14 +79,18 @@ const dedupeByEmail = (rows: ImportRow[]): ImportRow[] => {
 };
 
 /**
- * Administrator teacher management through CapabilityAccess (VVE-101).
+ * Administrator teacher management through CapabilityAccess (VVE-101) and
+ * BoardLifecycle (VVE-102).
  *
  * GET / is side-effect-free: it lists teachers WITH their current retrievable
- * Teacher Access Link (ADR-0008) and never creates or rotates anything.
+ * Teacher Access Link (ADR-0008), plus per-teacher board facts from the
+ * BoardLifecycle view, and never creates or rotates anything.
  * Regeneration is the explicit POST /:id/regenerate-link; deactivation is the
- * explicit POST /:id/deactivate and ends all access immediately.
+ * explicit POST /:id/deactivate — it ends ALL access immediately through
+ * CapabilityAccess AND schedules the teacher's Personal Board and every
+ * Managed Board for deletion after seven days (ADR-0006).
  */
-export const createAdminTeachersRouter = (access: CapabilityAccess) => {
+export const createAdminTeachersRouter = (access: CapabilityAccess, lifecycle: BoardLifecycle) => {
   const router = Router();
 
   // List teachers with their current link — read-only, never rotates.
@@ -95,6 +100,9 @@ export const createAdminTeachersRouter = (access: CapabilityAccess) => {
       res.status(503).json({ error: 'Nie udało się pobrać listy nauczycieli. Spróbuj ponownie.' });
       return;
     }
+    const factsView = await lifecycle.view({ kind: 'adminTeacherFacts' }, new Date());
+    const facts = !('error' in factsView) && factsView.kind === 'adminTeacherFacts' ? factsView.facts : [];
+    const factsByTeacher = new Map(facts.map((fact) => [fact.teacherId, fact]));
     res.json({
       teachers: result.map((t) => ({
         teacherId: t.teacherId,
@@ -103,7 +111,8 @@ export const createAdminTeachersRouter = (access: CapabilityAccess) => {
         isActive: t.isActive,
         createdAt: t.createdAt,
         lastLoginAt: t.lastLoginAt,
-        accessLink: t.accessLink
+        accessLink: t.accessLink,
+        boardFacts: factsByTeacher.get(t.teacherId) ?? null
       }))
     });
   });
@@ -189,23 +198,34 @@ export const createAdminTeachersRouter = (access: CapabilityAccess) => {
     });
   });
 
-  // Deactivation ends ALL access immediately (board deletion scheduling is VVE-102).
+  // Deactivation ends ALL access immediately and schedules deletion of the
+  // teacher's Personal Board and every Managed Board after seven days
+  // (ADR-0006) — one BoardLifecycle command, no recovery control.
   router.post('/:id/deactivate', async (req, res) => {
     const teacherId = req.params.id;
-    const result = await access.deactivateTeacher(teacherId);
+    const result = await lifecycle.execute({ kind: 'deactivateTeacher', teacherId }, new Date());
     if (!result.ok) {
       if (result.reason === 'notFound') {
         res.status(404).json({ error: 'Nie znaleziono nauczyciela.' });
         return;
       }
-      if (result.reason === 'alreadyInactive') {
+      if (result.reason === 'inactive') {
         res.status(409).json({ error: 'Nauczyciel jest już wyłączony.' });
         return;
       }
       res.status(503).json({ error: 'Nie udało się wyłączyć nauczyciela. Spróbuj ponownie.' });
       return;
     }
-    res.json({ teacherId, deactivated: true });
+    if (result.command !== 'deactivateTeacher') {
+      res.status(500).json({ error: 'Nieoczekiwany wynik operacji.' });
+      return;
+    }
+    res.json({
+      teacherId,
+      deactivated: true,
+      boardsScheduled: result.boardsScheduled,
+      note: 'Dostęp został odebrany natychmiast. Tablice nauczyciela zostaną trwale usunięte po 7 dniach.'
+    });
   });
 
   return router;

@@ -2,8 +2,8 @@ import request from 'supertest';
 import type { Express } from 'express';
 
 /**
- * The admin→teacher→board→student flow through the CapabilityAccess stack
- * (VVE-101), expressed once and reusably.
+ * The admin→teacher→board→student flow through the Pilot stack
+ * (CapabilityAccess + BoardLifecycle), expressed once and reusably.
  *
  * Every step is a real HTTP call against the app under test:
  *   1. The Administrator exchanges the shared passphrase for a twelve-hour
@@ -12,8 +12,11 @@ import type { Express } from 'express';
  *   2. The Teacher opens the access link; CapabilityAccess validates it and
  *      the stack exchanges it for a teacher session cookie, then redirects
  *      to the dashboard.
- *   3. The Teacher creates a Managed Board and receives the Board Access
- *      Link.
+ *   3. The Teacher's first dashboard GET lazily creates the Personal Board
+ *      (idempotent), then the Teacher creates a Managed Board and receives
+ *      the working Board Access Link (`studentLink`, QA P1-2). A re-run for
+ *      the same teacher reuses the existing boards through the dashboard
+ *      view — the flow converges instead of accumulating demo boards.
  *   4. The Student opens the Board Access Link and receives board facts plus
  *      a scoped collaboration ws admission token.
  */
@@ -22,6 +25,7 @@ export interface CurrentStackFlowResult {
   teacherAccessPath: string;
   adminSessionCookie: string;
   teacherSessionCookie: string;
+  personalBoardId: string;
   boardId: string;
   publicSlug: string;
   studentAccessPath: string;
@@ -38,6 +42,7 @@ export interface CurrentStackFlowOptions {
   teacherEmail: string;
   teacherFullName?: string;
   boardTitle?: string;
+  studentLabel?: string;
 }
 
 const pathOf = (url: string): string => `${new URL(url).pathname}${new URL(url).search}`;
@@ -53,7 +58,13 @@ const cookieFrom = (res: request.Response): string => {
 
 export const driveCurrentStackLessonFlow = async (
   app: Express,
-  { adminPassphrase, teacherEmail, teacherFullName = 'Flow Teacher', boardTitle = 'Flow Board' }: CurrentStackFlowOptions
+  {
+    adminPassphrase,
+    teacherEmail,
+    teacherFullName = 'Flow Teacher',
+    boardTitle = 'Flow Board',
+    studentLabel = 'Flow Student'
+  }: CurrentStackFlowOptions
 ): Promise<CurrentStackFlowResult> => {
   // 1a. Administrator passphrase → twelve-hour HttpOnly session.
   const loginRes = await request(app)
@@ -85,22 +96,58 @@ export const driveCurrentStackLessonFlow = async (
   }
   const teacherSessionCookie = cookieFrom(teacherLoginRes);
 
-  // 3. Teacher creates a Managed Board and receives the Board Access Link.
-  const createBoardRes = await request(app)
-    .post('/api/teacher/boards')
-    .set('Cookie', teacherSessionCookie)
-    .send({ title: boardTitle, studentName: 'Flow Student' });
-  if (createBoardRes.status !== 201) {
-    throw new Error(
-      `Teacher board creation failed: ${createBoardRes.status} ${JSON.stringify(createBoardRes.body)}`
-    );
+  // 3a. First dashboard visit lazily creates exactly one Personal Board.
+  const dashboardRes = await request(app)
+    .get('/api/teacher/boards')
+    .set('Cookie', teacherSessionCookie);
+  if (dashboardRes.status !== 200) {
+    throw new Error(`Teacher dashboard failed: ${dashboardRes.status} ${JSON.stringify(dashboardRes.body)}`);
   }
-  const studentUrl: string = createBoardRes.body.studentUrl;
-  const boardId: string = createBoardRes.body.boardId;
-  const publicSlug: string = createBoardRes.body.publicSlug;
+  const personalBoardId: string | undefined = dashboardRes.body.personalBoard?.boardId;
+  if (typeof personalBoardId !== 'string') {
+    throw new Error(`Dashboard returned no Personal Board: ${JSON.stringify(dashboardRes.body)}`);
+  }
+
+  // 3b. The Teacher creates the demo Managed Board — or, on a re-run, reuses
+  // the existing one through the dashboard view (copy WITHOUT rotation), so
+  // the flow converges: one Personal Board, one Managed Board, one link.
+  const dashboardBoards: Array<{
+    boardId: string;
+    state: string;
+    publicSlug: string | null;
+    boardAccessLink: string | null;
+  }> = Array.isArray(dashboardRes.body.boards) ? dashboardRes.body.boards : [];
+  const reusable = dashboardBoards.find(
+    (board) => board.state === 'active' && typeof board.boardAccessLink === 'string' && board.boardAccessLink.length > 0
+  );
+
+  let studentLink: string;
+  let boardId: string;
+  let publicSlug: string;
+  if (reusable && reusable.publicSlug) {
+    studentLink = reusable.boardAccessLink as string;
+    boardId = reusable.boardId;
+    publicSlug = reusable.publicSlug;
+  } else {
+    const createBoardRes = await request(app)
+      .post('/api/teacher/boards')
+      .set('Cookie', teacherSessionCookie)
+      .send({ title: boardTitle, studentLabel });
+    if (createBoardRes.status !== 201) {
+      throw new Error(
+        `Teacher board creation failed: ${createBoardRes.status} ${JSON.stringify(createBoardRes.body)}`
+      );
+    }
+    studentLink = createBoardRes.body.studentLink;
+    boardId = createBoardRes.body.boardId;
+    publicSlug = createBoardRes.body.publicSlug;
+    if (typeof studentLink !== 'string' || studentLink.length === 0) {
+      throw new Error(`Board creation returned no working studentLink: ${JSON.stringify(createBoardRes.body)}`);
+    }
+  }
 
   // 4. Student opens the Board Access Link and receives board facts + ws token.
-  const studentRes = await request(app).get(pathOf(studentUrl));
+  const studentRes = await request(app).get(pathOf(studentLink));
   if (studentRes.status !== 200) {
     throw new Error(`Student board access failed: ${studentRes.status} ${JSON.stringify(studentRes.body)}`);
   }
@@ -110,9 +157,10 @@ export const driveCurrentStackLessonFlow = async (
     teacherAccessPath: pathOf(teacherLink),
     adminSessionCookie,
     teacherSessionCookie,
+    personalBoardId,
     boardId,
     publicSlug,
-    studentAccessPath: pathOf(studentUrl),
+    studentAccessPath: pathOf(studentLink),
     studentBoard: {
       wsToken: studentRes.body.wsToken,
       role: studentRes.body.role,

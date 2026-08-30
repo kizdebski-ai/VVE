@@ -13,6 +13,7 @@ import {
   type RuntimeEnvironment
 } from './pilot/availability';
 import { createCapabilityAccess } from './pilot/capabilityAccess';
+import { createBoardLifecycle, type BoardLifecycle } from './pilot/boardLifecycle';
 import { requireAdminCapability } from './pilot/capabilityHttpAdapters';
 import { config } from './config';
 
@@ -39,14 +40,23 @@ export interface CreateAppOptions {
   devSurface?: boolean;
   /** CapabilityAccess dependency; defaults to the process-wide instance. */
   capabilityAccess?: ReturnType<typeof createCapabilityAccess>;
+  /** BoardLifecycle dependency (VVE-102); defaults to an instance over the process db + CapabilityAccess. */
+  boardLifecycle?: BoardLifecycle;
 }
 
-export const createHttpApp = ({ roomManager, aiSolver, environment, devSurface, capabilityAccess }: CreateAppOptions) => {
+export const createHttpApp = ({ roomManager, aiSolver, environment, devSurface, capabilityAccess, boardLifecycle }: CreateAppOptions) => {
   const app = express();
 
   const resolvedEnvironment: RuntimeEnvironment = environment ?? config.pilotEnvironment;
   const resolvedDevSurface: boolean = devSurface ?? config.devSurface;
   const access = capabilityAccess ?? createCapabilityAccess();
+  const lifecycle =
+    boardLifecycle ??
+    createBoardLifecycle({
+      access,
+      onBoardsAccessEnded: (boardIds) =>
+        boardIds.forEach((boardId) => roomManager.closeRoomSockets(boardId, 'Dostęp do tablicy został zakończony'))
+    });
 
   // One availability decision source for route registration (Module 9).
   const availability = createPilotAvailability();
@@ -145,16 +155,16 @@ export const createHttpApp = ({ roomManager, aiSolver, environment, devSurface, 
   // management operation enforces the session server-side via decide().
   register('http.adminTeachers', () => {
     app.use('/api/admin', createAdminAuthRouter(access));
-    app.use('/api/admin/teachers', requireAdminCapability(access), createAdminTeachersRouter(access));
+    app.use('/api/admin/teachers', requireAdminCapability(access), createAdminTeachersRouter(access, lifecycle));
   });
   register('http.teacherAuth', () => {
     app.use(createTeacherAuthRouter(access));
   });
   register('http.teacherBoards', () => {
-    app.use('/api/teacher/boards', createTeacherBoardsRouter(access));
+    app.use('/api/teacher/boards', createTeacherBoardsRouter(access, lifecycle));
   });
   register('http.boardAccess', () => {
-    app.use(createBoardAccessRouter(access));
+    app.use(createBoardAccessRouter(access, lifecycle));
   });
   register('http.ai', () => {
     // 4.5: Rate limit ALL AI endpoints (20 req/min per IP)

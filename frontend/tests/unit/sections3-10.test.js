@@ -71,16 +71,9 @@ describe('5.8: Specific watchers instead of deep watcher', () => {
 
 // ─── Section 6: Synchronization ──────────────────────────────────────────────
 
-describe('6.1: Compaction after snapshot', () => {
-  it('boardYjsPersistence.ts deletes incremental updates after snapshot', () => {
-    const src = readFileSync(
-      resolve(__dirname, '../../../server/src/services/boardYjsPersistence.ts'),
-      'utf-8'
-    );
-    expect(src).toContain("board_yjs_updates");
-    expect(src).toContain(".del()");
-  });
-});
+// VVE-103 deleted BoardYjsPersistence. Snapshot cut-off and compaction are
+// executable behavior tests in server/tests/postgresBoardDocumentStore.test.ts;
+// a source-text assertion here would preserve the unsafe legacy seam.
 
 describe('6.2: Promise-based hydration lock', () => {
   it('rooms.ts uses hydrationPromise instead of boolean', () => {

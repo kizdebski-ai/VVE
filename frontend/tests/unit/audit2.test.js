@@ -160,11 +160,9 @@ describe('H8: Per-IP WebSocket connection limiting', () => {
     expect(src).toContain('Too many connections');
   });
 
-  it('decrements IP count on close/error/unauthorized', () => {
-    // Should have trackIpDisconnect in close handler, error handler, and early exits
-    const disconnectCalls = (src.match(/trackIpDisconnect/g) || []).length;
-    expect(disconnectCalls).toBeGreaterThanOrEqual(4);
-  });
+  // Connection release is now idempotent through one local releaseIp()
+  // closure. Counting source occurrences would reward duplicated cleanup;
+  // runtime connection behavior is covered at the CollaborationRuntime seam.
 });
 
 // ─── Canvas memory cleanup in PDF export ─────────────────────────────────────

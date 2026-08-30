@@ -4,53 +4,49 @@ import { Knex } from 'knex';
 
 import { getDb } from '../src/db';
 import { createCapabilityAccess } from '../src/pilot/capabilityAccess';
-import { createBoardForTeacher } from '../src/services/boardService';
+import { createBoardLifecycle } from '../src/pilot/boardLifecycle';
 import { getOrCreateTeacher } from '../src/services/teacherService';
 import { PILOT_MANIFEST_VERSION } from '../src/pilot/availability';
 
 /**
- * Deterministic local Pilot fixture (VVE-100, slice S0; re-routed in VVE-101).
+ * Deterministic local Pilot fixture (VVE-100, slice S0; re-routed in
+ * VVE-101/102 through the CapabilityAccess + BoardLifecycle modules).
  *
- * Seeds ONE teacher with ONE Managed Board into local PostgreSQL so
- * Playwright/browser tests can launch three contexts through the
- * CapabilityAccess stack:
+ * Seeds ONE teacher with ONE Personal Board and ONE Managed Board into local
+ * PostgreSQL so Playwright/browser tests can launch three contexts through
+ * the Pilot stack:
  *
  *   - Administrator: passphrase login (ADMIN_PASSPHRASE → 12h session)
  *   - Teacher:       the printed Teacher Access Link (one active, retrievable)
- *   - Student:       the printed Board Access Link
+ *   - Student:       the printed Board Access Link of the fixture Managed Board
  *
- * Determinism: fixed inputs (email, names, board title, twelve-month
- * validity). Re-running deletes the fixture teacher's boards and recreates
- * exactly one, so the seeded structure converges. The Teacher Access Link is
+ * Determinism: fixed inputs (email, names, board title, Student Label).
+ * Re-running deletes the fixture teacher's boards and recreates exactly one
+ * of each kind, so the seeded structure converges. The Teacher Access Link is
  * REUSED when already active (viewing never rotates — VVE-101), and
  * credentials are written to server/data/pilot-fixture.json, which is
- * gitignored.
+ * gitignored. The Managed Board's twelve-month validity is fixed by
+ * BoardLifecycle, not by this fixture.
  */
 
 export const FIXTURE_TEACHER_EMAIL = 'pilot-teacher@vve-pilot.local';
 export const FIXTURE_TEACHER_NAME = 'Nauczyciel Pilotowy';
 export const FIXTURE_ORG_NAME = 'VVE Pilot Fixture';
 export const FIXTURE_BOARD_TITLE = 'Lekcja pilotażowa';
-export const FIXTURE_STUDENT_NAME = 'Uczeń';
-
-/** The Pilot contract fixes Managed Board validity at twelve months. */
-const addTwelveMonths = (from: Date): Date => {
-  const d = new Date(from);
-  d.setMonth(d.getMonth() + 12);
-  return d;
-};
+export const FIXTURE_STUDENT_LABEL = 'Uczeń';
 
 export interface PilotFixture {
   manifestVersion: string;
   seededAt: string;
   teacherId: string;
+  personalBoardId: string;
   boardId: string;
   publicSlug: string;
   /** ADMIN_PASSPHRASE the backend must run with for the Administrator context. */
   adminPassphrase: string;
   /** Teacher Access Link (opens the teacher login flow). */
   teacherAccessLink: string;
-  /** Board Access Link (opens the student board entry). */
+  /** Board Access Link of the fixture Managed Board (opens the student board entry). */
   boardAccessLink: string;
   validUntil: string;
 }
@@ -58,6 +54,7 @@ export interface PilotFixture {
 export const seedPilotFixture = async (): Promise<PilotFixture> => {
   const db: Knex = getDb();
   const access = createCapabilityAccess();
+  const lifecycle = createBoardLifecycle({ access });
 
   // Fixed organization (upsert by name keeps reruns deterministic).
   const existingOrg = await db('organizations').where({ name: FIXTURE_ORG_NAME }).first();
@@ -82,16 +79,15 @@ export const seedPilotFixture = async (): Promise<PilotFixture> => {
     await db('teachers').where({ id: teacher.id }).update({ is_active: true });
   }
 
-  // Reset the teacher's boards to exactly one fixture board. Access logs
-  // reference boards without a cascade, so they are removed first; yjs state,
-  // updates cascade with the board, and fixture students are removed too so
-  // reruns converge.
+  // Reset the teacher's boards. Access logs reference boards without a
+  // cascade, so they are removed first; the boards row delete cascades the
+  // document state, and fixture students no longer exist (VVE-102 stores the
+  // Student Label on the board).
   const priorBoardIds = await db('boards').where({ teacher_id: teacher.id }).pluck('id');
   if (priorBoardIds.length > 0) {
     await db('board_access_logs').whereIn('board_id', priorBoardIds).del();
   }
   await db('boards').where({ teacher_id: teacher.id }).del();
-  await db('students').where({ teacher_id: teacher.id }).del();
 
   // Exactly ONE active retrievable Teacher Access Link; re-seeding REUSES the
   // existing link (side-effect-free) instead of rotating it.
@@ -113,30 +109,43 @@ export const seedPilotFixture = async (): Promise<PilotFixture> => {
     throw new Error(`Seeded Teacher Access Link was denied by CapabilityAccess: ${decision.reason}`);
   }
 
-  // One Managed Board, twelve-month validity, one student label.
-  const { board, studentToken } = await createBoardForTeacher({
-    teacherId: teacher.id,
-    organizationId: orgId,
-    title: FIXTURE_BOARD_TITLE,
-    studentName: FIXTURE_STUDENT_NAME,
-    validUntil: addTwelveMonths(new Date())
-  });
+  // One Personal Board (lazy-creation command — the same path the dashboard
+  // uses) and one Managed Board with twelve-month validity.
+  const personal = await lifecycle.execute({ kind: 'ensurePersonalBoard', teacherId: teacher.id }, new Date());
+  if (!personal.ok) {
+    throw new Error(`Seeding the Personal Board failed: ${personal.reason}`);
+  }
+  if (personal.command !== 'ensurePersonalBoard') {
+    throw new Error('Personal Board command returned an unexpected result.');
+  }
 
-  // The board access link targets the app origin (config.teacherAppBaseUrl),
-  // same origin the teacher access link uses.
-  const appBase = new URL(linkResult.accessLink).origin;
-  const boardAccessLink = `${appBase}/board/${board.public_slug}?token=${studentToken}`;
+  const managed = await lifecycle.execute(
+    {
+      kind: 'createManagedBoard',
+      teacherId: teacher.id,
+      studentLabel: FIXTURE_STUDENT_LABEL,
+      title: FIXTURE_BOARD_TITLE
+    },
+    new Date()
+  );
+  if (!managed.ok) {
+    throw new Error(`Seeding the Managed Board failed: ${managed.reason}`);
+  }
+  if (managed.command !== 'createManagedBoard' || managed.boardAccessLink === undefined) {
+    throw new Error('Seeded Managed Board produced no Board Access Link.');
+  }
 
   const fixture: PilotFixture = {
     manifestVersion: PILOT_MANIFEST_VERSION,
     seededAt: new Date().toISOString(),
     teacherId: teacher.id,
-    boardId: board.id,
-    publicSlug: board.public_slug as string,
+    personalBoardId: personal.board.boardId,
+    boardId: managed.board.boardId,
+    publicSlug: managed.board.publicSlug as string,
     adminPassphrase: process.env.ADMIN_PASSPHRASE || '',
     teacherAccessLink: linkResult.accessLink,
-    boardAccessLink,
-    validUntil: new Date(board.valid_until as Date).toISOString()
+    boardAccessLink: managed.boardAccessLink,
+    validUntil: managed.board.validUntil ? new Date(managed.board.validUntil).toISOString() : ''
   };
 
   return fixture;
@@ -181,7 +190,7 @@ if (isCli) {
 
     console.log('[pilot-fixture] Seeded deterministic local Pilot fixture.');
     console.log(`[pilot-fixture] Teacher:  ${FIXTURE_TEACHER_EMAIL} (${FIXTURE_TEACHER_NAME})`);
-    console.log(`[pilot-fixture] Board:    ${FIXTURE_BOARD_TITLE} (valid until ${fixture.validUntil})`);
+    console.log(`[pilot-fixture] Boards:   private + ${FIXTURE_BOARD_TITLE} (valid until ${fixture.validUntil})`);
     console.log('');
     console.log('Browser contexts:');
     console.log(`  Administrator: passphrase login at ${new URL(fixture.teacherAccessLink).origin}/admin/teachers`);

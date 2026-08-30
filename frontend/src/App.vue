@@ -36,6 +36,7 @@
         @update:solution="solution = $event"
         @update:has-char-groups="hasCharGroups = $event"
         @update:has-stylized-strokes="hasStylizedStrokes = $event"
+        @update:active-users="handleActiveUsers"
         @select-pen-preset="selectPenPreset"
       />
       <AIChatPanel
@@ -404,6 +405,9 @@ export default {
     // Yjs awareness state (count/badges)
     const awarenessStates = ref([]);
     const activeUsersCount = computed(() => awarenessStates.value.length);
+    const handleActiveUsers = (states) => {
+      awarenessStates.value = Array.isArray(states) ? states : [];
+    };
     const localClientId = ref(null);
     const formattedLastSaved = computed(() => {
       if (!lastSaved.value) return '';
@@ -1344,6 +1348,7 @@ export default {
       exportedState,
       username,
       awarenessStates,
+      handleActiveUsers,
       statusMessage,
       darkMode,
       debugMode,

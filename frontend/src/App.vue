@@ -1443,6 +1443,7 @@ export default {
       selectPenPreset,
       selectInputProfile,
       cycleInputStyle,
+      handlePointerObserved,
       inputProfile,
       setPresetCanvasRef,
       setMainPreviewRef,

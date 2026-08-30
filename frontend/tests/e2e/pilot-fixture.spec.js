@@ -28,6 +28,7 @@ const fixture = JSON.parse(readFileSync(fixturePath, 'utf8'));
 const adminPassphrase = process.env.PILOT_ADMIN_PASSPHRASE || 'pilot-e2e-admin-passphrase';
 
 test.describe('Pilot fixture: Administrator, Teacher, Student browser contexts', () => {
+  test.describe.configure({ mode: 'serial' });
   test('Teacher opens the access link and lands on the dashboard with the seeded board', async ({ browser }) => {
     const context = await browser.newContext();
     const page = await context.newPage();
@@ -714,8 +715,10 @@ test.describe('Pilot fixture: Administrator, Teacher, Student browser contexts',
         pressure: 0.42
       }));
     });
-    await expect(autoPage.getByTestId('input-style-control').getByRole('radio', { name: 'Pióro' }))
-      .toHaveAttribute('aria-checked', 'true');
+    await expect.poll(async () => {
+      return autoPage.getByTestId('input-style-control').getByRole('radio', { name: 'Pióro' })
+        .getAttribute('aria-checked');
+    }, { timeout: 5_000 }).toBe('true');
     await autoContext.close();
   });
 });

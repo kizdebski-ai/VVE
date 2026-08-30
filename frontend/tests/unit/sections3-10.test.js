@@ -291,6 +291,13 @@ describe('10.1: Input Style keyboard shortcuts', () => {
     expect(src).toContain('useKeyboardShortcuts({');
     expect(src).toContain("emit('select-pen-preset'");
   });
+
+  it('App.vue auto-selects Input Style from observed pointer type until override', () => {
+    const src = readSrc('App.vue');
+    expect(src).toContain('@pointer-observed="handlePointerObserved"');
+    expect(src).toContain('handlePointerObserved,');
+    expect(src).toContain('suggestProfile');
+  });
 });
 
 describe('10.3: Extended color palette (20+ colors)', () => {

@@ -1,0 +1,21 @@
+{
+  "name": "WhiteVue",
+  "install": "./.cursor/install.sh",
+  "start": "./.cursor/start.sh",
+  "ports": [
+    { "name": "frontend (Vite)", "port": 5173 },
+    { "name": "backend (Node WS/API)", "port": 8000 }
+  ],
+  "terminals": [
+    {
+      "name": "backend",
+      "command": "cd server && npm run dev",
+      "description": "WhiteVue realtime backend (Express + WebSocket + Yjs) on http://localhost:8000"
+    },
+    {
+      "name": "frontend",
+      "command": "cd frontend && npm run dev -- --host",
+      "description": "WhiteVue Vue 3 + Vite dev server on http://localhost:5173 (proxies /api and /ws to the backend)"
+    }
+  ]
+}

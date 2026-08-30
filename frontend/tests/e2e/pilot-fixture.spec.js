@@ -261,7 +261,7 @@ test.describe('Pilot fixture: Administrator, Teacher, Student browser contexts',
     const browserErrors = [];
     for (const page of [first, second]) {
       page.on('console', (message) => {
-        if (message.type() === 'error') browserErrors.push(message.text());
+        if (['warning', 'error'].includes(message.type())) browserErrors.push(message.text());
       });
       page.on('pageerror', (error) => browserErrors.push(error.message));
     }
@@ -403,7 +403,7 @@ test.describe('Pilot fixture: Administrator, Teacher, Student browser contexts',
       const page = await context.newPage();
       const browserErrors = [];
       page.on('console', (message) => {
-        if (message.type() === 'error') browserErrors.push(message.text());
+        if (['warning', 'error'].includes(message.type())) browserErrors.push(message.text());
       });
       page.on('pageerror', (error) => browserErrors.push(error.message));
 

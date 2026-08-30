@@ -105,7 +105,7 @@ have focused unit or browser coverage.
 - Focused desktop/iPad panel run: passed for 1440x900 and 768x1024 with
   reduced motion. It asserted focus, Polish validation errors, exclusivity,
   Escape cancellation, horizontal overflow, viewport bounds, topmost hit
-  testing and zero browser console/page errors.
+  testing and zero browser console warnings/errors or page errors.
 - Runtime collaboration evidence covers two participants, acknowledged create
   and transform, participant-local undo/redo, reload hydration, PDF download,
   reconnect read-only transition within the 2 s gate, and hidden-experiment

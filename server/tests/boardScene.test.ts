@@ -5,8 +5,10 @@ import {
   applyBoardCommand,
   collectUpdateEffects,
   normalizeBoardObject,
+  queryObjectsNear,
   sceneClearEpoch,
   sceneDrawings,
+  sceneObjectBounds,
   validateBoardObject,
   SCENE_LIMITS,
   SHAPE_TYPES,
@@ -518,5 +520,53 @@ describe('collectUpdateEffects', () => {
     });
     const effects = collectUpdateEffects(Y.encodeStateAsUpdate(base), update);
     expect(effects.changedObjects.map((object) => object.id)).toEqual(['legacy-nested']);
+  });
+});
+
+describe('BoardDocument candidate query', () => {
+  it('keeps optional pen pressure through normalization', () => {
+    const object = normalizeBoardObject({
+      id: 'pressured',
+      type: 'pen',
+      points: [
+        { x: 0, y: 0, t: 1, p: 0.2 },
+        { x: 8, y: 3, t: 4, p: 0.9 }
+      ],
+      color: '#111827',
+      lineWidth: 2
+    });
+    expect(object.points).toEqual([
+      { x: 0, y: 0, t: 1, p: 0.2 },
+      { x: 8, y: 3, t: 4, p: 0.9 }
+    ]);
+  });
+
+  it('rejects out-of-range pressure instead of storing a corrupt point', () => {
+    expect(
+      validateBoardObject({
+        id: 'bad-pressure',
+        type: 'pen',
+        points: [{ x: 0, y: 0, p: 1.4 }],
+        color: '#111827',
+        lineWidth: 2
+      })
+    ).toMatchObject({ ok: false, reason: 'invalidGeometry' });
+  });
+
+  it('returns nearby objects without scanning past the AABB', () => {
+    const far = normalizeBoardObject({
+      id: 'far',
+      type: 'rectangle',
+      x: 400,
+      y: 400,
+      width: 40,
+      height: 40,
+      color: '#111827',
+      lineWidth: 2
+    });
+    const near = normalizeBoardObject(pen('near'));
+    const hits = queryObjectsNear([far, near], { x: 12, y: 12 }, 8);
+    expect(hits.map((object) => object.id)).toEqual(['near']);
+    expect(sceneObjectBounds(near)).toMatchObject({ x: 10, y: 10 });
   });
 });

@@ -17,16 +17,14 @@
       ref="drawCanvas" 
       class="whiteboard-canvas draw-layer"
       style="position: absolute; top: 0; left: 0; z-index: 1;"
-      @mousedown="handleMouseDown"
-      @mousemove="handleMouseMove"
-      @mouseup="handleMouseUp"
-      @mouseleave="handleMouseLeave"
+      @pointerdown="handlePointerDown"
+      @pointermove="handlePointerMove"
+      @pointerup="handlePointerUp"
+      @pointercancel="handlePointerCancel"
+      @lostpointercapture="handleLostPointerCapture"
+      @pointerleave="handlePointerLeave"
       @wheel="handleZoom"
       @contextmenu.prevent
-      @touchstart="handleTouchStart"
-      @touchmove="handleTouchMove"
-      @touchend="handleTouchEnd"
-      @touchcancel="handleTouchEnd"
     ></canvas>
 
     <!-- Cursor overlays for other users -->
@@ -179,7 +177,14 @@ import { drawGrid as drawUtilGrid, computeGridSteps } from '../utils/canvasGrid.
 import MovableObject from './MovableObject.vue';
 import { useNotifications } from '../composables/useNotifications';
 import { createWhiteboardSession } from '../board/whiteboardSession';
-import { normalizeBoardObject } from '@pilot/boardScene';
+import { createInputPipeline } from '../board/inputPipeline';
+import {
+  batchFromPointerEvent,
+  prefersReducedMotion,
+  viewportFromElement
+} from '../board/pointerEventAdapter';
+import { suggestProfile } from '../board/inputStyle';
+import { normalizeBoardObject, queryObjectsNear } from '@pilot/boardScene';
 import { undoRedoState } from '../utils/undoRedoState';
 import { useLineBindings } from '../composables/useLineBindings';
 import { usePdfExport } from '../composables/usePdfExport';
@@ -215,17 +220,6 @@ const clampDevicePixelRatio = () => {
 
 const clampZoom = (value) => Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, value));
 
-const getTouchDistance = (touchA, touchB) => {
-  const dx = touchA.clientX - touchB.clientX;
-  const dy = touchA.clientY - touchB.clientY;
-  return Math.hypot(dx, dy);
-};
-
-const getTouchCenter = (touchA, touchB, rect) => ({
-  x: ((touchA.clientX + touchB.clientX) / 2) - rect.left,
-  y: ((touchA.clientY + touchB.clientY) / 2) - rect.top,
-});
-
 
 export default {
   name: 'WhiteboardCanvas',
@@ -248,6 +242,7 @@ export default {
     gridAlignOptions: { type: Object, default: () => ({}) },
     handwritingStylerOptions: { type: Object, default: () => ({}) },
     mathRecognizerOptions: { type: Object, default: () => ({}) },
+    inputProfile: { type: String, default: 'mouse' },
     // Props from App.vue (already existed)
     roomId: { type: String, required: true },
     roomKey: { type: [String, Object], default: null },
@@ -267,7 +262,9 @@ export default {
     'update:has-char-groups',
     'update:has-stylized-strokes',
     'update:active-users',
-    'select-pen-preset'
+    'select-pen-preset',
+    'pointer-observed',
+    'update:input-profile'
   ],
   setup(props, { emit, expose }) {
     const devicePixelRatio = ref(clampDevicePixelRatio());
@@ -589,6 +586,7 @@ export default {
       activePenPreset,
       cancelActiveDrawing,
       startDrawing,
+      startDrawingAt,
       draw,
       finishDrawing,
       eraseElement,
@@ -1439,48 +1437,6 @@ export default {
       updateCursor();
     };
 
-    const startPinchGesture = (touches) => {
-      if (touches.length < 2 || !drawCanvas.value) return;
-      const rect = drawCanvas.value.getBoundingClientRect();
-      const touchA = touches[0];
-      const touchB = touches[1];
-      if (!touchA || !touchB) return;
-      pinchGesture.value = {
-        startDistance: getTouchDistance(touchA, touchB),
-        initialZoom: zoomLevel.value,
-        lastCanvasCenter: getTouchCenter(touchA, touchB, rect),
-      };
-      if (isDrawing.value) {
-        finishDrawing();
-      }
-      isPanning.value = true;
-      panStartedWithSpace.value = false;
-      updateCursor();
-    };
-
-    const updatePinchGesture = (touches) => {
-      if (!pinchGesture.value || touches.length < 2 || !drawCanvas.value) return;
-      const rect = drawCanvas.value.getBoundingClientRect();
-      const touchA = touches[0];
-      const touchB = touches[1];
-      if (!touchA || !touchB) return;
-      const canvasCenter = getTouchCenter(touchA, touchB, rect);
-      const gesture = pinchGesture.value;
-      const prevCenter = gesture.lastCanvasCenter || canvasCenter;
-
-      panSessionBy(canvasCenter.x - prevCenter.x, canvasCenter.y - prevCenter.y);
-
-      const distance = getTouchDistance(touchA, touchB);
-      const scale = gesture.startDistance ? distance / gesture.startDistance : 1;
-      const targetZoom = clampZoom(gesture.initialZoom * scale);
-
-      zoomSessionAt(canvasCenter.x, canvasCenter.y, targetZoom);
-      gesture.lastCanvasCenter = canvasCenter;
-
-      redrawCanvas();
-      showStatus(`Zoom: ${Math.round(zoomLevel.value * 100)}%`);
-    };
-
     const endTouchGesture = () => {
       pinchGesture.value = null;
       if (!panStartedWithSpace.value) {
@@ -1500,17 +1456,11 @@ export default {
 
     const darkModeObserver = new MutationObserver(handleDarkModeChange);
 
-    // --- Input Handlers ---
+    // --- Input Handlers (Pointer Events → InputPipeline) ---
 
     const getCoordinates = (event) => {
       if (!drawCanvas.value) return { offsetX: 0, offsetY: 0 };
       const rect = drawCanvas.value.getBoundingClientRect();
-      if (event.touches && event.touches[0]) {
-        return {
-          offsetX: event.touches[0].clientX - rect.left,
-          offsetY: event.touches[0].clientY - rect.top
-        };
-      }
       return {
         offsetX: event.clientX - rect.left,
         offsetY: event.clientY - rect.top
@@ -1524,8 +1474,71 @@ export default {
       };
     };
 
-    // addSmoothedPenPoint, computePenWidthFromPreset, getSnapSettings,
-    // applySoftGridSnap, applyGridSnapHard moved to useDrawingEngine composable
+    const inputPipeline = createInputPipeline({
+      initialProfile: props.inputProfile === 'pen' ? 'pen' : 'mouse'
+    });
+    const inputPaintSamples = [];
+    let pinchStartZoom = 1;
+    const capturedPointers = new Set();
+
+    const recordInputPaint = (timeStamp) => {
+      if (typeof performance === 'undefined' || !Number.isFinite(timeStamp)) return;
+      const dt = performance.now() - timeStamp;
+      if (dt >= 0 && dt < 1000) {
+        inputPaintSamples.push(dt);
+        if (inputPaintSamples.length > 240) inputPaintSamples.shift();
+      }
+    };
+
+    const inputPaintP95 = () => {
+      if (!inputPaintSamples.length) return null;
+      const sorted = [...inputPaintSamples].sort((a, b) => a - b);
+      const index = Math.min(sorted.length - 1, Math.max(0, Math.ceil(sorted.length * 0.95) - 1));
+      return sorted[index];
+    };
+
+    const lightweightScene = () => {
+      if (!yDrawings.value) return [];
+      return yDrawings.value.toArray().map((map) => ({
+        id: map.get('id'),
+        type: map.get('type'),
+        x: map.get('x'),
+        y: map.get('y'),
+        width: map.get('width'),
+        height: map.get('height'),
+        lineWidth: map.get('lineWidth'),
+        points: map.get('points'),
+        start: map.get('start'),
+        end: map.get('end')
+      }));
+    };
+
+    const indexOfObjectId = (id) => {
+      if (!yDrawings.value || !id) return -1;
+      const elements = yDrawings.value.toArray();
+      for (let i = 0; i < elements.length; i++) {
+        if (elements[i].get('id') === id) return i;
+      }
+      return -1;
+    };
+
+    const hitTestAt = (world) => {
+      const radius = Math.max(eraserSize.value / 2, 8);
+      const candidates = queryObjectsNear(lightweightScene(), world, radius);
+      for (const element of candidates) {
+        const hitPadding = Math.max((element.lineWidth || 2) / 2 + 5, eraserSize.value / 2);
+        if (isPointInElement(world, element, hitPadding)) return element;
+      }
+      return null;
+    };
+
+    const setEraserHover = (id) => {
+      const foundIndex = indexOfObjectId(id);
+      if (hoveredElementIndex.value !== foundIndex) {
+        hoveredElementIndex.value = foundIndex;
+        redrawCanvas(false);
+      }
+    };
 
     const updateLocalAwarenessCursor = throttle((coords) => {
         if (yjsConnection.value?.awareness) {
@@ -1538,320 +1551,271 @@ export default {
         }
     }, 50);
 
-    const handleMouseMove = (e) => {
-      const coords = getCoordinates(e);
-      const transformedCoords = transformCoordinates(coords.offsetX, coords.offsetY);
-      lastMouseCoords.value = transformedCoords; // Store for keydown events
-      updateLocalAwarenessCursor(transformedCoords);
-
-      // Don't handle drawing/panning if a config panel is active
-      if (activeConfigPanel.value) return;
-
-      if (isPanning.value && lastPanPoint.value) {
-        const currentPanPoint = transformCoordinates(coords.offsetX, coords.offsetY);
-        panSessionBy(
-          coords.offsetX - lastPanPoint.value.screenX,
-          coords.offsetY - lastPanPoint.value.screenY
-        );
-        lastPanPoint.value = { ...currentPanPoint, screenX: coords.offsetX, screenY: coords.offsetY };
-        redrawCanvas(true); // Pan requires full redraw
-        return;
-      }
-
-      if (!canMutateDocument()) return;
-
-      if (isDrawing.value && currentTool.value !== 'eraser') {
-        draw(transformedCoords, e.shiftKey, e.timeStamp); // Pass shift key state
-      } else if (currentTool.value === 'eraser') {
-        let foundIndex = -1;
-        if (yDrawings.value) {
-            const elementsArray = yDrawings.value.toArray(); // Get a JS array
-            for (let i = elementsArray.length - 1; i >= 0; i--) {
-                const elementMap = elementsArray[i];
-                try {
-                    // Convert Y.Map to plain object for hit testing
-                    const element = {};
-                    for (const [key, value] of elementMap.entries()) {
-                        element[key] = (value instanceof Y.Map || value instanceof Y.Array) ? value.toJSON() : value;
-                    }
-                    const hitPadding = Math.max((element.lineWidth || 2) / 2 + 5, eraserSize.value / 2);
-                    if (isPointInElement(transformedCoords, element, hitPadding)) {
-                        foundIndex = i;
-                        break;
-                    }
-                } catch (error) {
-                    // console.error("Error processing element for eraser hover:", elementMap, error); // Commented out
-                }
-            }
-        }
-        if (hoveredElementIndex.value !== foundIndex) {
-            hoveredElementIndex.value = foundIndex;
-            redrawCanvas(false); // Dynamic only (highlight)
-        }
-        if (isDrawing.value && foundIndex !== -1) {
-           eraseElement(foundIndex);
-        }
-      } else {
-         if (hoveredElementIndex.value !== -1) {
-             hoveredElementIndex.value = -1;
-             redrawCanvas(false); // Dynamic only
-         }
+    const clearAwarenessCursor = () => {
+      if (!yjsConnection.value?.awareness) return;
+      yjsConnection.value.awareness.setLocalStateField('cursor', null);
+      const userState = yjsConnection.value.awareness.getLocalState()?.user;
+      if (userState) {
+        yjsConnection.value.awareness.setLocalStateField('user', userState);
       }
     };
 
-    const handleMouseDown = (event) => {
-      shiftPressedAtStart.value = event.shiftKey; 
-      startCoordsForShiftLine.value = null; 
-
-      if (activeConfigPanel.value) return;
-
-      const coords = getCoordinates(event);
-      const transformedCoords = transformCoordinates(coords.offsetX, coords.offsetY);
-
-      if (event.button === 2) { // Right-click
-        event.preventDefault();
-        if (isDrawing.value) return; // Don't select if in the middle of drawing a new shape
-
-        const clickedObjectFoundId = findMovableElementIdAtPoint(transformedCoords);
-        session.value?.select(clickedObjectFoundId);
-        selectedObjectId.value = session.value?.selectedObjectId() ?? clickedObjectFoundId;
-        debugLog('[WhiteboardCanvas] Right-click selected:', selectedObjectId.value);
-        redrawCanvas(false); // Selection is dynamic (overlay/MovableObject) - wait, MovableObject is DOM.
-        // But if we have selection logic in canvas (e.g. highlight), we need redraw.
-        // MovableObject handles its own rendering.
-        // redrawCanvas() calls drawElement with isHighlighted=false for static.
-        // But wait, MovableObject is a component.
-        // Does redrawCanvas draw selection box? No.
-        // So redrawCanvas might not be needed for selection if it's purely DOM.
-        // But let's keep it safe.
-        return;
-      }
-
-      const shouldSpacePan = event.button === 0 && spacePanActive.value;
-      const shouldToolPan = event.button === 0 && currentTool.value === 'pan';
-      if (event.button === 1 || (event.button === 0 && event.altKey) || shouldSpacePan || shouldToolPan) { // Middle mouse, Alt+Left, Space+Left, or Pan tool
-        isPanning.value = true;
-        lastPanPoint.value = { ...transformedCoords, screenX: coords.offsetX, screenY: coords.offsetY };
-        panStartedWithSpace.value = shouldSpacePan;
-        event.preventDefault();
-        updateCursor();
-        return;
-      }
-
-      if (!canMutateDocument()) return denyReadOnlyMutation();
-      
-      if (event.button === 0) { // Left-click
-        if (currentTool.value === 'select') {
-            const hitObjectId = findMovableElementIdAtPoint(transformedCoords);
-            if (hitObjectId) {
-                if (event.altKey) {
-                    const map = findElementMapById(hitObjectId);
-                    if (map && map.get('type') === 'line') {
-                        detachLineBindings(hitObjectId);
-                        redrawCanvas(true); // Line binding change -> static update
-                        return;
-                    }
-                }
+    const applyInputIntents = (result) => {
+      for (const intent of result.intents) {
+        switch (intent.kind) {
+          case 'drawStart': {
+            lastMouseCoords.value = intent.world;
+            updateLocalAwarenessCursor(intent.world);
+            recordInputPaint(intent.timeStamp);
+            if (activeConfigPanel.value) break;
+            if (!canMutateDocument()) {
+              denyReadOnlyMutation();
+              break;
+            }
+            if (currentTool.value === 'select') {
+              const hitObjectId = findMovableElementIdAtPoint(intent.world);
+              if (hitObjectId) {
                 handleObjectSelectionRequest(hitObjectId);
-            } else if (selectedObjectId.value) {
+              } else if (selectedObjectId.value) {
                 session.value?.select(null);
                 selectedObjectId.value = null;
                 redrawCanvas(false);
+              }
+              break;
             }
-            return;
-        }
-
-        if (selectedObjectId.value) {
-            session.value?.select(null);
-            selectedObjectId.value = null;
-        }
-
-        if (currentTool.value === 'eraser') {
-            // Eraser logic (hover and click to erase is handled in mouseMove)
-            isDrawing.value = true; // Allow dragging eraser over elements
-        } else if (currentTool.value === 'mathPlot') {
-          openConfigPanel('math', transformedCoords);
-        } else if (currentTool.value === 'physicsPlot') {
-          openConfigPanel('physics', transformedCoords);
-        } else if (currentTool.value === 'coordSystem2D') {
-          const elementData = createCoordinateSystem2DElement(transformedCoords);
-          addElementFromPanel(elementData);
-        } else if (currentTool.value === 'coordSystem3D') {
-          const elementData = createCoordinateSystem3DElement(transformedCoords);
-          addElementFromPanel(elementData);
-        } else {
-          startDrawing(event, getCoordinates, transformCoordinates);
-        }
-        return; 
-      }
-    };
-
-
-    const handleMouseUp = (event) => {
-      // Don't handle mouse up if a config panel is active
-      if (activeConfigPanel.value) return;
-
-      if (isPanning.value) {
-        isPanning.value = false;
-        lastPanPoint.value = null;
-        panStartedWithSpace.value = false;
-        updateCursor();
-        return;
-      }
-      if (!canMutateDocument()) {
-        isDrawing.value = false;
-        currentElementPreview.value = null;
-        snapIndicator.value = null;
-        redrawCanvas(false);
-        return;
-      }
-      if (isDrawing.value) {
-         if (currentTool.value === 'eraser') {
-             isDrawing.value = false;
-         } else {
-             finishDrawing();
-         }
-      }
-      snapIndicator.value = null;
-      redrawCanvas(true); // Mouse up -> finish drawing -> static update
-    };
-
-    const handleWindowMouseUp = (event) => {
-      if (isDrawing.value || isPanning.value) {
-        handleMouseUp(event);
-      }
-    };
-
-    const handleMouseLeave = (event) => {
-      // Don't handle mouse leave if a config panel is active
-      if (activeConfigPanel.value) return;
-
-      if (isPanning.value) {
-        isPanning.value = false;
-        lastPanPoint.value = null;
-        panStartedWithSpace.value = false;
-        updateCursor();
-      }
-      if (isDrawing.value) {
-        if (canMutateDocument()) finishDrawing();
-        else {
-          isDrawing.value = false;
-          currentElementPreview.value = null;
-        }
-      }
-       if (yjsConnection.value?.awareness) {
-           yjsConnection.value.awareness.setLocalStateField('cursor', null);
-           const userState = yjsConnection.value.awareness.getLocalState()?.user;
-       if (userState) {
-               yjsConnection.value.awareness.setLocalStateField('user', userState);
-           }
-       }
-       snapIndicator.value = null;
-       redrawCanvas(false); // Mouse leave -> clear dynamic
-    };
-
-    const handleTouchStart = (event) => {
-        if (event.touches.length >= 2) {
-            event.preventDefault();
-            startPinchGesture(event.touches);
-            return;
-        }
-
-        if (event.touches.length === 1 && !pinchGesture.value) {
-            event.preventDefault();
-            const syntheticMouseEvent = {
-                clientX: event.touches[0].clientX,
-                clientY: event.touches[0].clientY,
-                button: 0,
-                shiftKey: event.shiftKey,
-                altKey: event.altKey,
-                preventDefault: () => event.preventDefault(),
-            };
-            handleMouseDown(syntheticMouseEvent);
-        }
-    };
-
-    const handleTouchMove = (event) => {
-        if (pinchGesture.value && event.touches.length >= 2) {
-            event.preventDefault();
-            updatePinchGesture(event.touches);
-            return;
-        }
-
-        if (event.touches.length === 1 && !pinchGesture.value) {
-            event.preventDefault();
-            const coords = getCoordinates(event);
-            const transformedCoords = transformCoordinates(coords.offsetX, coords.offsetY);
-            updateLocalAwarenessCursor(transformedCoords);
-
-            // P1-FIX: Pan tool panning via touch
-            if (isPanning.value && lastPanPoint.value) {
-                panSessionBy(
-                  coords.offsetX - lastPanPoint.value.screenX,
-                  coords.offsetY - lastPanPoint.value.screenY
-                );
-                lastPanPoint.value = { ...transformedCoords, screenX: coords.offsetX, screenY: coords.offsetY };
-                redrawCanvas(true);
-                return;
+            if (selectedObjectId.value) {
+              session.value?.select(null);
+              selectedObjectId.value = null;
             }
-
-            if (!canMutateDocument()) return;
-
-            // P0-FIX: Eraser must work on touch (iPad) - replicate handleMouseMove eraser logic
             if (currentTool.value === 'eraser') {
-                let foundIndex = -1;
-                if (yDrawings.value) {
-                    const elementsArray = yDrawings.value.toArray();
-                    for (let i = elementsArray.length - 1; i >= 0; i--) {
-                        const elementMap = elementsArray[i];
-                        try {
-                            const element = {};
-                            for (const [key, value] of elementMap.entries()) {
-                                element[key] = (value instanceof Y.Map || value instanceof Y.Array) ? value.toJSON() : value;
-                            }
-                            const hitPadding = Math.max((element.lineWidth || 2) / 2 + 5, eraserSize.value / 2);
-                            if (isPointInElement(transformedCoords, element, hitPadding)) {
-                                foundIndex = i;
-                                break;
-                            }
-                        } catch (_) { /* ignore */ }
-                    }
-                }
-                if (hoveredElementIndex.value !== foundIndex) {
-                    hoveredElementIndex.value = foundIndex;
-                    redrawCanvas(false);
-                }
-                if (isDrawing.value && foundIndex !== -1) {
-                    eraseElement(foundIndex);
-                }
-            } else if (isDrawing.value) {
-                draw(transformedCoords, false, event.timeStamp);
+              isDrawing.value = true;
+              const hit = hitTestAt(intent.world);
+              setEraserHover(hit?.id);
+              if (hit?.id) eraseElement(hit.id);
+              break;
             }
+            if (currentTool.value === 'mathPlot') {
+              openConfigPanel('math', intent.world);
+              break;
+            }
+            if (currentTool.value === 'physicsPlot') {
+              openConfigPanel('physics', intent.world);
+              break;
+            }
+            if (currentTool.value === 'coordSystem2D') {
+              addElementFromPanel(createCoordinateSystem2DElement(intent.world));
+              break;
+            }
+            if (currentTool.value === 'coordSystem3D') {
+              addElementFromPanel(createCoordinateSystem3DElement(intent.world));
+              break;
+            }
+            startDrawingAt(intent.world, intent.timeStamp, { pressure: intent.pressure });
+            break;
+          }
+          case 'drawUpdate': {
+            lastMouseCoords.value = intent.world;
+            updateLocalAwarenessCursor(intent.world);
+            recordInputPaint(intent.timeStamp);
+            if (activeConfigPanel.value || !canMutateDocument()) break;
+            if (currentTool.value === 'eraser') {
+              const hit = hitTestAt(intent.world);
+              setEraserHover(hit?.id);
+              if (isDrawing.value && hit?.id) eraseElement(hit.id);
+            } else {
+              draw(
+                { ...intent.world, p: intent.pressure },
+                intent.shiftKey === true,
+                intent.timeStamp
+              );
+            }
+            break;
+          }
+          case 'drawFinish': {
+            recordInputPaint(intent.timeStamp);
+            if (currentTool.value === 'eraser') {
+              isDrawing.value = false;
+            } else if (canMutateDocument()) {
+              finishDrawing();
+            } else {
+              isDrawing.value = false;
+              currentElementPreview.value = null;
+            }
+            snapIndicator.value = null;
+            redrawCanvas(true);
+            break;
+          }
+          case 'drawCancel': {
+            cancelActiveDrawing();
+            isDrawing.value = false;
+            snapIndicator.value = null;
+            redrawCanvas(false);
+            break;
+          }
+          case 'panStart': {
+            isPanning.value = true;
+            panStartedWithSpace.value = spacePanActive.value === true;
+            lastPanPoint.value = { ...intent.screen, screenX: intent.screen.x, screenY: intent.screen.y };
+            updateCursor();
+            break;
+          }
+          case 'panUpdate': {
+            panSessionBy(intent.dx, intent.dy);
+            lastPanPoint.value = { ...intent.screen, screenX: intent.screen.x, screenY: intent.screen.y };
+            redrawCanvas(true);
+            break;
+          }
+          case 'panFinish':
+          case 'panCancel': {
+            isPanning.value = false;
+            lastPanPoint.value = null;
+            panStartedWithSpace.value = false;
+            updateCursor();
+            break;
+          }
+          case 'pinchStart': {
+            pinchStartZoom = zoomLevel.value;
+            pinchGesture.value = { pointerIds: intent.pointerIds };
+            isPanning.value = true;
+            panStartedWithSpace.value = false;
+            updateCursor();
+            break;
+          }
+          case 'pinchUpdate': {
+            panSessionBy(intent.dx, intent.dy);
+            const targetZoom = clampZoom(pinchStartZoom * (intent.scale || 1));
+            zoomSessionAt(intent.screen.x, intent.screen.y, targetZoom);
+            redrawCanvas();
+            showStatus(`Zoom: ${Math.round(zoomLevel.value * 100)}%`);
+            break;
+          }
+          case 'pinchFinish':
+          case 'pinchCancel': {
+            endTouchGesture();
+            break;
+          }
+          case 'hover': {
+            lastMouseCoords.value = intent.world;
+            updateLocalAwarenessCursor(intent.world);
+            if (currentTool.value === 'eraser' && canMutateDocument()) {
+              const hit = hitTestAt(intent.world);
+              setEraserHover(hit?.id);
+            } else if (hoveredElementIndex.value !== -1) {
+              hoveredElementIndex.value = -1;
+              redrawCanvas(false);
+            }
+            break;
+          }
+          case 'awareness': {
+            if (intent.world) updateLocalAwarenessCursor(intent.world);
+            else clearAwarenessCursor();
+            break;
+          }
+          default:
+            break;
         }
+      }
     };
 
-    const handleTouchEnd = (event) => {
+    const pointerViewport = () => {
+      if (!drawCanvas.value) return null;
+      return viewportFromElement(drawCanvas.value, {
+        zoom: zoomLevel.value,
+        panX: panOffset.value.x,
+        panY: panOffset.value.y
+      });
+    };
+
+    const ingestPointerEvent = (event, phase) => {
+      const viewport = pointerViewport();
+      if (!viewport) return;
+      const result = inputPipeline.ingest(batchFromPointerEvent(event, {
+        phase,
+        viewport,
+        reducedMotion: prefersReducedMotion(),
+        altKey: event.altKey === true,
+        shiftKey: event.shiftKey === true,
+        spacePan: spacePanActive.value === true,
+        panTool: currentTool.value === 'pan',
+        smoothPath: currentTool.value === 'pen'
+      }));
+      applyInputIntents(result);
+    };
+
+    const capturePointer = (event) => {
+      const target = event.currentTarget;
+      if (target && typeof target.setPointerCapture === 'function' && event.pointerId != null) {
+        try {
+          target.setPointerCapture(event.pointerId);
+          capturedPointers.add(event.pointerId);
+        } catch {
+          /* happy-dom and detached nodes */
+        }
+      }
+    };
+
+    const handleRightClickSelect = (event) => {
+      if (isDrawing.value) return;
+      const coords = getCoordinates(event);
+      const transformedCoords = transformCoordinates(coords.offsetX, coords.offsetY);
+      const clickedObjectFoundId = findMovableElementIdAtPoint(transformedCoords);
+      session.value?.select(clickedObjectFoundId);
+      selectedObjectId.value = session.value?.selectedObjectId() ?? clickedObjectFoundId;
+      debugLog('[WhiteboardCanvas] Right-click selected:', selectedObjectId.value);
+    };
+
+    const handlePointerDown = (event) => {
+      shiftPressedAtStart.value = event.shiftKey;
+      startCoordsForShiftLine.value = null;
+      emit('pointer-observed', event.pointerType || 'mouse');
+      if (event.button === 2) {
         event.preventDefault();
+        handleRightClickSelect(event);
+        return;
+      }
+      event.preventDefault();
+      capturePointer(event);
+      if (activeConfigPanel.value) return;
+      ingestPointerEvent(event, 'down');
+    };
 
-        if (pinchGesture.value && event.touches.length < 2) {
-            endTouchGesture();
-        }
+    const handlePointerMove = (event) => {
+      event.preventDefault();
+      const phase = event.buttons ? 'move' : 'hover';
+      ingestPointerEvent(event, phase);
+    };
 
-        if (event.touches.length === 0) {
-            const syntheticMouseEvent = {
-                button: 0,
-            };
-            handleMouseUp(syntheticMouseEvent);
-        }
+    const handlePointerUp = (event) => {
+      event.preventDefault();
+      capturedPointers.delete(event.pointerId);
+      ingestPointerEvent(event, 'up');
+    };
 
-        if (yjsConnection.value?.awareness && event.touches.length === 0) {
-            yjsConnection.value.awareness.setLocalStateField('cursor', null);
-            const userState = yjsConnection.value.awareness.getLocalState()?.user;
-            if (userState) {
-                yjsConnection.value.awareness.setLocalStateField('user', userState);
-            }
-        }
-        snapIndicator.value = null;
+    const handlePointerCancel = (event) => {
+      event.preventDefault();
+      capturedPointers.delete(event.pointerId);
+      ingestPointerEvent(event, 'cancel');
+    };
+
+    const handleLostPointerCapture = (event) => {
+      if (!capturedPointers.has(event.pointerId)) return;
+      capturedPointers.delete(event.pointerId);
+      ingestPointerEvent(event, 'cancel');
+    };
+
+    const handlePointerLeave = () => {
+      if (isDrawing.value || isPanning.value || pinchGesture.value) return;
+      clearAwarenessCursor();
+      snapIndicator.value = null;
+      if (hoveredElementIndex.value !== -1) {
+        hoveredElementIndex.value = -1;
+        redrawCanvas(false);
+      }
+    };
+
+    const cancelPipeline = (reason) => {
+      applyInputIntents(inputPipeline.cancel(reason));
+      capturedPointers.clear();
     };
 
     // --- Drawing Logic (Yjs Integration) ---
@@ -2101,7 +2065,10 @@ export default {
       zoomOut,
       resetZoom,
       setTool,
-      cancelActiveDrawing,
+      cancelActiveDrawing: () => {
+        cancelPipeline('gesture');
+        return cancelActiveDrawing();
+      },
       closeConfigPanel,
       undo,
       redo,
@@ -2111,6 +2078,10 @@ export default {
       applyMathAnswer,
       selectPenPreset: (presetKey) => emit('select-pen-preset', presetKey),
     });
+    const onWindowBlur = () => {
+      handleWindowBlur();
+      cancelPipeline('blur');
+    };
 
     // --- Other Actions ---
     const handlePaste = (event) => {
@@ -2395,6 +2366,12 @@ export default {
         }
     });
 
+    watch(() => props.inputProfile, (next) => {
+      if (next === 'pen' || next === 'mouse') {
+        inputPipeline.configure(next);
+      }
+    });
+
     watch(() => props.username, (newUsername) => {
         latestUsername.value = newUsername;
         updateAwarenessUser(newUsername);
@@ -2411,8 +2388,7 @@ export default {
       window.addEventListener('keydown', handleKeyDown);
       window.addEventListener('keyup', handleKeyUp);
       window.addEventListener('paste', handlePaste);
-      window.addEventListener('blur', handleWindowBlur);
-      window.addEventListener('mouseup', handleWindowMouseUp);
+      window.addEventListener('blur', onWindowBlur);
       darkModeObserver.observe(document.body, { attributes: true });
       handleResize(); // Initial resize call
 
@@ -2456,8 +2432,7 @@ export default {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
       window.removeEventListener('paste', handlePaste);
-      window.removeEventListener('blur', handleWindowBlur);
-      window.removeEventListener('mouseup', handleWindowMouseUp);
+      window.removeEventListener('blur', onWindowBlur);
       darkModeObserver.disconnect();
       if (resizeObserver) {
         resizeObserver.disconnect();
@@ -2468,6 +2443,8 @@ export default {
         clipboardFocusHandler = null;
       }
       teardownYjsConnection();
+      cancelPipeline('dispose');
+      inputPipeline.dispose();
     });
 
     const snapGuides = ref([]);
@@ -2534,19 +2511,17 @@ export default {
       movableElements,
 
       // Methods
-      handleMouseDown,
-      handleMouseMove,
-      handleMouseUp,
-      handleMouseLeave,
+      handlePointerDown,
+      handlePointerMove,
+      handlePointerUp,
+      handlePointerCancel,
       handleZoom,
       handlePaste,
       handleResize,
-      handleTouchStart,
-      handleTouchMove,
-      handleTouchEnd,
       handleObjectSelectionRequest,
       handleCloneObject,
       handleCommitTransform,
+      inputPaintP95,
 
       // Public API
       setTool,
@@ -2633,6 +2608,7 @@ export default {
   background-color: #f8f9fa;
   touch-action: none;
   user-select: none;
+  overscroll-behavior: none;
 }
 
 .whiteboard-container.dark-mode {

@@ -458,4 +458,80 @@ test.describe('Pilot fixture: Administrator, Teacher, Student browser contexts',
     await context.close();
     await adminContext.close();
   });
+
+  test('Pointer pipeline: Input Style Mysz/Pióro, drawing, pinch does not scroll the page', async ({ browser }) => {
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    const errors = [];
+    page.on('pageerror', (err) => errors.push(err.message));
+
+    await page.goto(fixture.boardAccessLink);
+    await page.getByRole('button', { name: 'Dołącz do lekcji' }).click();
+    await expect(page.locator('canvas.draw-layer')).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByTestId('collaboration-read-only')).toBeHidden({ timeout: 5_000 });
+
+    const control = page.getByTestId('input-style-control');
+    await expect(control).toBeVisible();
+    await expect(control.getByRole('radio', { name: 'Mysz' })).toBeVisible();
+    await expect(control.getByRole('radio', { name: 'Pióro' })).toBeVisible();
+    await expect(control.getByRole('radio', { name: 'Mysz' })).toHaveAttribute('aria-checked', 'true');
+
+    await control.getByRole('radio', { name: 'Pióro' }).click();
+    await expect(control.getByRole('radio', { name: 'Pióro' })).toHaveAttribute('aria-checked', 'true');
+
+    const staticCanvas = page.locator('canvas.static-layer');
+    const before = await staticCanvas.evaluate((canvas) => canvas.toDataURL());
+    const box = await page.locator('canvas.draw-layer').boundingBox();
+    expect(box).not.toBeNull();
+    const x = box.x + box.width * 0.45;
+    const y = box.y + box.height * 0.4;
+    await page.mouse.move(x, y);
+    await page.mouse.down();
+    await page.mouse.move(x + 90, y + 40, { steps: 12 });
+    await page.mouse.up();
+    await expect.poll(
+      () => staticCanvas.evaluate((canvas) => canvas.toDataURL()),
+      { timeout: 5_000 }
+    ).not.toBe(before);
+
+    const scrollBefore = await page.evaluate(() => window.scrollY);
+    await page.locator('canvas.draw-layer').evaluate((canvas) => {
+      canvas.dispatchEvent(new PointerEvent('pointerdown', {
+        bubbles: true, cancelable: true, pointerId: 21, pointerType: 'touch',
+        isPrimary: true, clientX: 200, clientY: 240, buttons: 1, button: 0, pressure: 1
+      }));
+      canvas.dispatchEvent(new PointerEvent('pointerdown', {
+        bubbles: true, cancelable: true, pointerId: 22, pointerType: 'touch',
+        isPrimary: false, clientX: 280, clientY: 240, buttons: 1, button: 0, pressure: 1
+      }));
+      canvas.dispatchEvent(new PointerEvent('pointermove', {
+        bubbles: true, cancelable: true, pointerId: 21, pointerType: 'touch',
+        isPrimary: true, clientX: 180, clientY: 250, buttons: 1, pressure: 1
+      }));
+      canvas.dispatchEvent(new PointerEvent('pointermove', {
+        bubbles: true, cancelable: true, pointerId: 22, pointerType: 'touch',
+        isPrimary: false, clientX: 320, clientY: 250, buttons: 1, pressure: 1
+      }));
+      canvas.dispatchEvent(new PointerEvent('pointerup', {
+        bubbles: true, cancelable: true, pointerId: 21, pointerType: 'touch',
+        isPrimary: true, clientX: 180, clientY: 250, buttons: 0, button: 0
+      }));
+      canvas.dispatchEvent(new PointerEvent('pointerup', {
+        bubbles: true, cancelable: true, pointerId: 22, pointerType: 'touch',
+        isPrimary: false, clientX: 320, clientY: 250, buttons: 0, button: 0
+      }));
+    });
+    expect(await page.evaluate(() => window.scrollY)).toBe(scrollBefore);
+
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    await expect(control).toBeVisible();
+    await control.getByRole('radio', { name: 'Mysz' }).click();
+    await expect(control.getByRole('radio', { name: 'Mysz' })).toHaveAttribute('aria-checked', 'true');
+
+    const critical = errors.filter(
+      (message) => message.includes('is not defined') || message.includes('is not a function')
+    );
+    expect(critical).toHaveLength(0);
+    await context.close();
+  });
 });

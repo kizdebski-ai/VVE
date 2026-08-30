@@ -134,12 +134,12 @@ describe('WhiteboardCanvas.vue', () => {
   });
 
   describe('Object Selection (right mouse button)', () => {
-    it('selects an object on right-button mousedown if hit', async () => {
+    it('selects an object on right-button pointerdown if hit', async () => {
       // Configure mock to simulate a hit on the object
       geometryMock.isPointInRotatedRectangle.mockReturnValue(true);
 
       const canvas = wrapper.find('.whiteboard-canvas.draw-layer');
-      await canvas.trigger('mousedown', { clientX: 75, clientY: 90, button: 2 });
+      await canvas.trigger('pointerdown', { clientX: 75, clientY: 90, button: 2, pointerId: 1, pointerType: 'mouse', isPrimary: true, buttons: 2, pressure: 0 });
       await nextTick();
 
       expect(geometryMock.isPointInRotatedRectangle).toHaveBeenCalled();
@@ -150,11 +150,11 @@ describe('WhiteboardCanvas.vue', () => {
       expect(movableObjectWrapper.props('isSelected')).toBe(true);
     });
 
-    it('does not select an object on right-button mousedown if miss', async () => {
+    it('does not select an object on right-button pointerdown if miss', async () => {
       geometryMock.isPointInRotatedRectangle.mockReturnValue(false); // Simulate a miss
 
       const canvas = wrapper.find('.whiteboard-canvas.draw-layer');
-      await canvas.trigger('mousedown', { clientX: 10, clientY: 10, button: 2 });
+      await canvas.trigger('pointerdown', { clientX: 10, clientY: 10, button: 2, pointerId: 1, pointerType: 'mouse', isPrimary: true, buttons: 2, pressure: 0 });
       await nextTick();
 
       expect(geometryMock.isPointInRotatedRectangle).toHaveBeenCalled();
@@ -173,14 +173,14 @@ describe('WhiteboardCanvas.vue', () => {
       // First, select an object
       geometryMock.isPointInRotatedRectangle.mockReturnValue(true);
       const canvas = wrapper.find('.whiteboard-canvas.draw-layer');
-      await canvas.trigger('mousedown', { clientX: 75, clientY: 90, button: 2 }); // Select obj1
+      await canvas.trigger('pointerdown', { clientX: 75, clientY: 90, button: 2, pointerId: 1, pointerType: 'mouse', isPrimary: true, buttons: 2, pressure: 0 }); // Select obj1
       await nextTick();
       expect(wrapper.vm.selectedObjectId).toBe(initialTestObject.get('id'));
 
       // Switch to the select tool, then left-click on empty space (miss)
       wrapper.vm.setTool('select');
       geometryMock.isPointInRotatedRectangle.mockReturnValue(false);
-      await canvas.trigger('mousedown', { clientX: 10, clientY: 10, button: 0 }); // Left click outside
+      await canvas.trigger('pointerdown', { clientX: 10, clientY: 10, button: 0, pointerId: 1, pointerType: 'mouse', isPrimary: true, buttons: 1, pressure: 0.5 }); // Left click outside
       await nextTick();
 
       expect(wrapper.vm.selectedObjectId).toBeNull();
@@ -195,7 +195,7 @@ describe('WhiteboardCanvas.vue', () => {
     it('turns a MovableObject transform intent into one canonical document command', async () => {
       geometryMock.isPointInRotatedRectangle.mockReturnValue(true);
       const canvas = wrapper.find('.whiteboard-canvas.draw-layer');
-      await canvas.trigger('mousedown', { clientX: 75, clientY: 90, button: 2 });
+      await canvas.trigger('pointerdown', { clientX: 75, clientY: 90, button: 2, pointerId: 1, pointerType: 'mouse', isPrimary: true, buttons: 2, pressure: 0 });
       await nextTick();
 
       const movableObjectComp = wrapper.findComponent(MovableObject);
@@ -227,13 +227,13 @@ describe('WhiteboardCanvas.vue', () => {
       await nextTick();
 
       const canvas = wrapper.find('.whiteboard-canvas.draw-layer');
-      // Simulate drawing: mousedown, mousemove (to define size), mouseup
-      await canvas.trigger('mousedown', { clientX: 10, clientY: 20, button: 0 });
-      await nextTick(); // Let handleMouseDown process
+      // Simulate drawing: pointerdown, pointermove (to define size), pointerup
+      await canvas.trigger('pointerdown', { clientX: 10, clientY: 20, button: 0, pointerId: 1, pointerType: 'mouse', isPrimary: true, buttons: 1, pressure: 0.5 });
+      await nextTick(); // Let handlePointerDown process
       // Simulate dragging to (40, 60) to create a 30x40 rectangle
-      await canvas.trigger('mousemove', { clientX: 40, clientY: 60, buttons: 1 });
-      await nextTick(); // Let handleMouseMove process
-      await canvas.trigger('mouseup', { clientX: 40, clientY: 60, button: 0 });
+      await canvas.trigger('pointermove', { clientX: 40, clientY: 60, buttons: 1, pointerId: 1, pointerType: 'mouse', isPrimary: true, pressure: 0.5 });
+      await nextTick(); // Let handlePointerMove process
+      await canvas.trigger('pointerup', { clientX: 40, clientY: 60, button: 0, pointerId: 1, pointerType: 'mouse', isPrimary: true, buttons: 0, pressure: 0 });
       await nextTick(); // Let handleMouseUp process and element creation
 
       // The committed element lives in the real yDrawings array.
@@ -286,6 +286,36 @@ describe('WhiteboardCanvas.vue', () => {
       connectionOptions.onStatus('disconnected');
       await nextTick();
       expect(wrapper.find('[data-testid="collaboration-read-only"]').exists()).toBe(true);
+    });
+  });
+
+  describe('Pointer Event pipeline', () => {
+    it('exposes Pointer Event handlers and not mouse/touch drawing handlers', () => {
+      expect(typeof wrapper.vm.handlePointerDown).toBe('function');
+      expect(wrapper.vm.handleMouseDown).toBeUndefined();
+      expect(wrapper.vm.handleTouchStart).toBeUndefined();
+    });
+
+    it('cancels an in-progress stroke on pointercancel instead of committing', async () => {
+      wrapper.vm.setTool('pen');
+      await nextTick();
+      const canvas = wrapper.find('.whiteboard-canvas.draw-layer');
+      const before = mockYDrawings.length;
+      await canvas.trigger('pointerdown', {
+        clientX: 20, clientY: 20, button: 0, pointerId: 9,
+        pointerType: 'pen', isPrimary: true, buttons: 1, pressure: 0.4
+      });
+      await canvas.trigger('pointermove', {
+        clientX: 48, clientY: 36, pointerId: 9,
+        pointerType: 'pen', isPrimary: true, buttons: 1, pressure: 0.6
+      });
+      await canvas.trigger('pointercancel', {
+        clientX: 48, clientY: 36, pointerId: 9,
+        pointerType: 'pen', isPrimary: true, buttons: 0, pressure: 0
+      });
+      await nextTick();
+      expect(mockYDrawings.length).toBe(before);
+      expect(wrapper.vm.isDrawing).toBe(false);
     });
   });
 

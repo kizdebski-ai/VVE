@@ -129,7 +129,9 @@ onUnmounted(() => {
   position: fixed;
   display: flex;
   flex-direction: column;
-  z-index: 2000; /* High z-index to float above canvas */
+  /* Lesson dialogs must remain interactive above the touch toolbar and its
+     always-visible properties strip. */
+  z-index: calc(var(--z-toolbar, 3000) + 1);
   /* Glass styles are inherited from global .glass-panel */
   padding: 0; /* Content handles padding */
   max-height: calc(100dvh - 24px);

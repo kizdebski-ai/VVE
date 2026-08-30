@@ -436,11 +436,15 @@ test.describe('Pilot fixture: Administrator, Teacher, Student browser contexts',
       expect(panelBox.y).toBeGreaterThanOrEqual(0);
       expect(panelBox.x + panelBox.width).toBeLessThanOrEqual(profile.viewport.width);
       expect(panelBox.y + panelBox.height).toBeLessThanOrEqual(profile.viewport.height);
-      const layout = await page.evaluate(() => ({
+      const layout = await page.evaluate(({ panelX, panelY }) => ({
         innerWidth: window.innerWidth,
-        scrollWidth: document.documentElement.scrollWidth
-      }));
+        scrollWidth: document.documentElement.scrollWidth,
+        panelIsTopmost: Boolean(
+          document.elementFromPoint(panelX + 24, panelY + 24)?.closest('[role="dialog"]')
+        )
+      }), { panelX: panelBox.x, panelY: panelBox.y });
       expect(layout.scrollWidth).toBeLessThanOrEqual(layout.innerWidth);
+      expect(layout.panelIsTopmost).toBe(true);
 
       if (process.env.VVE_CAPTURE_VISUALS === '1') {
         await page.screenshot({

@@ -25,6 +25,7 @@ export function useKeyboardShortcuts({
   endTouchGesture,
   applyMathAnswer,
   selectPenPreset,
+  deleteSelection,
 }) {
 
   const handleKeyDown = (event) => {
@@ -81,6 +82,8 @@ export function useKeyboardShortcuts({
       if (lowerKey === 'p') { setTool('pen'); return; }
       if (lowerKey === 't') { setTool('text'); return; }
       if (lowerKey === 'e') { setTool('eraser'); return; }
+      if (lowerKey === 's') { setTool('shapes'); return; }
+      if (lowerKey === 'l') { setTool('lines'); return; }
 
       // 10.1: Pen preset shortcuts 1-4
       if (selectPenPreset) {
@@ -90,6 +93,11 @@ export function useKeyboardShortcuts({
           return;
         }
       }
+    }
+
+    if ((event.key === 'Delete' || event.key === 'Backspace') && deleteSelection?.()) {
+      event.preventDefault();
+      return;
     }
 
     // Undo / Redo

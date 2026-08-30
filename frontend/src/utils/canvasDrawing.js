@@ -58,7 +58,8 @@ export const drawElement = (
     typeof element.y === 'number' &&
     typeof element.width === 'number' &&
     typeof element.height === 'number' &&
-    type !== 'pen' && type !== 'line' && type !== 'text' && type !== 'image'
+    type !== 'pen' && type !== 'line' && type !== 'text' && type !== 'image' &&
+    !['coordinateSystem2D', 'coordinateSystem3D', 'mathFunctionPlot', 'physicsDataPlot'].includes(type)
   ) {
     element = {
       ...element,
@@ -527,19 +528,19 @@ export const drawElement = (
     // --- Advanced Shapes (RoughJS Implementation) ---
 
     case 'coordinateSystem2D':
-      if (element.position) drawCoordinateSystem2D(rc, context, element, options, isClean);
+      drawCoordinateSystem2D(rc, context, element, options, isClean);
       break;
 
     case 'mathFunctionPlot':
-      if (element.position && element.expression) drawMathFunctionPlot(rc, context, element, options, isClean);
+      if (element.expression) drawMathFunctionPlot(rc, context, element, options, isClean);
       break;
 
     case 'physicsDataPlot':
-      if (element.position) drawPhysicsDataPlot(rc, context, element, options, isClean);
+      drawPhysicsDataPlot(rc, context, element, options, isClean);
       break;
 
     case 'coordinateSystem3D':
-      if (element.position) drawCoordinateSystem3D(rc, context, element, options, isClean);
+      drawCoordinateSystem3D(rc, context, element, options, isClean);
       break;
 
     // --- 3D Primitives (2D Projection) ---
@@ -634,8 +635,8 @@ const drawImage = (context, element, imageCache, requestRedraw) => {
 // --- Graph & Plot Implementations ---
 
 const drawCoordinateSystem2D = (rc, context, element, options, isClean) => {
-  const { x, y } = element.position;
-  const { width, height, xLabel, yLabel } = element;
+  const { x, y, width, height, xLabel = 'x', yLabel = 'y' } = element;
+  if (![x, y, width, height].every(Number.isFinite)) return;
 
   // Axes
   if (isClean) {
@@ -657,13 +658,18 @@ const drawCoordinateSystem2D = (rc, context, element, options, isClean) => {
   // Labels
   context.fillStyle = options.stroke;
   context.font = '16px sans-serif';
-  context.fillText(xLabel || 'x', x + width - 15, y + height / 2 + 10);
-  context.fillText(yLabel || 'y', x + width / 2 + 10, y);
+  context.fillText(xLabel, x + width - 15, y + height / 2 + 18);
+  context.fillText(yLabel, x + width / 2 + 10, y + 16);
 };
 
 const drawMathFunctionPlot = (rc, context, element, options, isClean) => {
-  const { x: plotX, y: plotY } = element.position;
-  const { width, height, expression } = element;
+  const { x: plotX, y: plotY, width, height, expression } = element;
+  if (![plotX, plotY, width, height].every(Number.isFinite) || !expression) return;
+  const [xMin, xMax] = Array.isArray(element.xRange) ? element.xRange : [-10, 10];
+  const xRange = xMax - xMin;
+  if (!Number.isFinite(xRange) || xRange <= 0) return;
+  const yRange = xRange * (height / width);
+  const yMin = -(yRange / 2);
 
   // Draw axes first
   drawCoordinateSystem2D(rc, context, { ...element, xLabel: 'x', yLabel: 'f(x)' }, { ...options, stroke: '#666' }, isClean);
@@ -672,9 +678,7 @@ const drawMathFunctionPlot = (rc, context, element, options, isClean) => {
   try {
     const compiled = math.compile(expression || 'x');
     const points = [];
-    const steps = 100;
-    const xMin = -10, xMax = 10;
-    const yMin = -10, yMax = 10;
+    const steps = 300;
 
     for (let i = 0; i <= steps; i++) {
       const xVal = xMin + (xMax - xMin) * (i / steps);
@@ -683,7 +687,7 @@ const drawMathFunctionPlot = (rc, context, element, options, isClean) => {
 
       if (typeof yVal === 'number' && isFinite(yVal)) {
         const canvasX = plotX + ((xVal - xMin) / (xMax - xMin)) * width;
-        const canvasY = plotY + height - ((yVal - yMin) / (yMax - yMin)) * height;
+        const canvasY = plotY + height - ((yVal - yMin) / yRange) * height;
 
         if (canvasY >= plotY && canvasY <= plotY + height) {
           points.push([canvasX, canvasY]);
@@ -702,7 +706,7 @@ const drawMathFunctionPlot = (rc, context, element, options, isClean) => {
     }
 
   } catch (e) {
-    context.fillText('Error', plotX, plotY);
+    context.fillText('Nie można narysować funkcji', plotX + 12, plotY + 24);
   }
 };
 
@@ -721,22 +725,38 @@ const drawCleanCurve = (context, points, color) => {
 };
 
 const drawPhysicsDataPlot = (rc, context, element, options, isClean) => {
-  const { x: plotX, y: plotY } = element.position;
-  const { width, height, xData, yData } = element;
+  const {
+    x: plotX,
+    y: plotY,
+    width,
+    height,
+    points: dataPoints,
+    xLabel = 't',
+    yLabel = 'v'
+  } = element;
+  if (![plotX, plotY, width, height].every(Number.isFinite)) return;
 
   // Axes
-  drawCoordinateSystem2D(rc, context, { ...element, xLabel: 't', yLabel: 'v' }, { ...options, stroke: '#666' }, isClean);
+  drawCoordinateSystem2D(
+    rc,
+    context,
+    { ...element, xLabel, yLabel },
+    { ...options, stroke: '#666' },
+    isClean
+  );
 
-  if (!xData || !yData || xData.length === 0) return;
+  if (!Array.isArray(dataPoints) || dataPoints.length < 2) return;
 
-  const xMin = Math.min(...xData), xMax = Math.max(...xData);
-  const yMin = Math.min(...yData), yMax = Math.max(...yData);
+  const xMin = Math.min(...dataPoints.map((point) => point.x));
+  const xMax = Math.max(...dataPoints.map((point) => point.x));
+  const yMin = Math.min(...dataPoints.map((point) => point.y));
+  const yMax = Math.max(...dataPoints.map((point) => point.y));
   const xRange = xMax - xMin || 1;
   const yRange = yMax - yMin || 1;
 
-  const points = xData.map((val, i) => {
-    const cx = plotX + ((val - xMin) / xRange) * width;
-    const cy = plotY + height - ((yData[i] - yMin) / yRange) * height;
+  const points = dataPoints.map((point) => {
+    const cx = plotX + ((point.x - xMin) / xRange) * width;
+    const cy = plotY + height - ((point.y - yMin) / yRange) * height;
     return [cx, cy];
   });
 
@@ -758,17 +778,19 @@ const drawPhysicsDataPlot = (rc, context, element, options, isClean) => {
 };
 
 const drawCoordinateSystem3D = (rc, context, element, options, isClean) => {
-  const { x, y } = element.position;
-  const size = element.size || 200;
-  const half = size / 2;
+  const { x, y, width, height, xLabel = 'x', yLabel = 'y', zLabel = 'z' } = element;
+  if (![x, y, width, height].every(Number.isFinite)) return;
+  const halfWidth = width / 2;
+  const halfHeight = height / 2;
 
   // Center
-  const cx = x, cy = y;
+  const cx = x + halfWidth;
+  const cy = y + halfHeight;
 
   // Axes (Isometric-ish)
-  const xEnd = { x: cx + half, y: cy + half * 0.5 };
-  const yEnd = { x: cx - half, y: cy + half * 0.5 };
-  const zEnd = { x: cx, y: cy - half };
+  const xEnd = { x: x + width, y: cy + halfHeight * 0.45 };
+  const yEnd = { x, y: cy + halfHeight * 0.45 };
+  const zEnd = { x: cx, y };
 
   if (isClean) {
     context.beginPath();
@@ -782,9 +804,9 @@ const drawCoordinateSystem3D = (rc, context, element, options, isClean) => {
     rc.line(cx, cy, zEnd.x, zEnd.y, options);
   }
 
-  context.fillText('x', xEnd.x, xEnd.y);
-  context.fillText('y', yEnd.x, yEnd.y);
-  context.fillText('z', zEnd.x, zEnd.y);
+  context.fillText(xLabel, xEnd.x - 12, xEnd.y - 8);
+  context.fillText(yLabel, yEnd.x + 8, yEnd.y - 8);
+  context.fillText(zLabel, zEnd.x + 8, zEnd.y + 16);
 };
 
 // --- 3D Shapes ---

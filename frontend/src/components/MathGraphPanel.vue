@@ -3,47 +3,60 @@
     :initialX="windowWidth - 400" 
     :initialY="80" 
     width="380px"
+    aria-label="Wykres funkcji"
     @close="$emit('close')"
   >
     <template #header>
       <Calculator :size="18" />
-      <span>Math Graph</span>
+      <span>Wykres funkcji</span>
     </template>
 
-    <div class="input-group">
-      <label>Function f(x) =</label>
-      <input type="text" v-model="expression" placeholder="e.g. x^2, sin(x)" @keyup.enter="plot" />
-    </div>
-    
-    <div class="input-group">
-      <label>Color</label>
-      <div class="color-picker-wrapper">
-          <input type="color" v-model="color" class="color-input" />
-          <span class="color-preview" :style="{ backgroundColor: color }"></span>
-      </div>
-    </div>
-
-    <div class="range-inputs">
+    <form @submit.prevent="plot">
       <div class="input-group">
-        <label>Min X</label>
-        <input type="number" v-model.number="minX" />
+        <label for="math-expression">Funkcja f(x)</label>
+        <input
+          id="math-expression"
+          type="text"
+          v-model="expression"
+          placeholder="np. x^2 lub sin(x)"
+          autocomplete="off"
+        />
       </div>
-      <div class="input-group">
-        <label>Max X</label>
-        <input type="number" v-model.number="maxX" />
-      </div>
-    </div>
 
-    <button class="action-button btn-primary" @click="plot">
-      <LineChart :size="16" />
-      Plot Function
-    </button>
+      <div class="input-group">
+        <label for="math-color">Kolor wykresu</label>
+        <div class="color-picker-wrapper">
+            <input id="math-color" type="color" v-model="color" class="color-input" />
+            <span class="color-preview" :style="{ backgroundColor: color }"></span>
+        </div>
+      </div>
+
+      <fieldset class="range-inputs">
+        <legend>Zakres osi x</legend>
+        <div class="input-group">
+          <label for="math-min-x">Od</label>
+          <input id="math-min-x" type="number" v-model.number="minX" />
+        </div>
+        <div class="input-group">
+          <label for="math-max-x">Do</label>
+          <input id="math-max-x" type="number" v-model.number="maxX" />
+        </div>
+      </fieldset>
+
+      <p v-if="error" class="panel-error" role="alert">{{ error }}</p>
+
+      <button type="submit" class="action-button btn-primary">
+        <LineChart :size="16" />
+        Dodaj wykres
+      </button>
+    </form>
   </DraggablePanel>
 </template>
 
 <script setup>
 import { ref, computed } from 'vue';
 import { Calculator, LineChart } from 'lucide-vue-next';
+import { compile } from 'mathjs';
 import DraggablePanel from './DraggablePanel.vue';
 
 const emit = defineEmits(['close', 'plot-function']);
@@ -52,19 +65,35 @@ const expression = ref('x^2');
 const color = ref('#2563eb');
 const minX = ref(-10);
 const maxX = ref(10);
+const error = ref('');
 const windowWidth = computed(() => window.innerWidth);
 
 const plot = () => {
-  if (!expression.value) return;
-  
+  error.value = '';
+  const normalizedExpression = expression.value.trim();
+  if (!normalizedExpression) {
+    error.value = 'Wpisz funkcję do narysowania.';
+    return;
+  }
+  if (!Number.isFinite(minX.value) || !Number.isFinite(maxX.value) || minX.value >= maxX.value) {
+    error.value = 'Początek zakresu musi być mniejszy od końca.';
+    return;
+  }
+  try {
+    compile(normalizedExpression);
+  } catch {
+    error.value = 'Nie można odczytać tej funkcji. Sprawdź zapis działania.';
+    return;
+  }
+
   const elementData = {
     type: 'mathFunctionPlot',
-    expression: expression.value,
+    expression: normalizedExpression,
     color: color.value,
     xRange: [minX.value, maxX.value],
-    position: { x: 100, y: 100 }, 
     width: 400,
-    height: 300
+    height: 300,
+    lineWidth: 3
   };
 
   emit('plot-function', elementData);
@@ -117,6 +146,25 @@ const plot = () => {
   grid-template-columns: 1fr 1fr;
   gap: 12px;
   margin-bottom: 12px;
+  padding: 0;
+  border: 0;
+}
+
+.range-inputs legend {
+  grid-column: 1 / -1;
+  margin-bottom: 6px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.panel-error {
+  margin: 4px 0 12px;
+  padding: 9px 10px;
+  border-radius: 9px;
+  background: rgba(220, 38, 38, 0.1);
+  color: #b91c1c;
+  font-size: 13px;
 }
 
 .action-button {
@@ -126,5 +174,11 @@ const plot = () => {
   justify-content: center;
   gap: 8px;
   margin-top: 8px;
+}
+
+input:focus-visible,
+button:focus-visible {
+  outline: 3px solid rgba(37, 99, 235, 0.4);
+  outline-offset: 2px;
 }
 </style>

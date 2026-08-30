@@ -3,14 +3,16 @@ import dotenv from "dotenv";
 
 dotenv.config();
 
-const isProduction = process.env.NODE_ENV === 'production';
-
 const config: Knex.Config = {
     client: "pg",
     connection: process.env.DATABASE_URL as string,
     migrations: {
-        directory: isProduction ? "./migrations" : "./migrations",
-        extension: isProduction ? "js" : "ts",
+        // Use the same stable migration filenames as the compiled server.
+        // Mixing `.ts` names here with `.js` names at runtime makes Knex
+        // report a corrupt migration directory on the next application boot.
+        directory: "./migrations-js",
+        extension: "js",
+        loadExtensions: [".js"],
     },
 };
 

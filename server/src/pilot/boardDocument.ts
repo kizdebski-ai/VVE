@@ -2,6 +2,7 @@ import { createHash } from 'crypto';
 import * as Y from 'yjs';
 import {
   collectUpdateEffects,
+  migrateLegacyLessonObjects,
   SCENE_LIMITS,
   validateBoardObject,
   type BoardRole
@@ -32,6 +33,8 @@ export interface BoardDocument {
   encode(stateVector?: Uint8Array): Uint8Array;
   stateVector(): Uint8Array;
   digest(): string;
+  /** Run idempotent schema migration after all durable update rows replay. */
+  migrateLegacyObjects(): number;
   destroy(): void;
 }
 
@@ -164,6 +167,7 @@ export const createBoardDocument = (
     encode,
     stateVector: () => Y.encodeStateVector(doc),
     digest,
+    migrateLegacyObjects: () => migrateLegacyLessonObjects(doc),
     destroy: () => doc.destroy()
   };
 };

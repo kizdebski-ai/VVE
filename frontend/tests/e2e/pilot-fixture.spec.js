@@ -77,8 +77,8 @@ test.describe('Pilot fixture: Administrator, Teacher, Student browser contexts',
     await join(second);
 
     // Presence is hydrated for a later join and converges on both devices.
-    await expect(first.getByText('2 Online')).toBeVisible({ timeout: 5_000 });
-    await expect(second.getByText('2 Online')).toBeVisible({ timeout: 5_000 });
+    await expect(first.getByText('2 online')).toBeVisible({ timeout: 5_000 });
+    await expect(second.getByText('2 online')).toBeVisible({ timeout: 5_000 });
 
     const secondCanvas = second.locator('canvas.static-layer');
     const beforeRemote = await secondCanvas.evaluate((canvas) => canvas.toDataURL());
@@ -235,6 +235,244 @@ test.describe('Pilot fixture: Administrator, Teacher, Student browser contexts',
     await firstContext.close();
     await secondContext.close();
     await teacherContext.close();
+  });
+
+  test('Math, physics, coordinates, shapes, lines, and calculator complete the collaborative workflow', async ({ browser }) => {
+    test.setTimeout(90_000);
+    const teacherContext = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const teacher = await teacherContext.newPage();
+    await teacher.goto(fixture.teacherAccessLink);
+    await expect(teacher.getByRole('heading', { name: 'Moje tablice' })).toBeVisible({ timeout: 15_000 });
+
+    const boardLabel = `E2E narzędzia ${Date.now()}`;
+    await teacher.getByRole('button', { name: 'Nowa tablica ucznia' }).click();
+    await teacher.getByLabel('Etykieta ucznia / grupy').fill(boardLabel);
+    await teacher.getByLabel('Temat lekcji (opcjonalnie)').fill('Test narzędzi matematycznych i fizycznych');
+    await teacher.getByRole('button', { name: 'Utwórz tablicę' }).click();
+    const freshLink = teacher.locator('.modal-panel .keyway.fresh .keyway-channel');
+    await expect(freshLink).toBeVisible({ timeout: 10_000 });
+    const boardAccessLink = (await freshLink.innerText()).trim();
+    await teacher.locator('.modal-foot').getByRole('button', { name: 'Zamknij' }).click();
+
+    const firstContext = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
+    const secondContext = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const first = await firstContext.newPage();
+    const second = await secondContext.newPage();
+    const browserErrors = [];
+    for (const page of [first, second]) {
+      page.on('console', (message) => {
+        if (['warning', 'error'].includes(message.type())) browserErrors.push(message.text());
+      });
+      page.on('pageerror', (error) => browserErrors.push(error.message));
+    }
+    const join = async (page) => {
+      await page.goto(boardAccessLink);
+      await page.getByRole('button', { name: 'Dołącz do lekcji' }).click();
+      await expect(page.locator('canvas.static-layer')).toBeVisible({ timeout: 20_000 });
+      await expect(page.getByTestId('collaboration-read-only')).toBeHidden({ timeout: 5_000 });
+    };
+    await join(first);
+    await join(second);
+
+    // Calculator is functional and opening another required panel closes it.
+    await first.locator('[data-tool-id="panel.calculator"]').click();
+    const calculator = first.getByRole('dialog', { name: 'Kalkulator naukowy' });
+    await expect(calculator).toBeVisible();
+    await calculator.locator('.two').click();
+    await calculator.locator('.add').click();
+    await calculator.locator('.three').click();
+    await calculator.locator('.btn-equal').click();
+    await expect(calculator.locator('.result')).toHaveText('5');
+
+    await first.locator('[data-tool-id="panel.mathGraph"]').click();
+    await expect(calculator).toBeHidden();
+    const mathPanel = first.getByRole('dialog', { name: 'Wykres funkcji' });
+    await expect(mathPanel).toBeVisible();
+    await mathPanel.getByLabel('Funkcja f(x)').fill('sin(x)');
+    await mathPanel.getByLabel('Od').fill('-8');
+    await mathPanel.getByLabel('Do').fill('8');
+    await mathPanel.getByRole('button', { name: 'Dodaj wykres' }).click();
+    await expect(mathPanel).toBeHidden();
+
+    const firstMath = first.locator('[data-object-type="mathFunctionPlot"]');
+    const secondMath = second.locator('[data-object-type="mathFunctionPlot"]');
+    await expect(firstMath).toBeVisible({ timeout: 5_000 });
+    await expect(secondMath).toBeVisible({ timeout: 5_000 });
+
+    // A direct manipulation synchronizes, and local undo/redo reverses only
+    // this participant's graph movement.
+    const initialSecondBox = await secondMath.boundingBox();
+    await first.locator('[data-tool-id="tool.select"]').click();
+    await firstMath.click();
+    await expect(firstMath).toHaveClass(/is-selected/);
+    const firstMathBox = await firstMath.boundingBox();
+    await first.mouse.move(firstMathBox.x + firstMathBox.width / 2, firstMathBox.y + firstMathBox.height / 2);
+    await first.mouse.down();
+    await first.mouse.move(
+      firstMathBox.x + firstMathBox.width / 2 + 70,
+      firstMathBox.y + firstMathBox.height / 2 + 45,
+      { steps: 8 }
+    );
+    await first.mouse.up();
+    await expect.poll(async () => (await secondMath.boundingBox()).x, { timeout: 5_000 })
+      .not.toBeCloseTo(initialSecondBox.x, 0);
+    const movedSecondBox = await secondMath.boundingBox();
+
+    await first.locator('[data-tool-id="tool.undo"]').click();
+    await expect.poll(async () => (await secondMath.boundingBox()).x, { timeout: 5_000 })
+      .toBeCloseTo(initialSecondBox.x, 0);
+    await first.locator('[data-tool-id="tool.redo"]').click();
+    await expect.poll(async () => (await secondMath.boundingBox()).x, { timeout: 5_000 })
+      .toBeCloseTo(movedSecondBox.x, 0);
+
+    await first.locator('[data-tool-id="panel.physicsGraph"]').click();
+    const physicsPanel = first.getByRole('dialog', { name: 'Wykres fizyczny' });
+    await physicsPanel.getByLabel(/Punkty danych/).fill('0,0\n1,9.8\n2,19.6');
+    await physicsPanel.getByLabel('Opis osi poziomej').fill('czas');
+    await physicsPanel.getByLabel('Opis osi pionowej').fill('prędkość');
+    await physicsPanel.getByRole('button', { name: 'Dodaj wykres' }).click();
+    await expect(second.locator('[data-object-type="physicsDataPlot"]')).toBeVisible({ timeout: 5_000 });
+
+    await first.locator('[data-tool-id="panel.coordinateSystem"]').click();
+    await first.getByRole('button', { name: 'Układ współrzędnych 2D' }).click();
+    await expect(second.locator('[data-object-type="coordinateSystem2D"]')).toBeVisible({ timeout: 5_000 });
+
+    // Representative shape and line styles cross the same command,
+    // collaboration, transform, export, and persistence seams.
+    await first.locator('[data-tool-id="tool.shapes"]').click();
+    await first.getByRole('button', { name: 'Kreskowana' }).click();
+    await first.getByRole('button', { name: 'Trójkąt' }).click();
+    const canvasBox = await first.locator('canvas.draw-layer').boundingBox();
+    // Stay below the floating properties bar so the real canvas receives the
+    // complete direct-manipulation gesture.
+    await first.mouse.move(canvasBox.x + 180, canvasBox.y + 320);
+    await first.mouse.down();
+    await first.mouse.move(canvasBox.x + 300, canvasBox.y + 420, { steps: 6 });
+    await first.mouse.up();
+    await expect(second.locator('[data-object-type="triangle"]')).toBeVisible({ timeout: 5_000 });
+
+    await first.locator('[data-tool-id="tool.shapes"]').click();
+    await first.getByRole('button', { name: 'Po obu stronach' }).click();
+    await first.getByRole('button', { name: 'Linia' }).click();
+    await first.mouse.move(canvasBox.x + 340, canvasBox.y + 220);
+    await first.mouse.down();
+    await first.mouse.move(canvasBox.x + 500, canvasBox.y + 300, { steps: 6 });
+    await first.mouse.up();
+    await expect(second.locator('[data-object-type="line"]')).toBeVisible({ timeout: 5_000 });
+
+    // Reload hydrates all acknowledged lesson objects from durable storage.
+    await second.reload();
+    await expect(second.getByTestId('collaboration-read-only')).toBeHidden({ timeout: 5_000 });
+    for (const type of ['mathFunctionPlot', 'physicsDataPlot', 'coordinateSystem2D', 'triangle', 'line']) {
+      await expect(second.locator(`[data-object-type="${type}"]`)).toBeVisible({ timeout: 10_000 });
+    }
+
+    // The real PDF action renders and downloads the scene containing all
+    // VVE-106 objects.
+    await first.mouse.move(10, 5);
+    await expect(first.locator('.gear-btn')).toBeVisible();
+    await first.locator('.gear-btn').click();
+    const downloadPromise = first.waitForEvent('download');
+    await first.locator('.pdf-menu-wrapper > button').click();
+    const download = await downloadPromise;
+    expect(download.suggestedFilename()).toBe('whiteboard.pdf');
+
+    for (const hidden of ['experiment.ai', 'experiment.chemistry', 'experiment.gridAlign']) {
+      await expect(first.locator(`[data-tool-id="${hidden}"]`)).toHaveCount(0);
+    }
+    expect(browserErrors).toEqual([]);
+
+    await firstContext.close();
+    await secondContext.close();
+    await teacherContext.close();
+  });
+
+  test('lesson panels remain focused and inside desktop and iPad portrait viewports', async ({ browser }) => {
+    const profiles = [
+      { name: 'desktop', viewport: { width: 1440, height: 900 }, hasTouch: false },
+      { name: 'ipad-portrait', viewport: { width: 768, height: 1024 }, hasTouch: true }
+    ];
+
+    for (const profile of profiles) {
+      const context = await browser.newContext({
+        viewport: profile.viewport,
+        hasTouch: profile.hasTouch,
+        isMobile: profile.hasTouch,
+        reducedMotion: 'reduce'
+      });
+      const page = await context.newPage();
+      const browserErrors = [];
+      page.on('console', (message) => {
+        if (['warning', 'error'].includes(message.type())) browserErrors.push(message.text());
+      });
+      page.on('pageerror', (error) => browserErrors.push(error.message));
+
+      await page.goto(fixture.boardAccessLink);
+      await page.getByRole('button', { name: 'Dołącz do lekcji' }).click();
+      await expect(page.locator('canvas.static-layer')).toBeVisible({ timeout: 20_000 });
+      await expect(page.getByTestId('collaboration-read-only')).toBeHidden({ timeout: 5_000 });
+
+      await page.locator('[data-tool-id="panel.mathGraph"]').click();
+      const mathPanel = page.getByRole('dialog', { name: 'Wykres funkcji' });
+      await expect(mathPanel).toBeVisible();
+      await expect(mathPanel.getByLabel('Funkcja f(x)')).toBeFocused();
+      await mathPanel.getByLabel('Od').fill('5');
+      await mathPanel.getByLabel('Do').fill('-5');
+      await mathPanel.getByRole('button', { name: 'Dodaj wykres' }).click();
+      await expect(mathPanel.getByRole('alert')).toHaveText('Początek zakresu musi być mniejszy od końca.');
+
+      await page.locator('[data-tool-id="panel.physicsGraph"]').click();
+      await expect(mathPanel).toBeHidden();
+      const physicsPanel = page.getByRole('dialog', { name: 'Wykres fizyczny' });
+      await expect(physicsPanel).toBeVisible();
+      await expect(physicsPanel.getByLabel(/Punkty danych/)).toBeFocused();
+      await physicsPanel.getByLabel(/Punkty danych/).fill('0,0');
+      await physicsPanel.getByRole('button', { name: 'Dodaj wykres' }).click();
+      await expect(physicsPanel.getByRole('alert')).toHaveText('Podaj co najmniej dwa poprawne punkty.');
+
+      const panelBox = await physicsPanel.boundingBox();
+      expect(panelBox).not.toBeNull();
+      expect(panelBox.x).toBeGreaterThanOrEqual(0);
+      expect(panelBox.y).toBeGreaterThanOrEqual(0);
+      expect(panelBox.x + panelBox.width).toBeLessThanOrEqual(profile.viewport.width);
+      expect(panelBox.y + panelBox.height).toBeLessThanOrEqual(profile.viewport.height);
+      const layout = await page.evaluate(({ panelX, panelY }) => ({
+        innerWidth: window.innerWidth,
+        scrollWidth: document.documentElement.scrollWidth,
+        panelIsTopmost: Boolean(
+          document.elementFromPoint(panelX + 24, panelY + 24)?.closest('[role="dialog"]')
+        )
+      }), { panelX: panelBox.x, panelY: panelBox.y });
+      expect(layout.scrollWidth).toBeLessThanOrEqual(layout.innerWidth);
+      expect(layout.panelIsTopmost).toBe(true);
+
+      if (process.env.VVE_CAPTURE_VISUALS === '1') {
+        await page.screenshot({
+          path: path.resolve(
+            path.dirname(fileURLToPath(import.meta.url)),
+            '..',
+            '..',
+            '..',
+            'docs',
+            'implementation',
+            `VVE-106-${profile.name}.png`
+          ),
+          fullPage: true
+        });
+      }
+
+      await page.keyboard.press('Escape');
+      await expect(physicsPanel).toBeHidden();
+      await page.locator('[data-tool-id="panel.calculator"]').click();
+      const calculator = page.getByRole('dialog', { name: 'Kalkulator naukowy' });
+      await expect(calculator).toBeVisible();
+      await expect(calculator.locator(':focus')).toHaveCount(1);
+      await page.keyboard.press('Escape');
+      await expect(calculator).toBeHidden();
+
+      expect(browserErrors).toEqual([]);
+      await context.close();
+    }
   });
 
   test('Administrator signs in with the passphrase; viewing the list never rotates links', async ({ browser }) => {

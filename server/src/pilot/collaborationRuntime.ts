@@ -276,6 +276,10 @@ export const createCollaborationRuntime = (
           throw new CollaborationFailure('persistenceUnavailable', `Stored update ${operation.sequence} is invalid.`);
         }
       }
+      // Migration runs only after snapshot + operation replay so a later
+      // historical alias update cannot be shadowed by an earlier migration
+      // write. The next normal compaction durably replaces the legacy shape.
+      document.migrateLegacyObjects();
       const awarenessDoc = new Y.Doc();
       const awareness = new Awareness(awarenessDoc);
       // The server is a relay, not a lesson participant.

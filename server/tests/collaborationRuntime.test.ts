@@ -217,6 +217,57 @@ describe('CollaborationRuntime acknowledgement oracle', () => {
     expect((await runtime.inspect(BOARD_A)).digest).toBe(before);
   });
 
+  it('migrates legacy lesson rows and persists the canonical snapshot on close', async () => {
+    const store = new InMemoryBoardDocumentStore();
+    const legacy = new Y.Doc();
+    const plot = new Y.Map<unknown>();
+    for (const [key, value] of Object.entries({
+      id: 'legacy-physics',
+      type: 'physicsDataPlot',
+      position: { x: 30, y: 40 },
+      width: 400,
+      height: 300,
+      xData: [0, 1],
+      yData: [0, 9.8],
+      mode: 'lines+markers'
+    })) plot.set(key, value);
+    legacy.getArray('drawings').push([plot]);
+    await store.append(BOARD_A, 'legacy-lesson', Y.encodeStateAsUpdate(legacy));
+
+    const runtime = createCollaborationRuntime({ store });
+    const firstTransport = new MemoryTransport();
+    const first = await runtime.connect(connection(), firstTransport);
+    const firstState = new Y.Doc();
+    Y.applyUpdate(firstState, (await runtime.inspect(BOARD_A)).encodedState);
+    expect(firstState.getArray('drawings').toJSON()).toEqual([
+      {
+        id: 'legacy-physics',
+        type: 'physicsDataPlot',
+        x: 30,
+        y: 40,
+        width: 400,
+        height: 300,
+        points: [{ x: 0, y: 0 }, { x: 1, y: 9.8 }],
+        xLabel: 't',
+        yLabel: 'v',
+        rotation: 0
+      }
+    ]);
+    await first.close('migration compacted');
+
+    const restarted = createCollaborationRuntime({ store });
+    const restartedTransport = new MemoryTransport();
+    await restarted.connect(connection(), restartedTransport);
+    const sync = restartedTransport.frames.find((frame) => frame.kind === 'sync');
+    expect(sync?.kind).toBe('sync');
+    const restartedState = new Y.Doc();
+    if (sync?.kind === 'sync') Y.applyUpdate(restartedState, sync.update);
+    expect(restartedState.getArray('drawings').toJSON()).toEqual(
+      firstState.getArray('drawings').toJSON()
+    );
+    expect((await store.inspect(BOARD_A)).operationCount).toBe(0);
+  });
+
   it('returns typed persistence failure and never acknowledges it', async () => {
     const store = new InMemoryBoardDocumentStore({ failAppend: true });
     const runtime = createCollaborationRuntime({ store });

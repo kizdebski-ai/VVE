@@ -102,7 +102,8 @@ export const createCoordinateSystem2DElement = (position, width = 300, height = 
   return {
     id: uuidv4(),
     type: 'coordinateSystem2D',
-    position,
+    x: position.x,
+    y: position.y,
     width,
     height,
     color,
@@ -128,10 +129,12 @@ export const createMathFunctionPlotElement = (position, expression = 'x', width 
   return {
     id: uuidv4(),
     type: 'mathFunctionPlot',
-    position,
+    x: position.x,
+    y: position.y,
     width,
     height,
     expression,
+    xRange: [-10, 10],
     color,
     lineWidth,
     timestamp: Date.now()
@@ -142,27 +145,26 @@ export const createMathFunctionPlotElement = (position, expression = 'x', width 
 /**
  * Create a Physics Data Plot element
  * @param {Object} position - Top-left corner {x, y}
- * @param {Array<Number>} xData - Array of x-coordinates
- * @param {Array<Number>} yData - Array of y-coordinates
+ * @param {Array<{x: Number, y: Number}>} points - Canonical data points
  * @param {Number} width - Plot width
  * @param {Number} height - Plot height
  * @param {String} color - Plot color
  * @param {Number} lineWidth - Plot line width
- * @param {String} mode - Plot mode ('lines', 'markers', 'lines+markers')
  * @returns {Object} - PhysicsDataPlot element
  */
-export const createPhysicsDataPlotElement = (position, xData = [], yData = [], width = 300, height = 200, color = '#dc3545', lineWidth = 1, mode = 'lines+markers') => {
+export const createPhysicsDataPlotElement = (position, points = [], width = 300, height = 200, color = '#dc3545', lineWidth = 1) => {
   return {
     id: uuidv4(),
     type: 'physicsDataPlot',
-    position,
+    x: position.x,
+    y: position.y,
     width,
     height,
-    xData,
-    yData,
+    points,
     color,
     lineWidth,
-    mode,
+    xLabel: 't',
+    yLabel: 'v',
     timestamp: Date.now()
   };
 };
@@ -179,10 +181,10 @@ export const createCoordinateSystem3DElement = (position, size = 150, color = '#
   return {
     id: uuidv4(),
     type: 'coordinateSystem3D',
-    position, // Center position for 3D projection
-    size,
-    width: size * 1.2,
-    height: size * 1.2,
+    x: position.x,
+    y: position.y,
+    width: size,
+    height: size,
     color,
     lineWidth,
     xLabel: 'x',

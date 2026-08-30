@@ -14,6 +14,7 @@
         <button
           v-for="tool in visibleMainTools"
           :key="tool.name"
+          type="button"
           class="tool-btn"
           :data-tool-id="tool.feature"
           :class="{ active: currentTool === tool.name }"
@@ -51,13 +52,15 @@
               ref="shapesMenuRef"
             >
               <div class="popover-section">
-                <div class="section-title">Shapes</div>
+                <div class="section-title">Kształty</div>
                 <div class="shapes-grid">
                     <button
                       v-for="shape in shapeOptions"
                       :key="shape.tool"
+                      type="button"
                       class="shape-btn"
                       :class="{ active: isShapeActive(shape) }"
+                      :aria-label="shape.label"
                       @click="selectShape(shape)"
                       :title="shape.label"
                     >
@@ -67,7 +70,7 @@
               </div>
 
               <div class="popover-section">
-                <div class="section-title">Line style</div>
+                <div class="section-title">Styl linii</div>
                 <div class="option-row">
                   <button
                     v-for="style in lineStyleOptions"
@@ -82,7 +85,7 @@
               </div>
 
               <div class="popover-section">
-                <div class="section-title">Roughness</div>
+                <div class="section-title">Wygląd kreski</div>
                 <div class="option-row">
                   <button
                     v-for="option in roughnessOptions"
@@ -97,7 +100,7 @@
               </div>
 
               <div class="popover-section">
-                <div class="section-title">Arrowheads</div>
+                <div class="section-title">Groty</div>
                 <div class="option-row">
                   <button
                     v-for="style in arrowStyleOptions"
@@ -112,7 +115,7 @@
               </div>
 
               <div class="popover-section">
-                <div class="section-title">Quick colors</div>
+                <div class="section-title">Kolor linii</div>
                 <div class="color-row">
                   <button
                     v-for="swatch in colorSwatches"
@@ -126,7 +129,7 @@
               </div>
 
               <div class="popover-section">
-                <div class="section-title">Fill color</div>
+                <div class="section-title">Kolor wypełnienia</div>
                 <div class="color-row">
                   <button
                     class="color-swatch fill-none"
@@ -174,30 +177,40 @@
              enumeration test asserts this group equals manifest.tools. -->
         <button
           v-if="can('panel.calculator')"
+          type="button"
           class="tool-btn"
           data-tool-id="panel.calculator"
+          :class="{ active: isCalculatorOpen }"
+          :aria-pressed="isCalculatorOpen"
+          aria-keyshortcuts="Shift+K"
           @click="$emit('toggle-calculator')"
-          title="Kalkulator naukowy"
+          title="Kalkulator naukowy (Shift+K)"
         >
           <Calculator :size="20" />
         </button>
         <button
           v-if="can('panel.mathGraph')"
+          type="button"
           class="tool-btn"
           data-tool-id="panel.mathGraph"
           :class="{ active: isMathPanelOpen }"
+          :aria-pressed="isMathPanelOpen"
+          aria-keyshortcuts="Shift+F"
           @click="$emit('toggle-math-panel')"
-          title="Wykres funkcji"
+          title="Wykres funkcji (Shift+F)"
         >
           <LineChart :size="20" />
         </button>
         <button
           v-if="can('panel.physicsGraph')"
+          type="button"
           class="tool-btn"
           data-tool-id="panel.physicsGraph"
           :class="{ active: isPhysicsPanelOpen }"
+          :aria-pressed="isPhysicsPanelOpen"
+          aria-keyshortcuts="Shift+Y"
           @click="$emit('toggle-physics-panel')"
-          title="Wykres fizyczny"
+          title="Wykres fizyczny (Shift+Y)"
         >
           <Activity :size="20" />
         </button>
@@ -222,9 +235,12 @@
         </button>
         <div v-if="can('panel.coordinateSystem')" class="dropdown-trigger coordinate-trigger" ref="coordinateTriggerRef">
           <button
+            type="button"
             class="tool-btn"
             data-tool-id="panel.coordinateSystem"
             :class="{ active: showCoordinateMenu }"
+            :aria-expanded="showCoordinateMenu"
+            aria-haspopup="menu"
             @click.stop="toggleCoordinateMenu"
             title="Dodaj układ współrzędnych"
           >
@@ -241,6 +257,7 @@
               <button
                 v-for="option in coordinateOptions"
                 :key="option.type"
+                type="button"
                 class="shape-btn coordinate-btn"
                 @click="selectCoordinateSystem(option.type)"
               >
@@ -369,6 +386,7 @@ const props = defineProps({
   arrowStyle: { type: String, default: 'none' },
   roughness: { type: Number, default: 1 },
   currentShape: { type: String, default: 'rectangle' },
+  isCalculatorOpen: Boolean,
   isMathPanelOpen: Boolean,
   isPhysicsPanelOpen: Boolean,
   isDiagramPanelOpen: Boolean,
@@ -412,40 +430,40 @@ const mainTools = [
 const visibleMainTools = computed(() => mainTools.filter((tool) => can(tool.feature)));
 
 const shapeOptions = [
-  { tool: 'rectangle', label: 'Rectangle', icon: Square },
-  { tool: 'circle', label: 'Circle', icon: CircleIcon },
-  { tool: 'triangle', label: 'Triangle', icon: Triangle },
-  { tool: 'square', label: 'Square', icon: Square },
-  { tool: 'trapezoid', label: 'Trapezoid', icon: Diamond },
-  { tool: 'parallelogram', label: 'Parallelogram', icon: Diamond },
-  { tool: 'deltoid', label: 'Kite', icon: Diamond },
-  { tool: 'cube', label: 'Cube', icon: Box },
-  { tool: 'cuboid', label: 'Cuboid', icon: Box },
-  { tool: 'sphere', label: 'Sphere', icon: Globe },
-  { tool: 'cylinder', label: 'Cylinder', icon: Cylinder },
-  { tool: 'cone', label: 'Cone', icon: Cone },
-  { tool: 'pyramid', label: 'Pyramid', icon: Pyramid },
-  { tool: 'tetrahedron', label: 'Tetrahedron', icon: Pyramid },
-  { tool: 'line', label: 'Line', icon: Minus, toolType: 'lines' }
+  { tool: 'rectangle', label: 'Prostokąt', icon: Square },
+  { tool: 'circle', label: 'Okrąg', icon: CircleIcon },
+  { tool: 'triangle', label: 'Trójkąt', icon: Triangle },
+  { tool: 'square', label: 'Kwadrat', icon: Square },
+  { tool: 'trapezoid', label: 'Trapez', icon: Diamond },
+  { tool: 'parallelogram', label: 'Równoległobok', icon: Diamond },
+  { tool: 'deltoid', label: 'Deltoid', icon: Diamond },
+  { tool: 'cube', label: 'Sześcian', icon: Box },
+  { tool: 'cuboid', label: 'Prostopadłościan', icon: Box },
+  { tool: 'sphere', label: 'Kula', icon: Globe },
+  { tool: 'cylinder', label: 'Walec', icon: Cylinder },
+  { tool: 'cone', label: 'Stożek', icon: Cone },
+  { tool: 'pyramid', label: 'Ostrosłup', icon: Pyramid },
+  { tool: 'tetrahedron', label: 'Czworościan', icon: Pyramid },
+  { tool: 'line', label: 'Linia', icon: Minus, toolType: 'lines' }
 ];
 
 const lineStyleOptions = [
-  { value: 'solid', label: 'Solid' },
-  { value: 'dashed', label: 'Dashed' },
-  { value: 'dotted', label: 'Dotted' }
+  { value: 'solid', label: 'Ciągła' },
+  { value: 'dashed', label: 'Kreskowana' },
+  { value: 'dotted', label: 'Kropkowana' }
 ];
 
 const roughnessOptions = [
-  { value: 0, label: 'Clean' },
-  { value: 1, label: 'Sketchy' },
-  { value: 2, label: 'Rough' }
+  { value: 0, label: 'Gładka' },
+  { value: 1, label: 'Szkicowa' },
+  { value: 2, label: 'Odręczna' }
 ];
 
 const arrowStyleOptions = [
-  { value: 'none', label: 'None' },
-  { value: 'start', label: 'Start' },
-  { value: 'end', label: 'End' },
-  { value: 'both', label: 'Both' }
+  { value: 'none', label: 'Bez grotów' },
+  { value: 'start', label: 'Na początku' },
+  { value: 'end', label: 'Na końcu' },
+  { value: 'both', label: 'Po obu stronach' }
 ];
 
 const colorSwatches = [
@@ -485,8 +503,8 @@ const quickSwatches = [
 ];
 
 const coordinateOptions = [
-  { type: '2d', label: '2D Coordinate System' },
-  { type: '3d', label: '3D Coordinate System' }
+  { type: '2d', label: 'Układ współrzędnych 2D' },
+  { type: '3d', label: 'Układ współrzędnych 3D' }
 ];
 
 const currentTool = ref(props.activeTool);
@@ -577,25 +595,33 @@ const isShapeActive = (shape) => {
 const toggleShapesMenu = () => {
   showShapesMenu.value = !showShapesMenu.value;
   if (showShapesMenu.value) {
-    nextTick(() => positionShapesMenu());
+    showCoordinateMenu.value = false;
+    nextTick(() => {
+      positionShapesMenu();
+      shapesMenuRef.value?.querySelector('button')?.focus();
+    });
   }
+};
+
+const clampPopoverPosition = (top, left, element, fallbackWidth) => {
+  const viewportWidth = window.visualViewport?.width || window.innerWidth;
+  const viewportHeight = window.visualViewport?.height || window.innerHeight;
+  const width = element?.offsetWidth || fallbackWidth;
+  const height = element?.offsetHeight || 200;
+  const margin = 12;
+  return {
+    top: `${Math.max(margin, Math.min(top, viewportHeight - height - margin))}px`,
+    left: `${Math.max(margin, Math.min(left, viewportWidth - width - margin))}px`
+  };
 };
 
 const positionShapesMenu = () => {
   const trigger = shapesTriggerRef.value;
   if (!trigger) return;
   const rect = trigger.getBoundingClientRect();
-  if (props.orientation === 'vertical') {
-    shapesMenuStyle.value = {
-      top: `${rect.top}px`,
-      left: `${rect.right + 8}px`
-    };
-  } else {
-    shapesMenuStyle.value = {
-      top: `${rect.bottom + 8}px`,
-      left: `${rect.left}px`
-    };
-  }
+  const top = props.orientation === 'vertical' ? rect.top : rect.bottom + 8;
+  const left = props.orientation === 'vertical' ? rect.right + 8 : rect.left;
+  shapesMenuStyle.value = clampPopoverPosition(top, left, shapesMenuRef.value, 280);
 };
 
 const selectShape = (shape) => {
@@ -606,6 +632,7 @@ const selectShape = (shape) => {
     emit('update:shape', shape.tool);
   }
   showShapesMenu.value = false;
+  shapesTriggerRef.value?.focus();
 };
 
 const selectLineStyle = (style) => {
@@ -636,7 +663,11 @@ const selectFillColor = (color) => {
 const toggleCoordinateMenu = () => {
   showCoordinateMenu.value = !showCoordinateMenu.value;
   if (showCoordinateMenu.value) {
-    nextTick(() => positionCoordinateMenu());
+    showShapesMenu.value = false;
+    nextTick(() => {
+      positionCoordinateMenu();
+      coordinateMenuRef.value?.querySelector('button')?.focus();
+    });
   }
 };
 
@@ -644,22 +675,15 @@ const positionCoordinateMenu = () => {
   const trigger = coordinateTriggerRef.value;
   if (!trigger) return;
   const rect = trigger.getBoundingClientRect();
-  if (props.orientation === 'vertical') {
-    coordinateMenuStyle.value = {
-      top: `${rect.top}px`,
-      left: `${rect.right + 8}px`
-    };
-  } else {
-    coordinateMenuStyle.value = {
-      top: `${rect.bottom + 8}px`,
-      left: `${rect.left}px`
-    };
-  }
+  const top = props.orientation === 'vertical' ? rect.top : rect.bottom + 8;
+  const left = props.orientation === 'vertical' ? rect.right + 8 : rect.left;
+  coordinateMenuStyle.value = clampPopoverPosition(top, left, coordinateMenuRef.value, 220);
 };
 
 const selectCoordinateSystem = (type) => {
   emit('add-coordinate-system', type);
   showCoordinateMenu.value = false;
+  coordinateTriggerRef.value?.querySelector('button')?.focus();
 };
 
 const toggleColorPicker = () => {
@@ -714,6 +738,18 @@ const handleResize = () => {
   if (showCoordinateMenu.value) positionCoordinateMenu();
 };
 
+const handleEscape = (event) => {
+  if (event.key !== 'Escape') return;
+  if (showShapesMenu.value) {
+    showShapesMenu.value = false;
+    shapesTriggerRef.value?.focus();
+  }
+  if (showCoordinateMenu.value) {
+    showCoordinateMenu.value = false;
+    coordinateTriggerRef.value?.querySelector('button')?.focus();
+  }
+};
+
 watch(() => props.orientation, () => {
   nextTick(() => {
     if (showShapesMenu.value) positionShapesMenu();
@@ -723,6 +759,7 @@ watch(() => props.orientation, () => {
 
 onMounted(() => {
   document.addEventListener('click', handleClickOutside);
+  document.addEventListener('keydown', handleEscape);
   window.addEventListener('resize', handleResize);
   // P0-FIX: Detect touch device and keep properties bar always visible
   isTouchDevice.value = window.matchMedia('(hover: none)').matches || navigator.maxTouchPoints > 0;
@@ -733,6 +770,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   document.removeEventListener('click', handleClickOutside);
+  document.removeEventListener('keydown', handleEscape);
   window.removeEventListener('resize', handleResize);
 });
 

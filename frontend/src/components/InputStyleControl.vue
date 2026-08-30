@@ -24,7 +24,9 @@
         :aria-label="option.label"
         :data-profile="option.profile"
         :title="option.hint"
+        :tabindex="model === option.profile ? 0 : -1"
         @click="select(option.profile)"
+        @keydown="onOptionKeydown"
       >
         {{ option.label }}
       </button>
@@ -68,6 +70,30 @@ export default {
     select(profile) {
       if (profile === this.model) return;
       this.$emit('update:modelValue', profile);
+    },
+    focusProfile(profile) {
+      this.$nextTick(() => {
+        const el = this.$el?.querySelector?.(`[data-profile="${profile}"]`);
+        if (el && typeof el.focus === 'function') el.focus();
+      });
+    },
+    onOptionKeydown(event) {
+      const order = ['mouse', 'pen'];
+      const current = this.model;
+      let next = null;
+      if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
+        next = current === 'pen' ? 'mouse' : 'pen';
+      } else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
+        next = current === 'mouse' ? 'pen' : 'mouse';
+      } else if (event.key === 'Home') {
+        next = order[0];
+      } else if (event.key === 'End') {
+        next = order[1];
+      }
+      if (!next) return;
+      event.preventDefault();
+      this.select(next);
+      this.focusProfile(next);
     }
   }
 };
@@ -123,6 +149,7 @@ export default {
   position: relative;
   z-index: 1;
   box-shadow: none;
+  transition: background-color 140ms ease, color 140ms ease, box-shadow 140ms ease;
 }
 
 .input-style-option.active {

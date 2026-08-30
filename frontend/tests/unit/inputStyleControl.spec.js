@@ -16,6 +16,9 @@ describe('InputStyleControl', () => {
     expect(mysz.attributes('aria-checked')).toBe('true');
     expect(pioro.attributes('aria-checked')).toBe('false');
 
+    expect(mysz.attributes('tabindex')).toBe('0');
+    expect(pioro.attributes('tabindex')).toBe('-1');
+
     await pioro.trigger('click');
     expect(wrapper.emitted('update:modelValue')?.[0]).toEqual(['pen']);
 
@@ -23,6 +26,10 @@ describe('InputStyleControl', () => {
     await nextTick();
     expect(wrapper.get('[data-profile="pen"]').attributes('aria-checked')).toBe('true');
     expect(wrapper.get('[data-profile="mouse"]').attributes('aria-checked')).toBe('false');
+    expect(wrapper.get('[data-profile="pen"]').attributes('tabindex')).toBe('0');
+
+    await pioro.trigger('keydown', { key: 'ArrowRight' });
+    expect(wrapper.emitted('update:modelValue')?.at(-1)).toEqual(['mouse']);
     wrapper.unmount();
   });
 });

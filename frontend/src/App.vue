@@ -1499,6 +1499,10 @@ html, body {
 
   overflow: hidden;
 
+  touch-action: none;
+
+  overscroll-behavior: none;
+
 }
 
 
@@ -1546,6 +1550,10 @@ body {
   overflow: hidden;
 
   width: 100%;
+
+  touch-action: none;
+
+  overscroll-behavior: none;
 
 }
 

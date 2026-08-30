@@ -35,13 +35,17 @@ describe('C1: Composable wiring in WhiteboardCanvas', () => {
     expect(src).toMatch(/const\s*\{[^}]*applyMathAnswer[^}]*\}\s*=\s*useHelperModules/s);
   });
 
-  it('passes getCoordinates and transformCoordinates to startDrawing', () => {
-    expect(src).toContain('startDrawing(event, getCoordinates, transformCoordinates)');
+  it('dispatches drawing from InputPipeline world points instead of a mouse adapter', () => {
+    expect(src).toContain('startDrawingAt(');
+    expect(src).toContain('createInputPipeline');
+    expect(src).toContain('@pointerdown');
+    expect(src).not.toContain('@mousedown="handleMouseDown"');
+    expect(src).not.toContain('@touchstart="handleTouchStart"');
   });
 
-  it('useKeyboardShortcuts uses real cancelActiveDrawing (not inline stub)', () => {
-    // Should NOT have the old inline stub
-    expect(src).not.toMatch(/cancelActiveDrawing:\s*\(\)\s*=>\s*\{/);
+  it('Escape/blur cancels the InputPipeline as well as the live preview', () => {
+    expect(src).toContain("cancelPipeline('gesture')");
+    expect(src).toContain("cancelPipeline('blur')");
   });
 
   it('useKeyboardShortcuts uses real applyMathAnswer (not empty function)', () => {

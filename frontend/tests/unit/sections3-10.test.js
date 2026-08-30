@@ -277,14 +277,13 @@ describe('9.8: Unused CSS variables removed', () => {
 
 // ─── Section 10: Missing Features ────────────────────────────────────────────
 
-describe('10.1: Pen preset keyboard shortcuts 1-4', () => {
-  it('useKeyboardShortcuts.js has pen preset shortcuts', () => {
+describe('10.1: Input Style keyboard shortcuts', () => {
+  it('useKeyboardShortcuts.js maps 1/2 to Mysz/Pióro Input Style', () => {
     const src = readSrc('composables/useKeyboardShortcuts.js');
     expect(src).toContain('selectPenPreset');
-    expect(src).toContain("'1': 'gel'");
-    expect(src).toContain("'2': 'technical'");
-    expect(src).toContain("'3': 'marker'");
-    expect(src).toContain("'4': 'calligraphy'");
+    expect(src).toContain("'1': 'mouse'");
+    expect(src).toContain("'2': 'pen'");
+    expect(src).not.toContain("'1': 'gel'");
   });
 
   it('WhiteboardCanvas.vue wires up useKeyboardShortcuts composable', () => {

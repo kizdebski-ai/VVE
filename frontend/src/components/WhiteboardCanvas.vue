@@ -3,6 +3,8 @@
     ref="containerRef"
     class="whiteboard-container"
     :class="{ 'dark-mode': darkMode, 'collaboration-read-only': collaborationReadOnly }"
+    :data-input-paint-p95="inputPaintP95Ms == null ? '' : String(inputPaintP95Ms)"
+    :data-input-paint-samples="String(inputPaintSampleCount)"
   >
     <div v-if="debugMode" style="position: absolute; top: 5px; left: 5px; z-index: 9999;
      background: rgba(0,0,0,0.7); color: white; padding: 5px; border-radius: 4px; font-size: 12px;">
@@ -1478,6 +1480,8 @@ export default {
       initialProfile: props.inputProfile === 'pen' ? 'pen' : 'mouse'
     });
     const inputPaintSamples = [];
+    const inputPaintP95Ms = ref(null);
+    const inputPaintSampleCount = ref(0);
     let pinchStartZoom = 1;
     const capturedPointers = new Set();
 
@@ -1487,15 +1491,14 @@ export default {
       if (dt >= 0 && dt < 1000) {
         inputPaintSamples.push(dt);
         if (inputPaintSamples.length > 240) inputPaintSamples.shift();
+        inputPaintSampleCount.value = inputPaintSamples.length;
+        const sorted = [...inputPaintSamples].sort((a, b) => a - b);
+        const index = Math.min(sorted.length - 1, Math.max(0, Math.ceil(sorted.length * 0.95) - 1));
+        inputPaintP95Ms.value = sorted[index];
       }
     };
 
-    const inputPaintP95 = () => {
-      if (!inputPaintSamples.length) return null;
-      const sorted = [...inputPaintSamples].sort((a, b) => a - b);
-      const index = Math.min(sorted.length - 1, Math.max(0, Math.ceil(sorted.length * 0.95) - 1));
-      return sorted[index];
-    };
+    const inputPaintP95 = () => inputPaintP95Ms.value;
 
     const lightweightScene = () => {
       if (!yDrawings.value) return [];
@@ -2522,6 +2525,8 @@ export default {
       handleCloneObject,
       handleCommitTransform,
       inputPaintP95,
+      inputPaintP95Ms,
+      inputPaintSampleCount,
 
       // Public API
       setTool,

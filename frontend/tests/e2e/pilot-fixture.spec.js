@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { readFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -533,5 +533,189 @@ test.describe('Pilot fixture: Administrator, Teacher, Student browser contexts',
     );
     expect(critical).toHaveLength(0);
     await context.close();
+  });
+
+  test('Pointer pipeline: persistence, cancel, p95, desktop and iPad layout', async ({ browser }) => {
+    test.setTimeout(90_000);
+    const evidenceDir = path.resolve(
+      path.dirname(fileURLToPath(import.meta.url)),
+      '..',
+      '..',
+      '..',
+      'docs',
+      'implementation',
+      'evidence',
+      'vve-105'
+    );
+    mkdirSync(evidenceDir, { recursive: true });
+
+    const assertNoPageOverflow = async (page) => {
+      const box = await page.evaluate(() => ({
+        scrollWidth: document.documentElement.scrollWidth,
+        clientWidth: document.documentElement.clientWidth,
+        scrollX: window.scrollX
+      }));
+      expect(box.scrollWidth).toBeLessThanOrEqual(box.clientWidth + 1);
+      expect(box.scrollX).toBe(0);
+    };
+
+    const joinBoard = async (page) => {
+      await page.goto(fixture.boardAccessLink);
+      const join = page.getByRole('button', { name: 'Dołącz do lekcji' });
+      if (await join.count()) {
+        await join.click();
+      }
+      await expect(page.locator('canvas.draw-layer')).toBeVisible({ timeout: 20_000 });
+      await expect(page.getByTestId('collaboration-read-only')).toBeHidden({ timeout: 5_000 });
+    };
+
+    const desktop = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const page = await desktop.newPage();
+    const consoleErrors = [];
+    page.on('pageerror', (err) => consoleErrors.push(err.message));
+    page.on('console', (msg) => {
+      if (msg.type() === 'error') consoleErrors.push(msg.text());
+    });
+
+    await joinBoard(page);
+    const control = page.getByTestId('input-style-control');
+    await expect(control).toBeVisible();
+    await assertNoPageOverflow(page);
+    const desktopControlBox = await control.boundingBox();
+    expect(desktopControlBox).not.toBeNull();
+    expect(desktopControlBox.x).toBeGreaterThanOrEqual(0);
+    expect(desktopControlBox.y).toBeGreaterThanOrEqual(0);
+    expect(desktopControlBox.x + desktopControlBox.width).toBeLessThanOrEqual(1440 + 1);
+    expect(desktopControlBox.y + desktopControlBox.height).toBeLessThanOrEqual(900 + 1);
+
+    await page.screenshot({
+      path: path.join(evidenceDir, 'desktop-1440x900-input-style.png'),
+      fullPage: false
+    });
+
+    await page.keyboard.press('2');
+    await expect(control.getByRole('radio', { name: 'Pióro' })).toHaveAttribute('aria-checked', 'true');
+    await control.getByRole('radio', { name: 'Pióro' }).focus();
+    await expect(control.getByRole('radio', { name: 'Pióro' })).toBeFocused();
+    await page.keyboard.press('ArrowRight');
+    await expect(control.getByRole('radio', { name: 'Mysz' })).toHaveAttribute('aria-checked', 'true');
+    await page.keyboard.press('1');
+    await expect(control.getByRole('radio', { name: 'Mysz' })).toHaveAttribute('aria-checked', 'true');
+
+    await control.getByRole('radio', { name: 'Pióro' }).click();
+    const stored = JSON.parse(await page.evaluate(() => localStorage.getItem('vve.inputStyle.v1')));
+    expect(stored.profile).toBe('pen');
+    expect(stored.overridden).toBe(true);
+
+    const staticCanvas = page.locator('canvas.static-layer');
+    const beforeCancel = await staticCanvas.evaluate((canvas) => canvas.toDataURL());
+    const box = await page.locator('canvas.draw-layer').boundingBox();
+    expect(box).not.toBeNull();
+    const cancelX = box.x + box.width * 0.3;
+    const cancelY = box.y + box.height * 0.3;
+    await page.mouse.move(cancelX, cancelY);
+    await page.mouse.down();
+    await page.mouse.move(cancelX + 70, cancelY + 24, { steps: 8 });
+    await page.evaluate(() => window.dispatchEvent(new Event('blur')));
+    await page.mouse.up();
+    await page.waitForTimeout(250);
+    expect(await staticCanvas.evaluate((canvas) => canvas.toDataURL())).toBe(beforeCancel);
+
+    const paintX = box.x + box.width * 0.55;
+    const paintY = box.y + box.height * 0.45;
+    await page.mouse.move(paintX, paintY);
+    await page.mouse.down();
+    await page.mouse.move(paintX + 160, paintY + 70, { steps: 40 });
+    await page.mouse.up();
+    await expect.poll(
+      () => page.locator('[data-input-paint-samples]').getAttribute('data-input-paint-samples'),
+      { timeout: 5_000 }
+    ).not.toBe('0');
+
+    const p95Raw = await page.locator('[data-input-paint-p95]').getAttribute('data-input-paint-p95');
+    const sampleCount = await page.locator('[data-input-paint-samples]').getAttribute('data-input-paint-samples');
+    const p95 = Number(p95Raw);
+    expect(Number.isFinite(p95)).toBe(true);
+    expect(p95).toBeGreaterThanOrEqual(0);
+    expect(p95).toBeLessThanOrEqual(50);
+
+    await page.screenshot({
+      path: path.join(evidenceDir, 'desktop-1440x900-after-stroke.png'),
+      fullPage: false
+    });
+
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await joinBoard(page);
+    await expect(page.getByTestId('input-style-control').getByRole('radio', { name: 'Pióro' }))
+      .toHaveAttribute('aria-checked', 'true');
+
+    writeFileSync(
+      path.join(evidenceDir, 'input-paint-p95.json'),
+      JSON.stringify(
+        {
+          viewport: '1440x900',
+          p95Ms: p95,
+          samples: Number(sampleCount),
+          targetMs: 50
+        },
+        null,
+        2
+      )
+    );
+
+    const blockingErrors = consoleErrors.filter(
+      (message) =>
+        message.includes('is not defined') ||
+        message.includes('is not a function') ||
+        message.includes('Failed to fetch')
+    );
+    expect(blockingErrors).toHaveLength(0);
+    await desktop.close();
+
+    const ipad = await browser.newContext({
+      viewport: { width: 768, height: 1024 },
+      hasTouch: true,
+      isMobile: true
+    });
+    const ipadPage = await ipad.newPage();
+    await ipadPage.emulateMedia({ reducedMotion: 'reduce' });
+    await joinBoard(ipadPage);
+    const ipadControl = ipadPage.getByTestId('input-style-control');
+    await expect(ipadControl).toBeVisible();
+    await assertNoPageOverflow(ipadPage);
+    const ipadBox = await ipadControl.boundingBox();
+    expect(ipadBox).not.toBeNull();
+    expect(ipadBox.x).toBeGreaterThanOrEqual(0);
+    expect(ipadBox.y).toBeGreaterThanOrEqual(0);
+    expect(ipadBox.x + ipadBox.width).toBeLessThanOrEqual(768 + 1);
+    expect(ipadBox.y + ipadBox.height).toBeLessThanOrEqual(1024 + 1);
+    await ipadControl.getByRole('radio', { name: 'Pióro' }).click();
+    await expect(ipadControl.getByRole('radio', { name: 'Pióro' })).toHaveAttribute('aria-checked', 'true');
+    await ipadPage.screenshot({
+      path: path.join(evidenceDir, 'ipad-768x1024-input-style.png'),
+      fullPage: false
+    });
+    await ipad.close();
+
+    const autoContext = await browser.newContext();
+    const autoPage = await autoContext.newPage();
+    await joinBoard(autoPage);
+    await autoPage.locator('canvas.draw-layer').evaluate((canvas) => {
+      canvas.dispatchEvent(new PointerEvent('pointerdown', {
+        bubbles: true,
+        cancelable: true,
+        pointerId: 7,
+        pointerType: 'pen',
+        isPrimary: true,
+        clientX: 220,
+        clientY: 260,
+        buttons: 1,
+        button: 0,
+        pressure: 0.42
+      }));
+    });
+    await expect(autoPage.getByTestId('input-style-control').getByRole('radio', { name: 'Pióro' }))
+      .toHaveAttribute('aria-checked', 'true');
+    await autoContext.close();
   });
 });

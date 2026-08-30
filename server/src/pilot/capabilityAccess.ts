@@ -4,6 +4,11 @@ import { config } from '../config';
 import { getDb } from '../db';
 import { logger } from '../logger';
 import { normalizeTeacherEmail } from '../services/teacherService';
+import {
+  createResourceGovernor,
+  type ResourceGovernor
+} from './resourceGovernor';
+import { createResourceLimits } from './resourceLimits';
 
 /**
  * CapabilityAccess — Module 1 of the VVE Pilot deep-module design (slice S1).
@@ -249,6 +254,8 @@ export interface CreateCapabilityAccessOptions {
   /** Administrator login rate limit; defaults come from config (5/min). */
   loginMax?: number;
   loginWindowMs?: number;
+  /** ResourceGovernor owns the login window; tests may inject a custom instance. */
+  resourceGovernor?: ResourceGovernor;
 }
 
 export interface CapabilityAccess {
@@ -281,18 +288,21 @@ export const createCapabilityAccess = (options: CreateCapabilityAccessOptions = 
   const db = () => options.db ?? getDb();
   const loginMax = options.loginMax ?? config.adminLoginMax;
   const loginWindowMs = options.loginWindowMs ?? config.adminLoginWindowMs;
+  const governor =
+    options.resourceGovernor ??
+    createResourceGovernor({
+      limits: createResourceLimits({
+        administratorLoginMax: loginMax,
+        administratorLoginWindowMs: loginWindowMs
+      })
+    });
 
-  // ---- Administrator login rate limiting (hidden inside the module) -------
-  const loginBuckets = new Map<string, { count: number; resetAt: number }>();
   const loginAllowed = (clientKey: string, now: Date): boolean => {
-    const bucket = loginBuckets.get(clientKey);
-    if (!bucket || bucket.resetAt < now.getTime()) {
-      loginBuckets.set(clientKey, { count: 1, resetAt: now.getTime() + loginWindowMs });
-      return true;
-    }
-    if (bucket.count >= loginMax) return false;
-    bucket.count += 1;
-    return true;
+    const decision = governor.admit(
+      { kind: 'administratorLogin', clientKey },
+      { now: now.getTime() }
+    );
+    return decision.decision === 'allow' || decision.decision === 'allowWithBudget';
   };
 
   // ---- Shared durable lookups (single indexed query on the hot path) -----

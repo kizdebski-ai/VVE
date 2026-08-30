@@ -26,6 +26,11 @@ import { createAdminTeachersRouter } from './routes/adminTeachers';
 import { createTeacherAuthRouter } from './routes/teacherAuth';
 import { createTeacherBoardsRouter } from './routes/teacherBoards';
 import { createBoardAccessRouter } from './routes/boardAccess';
+import {
+  createResourceGovernor,
+  type ResourceGovernor
+} from './pilot/resourceGovernor';
+import { resourceLimitsFromEnv } from './pilot/resourceLimits';
 
 export interface CreateAppOptions {
   roomManager: RoomManager;
@@ -42,14 +47,16 @@ export interface CreateAppOptions {
   capabilityAccess?: ReturnType<typeof createCapabilityAccess>;
   /** BoardLifecycle dependency (VVE-102); defaults to an instance over the process db + CapabilityAccess. */
   boardLifecycle?: BoardLifecycle;
+  resourceGovernor?: ResourceGovernor;
 }
 
-export const createHttpApp = ({ roomManager, aiSolver, environment, devSurface, capabilityAccess, boardLifecycle }: CreateAppOptions) => {
+export const createHttpApp = ({ roomManager, aiSolver, environment, devSurface, capabilityAccess, boardLifecycle, resourceGovernor }: CreateAppOptions) => {
   const app = express();
 
   const resolvedEnvironment: RuntimeEnvironment = environment ?? config.pilotEnvironment;
   const resolvedDevSurface: boolean = devSurface ?? config.devSurface;
   const access = capabilityAccess ?? createCapabilityAccess();
+  const governor = resourceGovernor ?? createResourceGovernor({ limits: resourceLimitsFromEnv() });
   const lifecycle =
     boardLifecycle ??
     createBoardLifecycle({
@@ -124,8 +131,7 @@ export const createHttpApp = ({ roomManager, aiSolver, environment, devSurface, 
         : undefined // Open in development
   ));
 
-  // AI endpoints accept screenshots, so allow a slightly larger body size
-  app.use(express.json({ limit: '20mb' }));
+  app.use(express.json({ limit: governor.limits().maxHttpJsonBytes }));
 
   // Correlation ID middleware
   app.use((req, res, next) => {

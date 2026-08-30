@@ -83,11 +83,11 @@ export const encodeServerFrame = (frame: ServerFrame): Uint8Array => {
       return prefixed(
         collaborationMessage.denial,
         encoder.encode(
-          JSON.stringify(
-            frame.operationId
-              ? { reason: frame.reason, operationId: frame.operationId }
-              : { reason: frame.reason }
-          )
+          JSON.stringify({
+            reason: frame.reason,
+            ...(frame.operationId ? { operationId: frame.operationId } : {}),
+            ...(frame.messageKey ? { messageKey: frame.messageKey } : {})
+          })
         )
       );
     case 'serverDraining':

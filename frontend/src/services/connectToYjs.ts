@@ -74,6 +74,7 @@ export interface YjsConnection {
 export interface MutationDenial {
   reason: string;
   operationId: string;
+  messageKey?: string;
 }
 
 export interface ConnectOptions {
@@ -267,20 +268,18 @@ export function connectToYjs(roomId: string, options?: ConnectOptions): YjsConne
           break;
         }
         case collaborationMessage.denial: {
-          let denial: { reason?: string; operationId?: string } = {};
+          let denial: { reason?: string; operationId?: string; messageKey?: string } = {};
           try {
             denial = JSON.parse(decoder.decode(data.slice(1)));
           } catch {
             denial = { reason: decoder.decode(data.slice(1)) };
           }
           if (denial.operationId) {
-            // Mutation-level denial: exactly one operation was rejected
-            // (schema violation or a forbidden command). The connection and
-            // the rest of the pending queue stay valid.
             pending.delete(denial.operationId);
             options?.onMutationDenied?.({
               reason: denial.reason ?? 'malformed',
-              operationId: denial.operationId
+              operationId: denial.operationId,
+              messageKey: denial.messageKey
             });
             break;
           }

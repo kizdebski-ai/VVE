@@ -11,6 +11,8 @@ import {
   type ServerFrame
 } from '../src/pilot/collaborationRuntime';
 import { applyBoardCommand, type BoardCommand } from '../src/pilot/boardScene';
+import { createResourceGovernor } from '../src/pilot/resourceGovernor';
+import { createResourceLimits } from '../src/pilot/resourceLimits';
 
 const BOARD_A = '11111111-1111-4111-8111-111111111111';
 const BOARD_B = '22222222-2222-4222-8222-222222222222';
@@ -42,6 +44,7 @@ const connection = (
 class MemoryTransport implements CollaborationTransport {
   frames: ServerFrame[] = [];
   closed: { code: number; reason: string } | null = null;
+  buffer = 0;
 
   constructor(private readonly events?: string[]) {}
 
@@ -54,6 +57,10 @@ class MemoryTransport implements CollaborationTransport {
 
   async close(code: number, reason: string) {
     this.closed = { code, reason };
+  }
+
+  bufferedBytes() {
+    return this.buffer;
   }
 }
 
@@ -307,5 +314,63 @@ describe('CollaborationRuntime document authority (S4)', () => {
       operationId: 'op-rogue'
     });
     expect(transport.closed).toBeNull();
+  });
+
+  it('admits 57 concurrent clients and rejects a single oversized mutation', async () => {
+    const governor = createResourceGovernor();
+    const runtime = createCollaborationRuntime({
+      store: new InMemoryBoardDocumentStore(),
+      resourceGovernor: governor
+    });
+    const handles = [];
+    for (let index = 0; index < 57; index += 1) {
+      const boardIndex = index < 22 ? index : index - 22;
+      const boardId = `${String(boardIndex).padStart(8, '0')}-1111-4111-8111-111111111111`;
+      const role = index < 22 ? 'teacher' : 'student';
+      handles.push(
+        await runtime.connect(connection(boardId, role), new MemoryTransport())
+      );
+    }
+    expect(handles).toHaveLength(57);
+
+    const tight = createCollaborationRuntime({
+      store: new InMemoryBoardDocumentStore(),
+      resourceGovernor: createResourceGovernor({
+        limits: createResourceLimits({ maxDocumentUpdateBytes: 8 })
+      })
+    });
+    const transport = new MemoryTransport();
+    const handle = await tight.connect(connection(), transport);
+    const huge = new Uint8Array(64).fill(1);
+    const result = await handle.receive({ kind: 'mutation', operationId: 'op-huge', update: huge });
+    expect(result).toEqual({ accepted: false, reason: 'resource' });
+    expect(transport.frames.at(-1)).toMatchObject({
+      kind: 'denial',
+      reason: 'resource',
+      operationId: 'op-huge'
+    });
+    expect(transport.closed).toBeNull();
+  });
+
+  it('disconnects a slow consumer and keeps the healthy peer synchronized', async () => {
+    const runtime = createCollaborationRuntime({
+      store: new InMemoryBoardDocumentStore(),
+      resourceGovernor: createResourceGovernor({
+        limits: createResourceLimits({ maxSlowClientBufferedBytes: 16 })
+      })
+    });
+    const teacher = new MemoryTransport();
+    const slow = new MemoryTransport();
+    slow.buffer = 10_000;
+    const teacherHandle = await runtime.connect(connection(), teacher);
+    await runtime.connect(connection(BOARD_A, 'student'), slow);
+
+    const result = await teacherHandle.receive(mutation('op-keep', 'title', 'Lesson continues'));
+    expect(result).toMatchObject({ accepted: true, operationId: 'op-keep' });
+    expect(slow.closed).toEqual({ code: 1013, reason: 'Slow consumer' });
+    expect(slow.frames.some((frame) => frame.kind === 'denial' && frame.reason === 'resource')).toBe(
+      true
+    );
+    expect(teacher.frames.at(-1)).toMatchObject({ kind: 'acknowledgement', operationId: 'op-keep' });
   });
 });

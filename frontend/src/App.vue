@@ -254,7 +254,6 @@ import { buildRoomHash, parseRoomHash } from './lib/roomLink';
 import { generateEncryptionKey } from './lib/crypto';
 import 'katex/dist/katex.min.css';
 import { drawStyledPen, DEFAULT_PEN_PRESETS, makePreviewPoints } from './utils/penStyles';
-import { usePdfImport } from './composables/usePdfImport';
 import { Users, Share2, ChevronRight, ChevronLeft } from 'lucide-vue-next';
 import PilotUnavailable from './views/PilotUnavailable.vue';
 import { featureAvailable } from './services/pilotSurface';
@@ -550,12 +549,13 @@ export default {
       }
     };
 
-    const { importPdfFile } = usePdfImport({
-      addElementFromPanel: (data) => handleAddElement(data),
-      showToast: (msg, type, dur) => showNotification(msg, type),
-      debugLog: appDebugLog,
-    });
-    const handleImportPdf = (file) => importPdfFile(file);
+    const handleImportPdf = (file) => {
+      if (whiteboard.value?.importArtifactFile) {
+        whiteboard.value.importArtifactFile(file);
+        return;
+      }
+      showNotification('Tablica nie jest jeszcze gotowa do importu.', 'warning');
+    };
 
     const handleDiagramApply = (diagramData) => {
       if (!diagramData?.nodes?.length) return;
@@ -937,7 +937,7 @@ export default {
         await whiteboard.value.exportBoardAsPdf();
       } else {
         console.warn('[App] whiteboard ref missing or exportBoardAsPdf not exposed');
-        showStatus('PDF export not available.', 3000);
+        showStatus('Eksport PDF jest niedostępny.', 3000);
       }
     };
 
@@ -946,7 +946,7 @@ export default {
         await whiteboard.value.exportBoardAsPdfPaged();
       } else {
         console.warn('[App] whiteboard ref missing or exportBoardAsPdfPaged not exposed');
-        showStatus('PDF export not available.', 3000);
+        showStatus('Eksport PDF jest niedostępny.', 3000);
       }
     };
 
@@ -1027,53 +1027,13 @@ export default {
     };
 
     const handleImageSelected = (file) => {
-      appDebugLog("App.vue: handleImageSelected called with:", file);
-      if (!file) {
-          console.warn("handleImageSelected: No file received.");
-          return;
+      if (!file) return;
+      if (whiteboard.value?.importArtifactFile) {
+        whiteboard.value.importArtifactFile(file);
+        return;
       }
-      if (!whiteboard.value) {
-          console.warn("handleImageSelected: Whiteboard ref not available yet.");
-          showNotification("Whiteboard not ready, please try again.", "warning");
-          return;
-      }
-
-      if (file instanceof File) {
-        appDebugLog(`handleImageSelected: Processing File object: ${file.name}, type: ${file.type}`);
-        const reader = new FileReader();
-
-        reader.onload = (e) => {
-          appDebugLog("FileReader onload triggered.");
-          const dataUrl = e.target.result;
-          if (whiteboard.value?.addImageFromDataUrl) {
-            appDebugLog("Calling whiteboard.addImageFromDataUrl with dataUrl (first 50 chars):", dataUrl.substring(0, 50));
-            whiteboard.value.addImageFromDataUrl(dataUrl);
-            appDebugLog("Called whiteboard.addImageFromDataUrl.");
-          } else {
-            console.error("Whiteboard ref or addImageFromDataUrl method not available when FileReader loaded.");
-            showNotification("Error processing image (internal).", "error");
-          }
-        };
-
-        reader.onerror = (err) => {
-            console.error("FileReader error:", err);
-            showNotification("Error reading selected file.", "error");
-        };
-
-        reader.readAsDataURL(file);
-        appDebugLog("FileReader readAsDataURL called.");
-
-      } else {
-         console.warn("handleImageSelected received non-File object:", file);
-         if (whiteboard.value?.addImageFromDataUrl && typeof file === 'string') {
-             appDebugLog("Calling whiteboard.addImageFromDataUrl with non-File object (string)...");
-             whiteboard.value.addImageFromDataUrl(file);
-         } else {
-             showNotification("Invalid image data received.", "error");
-         }
-      }
+      showNotification('Tablica nie jest jeszcze gotowa do importu.', 'warning');
     };
-
 
     const toggleDarkMode = () => {
       darkMode.value = !darkMode.value;

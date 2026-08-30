@@ -4,9 +4,12 @@ import { parse } from 'csv-parse/sync';
 import { logger } from '../logger';
 import type { CapabilityAccess } from '../pilot/capabilityAccess';
 import type { BoardLifecycle } from '../pilot/boardLifecycle';
+import { MEASURED_RESOURCE_LIMITS } from '../pilot/resourceLimits';
 
-// 4.7: Limit file upload size to 5MB
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: MEASURED_RESOURCE_LIMITS.maxAdminUploadBytes }
+});
 const textParser = express.text({ type: ['text/csv', 'text/plain', 'application/csv'] });
 
 type ImportRow = { email: string; fullName?: string | null };

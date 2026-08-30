@@ -69,6 +69,31 @@ describe('Pilot surface: manifest-driven UI enumeration', () => {
     expect(featureAvailable('panel.imagePaste', 'teacher')).toBe(true);
   });
 
+  it('keeps lesson popovers exclusive, Polish, and keyboard-addressable', async () => {
+    const wrapper = mount(ToolBar, {
+      props: {
+        role: 'teacher',
+        isCalculatorOpen: true,
+        isMathPanelOpen: false,
+        isPhysicsPanelOpen: false
+      }
+    });
+    const calculator = wrapper.get('[data-tool-id="panel.calculator"]');
+    expect(calculator.attributes('aria-pressed')).toBe('true');
+    expect(calculator.attributes('aria-keyshortcuts')).toBe('Shift+K');
+
+    await wrapper.get('[data-tool-id="tool.shapes"]').trigger('click');
+    await nextTick();
+    expect(document.querySelector('.shapes-popover')?.textContent).toContain('Kształty');
+    expect(document.querySelector('.shapes-popover')?.textContent).toContain('Linia');
+
+    await wrapper.get('[data-tool-id="panel.coordinateSystem"]').trigger('click');
+    await nextTick();
+    expect(document.querySelector('.shapes-popover')).toBeNull();
+    expect(document.querySelector('.coordinate-menu')?.textContent).toContain('Układ współrzędnych 2D');
+    wrapper.unmount();
+  });
+
   it('top menu hides raw board transfer, rooms and grid align while keeping PDF and input style', async () => {
     const wrapper = mount(TopMenu, { props: { role: 'teacher' } });
     // Reveal the gear (hover) and open the menu (click).

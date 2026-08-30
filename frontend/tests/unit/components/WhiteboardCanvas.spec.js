@@ -249,6 +249,40 @@ describe('WhiteboardCanvas.vue', () => {
       expect(pushedElement.get('height')).toBe(40);
       expect(pushedElement.get('id')).toEqual(expect.any(String));
     });
+
+    it('adds a canonical mathematical graph at the viewport and deletes it through selection', async () => {
+      expect(wrapper.vm.addElementFromPanel({
+        type: 'mathFunctionPlot',
+        width: 400,
+        height: 300,
+        expression: 'x^2',
+        xRange: [-10, 10],
+        color: '#2563eb',
+        lineWidth: 3
+      })).toBe(true);
+      await nextTick();
+
+      const graph = mockYDrawings.get(1);
+      expect(graph.get('type')).toBe('mathFunctionPlot');
+      expect(graph.get('x')).toEqual(expect.any(Number));
+      expect(graph.get('y')).toEqual(expect.any(Number));
+      expect(graph.has('position')).toBe(false);
+
+      wrapper.vm.selectObject(graph.get('id'));
+      expect(wrapper.vm.deleteSelectedObject()).toBe(true);
+      expect(mockYDrawings.toArray().some((object) => object.get('id') === graph.get('id'))).toBe(false);
+    });
+
+    it('publishes the exclusive panel state owned by WhiteboardSession', async () => {
+      expect(wrapper.vm.toggleLessonPanel('calculator')).toBe('calculator');
+      expect(wrapper.vm.toggleLessonPanel('mathGraph')).toBe('mathGraph');
+      expect(wrapper.vm.toggleLessonPanel('mathGraph')).toBeNull();
+      expect(wrapper.emitted('update:lesson-panel')).toEqual([
+        ['calculator'],
+        ['mathGraph'],
+        [null]
+      ]);
+    });
   });
 
   describe('Acknowledged collaboration read-only gate', () => {

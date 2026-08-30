@@ -154,4 +154,93 @@ describe('WhiteboardSession Interface', () => {
     expect(session.canUndo()).toBe(false);
     session.dispose();
   });
+
+  it('owns exclusive lesson-panel state without touching the shared document', () => {
+    const ydoc = new Y.Doc();
+    const changes: Array<string | null> = [];
+    const session = createWhiteboardSession({
+      ydoc,
+      role: 'student',
+      onPanelChange: (panel) => changes.push(panel)
+    });
+    const before = Y.encodeStateAsUpdate(ydoc);
+
+    expect(session.togglePanel('calculator')).toBe('calculator');
+    expect(session.togglePanel('mathGraph')).toBe('mathGraph');
+    expect(session.activePanel()).toBe('mathGraph');
+    expect(session.togglePanel('mathGraph')).toBeNull();
+    expect(session.setActivePanel('physicsGraph')).toBe('physicsGraph');
+    expect(session.setActivePanel(null)).toBeNull();
+    expect(changes).toEqual(['calculator', 'mathGraph', null, 'physicsGraph', null]);
+    expect(Y.encodeStateAsUpdate(ydoc)).toEqual(before);
+    expect(session.canUndo()).toBe(false);
+    session.dispose();
+  });
+
+  it('creates, transforms, undoes, and redoes canonical math and physics objects', () => {
+    const ydoc = new Y.Doc();
+    const session = createWhiteboardSession({ ydoc, role: 'student' });
+
+    expect(session.execute({
+      kind: 'add',
+      object: {
+        id: 'math',
+        type: 'mathFunctionPlot',
+        x: 20,
+        y: 30,
+        width: 400,
+        height: 300,
+        expression: 'x^2',
+        xRange: [-5, 5],
+        color: '#2563eb',
+        lineWidth: 3
+      }
+    })).toEqual({ ok: true });
+    expect(session.execute({
+      kind: 'add',
+      object: {
+        id: 'physics',
+        type: 'physicsDataPlot',
+        x: 60,
+        y: 70,
+        width: 400,
+        height: 300,
+        points: [{ x: 0, y: 0 }, { x: 1, y: 9.8 }],
+        xLabel: 't',
+        yLabel: 'v',
+        color: '#f59e0b',
+        lineWidth: 2
+      }
+    })).toEqual({ ok: true });
+    expect(session.execute({
+      kind: 'resize',
+      id: 'math',
+      x: 100,
+      y: 120,
+      width: 500,
+      height: 360
+    })).toEqual({ ok: true });
+    expect(session.snapshot().find((object) => object.id === 'math')).toMatchObject({
+      x: 100,
+      y: 120,
+      width: 500,
+      height: 360
+    });
+
+    expect(session.undo()).toBe(true);
+    expect(session.snapshot().find((object) => object.id === 'math')).toMatchObject({
+      x: 20,
+      y: 30,
+      width: 400,
+      height: 300
+    });
+    expect(session.redo()).toBe(true);
+    expect(session.snapshot()).toHaveLength(2);
+    for (const object of session.snapshot()) {
+      expect(object).not.toHaveProperty('position');
+      expect(object).not.toHaveProperty('xData');
+      expect(object).not.toHaveProperty('yData');
+    }
+    session.dispose();
+  });
 });

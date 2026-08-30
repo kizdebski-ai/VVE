@@ -80,7 +80,16 @@ export const encodeServerFrame = (frame: ServerFrame): Uint8Array => {
         encoder.encode(JSON.stringify({ digest: frame.digest }))
       );
     case 'denial':
-      return prefixed(collaborationMessage.denial, encoder.encode(frame.reason));
+      return prefixed(
+        collaborationMessage.denial,
+        encoder.encode(
+          JSON.stringify(
+            frame.operationId
+              ? { reason: frame.reason, operationId: frame.operationId }
+              : { reason: frame.reason }
+          )
+        )
+      );
     case 'serverDraining':
       return prefixed(collaborationMessage.serverDraining, encoder.encode(frame.reason));
   }

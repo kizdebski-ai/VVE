@@ -130,6 +130,113 @@ test.describe('Pilot fixture: Administrator, Teacher, Student browser contexts',
     await secondContext.close();
   });
 
+  test('Whiteboard commands keep undo participant-scoped and whole-board clear Teacher-only', async ({ browser }) => {
+    const teacherContext = await browser.newContext();
+    const teacher = await teacherContext.newPage();
+    await teacher.goto(fixture.teacherAccessLink);
+    await expect(teacher.getByRole('heading', { name: 'Moje tablice' })).toBeVisible({ timeout: 15_000 });
+
+    const boardLabel = `E2E komendy ${Date.now()}`;
+    await teacher.getByRole('button', { name: 'Nowa tablica ucznia' }).click();
+    await teacher.getByLabel('Etykieta ucznia / grupy').fill(boardLabel);
+    await teacher.getByLabel('Temat lekcji (opcjonalnie)').fill('Test komend tablicy');
+    await teacher.getByRole('button', { name: 'Utwórz tablicę' }).click();
+    const freshLink = teacher.locator('.modal-panel .keyway.fresh .keyway-channel');
+    await expect(freshLink).toBeVisible({ timeout: 10_000 });
+    const boardAccessLink = (await freshLink.innerText()).trim();
+    await teacher.locator('.modal-foot').getByRole('button', { name: 'Zamknij' }).click();
+
+    const firstContext = await browser.newContext();
+    const secondContext = await browser.newContext();
+    const first = await firstContext.newPage();
+    const second = await secondContext.newPage();
+    const join = async (page) => {
+      await page.goto(boardAccessLink);
+      await page.getByRole('button', { name: 'Dołącz do lekcji' }).click();
+      await expect(page.locator('canvas.static-layer')).toBeVisible({ timeout: 20_000 });
+      await expect(page.getByTestId('collaboration-read-only')).toBeHidden({ timeout: 5_000 });
+    };
+    await join(first);
+    await join(second);
+
+    const firstStatic = first.locator('canvas.static-layer');
+    const secondStatic = second.locator('canvas.static-layer');
+    const initial = await secondStatic.evaluate((canvas) => canvas.toDataURL());
+    const drawStroke = async (page, xRatio, yRatio) => {
+      const box = await page.locator('canvas.draw-layer').boundingBox();
+      expect(box).not.toBeNull();
+      const x = box.x + box.width * xRatio;
+      const y = box.y + box.height * yRatio;
+      await page.mouse.move(x, y);
+      await page.mouse.down();
+      await page.mouse.move(x + 80, y + 35, { steps: 12 });
+      await page.mouse.up();
+    };
+    const waitForView = async (canvas, expected) => {
+      await expect.poll(
+        () => canvas.evaluate((node) => node.toDataURL()),
+        { timeout: 5_000 }
+      ).toBe(expected);
+    };
+
+    await drawStroke(first, 0.28, 0.35);
+    await expect.poll(
+      () => secondStatic.evaluate((canvas) => canvas.toDataURL()),
+      { timeout: 5_000 }
+    ).not.toBe(initial);
+    const firstOnly = await secondStatic.evaluate((canvas) => canvas.toDataURL());
+
+    await drawStroke(second, 0.62, 0.64);
+    await expect.poll(
+      () => firstStatic.evaluate((canvas) => canvas.toDataURL()),
+      { timeout: 5_000 }
+    ).not.toBe(firstOnly);
+    const both = await firstStatic.evaluate((canvas) => canvas.toDataURL());
+    await waitForView(secondStatic, both);
+
+    // First participant rewinds only their own transaction; the second
+    // participant's stroke remains and their history is still independent.
+    await first.locator('[data-tool-id="tool.undo"]').click();
+    await expect.poll(
+      () => secondStatic.evaluate((canvas) => canvas.toDataURL()),
+      { timeout: 5_000 }
+    ).not.toBe(both);
+    const secondOnly = await secondStatic.evaluate((canvas) => canvas.toDataURL());
+    expect(secondOnly).not.toBe(initial);
+    expect(secondOnly).not.toBe(firstOnly);
+
+    await second.locator('[data-tool-id="tool.undo"]').click();
+    await waitForView(firstStatic, initial);
+    await waitForView(secondStatic, initial);
+
+    await first.locator('[data-tool-id="tool.redo"]').click();
+    await waitForView(secondStatic, firstOnly);
+    await second.locator('[data-tool-id="tool.redo"]').click();
+    await waitForView(firstStatic, both);
+
+    // Students have no whole-board clear affordance. The owning Teacher has
+    // it, confirms explicitly, and both Student sessions converge to empty.
+    await expect(first.locator('[data-tool-id="tool.clearBoard"]')).toHaveCount(0);
+    const row = teacher.locator('.board-row', { hasText: boardLabel });
+    const teacherBoardPromise = teacherContext.waitForEvent('page');
+    await row.getByRole('button', { name: 'Otwórz' }).click();
+    const teacherBoard = await teacherBoardPromise;
+    await expect(teacherBoard.getByText('Tablica nauczyciela')).toBeVisible({ timeout: 10_000 });
+    await teacherBoard.getByRole('button', { name: 'Otwórz tablicę' }).click();
+    await expect(teacherBoard.locator('canvas.static-layer')).toBeVisible({ timeout: 20_000 });
+    await expect(teacherBoard.getByTestId('collaboration-read-only')).toBeHidden({ timeout: 5_000 });
+    const clearButton = teacherBoard.locator('[data-tool-id="tool.clearBoard"]');
+    await expect(clearButton).toBeVisible();
+    teacherBoard.once('dialog', (dialog) => dialog.accept());
+    await clearButton.click();
+    await waitForView(firstStatic, initial);
+    await waitForView(secondStatic, initial);
+
+    await firstContext.close();
+    await secondContext.close();
+    await teacherContext.close();
+  });
+
   test('Administrator signs in with the passphrase; viewing the list never rotates links', async ({ browser }) => {
     const context = await browser.newContext();
     const page = await context.newPage();

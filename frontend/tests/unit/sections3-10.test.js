@@ -86,14 +86,9 @@ describe('6.2: Promise-based hydration lock', () => {
   });
 });
 
-describe('6.4: Silent catches → console.warn', () => {
-  it('useUndoRedo.js uses console.warn in catch blocks', () => {
-    const src = readSrc('composables/useUndoRedo.js');
-    expect(src).toContain("console.warn('[useUndoRedo]");
-    // No silent catches
-    expect(src).not.toMatch(/catch\s*\(_\)\s*\{\s*\/\*\s*ignore\s*\*\/\s*\}/);
-  });
-});
+// VVE-104 replaced the standalone useUndoRedo composable with participant-
+// scoped history inside WhiteboardSession. Its behavior is covered through
+// the session Interface rather than source-text assertions.
 
 describe('6.5: AI operation mutex', () => {
   it('useHelperModules.js implements withAiMutex', () => {

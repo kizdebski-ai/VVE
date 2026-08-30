@@ -5,7 +5,6 @@
  * eraseElement, and the Ramer-Douglas-Peucker simplification algorithm.
  */
 import { ref, computed, nextTick } from 'vue';
-import * as Y from 'yjs';
 import { createNewElement } from '../utils/canvasTools.js';
 import { computeGridSteps } from '../utils/canvasGrid.js';
 import { DEFAULT_PEN_PRESETS } from '../utils/penStyles.js';
@@ -35,7 +34,7 @@ export function useDrawingEngine({
   ydoc,
   yDrawings,
   yjsConnection,
-  undoManager,
+  session,
   smoothingFactor,
   debugModeEnabled,
   // Props getters
@@ -489,120 +488,67 @@ export function useDrawingEngine({
         }
       }
 
-      if (elementToAdd) {
+      if (elementToAdd && elementToAdd.type !== 'text' && elementToAdd.type !== 'image') {
         if (elementToAdd.type === 'line') {
           attachBindingsToLineDraft(elementToAdd);
         }
-        elementToAdd.id = `${yjsConnection.value?.awareness?.clientID || 'local'}-${Date.now()}`;
 
-        if (debugModeEnabled.value) {
-          debugLog?.('[finishDrawing] Final elementToAdd before Yjs transaction:', JSON.stringify(elementToAdd));
+        // Canonical scene object (VVE-104): one geometry per family. Shapes
+        // store x/y/width/height (never start/end), lines store plain
+        // start/end points, pens store absolute points with derived bounds.
+        const shapeOrLine = SHAPE_TOOLS.has(elementToAdd.type) || elementToAdd.type === 'line';
+        const object = {
+          id: `${yjsConnection.value?.awareness?.clientID || 'local'}-${Date.now()}`,
+          type: elementToAdd.type,
+          color: elementToAdd.color,
+          lineWidth: elementToAdd.lineWidth,
+          timestamp: Date.now(),
+          rotation: 0,
+        };
+        const resolvedLineStyle = elementToAdd.lineStyle ?? (shapeOrLine ? getCurrentLineStyle() || 'solid' : undefined);
+        const resolvedRoughness = elementToAdd.roughness ?? (shapeOrLine ? getCurrentRoughness() ?? 1 : undefined);
+        const resolvedFillColor = elementToAdd.fillColor ?? (shapeOrLine ? getCurrentFillColor() : undefined);
+        if (resolvedLineStyle != null) object.lineStyle = resolvedLineStyle;
+        if (resolvedRoughness != null) object.roughness = resolvedRoughness;
+        if (resolvedFillColor != null) object.fillColor = resolvedFillColor;
+
+        if (elementToAdd.type === 'pen') {
+          if (elementToAdd.penStyle) object.penStyle = elementToAdd.penStyle;
+          if (elementToAdd.penConfig) {
+            object.penConfig = Object.fromEntries(
+              Object.entries(elementToAdd.penConfig).filter(
+                ([, val]) => val !== undefined && val !== null && typeof val !== 'function'
+              )
+            );
+          }
+          object.points = elementToAdd.points;
+          if (elementToAdd.rawPoints) object.rawPoints = elementToAdd.rawPoints;
+        } else if (elementToAdd.type === 'line') {
+          object.start = { x: elementToAdd.start.x, y: elementToAdd.start.y };
+          object.end = { x: elementToAdd.end.x, y: elementToAdd.end.y };
+          object.arrowStyle = elementToAdd.arrowStyle || getCurrentArrowStyle() || 'none';
+          if (elementToAdd.startBinding) object.startBinding = elementToAdd.startBinding;
+          if (elementToAdd.endBinding) object.endBinding = elementToAdd.endBinding;
+        } else if (elementToAdd.start && elementToAdd.end) {
+          object.x = Math.min(elementToAdd.start.x, elementToAdd.end.x);
+          object.y = Math.min(elementToAdd.start.y, elementToAdd.end.y);
+          object.width = Math.abs(elementToAdd.start.x - elementToAdd.end.x);
+          object.height = Math.abs(elementToAdd.start.y - elementToAdd.end.y);
         }
 
-        try {
-          ydoc.value.transact(() => {
-            const yElementMap = new Y.Map();
-            yElementMap.set('id', elementToAdd.id);
-            yElementMap.set('type', elementToAdd.type);
-            yElementMap.set('color', elementToAdd.color);
-            yElementMap.set('lineWidth', elementToAdd.lineWidth);
-            yElementMap.set('timestamp', Date.now());
-            yElementMap.set('rotation', 0);
+        if (debugModeEnabled.value) {
+          debugLog?.('[finishDrawing] Canonical object for session.execute:', JSON.stringify(object));
+        }
 
-            const shapeOrLine = SHAPE_TOOLS.has(elementToAdd.type) || elementToAdd.type === 'line';
-            const resolvedLineStyle = elementToAdd.lineStyle ?? (shapeOrLine ? getCurrentLineStyle() || 'solid' : undefined);
-            const resolvedRoughness = elementToAdd.roughness ?? (shapeOrLine ? getCurrentRoughness() ?? 1 : undefined);
-            const resolvedFillColor = elementToAdd.fillColor ?? (shapeOrLine ? getCurrentFillColor() : undefined);
-            if (resolvedLineStyle != null) yElementMap.set('lineStyle', resolvedLineStyle);
-            if (resolvedRoughness != null) yElementMap.set('roughness', resolvedRoughness);
-            if (resolvedFillColor != null) yElementMap.set('fillColor', resolvedFillColor);
-
-            if (elementToAdd.type === 'pen') {
-              if (elementToAdd.penStyle) yElementMap.set('penStyle', elementToAdd.penStyle);
-              // 1.7: Explicit property extraction for penConfig (Y.Map cannot store raw objects)
-              if (elementToAdd.penConfig) {
-                const pc = elementToAdd.penConfig;
-                const penConfigMap = new Y.Map();
-                for (const [key, val] of Object.entries(pc)) {
-                  if (val !== undefined && val !== null && typeof val !== 'function') {
-                    penConfigMap.set(key, val);
-                  }
-                }
-                yElementMap.set('penConfig', penConfigMap);
-              }
-              yElementMap.set('points', elementToAdd.points);
-              if (elementToAdd.rawPoints) yElementMap.set('rawPoints', elementToAdd.rawPoints);
-              if (elementToAdd.points && elementToAdd.points.length > 0) {
-                let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-                elementToAdd.points.forEach(p => {
-                  const px = typeof p.x === 'number' ? p.x : Array.isArray(p) ? p[0] : 0;
-                  const py = typeof p.y === 'number' ? p.y : Array.isArray(p) ? p[1] : 0;
-                  minX = Math.min(minX, px); minY = Math.min(minY, py);
-                  maxX = Math.max(maxX, px); maxY = Math.max(maxY, py);
-                });
-                // 1.8: Validate coordinates before Yjs save
-                if (!Number.isFinite(minX) || !Number.isFinite(minY) || !Number.isFinite(maxX) || !Number.isFinite(maxY)) {
-                  console.warn('[finishDrawing] Invalid bounding box — skipping element');
-                  currentElementPreview.value = null;
-                  pointsBuffer.value = [];
-                  return;
-                }
-                yElementMap.set('x', minX);
-                yElementMap.set('y', minY);
-                yElementMap.set('width', Math.max(0, maxX - minX));
-                yElementMap.set('height', Math.max(0, maxY - minY));
-              } else {
-                yElementMap.set('x', 0); yElementMap.set('y', 0);
-                yElementMap.set('width', 0); yElementMap.set('height', 0);
-              }
-            } else if (elementToAdd.type === 'line' || (elementToAdd.start && elementToAdd.end)) {
-              const startX = elementToAdd.start.x;
-              const startY = elementToAdd.start.y;
-              const endX = elementToAdd.end.x;
-              const endY = elementToAdd.end.y;
-              const x = Math.min(startX, endX);
-              const y = Math.min(startY, endY);
-              const width = Math.abs(startX - endX);
-              const height = Math.abs(startY - endY);
-              yElementMap.set('x', x); yElementMap.set('y', y);
-              yElementMap.set('width', width); yElementMap.set('height', height);
-
-              if (elementToAdd.type === 'line') {
-                const linePoints = [
-                  { x: startX - x, y: startY - y },
-                  { x: endX - x, y: endY - y },
-                ];
-                yElementMap.set('points', linePoints);
-                const arrowStyle = elementToAdd.arrowStyle || getCurrentArrowStyle() || 'none';
-                yElementMap.set('arrowStyle', arrowStyle);
-              }
-
-              const startMap = new Y.Map();
-              startMap.set('x', startX); startMap.set('y', startY);
-              yElementMap.set('start', startMap);
-              const endMap = new Y.Map();
-              endMap.set('x', endX); endMap.set('y', endY);
-              yElementMap.set('end', endMap);
-
-              if (elementToAdd.startBinding) yElementMap.set('startBinding', elementToAdd.startBinding);
-              if (elementToAdd.endBinding) yElementMap.set('endBinding', elementToAdd.endBinding);
-            }
-
-            if (elementToAdd.type !== 'text' && elementToAdd.type !== 'image') {
-              yDrawings.value.push([yElementMap]);
-              refreshMovableElements();
-            }
-
-            if (debugModeEnabled.value) {
-              debugLog?.('[finishDrawing] Successfully pushed Y.Map to yDrawings');
-            }
-          }, 'local-drawing');
+        const result = session.value?.execute({ kind: 'add', object });
+        if (result?.ok) {
+          refreshMovableElements();
 
           // Notify helper modules
-          if (getActiveFeature() && elementToAdd.type !== 'text' && elementToAdd.type !== 'image') {
+          if (getActiveFeature()) {
             const module = getActiveModule();
             if (module && module.addStroke) {
-              module.addStroke({ ...elementToAdd });
+              module.addStroke({ ...elementToAdd, id: object.id });
               if (getActiveFeature() === 'styleHandwriting') {
                 emit('update:has-char-groups', false);
                 emit('update:has-stylized-strokes', false);
@@ -610,16 +556,10 @@ export function useDrawingEngine({
             }
           }
 
-          undoManager.value?.stopCapturing();
-
-          nextTick(() => {
-            if (undoManager.value) {
-              updateGlobalState();
-            }
-          });
-        } catch (error) {
-          console.error('[finishDrawing] Error during Yjs transaction:', error);
-          showToast?.('Error saving drawing element.', 'error');
+          nextTick(() => updateGlobalState());
+        } else if (result) {
+          debugWarn?.('[finishDrawing] Session rejected element:', result.message);
+          showToast?.(result.message, 'error');
         }
       }
     } else {
@@ -636,39 +576,24 @@ export function useDrawingEngine({
   // --- Eraser ---
 
   const eraseElement = (indexOrId) => {
-    if (!ydoc.value || !yDrawings.value) return;
+    if (!yDrawings.value || !session.value) return;
 
-    let elementIndex = -1;
+    let elementId = null;
     if (typeof indexOrId === 'string') {
-      elementIndex = yDrawings.value.toArray().findIndex(elMap => elMap.get('id') === indexOrId);
-    } else if (typeof indexOrId === 'number') {
-      const elemAtIndex = indexOrId >= 0 && indexOrId < yDrawings.value.length
-        ? yDrawings.value.get(indexOrId) : null;
-      if (elemAtIndex) {
-        const id = elemAtIndex.get('id');
-        if (id) {
-          elementIndex = yDrawings.value.toArray().findIndex(elMap => elMap.get('id') === id);
-        } else {
-          elementIndex = indexOrId;
-        }
-      }
+      elementId = indexOrId;
+    } else if (typeof indexOrId === 'number' && indexOrId >= 0 && indexOrId < yDrawings.value.length) {
+      elementId = yDrawings.value.get(indexOrId)?.get('id') ?? null;
     }
 
-    if (elementIndex !== -1 && elementIndex >= 0 && elementIndex < yDrawings.value.length) {
-      debugLog?.(`[eraseElement] Removing element at index: ${elementIndex}`);
-
-      ydoc.value.transact(() => {
-        yDrawings.value.delete(elementIndex, 1);
-      }, 'local-erase');
-      refreshMovableElements();
-
-      undoManager.value?.stopCapturing();
-
-      nextTick(() => {
-        if (undoManager.value) {
-          updateGlobalState();
-        }
-      });
+    if (elementId) {
+      debugLog?.(`[eraseElement] Removing element: ${elementId}`);
+      const result = session.value.execute({ kind: 'delete', ids: [elementId] });
+      if (result.ok) {
+        refreshMovableElements();
+        nextTick(() => updateGlobalState());
+      } else {
+        debugWarn?.(`[eraseElement] Session rejected delete: ${result.message}`);
+      }
     } else {
       debugWarn?.(`[eraseElement] Element not found for index/ID: ${indexOrId}`);
     }

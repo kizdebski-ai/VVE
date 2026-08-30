@@ -13,6 +13,10 @@ export default defineConfig({
       // server package, consumed unchanged by the frontend (VVE-100, Module 9).
       '@pilot': fileURLToPath(new URL('../server/src/pilot', import.meta.url)),
     },
+    // The shared `@pilot` board modules import yjs from the server package;
+    // dedupe so the browser bundle holds exactly one Yjs instance (two would
+    // break instanceof checks inside the CRDT).
+    dedupe: ['yjs'],
   },
   test: {
     environment: 'happy-dom',
@@ -39,15 +43,15 @@ export default defineConfig({
   server: {
     proxy: {
       '/api': {
-        target: 'http://localhost:8000',
+        target: process.env.VVE_PROXY_TARGET || 'http://localhost:8000',
         changeOrigin: true,
       },
       '/ws': {
-        target: 'ws://localhost:8000',
+        target: (process.env.VVE_PROXY_TARGET || 'http://localhost:8000').replace(/^http/, 'ws'),
         ws: true,
       },
       '/teacher/login': {
-        target: 'http://localhost:8000',
+        target: process.env.VVE_PROXY_TARGET || 'http://localhost:8000',
         changeOrigin: true,
       }
     }

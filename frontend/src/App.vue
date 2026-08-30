@@ -21,6 +21,7 @@
         :room-key="roomKey"
         :username="username"
         :ws-token="storedWsToken"
+        :role="effectiveRole"
         :debug-mode="debugMode"
         :current-shape="currentShape"
         :current-line-style="currentLineStyle"

@@ -49,6 +49,7 @@
       :is-selected="elementMap.get('id') === selectedObjectId"
       :interaction-enabled="currentTool === 'select' && !collaborationReadOnly"
       @update:object="handleObjectUpdate"
+      @commit-transform="handleCommitTransform"
       @request-select="handleObjectSelectionRequest"
       @clone-object="handleCloneObject"
       @update:snap-guides="handleSnapGuidesUpdate"
@@ -177,7 +178,9 @@ import {
 import { drawGrid as drawUtilGrid, computeGridSteps } from '../utils/canvasGrid.js';
 import MovableObject from './MovableObject.vue';
 import { useNotifications } from '../composables/useNotifications';
-import { useUndoRedo } from '../composables/useUndoRedo';
+import { createWhiteboardSession } from '../board/whiteboardSession';
+import { normalizeBoardObject } from '@pilot/boardScene';
+import { undoRedoState } from '../utils/undoRedoState';
 import { useLineBindings } from '../composables/useLineBindings';
 import { usePdfExport } from '../composables/usePdfExport';
 import { useKeyboardShortcuts } from '../composables/useKeyboardShortcuts';
@@ -250,6 +253,10 @@ export default {
     roomKey: { type: [String, Object], default: null },
     username: { type: String, default: 'Anonymous' },
     wsToken: { type: String, default: null },
+    // Participant document role: 'teacher' | 'student' | 'developer'. Gates
+    // Teacher-only document commands (whole-board clear) in the session; the
+    // server enforces the same rule authoritatively.
+    role: { type: String, default: 'developer' },
     onConnectionStatus: { type: Function, default: null }
   },
   emits: [
@@ -460,24 +467,55 @@ export default {
       return false;
     };
 
+    // --- WhiteboardSession (VVE-104): the single write path to the document ---
+    // Created per connection in connectToRoom; owns typed commands, canonical
+    // validation and the participant-scoped undo history.
+    const session = shallowRef(null);
+    const reflectViewport = (viewport) => {
+      zoomLevel.value = viewport.zoom;
+      panOffset.value = { x: viewport.panX, y: viewport.panY };
+      return viewport;
+    };
+    const setSessionViewport = (viewport) => reflectViewport(
+      session.value?.setViewport(viewport) ?? viewport
+    );
+    const panSessionBy = (dx, dy) => {
+      if (session.value) return reflectViewport(session.value.panBy(dx, dy));
+      return setSessionViewport({
+        zoom: zoomLevel.value,
+        panX: panOffset.value.x + dx,
+        panY: panOffset.value.y + dy
+      });
+    };
+    const zoomSessionAt = (screenX, screenY, nextZoom) => {
+      if (session.value) return reflectViewport(session.value.zoomAt(screenX, screenY, nextZoom));
+      const ratio = nextZoom / zoomLevel.value;
+      return setSessionViewport({
+        zoom: nextZoom,
+        panX: screenX - (screenX - panOffset.value.x) * ratio,
+        panY: screenY - (screenY - panOffset.value.y) * ratio
+      });
+    };
+    const resetSessionViewport = () => reflectViewport(
+      session.value?.resetViewport() ?? { zoom: 1, panX: 0, panY: 0 }
+    );
+
     // --- PDF Export Composable (after yDrawings/ydoc are declared) ---
     const {
       exportBoardAsPdf, exportBoardAsPdfPaged,
       getSnapshot, getSerializableState, loadState, exportAsText, importFromText,
-    } = usePdfExport({ yDrawings, ydoc, smoothingFactor, imageCache, showToast, debugLog, debugWarn });
+    } = usePdfExport({ session, yDrawings, ydoc, smoothingFactor, imageCache, showToast, debugLog, debugWarn });
+    const canUndo = ref(false);
+    const canRedo = ref(false);
+    const updateGlobalState = () => {
+      const hasUndo = session.value?.canUndo() === true;
+      const hasRedo = session.value?.canRedo() === true;
+      canUndo.value = hasUndo;
+      canRedo.value = hasRedo;
+      undoRedoState.update(hasUndo, hasRedo);
+    };
 
-    // --- Undo/Redo Composable (initialized after redrawCanvas is available) ---
-    // Undo/redo composable needs to be called here, but undo/redo methods
-    // will be wrapped later to include redrawCanvas callback.
-    const {
-      undoManager, canUndo, canRedo,
-      updateGlobalState, initializeUndoManager,
-      undo: undoCore, redo: redoCore,
-      teardownUndoManager,
-    } = useUndoRedo({ ydoc, yDrawings });
-    
-            
-    // --- Line Bindings Composable ---
+    // --- Line Bindings Composable (read-only geometry since VVE-104) ---
     const {
       BINDABLE_ELEMENT_TYPES,
       BINDING_DISTANCE_THRESHOLD,
@@ -486,20 +524,27 @@ export default {
       getRectFromElementMap,
       findBindingTargetNearPoint,
       attachBindingsToLineDraft,
-      updateBindingsForTarget,
-      refreshLineBindings,
-      detachLineBindings,
-    } = useLineBindings(yDrawings, ydoc);
+      computeLineBindingUpdate,
+    } = useLineBindings(yDrawings);
 
-    // Line binding functions (getConnectorAnchors, findElementMapById, getRectFromElementMap,
-    // distanceToRect, clampVectorToRotatedRect, makeBindingPayload, resolveBindingPoint,
-    // getLineEndpoints, setLineEndpoints, findBindingTargetNearPoint, attachBindingsToLineDraft,
-    // updateBindingsForTarget, refreshLineBindings, detachLineBindings)
-    // moved to useLineBindings composable
-    // updateGlobalState, initializeUndoManager, undo, redo moved to useUndoRedo composable
-    // Wrap undo/redo with redrawCanvas callback (redrawCanvas is defined later via closure)
-    const undo = () => canMutateDocument() ? undoCore(() => redrawCanvas(true)) : denyReadOnlyMutation();
-    const redo = () => canMutateDocument() ? redoCore(() => redrawCanvas(true)) : denyReadOnlyMutation();
+    const undo = () => {
+      if (!canMutateDocument()) return denyReadOnlyMutation();
+      if (session.value?.undo()) {
+        nextTick(() => {
+          redrawCanvas(true);
+          updateGlobalState();
+        });
+      }
+    };
+    const redo = () => {
+      if (!canMutateDocument()) return denyReadOnlyMutation();
+      if (session.value?.redo()) {
+        nextTick(() => {
+          redrawCanvas(true);
+          updateGlobalState();
+        });
+      }
+    };
 
     // --- Helper Modules Composable (must be before useDrawingEngine because it provides getActiveModule) ---
     const {
@@ -521,7 +566,7 @@ export default {
       yDrawings,
       yjsConnection,
       zoomLevel,
-      undoManager,
+      session,
       updateGlobalState,
       redrawCanvas: (...args) => redrawCanvas(...args),
       refreshMovableElements: () => refreshMovableElements(),
@@ -557,7 +602,7 @@ export default {
       ydoc,
       yDrawings,
       yjsConnection,
-      undoManager,
+      session,
       smoothingFactor,
       debugModeEnabled,
       getCurrentShape: () => props.currentShape,
@@ -603,73 +648,40 @@ export default {
     // Method to add a plot/coord system from panel data
     const addElementFromPanel = (elementData) => {
       if (!canMutateDocument()) return denyReadOnlyMutation();
-      if (!ydoc.value || !yDrawings.value || !elementData || !elementData.type) {
-        console.error("Invalid data received from panel or Yjs not ready", elementData);
+      if (!session.value || !elementData || !elementData.type) {
+        console.error("Invalid data received from panel or session not ready", elementData);
         closeConfigPanel();
         return;
       }
 
       try {
-        // Ensure ID exists
-        if (!elementData.id) {
-            elementData.id = uuidv4();
+        const object = { ...elementData };
+        if (!object.id) object.id = uuidv4();
+
+        // Mirror geometry for MovableObject overlays (extension types keep
+        // their `position` payload until VVE-106 canonicalizes them)
+        const hasPosition = object.position && typeof object.position.x === 'number' && typeof object.position.y === 'number';
+        if (hasPosition) {
+          object.x = object.position.x;
+          object.y = object.position.y;
+        }
+        if (object.type === 'coordinateSystem3D' && typeof object.size === 'number') {
+          const planeSize = object.size * 1.2;
+          object.width = planeSize;
+          object.height = planeSize;
         }
 
-        ydoc.value.transact(() => {
-          const yElementMap = new Y.Map();
-
-          // Convert JS object/array properties to Yjs types
-          for (const [key, value] of Object.entries(elementData)) {
-            if (key === 'position' && typeof value === 'object' && value !== null) {
-              const posMap = new Y.Map();
-              posMap.set('x', value.x);
-              posMap.set('y', value.y);
-              yElementMap.set(key, posMap);
-            } else if (Array.isArray(value)) {
-              // Store plain arrays directly for data points (simpler for now)
-              yElementMap.set(key, value);
-            } else {
-              yElementMap.set(key, value);
-            }
-          }
-
-          // Normalize geometry for MovableObject overlays
-          const hasPosition = elementData.position && typeof elementData.position.x === 'number' && typeof elementData.position.y === 'number';
-          if (hasPosition) {
-            yElementMap.set('x', elementData.position.x);
-            yElementMap.set('y', elementData.position.y);
-          }
-          if (typeof elementData.width === 'number') {
-            yElementMap.set('width', elementData.width);
-          }
-          if (typeof elementData.height === 'number') {
-            yElementMap.set('height', elementData.height);
-          }
-          if (elementData.type === 'coordinateSystem3D' && typeof elementData.size === 'number') {
-            const planeSize = elementData.size * 1.2;
-            yElementMap.set('width', planeSize);
-            yElementMap.set('height', planeSize);
-          }
-
-          // Apply default arrow style for lines if missing
-          if (elementData.type === 'line' && !elementData.arrowStyle) {
-              yElementMap.set('arrowStyle', props.currentArrowStyle || 'none');
-          }
-
-          yDrawings.value.push([yElementMap]);
-          refreshMovableElements();
-        }, 'local-plot'); // Origin
+        const result = session.value.execute({ kind: 'add', object });
+        if (!result.ok) {
+          showToast(result.message, 'error');
+          return;
+        }
+        refreshMovableElements();
 
         nextTick(() => {
-          if (undoManager.value) {
-            updateGlobalState();
-          }
+          updateGlobalState();
           redrawCanvas(true); // Redraw to show the new element
         });
-
-      } catch (error) {
-        console.error('[addElementFromPanel] Error during Yjs transaction:', error);
-        showToast("Error saving element.", "error");
       } finally {
         closeConfigPanel(); // Close panel after adding
       }
@@ -688,10 +700,13 @@ export default {
             localScene = [];
             return;
         }
-        // Map Yjs elements to local plain objects once
+        // Map Yjs elements to canonical plain objects once. Normalization is
+        // the single legacy-intake edge: documents written before VVE-104
+        // (aliases like strokeColor/dataUrl/position, relative line points)
+        // render through the same canonical shape as new ones.
         const rawArray = yDrawings.value.toArray();
-        localScene = rawArray.map(map => {
-            const json = map.toJSON();
+        const snapshot = session.value?.snapshot() ?? rawArray.map(map => normalizeBoardObject(map.toJSON()));
+        localScene = snapshot.map(json => {
             if (overrideObject && json.id === overrideObject.id) {
                 return { ...json, ...overrideObject };
             }
@@ -1165,7 +1180,11 @@ export default {
         if (yDrawings.value) {
             yDrawings.value.unobserveDeep(handleYjsUpdate);
         }
-        teardownUndoManager();
+        if (session.value) {
+            session.value.dispose();
+            session.value = null;
+            updateGlobalState();
+        }
         if (yjsConnection.value) {
             yjsConnection.value.disconnect();
         }
@@ -1183,12 +1202,8 @@ export default {
         refreshMovableElements();
         syncModulesWithYjs();
         redrawCanvas(true); // Remote update -> static update
-        
-        nextTick(() => {
-             if (undoManager.value) {
-                 updateGlobalState();
-             }
-        });
+
+        nextTick(() => updateGlobalState());
     };
 
     const connectToRoom = async (targetRoomId) => {
@@ -1202,6 +1217,7 @@ export default {
         }
 
         teardownYjsConnection();
+        session.value?.select(null);
         selectedObjectId.value = null;
         isConnecting.value = true;
 
@@ -1209,6 +1225,16 @@ export default {
             // Pass roomKey to connectToYjs for E2E encryption
             const connection = await connectToYjs(normalizedRoomId, {
               wsToken: props.wsToken || undefined,
+              onMutationDenied: (denial) => {
+                // Defense-in-depth path: the session enforces the same rules
+                // locally, so an honest client should never see this.
+                showToast(
+                  denial.reason === 'forbidden'
+                    ? 'Serwer odrzucił operację: tylko nauczyciel może wyczyścić tablicę.'
+                    : 'Serwer odrzucił nieprawidłową operację.',
+                  'error'
+                );
+              },
               onStatus: (status) => {
                 connectionStatus.value = status;
                 isConnecting.value = status === 'connecting' || status === 'reconnecting';
@@ -1233,16 +1259,32 @@ export default {
                 throw new Error('Yjs shared drawings array is unavailable.');
             }
 
+            session.value = createWhiteboardSession({
+              ydoc: connection.ydoc,
+              role: props.role,
+              initialViewport: {
+                zoom: zoomLevel.value,
+                panX: panOffset.value.x,
+                panY: panOffset.value.y
+              },
+              isEditable: canMutateDocument,
+              onHistoryChange: ({ canUndo: nextCanUndo, canRedo: nextCanRedo }) => {
+                canUndo.value = nextCanUndo;
+                canRedo.value = nextCanRedo;
+                undoRedoState.update(nextCanUndo, nextCanRedo);
+              }
+            });
+
             yDrawings.value.observeDeep(handleYjsUpdate);
             setupAwarenessListener(); // Enable cursor tracking and online count
             activeRoomId.value = normalizedRoomId;
             updateLocalScene(); // Initial sync
             refreshMovableElements();
 
-            // Ensure modules and undo manager sync with the new document
+            // Ensure helpers and the session view sync with the new document.
             syncModulesWithYjs();
             setTimeout(() => {
-                initializeUndoManager();
+                updateGlobalState();
                 redrawCanvas(true);
             }, 100);
 
@@ -1426,20 +1468,13 @@ export default {
       const gesture = pinchGesture.value;
       const prevCenter = gesture.lastCanvasCenter || canvasCenter;
 
-      panOffset.value.x += canvasCenter.x - prevCenter.x;
-      panOffset.value.y += canvasCenter.y - prevCenter.y;
+      panSessionBy(canvasCenter.x - prevCenter.x, canvasCenter.y - prevCenter.y);
 
       const distance = getTouchDistance(touchA, touchB);
       const scale = gesture.startDistance ? distance / gesture.startDistance : 1;
       const targetZoom = clampZoom(gesture.initialZoom * scale);
-      const prevZoom = zoomLevel.value;
 
-      const worldX = (canvasCenter.x - panOffset.value.x) / prevZoom;
-      const worldY = (canvasCenter.y - panOffset.value.y) / prevZoom;
-
-      zoomLevel.value = targetZoom;
-      panOffset.value.x = canvasCenter.x - worldX * zoomLevel.value;
-      panOffset.value.y = canvasCenter.y - worldY * zoomLevel.value;
+      zoomSessionAt(canvasCenter.x, canvasCenter.y, targetZoom);
       gesture.lastCanvasCenter = canvasCenter;
 
       redrawCanvas();
@@ -1514,8 +1549,10 @@ export default {
 
       if (isPanning.value && lastPanPoint.value) {
         const currentPanPoint = transformCoordinates(coords.offsetX, coords.offsetY);
-        panOffset.value.x += coords.offsetX - lastPanPoint.value.screenX;
-        panOffset.value.y += coords.offsetY - lastPanPoint.value.screenY;
+        panSessionBy(
+          coords.offsetX - lastPanPoint.value.screenX,
+          coords.offsetY - lastPanPoint.value.screenY
+        );
         lastPanPoint.value = { ...currentPanPoint, screenX: coords.offsetX, screenY: coords.offsetY };
         redrawCanvas(true); // Pan requires full redraw
         return;
@@ -1576,7 +1613,8 @@ export default {
         if (isDrawing.value) return; // Don't select if in the middle of drawing a new shape
 
         const clickedObjectFoundId = findMovableElementIdAtPoint(transformedCoords);
-        selectedObjectId.value = clickedObjectFoundId;
+        session.value?.select(clickedObjectFoundId);
+        selectedObjectId.value = session.value?.selectedObjectId() ?? clickedObjectFoundId;
         debugLog('[WhiteboardCanvas] Right-click selected:', selectedObjectId.value);
         redrawCanvas(false); // Selection is dynamic (overlay/MovableObject) - wait, MovableObject is DOM.
         // But if we have selection logic in canvas (e.g. highlight), we need redraw.
@@ -1616,6 +1654,7 @@ export default {
                 }
                 handleObjectSelectionRequest(hitObjectId);
             } else if (selectedObjectId.value) {
+                session.value?.select(null);
                 selectedObjectId.value = null;
                 redrawCanvas(false);
             }
@@ -1623,6 +1662,7 @@ export default {
         }
 
         if (selectedObjectId.value) {
+            session.value?.select(null);
             selectedObjectId.value = null;
         }
 
@@ -1746,8 +1786,10 @@ export default {
 
             // P1-FIX: Pan tool panning via touch
             if (isPanning.value && lastPanPoint.value) {
-                panOffset.value.x += coords.offsetX - lastPanPoint.value.screenX;
-                panOffset.value.y += coords.offsetY - lastPanPoint.value.screenY;
+                panSessionBy(
+                  coords.offsetX - lastPanPoint.value.screenX,
+                  coords.offsetY - lastPanPoint.value.screenY
+                );
                 lastPanPoint.value = { ...transformedCoords, screenX: coords.offsetX, screenY: coords.offsetY };
                 redrawCanvas(true);
                 return;
@@ -1816,44 +1858,42 @@ export default {
 
     // --- Inline Text Methods ---
     const addTextElement = (coords, text, fontSize = 24) => {
-      if (!ydoc.value || !yDrawings.value) return;
+      if (!session.value) return;
 
-      const id = `${yjsConnection.value?.awareness?.clientID || 'local'}-${Date.now()}`;
+      const id = session.value.newObjectId();
 
       try {
-        ydoc.value.transact(() => {
-          const yTextMap = new Y.Map();
-          yTextMap.set('id', id);
-          yTextMap.set('type', 'text');
-          yTextMap.set('x', coords.x);
-          yTextMap.set('y', coords.y);
-          yTextMap.set('text', text);
-          yTextMap.set('fontSize', fontSize);
-          yTextMap.set('color', currentColor.value);
-          yTextMap.set('timestamp', Date.now());
-          yTextMap.set('rotation', 0);
-          
-          // Estimate size
-          if (drawContext.value) {
-            drawContext.value.save();
-            drawContext.value.font = `${fontSize}px "Kalam", cursive`;
-            const metrics = drawContext.value.measureText(text);
-            drawContext.value.restore();
-            yTextMap.set('width', metrics.width);
-            yTextMap.set('height', fontSize * 1.2);
-          } else {
-             yTextMap.set('width', text.length * fontSize * 0.6);
-             yTextMap.set('height', fontSize * 1.2);
+        let width = text.length * fontSize * 0.6;
+        if (drawContext.value) {
+          drawContext.value.save();
+          drawContext.value.font = `${fontSize}px "Kalam", cursive`;
+          width = drawContext.value.measureText(text).width;
+          drawContext.value.restore();
+        }
+        const result = session.value.execute({
+          kind: 'add',
+          object: {
+            id,
+            type: 'text',
+            x: coords.x,
+            y: coords.y,
+            text,
+            fontSize,
+            color: currentColor.value,
+            timestamp: Date.now(),
+            rotation: 0,
+            width,
+            height: fontSize * 1.2
           }
-
-          yDrawings.value.push([yTextMap]);
-          refreshMovableElements();
-        }, 'local-add-text');
+        });
+        if (!result.ok) {
+          showToast(result.message, 'error');
+          return;
+        }
+        refreshMovableElements();
 
         nextTick(() => {
-            if (undoManager.value) {
-                updateGlobalState();
-            }
+            updateGlobalState();
             redrawCanvas(true);
         });
       } catch (error) {
@@ -1908,119 +1948,67 @@ export default {
 
     // LINE_TOOLS, draw, finishDrawing moved to useDrawingEngine composable
 
-    const handleObjectUpdate = (updatedYMap) => {
-      if (!canMutateDocument()) return denyReadOnlyMutation();
-      if (!updatedYMap) return;
-
-      // Check if it's a Y.Map (committed update) or plain object (local drag override)
-      const isYMap = updatedYMap instanceof Y.Map;
-      
-      if (isYMap) {
-          const type = updatedYMap.get('type');
-          const id = updatedYMap.get('id');
-          if (type === 'line') {
-            refreshLineBindings(updatedYMap);
-          } else if (BINDABLE_ELEMENT_TYPES.has(type) && id) {
-            updateBindingsForTarget(id);
-          }
-          debugLog('[WhiteboardCanvas] MovableObject updated (Yjs):', updatedYMap.toJSON());
-          updateLocalScene(); // Standard sync
-      } else {
-          // It's a plain object override from dragging
-          // We skip binding updates here for performance/correctness during drag
-          // debugLog('[WhiteboardCanvas] MovableObject updated (Local Override):', updatedYMap);
-          updateLocalScene(updatedYMap); // Update with override
-      }
-
+    const handleObjectUpdate = (preview) => {
+      if (!preview) return;
+      // MovableObject emits plain preview geometry while a gesture is active.
+      // The final pointer-up emits commit-transform and crosses the session
+      // Interface exactly once.
+      updateLocalScene(preview instanceof Y.Map ? null : preview);
       redrawCanvas();
     };
 
-    const cloneYValue = (value) => {
-      if (value instanceof Y.Map) {
-        const nested = new Y.Map();
-        value.forEach((nestedValue, nestedKey) => {
-          nested.set(nestedKey, cloneYValue(nestedValue));
-        });
-        return nested;
+    const handleCommitTransform = (payload) => {
+      if (!canMutateDocument()) return denyReadOnlyMutation();
+      if (!session.value || !payload?.id) return;
+
+      let command;
+      if (payload.kind === 'line-endpoints') {
+        const binding = computeLineBindingUpdate(
+          payload.id,
+          payload.start,
+          payload.end,
+          payload.lineWidth
+        );
+        command = {
+          kind: 'setLineEndpoints',
+          id: String(payload.id),
+          start: binding.start,
+          end: binding.end,
+          startBinding: binding.startBinding,
+          endBinding: binding.endBinding
+        };
+      } else {
+        command = { ...payload, id: String(payload.id) };
+        delete command.lineWidth;
       }
-      if (value instanceof Y.Array) {
-        return value.toArray().map(item => cloneYValue(item));
-      }
-      if (Array.isArray(value)) {
-        return value.map(item => (item && typeof item === 'object' ? { ...item } : item));
-      }
-      if (value && typeof value === 'object') {
-        return { ...value };
-      }
-      return value;
+
+      const result = session.value.execute(command);
+      if (!result.ok) showToast(result.message, 'error');
+      refreshMovableElements();
+      updateLocalScene();
+      redrawCanvas(true);
+      nextTick(updateGlobalState);
     };
 
     const handleCloneObject = (objectData) => {
       if (!canMutateDocument()) return denyReadOnlyMutation();
-      if (!ydoc.value || !yDrawings.value) return;
-      const sourceId = objectData?.id;
-      const sourceMap = yDrawings.value.toArray().find(map => map.get('id') === sourceId);
-      if (!sourceMap) {
-        debugWarn('[handleCloneObject] Source element not found for id:', sourceId);
+      if (!session.value || !objectData?.id) return;
+      const newId = session.value.newObjectId();
+      const result = session.value.execute({
+        kind: 'clone',
+        id: String(objectData.id),
+        newId,
+        offset: 20
+      });
+      if (!result.ok) {
+        showToast(result.message, 'error');
         return;
       }
 
-      const offset = 20;
-      const addOffset = (val) => (typeof val === 'number' && !Number.isNaN(val) ? val + offset : offset);
-      const cloneMap = new Y.Map();
-      sourceMap.forEach((value, key) => {
-        cloneMap.set(key, cloneYValue(value));
-      });
-
-      const shiftPointLike = (pointLike) => {
-        if (!pointLike || typeof pointLike !== 'object') return { x: offset, y: offset };
-        const baseX = typeof pointLike.x === 'number' && !Number.isNaN(pointLike.x) ? pointLike.x : 0;
-        const baseY = typeof pointLike.y === 'number' && !Number.isNaN(pointLike.y) ? pointLike.y : 0;
-        return { ...pointLike, x: baseX + offset, y: baseY + offset };
-      };
-
-      const shiftNestedPoint = (key) => {
-        const nested = cloneMap.get(key);
-        if (nested instanceof Y.Map) {
-          nested.set('x', addOffset(nested.get('x')));
-          nested.set('y', addOffset(nested.get('y')));
-          cloneMap.set(key, nested);
-        } else if (nested && typeof nested === 'object') {
-          cloneMap.set(key, shiftPointLike(nested));
-        }
-      };
-
-      if (cloneMap.has('x')) cloneMap.set('x', addOffset(cloneMap.get('x')));
-      if (cloneMap.has('y')) cloneMap.set('y', addOffset(cloneMap.get('y')));
-      shiftNestedPoint('start');
-      shiftNestedPoint('end');
-      shiftNestedPoint('position');
-
-      const points = cloneMap.get('points');
-      if (Array.isArray(points)) {
-        cloneMap.set('points', points.map(shiftPointLike));
-      }
-      const rawPoints = cloneMap.get('rawPoints');
-      if (Array.isArray(rawPoints)) {
-        cloneMap.set('rawPoints', rawPoints.map(shiftPointLike));
-      }
-
-      const newId = `${yjsConnection.value?.awareness?.clientID || 'local'}-${uuidv4()}`;
-      cloneMap.set('id', newId);
-      cloneMap.set('timestamp', Date.now());
-
-      ydoc.value.transact(() => {
-        yDrawings.value.push([cloneMap]);
-      }, 'clone-object');
-
       refreshMovableElements();
       redrawCanvas();
-      nextTick(() => {
-        if (undoManager.value) {
-          updateGlobalState();
-        }
-      });
-      debugLog('[handleCloneObject] Cloned element', sourceId, '->', newId);
+      nextTick(updateGlobalState);
+      debugLog('[handleCloneObject] Cloned element', objectData.id, '->', newId);
     };
 
     const selectObject = (objectId) => {
@@ -2074,40 +2062,29 @@ export default {
       const delta = event.deltaY < 0 ? 1.1 : 0.9;
       const prevZoom = zoomLevel.value;
       const newZoom = clampZoom(prevZoom * delta);
-      const zoomRatio = newZoom / prevZoom;
-
-      panOffset.value.x = mouseX - (mouseX - panOffset.value.x) * zoomRatio;
-      panOffset.value.y = mouseY - (mouseY - panOffset.value.y) * zoomRatio;
-      zoomLevel.value = newZoom;
+      zoomSessionAt(mouseX, mouseY, newZoom);
       redrawCanvas();
       showStatus(`Zoom: ${Math.round(zoomLevel.value * 100)}%`);
     };
 
     const zoomIn = () => {
-        const prevZoom = zoomLevel.value;
-        zoomLevel.value = clampZoom(zoomLevel.value * 1.2);
+        const nextZoom = clampZoom(zoomLevel.value * 1.2);
         const centerX = canvasWidth.value / 2;
         const centerY = canvasHeight.value / 2;
-        const zoomRatio = zoomLevel.value / prevZoom;
-        panOffset.value.x = centerX - (centerX - panOffset.value.x) * zoomRatio;
-        panOffset.value.y = centerY - (centerY - panOffset.value.y) * zoomRatio;
+        zoomSessionAt(centerX, centerY, nextZoom);
         redrawCanvas();
     };
 
     const zoomOut = () => {
-        const prevZoom = zoomLevel.value;
-        zoomLevel.value = clampZoom(zoomLevel.value / 1.2);
+        const nextZoom = clampZoom(zoomLevel.value / 1.2);
         const centerX = canvasWidth.value / 2;
         const centerY = canvasHeight.value / 2;
-        const zoomRatio = zoomLevel.value / prevZoom;
-        panOffset.value.x = centerX - (centerX - panOffset.value.x) * zoomRatio;
-        panOffset.value.y = centerY - (centerY - panOffset.value.y) * zoomRatio;
+        zoomSessionAt(centerX, centerY, nextZoom);
         redrawCanvas();
     };
 
     const resetZoom = () => {
-        zoomLevel.value = 1;
-        panOffset.value = { x: 0, y: 0 };
+        resetSessionViewport();
         redrawCanvas();
     };
 
@@ -2164,8 +2141,8 @@ export default {
 
     const addImageFromDataUrl = (dataUrl) => {
         if (!canMutateDocument()) return denyReadOnlyMutation();
-        if (!ydoc.value || !yDrawings.value) {
-            console.error("[addImageFromDataUrl] Error: ydoc or yDrawings not available!");
+        if (!session.value) {
+            console.error("[addImageFromDataUrl] Error: session not available!");
             showToast("Cannot add image - connection issue", "error");
             return;
         }
@@ -2182,43 +2159,32 @@ export default {
 
         createImageElement(dataUrl, centerX, centerY)
             .then(imageData => {
-                imageData.id = `${yjsConnection.value?.awareness?.clientID || 'local'}-${Date.now()}`; // Assign ID
+                imageData.id = session.value.newObjectId();
 
                 try {
-                    ydoc.value.transact(() => {
-                        const imageMap = new Y.Map();
-
-                        // Set basic properties
-                        imageMap.set('id', imageData.id); // Store ID
-                        imageMap.set('type', 'image');
-                        imageMap.set('timestamp', Date.now());
-
-                        // Set position (x,y), dimensions, and rotation
-                        imageMap.set('x', imageData.x); // Already top-left
-                        imageMap.set('y', imageData.y); // Already top-left
-                        // The 'position' Y.Map can be removed if x,y are at root, or kept for consistency
-                        const posMap = new Y.Map();
-                        posMap.set('x', imageData.x);
-                        posMap.set('y', imageData.y);
-                        imageMap.set('position', posMap); // Keep for now if other parts use it
-
-                        imageMap.set('dataUrl', imageData.dataUrl);
-                        imageMap.set('src', imageData.dataUrl);
-                        imageMap.set('width', imageData.width);
-                        imageMap.set('height', imageData.height);
-                        imageMap.set('rotation', 0); // Default rotation
-
-                        yDrawings.value.push([imageMap]);
-                        refreshMovableElements();
-                    }, 'local-image'); // Specify origin
+                    const result = session.value.execute({
+                      kind: 'add',
+                      object: {
+                        id: imageData.id,
+                        type: 'image',
+                        timestamp: Date.now(),
+                        x: imageData.x,
+                        y: imageData.y,
+                        src: imageData.dataUrl,
+                        width: imageData.width,
+                        height: imageData.height,
+                        rotation: 0
+                      }
+                    });
+                    if (!result.ok) {
+                      showToast(result.message, 'error');
+                      return;
+                    }
+                    refreshMovableElements();
 
                     nextTick(() => {
                         redrawCanvas();
-
-                        // Update undo state
-                        if (undoManager.value) {
-                            updateGlobalState();
-                        }
+                        updateGlobalState();
                     });
 
                     // Show success message
@@ -2243,38 +2209,30 @@ export default {
     const clearCanvas = (options = {}) => {
         if (!canMutateDocument()) return denyReadOnlyMutation();
         const skipConfirm = options?.skipConfirm === true;
-        if (!ydoc.value || !yDrawings.value) {
-            showToast("Canvas is not ready to clear yet.", "warning");
+        if (!session.value) {
+            showToast("Tablica nie jest jeszcze gotowa do wyczyszczenia.", "warning");
             return;
         }
-        if (!skipConfirm && !confirm('Are you sure you want to clear the canvas?')) {
+        if (!skipConfirm && !confirm('Czy na pewno chcesz wyczyścić całą tablicę?')) {
             return;
         }
-        // debugLog('[clearCanvas] Clearing all elements'); // Commented out
 
         try {
-            ydoc.value.transact(() => {
-              // Store current length for better performance
-              const length = yDrawings.value.length;
-              if (length > 0) {
-                yDrawings.value.delete(0, length);
-              }
-            }, 'local-clear'); // Add origin
+            const result = session.value.execute({ kind: 'clear' });
+            if (!result.ok) {
+              showToast(result.message, 'error');
+              return;
+            }
+            session.value.select(null);
             selectedObjectId.value = null;
             snapGuides.value = [];
             refreshMovableElements();
             redrawCanvas();
-
-            // P0-FIX: Stop capturing so clear is a separate undo step
-            undoManager.value?.stopCapturing();
-
-            showStatus('Canvas cleared');
+            showStatus('Tablica została wyczyszczona');
 
             // After each transaction make sure global state and helpers are reset
             nextTick(() => {
-               if (undoManager.value) {
-                  updateGlobalState(); // Use the shared function
-               }
+               updateGlobalState();
                // Reset helper module states as well
                gridAlignModule.value?.clear();
                handwritingStylerModule.value?.clear();
@@ -2287,7 +2245,7 @@ export default {
             });
         } catch (error) {
             // console.error('[clearCanvas] Error clearing canvas:', error); // Commented out
-            showToast("Error clearing canvas.", "error");
+            showToast("Nie udało się wyczyścić tablicy.", "error");
         }
     };
 
@@ -2308,36 +2266,30 @@ export default {
         y: (canvasHeight.value / 2 - panOffset.value.y) / zoomLevel.value,
     });
     const testUndoManager = () => {
-      // debugLog("=== TEST UNDOMANAGER ==="); // Commented out
-
       try {
-        if (!ydoc.value || !yDrawings.value) {
-          alert("Brak ydoc lub yDrawings!");
+        if (!session.value) {
+          alert("Brak aktywnej sesji tablicy!");
           return;
         }
-
-        // debugLog("Dodaję testowy element..."); // Commented out
-
-        ydoc.value.transact(() => {
-          const testElement = new Y.Map();
-          testElement.set('type', 'test');
-          testElement.set('timestamp', Date.now());
-          testElement.set('color', '#ff0000');
-
-          const startMap = new Y.Map();
-          startMap.set('x', 100);
-          startMap.set('y', 100);
-          testElement.set('start', startMap);
-
-          const endMap = new Y.Map();
-          endMap.set('x', 200);
-          endMap.set('y', 200);
-          testElement.set('end', endMap);
-
-          yDrawings.value.push([testElement]);
-        }, 'local-drawing');
+        const result = session.value.execute({
+          kind: 'add',
+          object: {
+            id: session.value.newObjectId(),
+            type: 'rectangle',
+            x: 100,
+            y: 100,
+            width: 100,
+            height: 100,
+            rotation: 0,
+            timestamp: Date.now(),
+            color: '#ff0000',
+            lineWidth: 2
+          }
+        });
+        if (!result.ok) throw new Error(result.message);
 
         nextTick(() => {
+          updateGlobalState();
           alert(`Test wykonany. canUndo = ${canUndo.value}`);
         });
       } catch (error) {
@@ -2548,7 +2500,8 @@ export default {
     });
 
     const handleObjectSelectionRequest = (id) => {
-      selectedObjectId.value = id;
+      if (session.value?.select(String(id)) === false) return;
+      selectedObjectId.value = session.value?.selectedObjectId() ?? id;
       redrawCanvas();
     };
 
@@ -2593,6 +2546,7 @@ export default {
       handleTouchEnd,
       handleObjectSelectionRequest,
       handleCloneObject,
+      handleCommitTransform,
 
       // Public API
       setTool,

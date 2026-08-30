@@ -46,8 +46,26 @@ export const drawElement = (
 ) => {
   if (!context || !element || !element.type) return;
 
-
   const type = element.type;
+
+  // Canonical document objects (VVE-104) store shapes as x/y/width/height and
+  // never as start/end; in-progress previews still carry start/end while the
+  // pointer moves. Synthesize the start/end view the shape painters use so
+  // both inputs render identically.
+  if (
+    element.start === undefined &&
+    typeof element.x === 'number' &&
+    typeof element.y === 'number' &&
+    typeof element.width === 'number' &&
+    typeof element.height === 'number' &&
+    type !== 'pen' && type !== 'line' && type !== 'text' && type !== 'image'
+  ) {
+    element = {
+      ...element,
+      start: { x: element.x, y: element.y },
+      end: { x: element.x + element.width, y: element.y + element.height },
+    };
+  }
   // 1.2: Reuse cached Rough.js instance for the same canvas
   let rc = rcOverride;
   if (!rc) {
@@ -58,8 +76,9 @@ export const drawElement = (
     }
   }
 
-  // Base style
-  const baseColor = element.strokeColor || element.color || '#000000';
+  // Base style (canonical field: `color`; the legacy strokeColor alias is
+  // converted at document intake, never read here)
+  const baseColor = element.color || '#000000';
   const color = isHighlighted ? '#ff5252' : baseColor;
   const lw = element.lineWidth || 2;
   const lineStyle = element.lineStyle || 'solid'; // solid, dashed, dotted
@@ -109,7 +128,7 @@ export const drawElement = (
       // To DISABLE: Comment out this 'if' block to force re-rendering from points.
       if (element.cachedPath) {
         context.save();
-        context.strokeStyle = element.strokeColor || element.color || color;
+        context.strokeStyle = element.color || color;
         context.lineWidth = lw;
         context.lineCap = 'round';
         context.lineJoin = 'round';
@@ -125,7 +144,7 @@ export const drawElement = (
       if (points.length === 1) {
         const pt = Array.isArray(points[0]) ? { x: points[0][0], y: points[0][1] } : points[0];
         context.save();
-        context.fillStyle = element.strokeColor || element.color || color;
+        context.fillStyle = element.color || color;
         context.beginPath();
         context.arc(pt.x, pt.y, Math.max(lw / 2, 1.5), 0, Math.PI * 2);
         context.fill();
@@ -137,7 +156,7 @@ export const drawElement = (
       const globalSmoothing = typeof penStyleOptions.smoothingFactor === 'number'
         ? Math.min(Math.max(penStyleOptions.smoothingFactor / 100, 0), 1)
         : 0.25;
-      const strokeColor = element.strokeColor || element.color || color;
+      const strokeColor = element.color || color;
 
       drawStyledPen(context, points, {
         style: penStyle,
@@ -164,26 +183,13 @@ export const drawElement = (
     }
 
     case 'line': {
-      // Support both old format (start/end) and new format (x, y, points[])
-      let startX, startY, endX, endY;
-
-      if (element.points && element.points.length >= 2) {
-        // New point-based format - points are relative to (x, y)
-        const baseX = element.x || 0;
-        const baseY = element.y || 0;
-        startX = baseX + element.points[0].x;
-        startY = baseY + element.points[0].y;
-        endX = baseX + element.points[1].x;
-        endY = baseY + element.points[1].y;
-      } else if (element.start && element.end) {
-        // Old format - absolute start/end points
-        startX = element.start.x;
-        startY = element.start.y;
-        endX = element.end.x;
-        endY = element.end.y;
-      } else {
-        break; // No valid line data
-      }
+      // Canonical geometry: absolute start/end points (the relative-points
+      // alias was removed with VVE-104).
+      if (!element.start || !element.end) break;
+      const startX = element.start.x;
+      const startY = element.start.y;
+      const endX = element.end.x;
+      const endY = element.end.y;
 
       if (isClean) {
         context.beginPath();
@@ -507,8 +513,7 @@ export const drawElement = (
       break;
 
     case 'text':
-      // Allow drawing if either 'position' object exists OR top-level x/y exist
-      if ((element.position || (element.x !== undefined && element.y !== undefined)) && element.text) {
+      if (element.x !== undefined && element.y !== undefined && element.text) {
         drawText(context, element);
       }
       break;
@@ -593,9 +598,8 @@ const drawText = (context, element) => {
   context.textBaseline = element.baseline || 'top';
   context.fillStyle = element.color || '#000000';
 
-  // Fallback to top-level x/y if position object is missing
-  const posX = element.position ? element.position.x : element.x;
-  const posY = element.position ? element.position.y : element.y;
+  const posX = element.x;
+  const posY = element.y;
 
   if (posX === undefined || posY === undefined) return;
 
@@ -607,14 +611,14 @@ const drawText = (context, element) => {
 };
 
 const drawImage = (context, element, imageCache, requestRedraw) => {
-  const { dataUrl, position, width, height } = element;
-  // Allow top-level x/y
-  const posX = position ? position.x : element.x;
-  const posY = position ? position.y : element.y;
+  // Canonical image geometry: src + top-level x/y (the dataUrl/position
+  // aliases were removed with VVE-104; legacy documents are normalized at
+  // intake).
+  const { src, width, height, x: posX, y: posY } = element;
 
-  if (!dataUrl || (posX === undefined || posY === undefined)) return;
+  if (!src || (posX === undefined || posY === undefined)) return;
 
-  let img = imageCache.get(dataUrl);
+  let img = imageCache.get(src);
   if (img) {
     if (img.complete && img.naturalWidth > 0) {
       context.drawImage(img, posX, posY, width, height);
@@ -622,8 +626,8 @@ const drawImage = (context, element, imageCache, requestRedraw) => {
   } else {
     img = new Image();
     img.onload = () => requestRedraw && requestRedraw();
-    img.src = dataUrl;
-    imageCache.set(dataUrl, img);
+    img.src = src;
+    imageCache.set(src, img);
   }
 };
 

@@ -20,6 +20,8 @@ const serverDir = path.resolve(
   'server'
 );
 
+const frontendPort = process.env.VVE_E2E_FRONTEND_PORT || '5173';
+
 export const pilotE2eEnv = {
   DATABASE_URL: process.env.PILOT_DATABASE_URL || 'postgres://vve:vve-test@127.0.0.1:5433/vve_test',
   ADMIN_PASSPHRASE: process.env.PILOT_ADMIN_PASSPHRASE || 'pilot-e2e-admin-passphrase',
@@ -27,7 +29,7 @@ export const pilotE2eEnv = {
   ADMIN_SESSION_SECRET: 'pilot-e2e-admin-session-secret',
   BOARD_WS_SECRET: 'pilot-e2e-ws-secret',
   // Links must point at the local app origin the browser actually opens.
-  TEACHER_APP_BASE_URL: 'http://localhost:5173'
+  TEACHER_APP_BASE_URL: `http://localhost:${frontendPort}`
 };
 
 export default async function globalSetup() {

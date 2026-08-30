@@ -10,6 +10,7 @@ import {
   type CollaborationTransport,
   type ServerFrame
 } from '../src/pilot/collaborationRuntime';
+import { applyBoardCommand, type BoardCommand } from '../src/pilot/boardScene';
 
 const BOARD_A = '11111111-1111-4111-8111-111111111111';
 const BOARD_B = '22222222-2222-4222-8222-222222222222';
@@ -224,5 +225,87 @@ describe('CollaborationRuntime acknowledgement oracle', () => {
 
     await expect(handle.receive(mutation('failed-op', 'x', 'y'))).rejects.toBeInstanceOf(CollaborationFailure);
     expect(transport.frames.some((frame) => frame.kind === 'acknowledgement')).toBe(false);
+  });
+});
+
+describe('CollaborationRuntime document authority (S4)', () => {
+  const boardMutation = (
+    operationId: string,
+    baseState: Uint8Array,
+    command: BoardCommand,
+    role: 'teacher' | 'student'
+  ) => {
+    const doc = new Y.Doc();
+    if (baseState.length) Y.applyUpdate(doc, baseState);
+    const vector = Y.encodeStateVector(doc);
+    const result = applyBoardCommand(doc, command, { origin: 'client', role });
+    if (!result.ok) throw new Error(result.message);
+    return { kind: 'mutation' as const, operationId, update: Y.encodeStateAsUpdate(doc, vector) };
+  };
+
+  const rectangle = { id: 'rect-1', type: 'rectangle', x: 0, y: 0, width: 10, height: 10 };
+
+  it('denies a forged student clear per-operation and keeps the connection live', async () => {
+    const store = new InMemoryBoardDocumentStore();
+    const runtime = createCollaborationRuntime({ store });
+    const teacher = new MemoryTransport();
+    const student = new MemoryTransport();
+    const teacherHandle = await runtime.connect(connection(BOARD_A, 'teacher'), teacher);
+    const studentHandle = await runtime.connect(connection(BOARD_A, 'student'), student);
+
+    const state = () => runtime.inspect(BOARD_A).then((snapshot) => snapshot.encodedState);
+    await teacherHandle.receive(
+      boardMutation('op-add', await state(), { kind: 'add', object: rectangle }, 'teacher')
+    );
+
+    // A malicious Student client can craft the clear bytes; document
+    // authority lives on the server, not in the hidden UI button.
+    const forgedClear = boardMutation('op-forged-clear', await state(), { kind: 'clear' }, 'teacher');
+    const denied = await studentHandle.receive(forgedClear);
+    expect(denied).toEqual({ accepted: false, reason: 'forbidden' });
+    expect(student.frames.at(-1)).toEqual({
+      kind: 'denial',
+      reason: 'forbidden',
+      operationId: 'op-forged-clear'
+    });
+    expect(student.closed).toBeNull();
+
+    // The board still holds the rectangle, nothing was persisted, and the
+    // student connection continues to accept lawful mutations.
+    expect((await store.inspect(BOARD_A)).operationIds).toEqual(['op-add']);
+    const lawful = await studentHandle.receive(
+      boardMutation('op-move', await state(), { kind: 'move', id: 'rect-1', x: 7, y: 8 }, 'student')
+    );
+    expect(lawful).toMatchObject({ accepted: true, operationId: 'op-move' });
+
+    const teacherClear = await teacherHandle.receive(
+      boardMutation('op-clear', await state(), { kind: 'clear' }, 'teacher')
+    );
+    expect(teacherClear).toMatchObject({ accepted: true, operationId: 'op-clear' });
+  });
+
+  it('denies schema-violating objects with the offending operation id', async () => {
+    const runtime = createCollaborationRuntime({ store: new InMemoryBoardDocumentStore() });
+    const transport = new MemoryTransport();
+    const handle = await runtime.connect(connection(BOARD_A, 'student'), transport);
+
+    const rogue = new Y.Doc();
+    const map = new Y.Map<unknown>();
+    map.set('id', 'rogue');
+    map.set('type', 'not-a-real-tool');
+    rogue.getArray('drawings').push([map]);
+
+    const result = await handle.receive({
+      kind: 'mutation',
+      operationId: 'op-rogue',
+      update: Y.encodeStateAsUpdate(rogue)
+    });
+    expect(result).toEqual({ accepted: false, reason: 'malformed' });
+    expect(transport.frames.at(-1)).toEqual({
+      kind: 'denial',
+      reason: 'malformed',
+      operationId: 'op-rogue'
+    });
+    expect(transport.closed).toBeNull();
   });
 });

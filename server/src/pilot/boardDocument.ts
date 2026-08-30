@@ -1,16 +1,26 @@
 import { createHash } from 'crypto';
 import * as Y from 'yjs';
+import {
+  collectUpdateEffects,
+  SCENE_LIMITS,
+  validateBoardObject,
+  type BoardRole
+} from './boardScene';
 
 export type OperationOrigin =
   | { kind: 'hydrate' }
-  | { kind: 'remote'; actorId: string }
-  | { kind: 'local'; actorId: string };
+  | { kind: 'remote'; actorId: string; role?: BoardRole }
+  | { kind: 'local'; actorId: string; role?: BoardRole };
 
 export type DocumentResult =
   | { ok: true; digest: string }
   | {
       ok: false;
-      reason: 'incompatibleUpdate' | 'resourceViolation' | 'forbiddenCommand';
+      reason:
+        | 'incompatibleUpdate'
+        | 'resourceViolation'
+        | 'forbiddenCommand'
+        | 'invalidObject';
       message: string;
     };
 
@@ -48,7 +58,10 @@ const stableValue = (value: unknown): unknown => {
  * Yjs remains an implementation detail: callers can apply/encode state and
  * compare a stable digest, but cannot reach the underlying collections. A
  * candidate update is first applied to a shadow document so malformed input
- * never partially changes the live lesson.
+ * never partially changes the live lesson, and every non-hydrate update is
+ * validated against the canonical scene schema: each object it adds or
+ * modifies must conform, and a whole-board clear (boardMeta clearEpoch bump)
+ * is a Teacher-only document action, whatever the client claims.
  */
 export const createBoardDocument = (
   options: CreateBoardDocumentOptions = {}
@@ -84,19 +97,58 @@ export const createBoardDocument = (
         };
       }
 
-      const shadow = new Y.Doc();
+      if (origin.kind === 'hydrate') {
+        try {
+          Y.applyUpdate(doc, update, origin);
+          return { ok: true, digest: digest() };
+        } catch (error) {
+          return {
+            ok: false,
+            reason: 'incompatibleUpdate',
+            message: (error as Error).message
+          };
+        }
+      }
+
+      // Shadow validation: decode + schema + authorization on a scratch
+      // document, so a rejected update never partially changes live state.
+      let effects: ReturnType<typeof collectUpdateEffects>;
       try {
-        Y.applyUpdate(shadow, encode(), 'shadow-base');
-        Y.applyUpdate(shadow, update, 'shadow-candidate');
+        effects = collectUpdateEffects(encode(), update);
       } catch (error) {
-        shadow.destroy();
         return {
           ok: false,
           reason: 'incompatibleUpdate',
           message: (error as Error).message
         };
       }
-      shadow.destroy();
+
+      if (effects.clearEpochChanged && origin.role !== 'teacher' && origin.role !== 'developer') {
+        return {
+          ok: false,
+          reason: 'forbiddenCommand',
+          message: 'Only the Teacher may clear the whole board.'
+        };
+      }
+
+      if (effects.objectCount > SCENE_LIMITS.maxObjects) {
+        return {
+          ok: false,
+          reason: 'resourceViolation',
+          message: `The board exceeds ${SCENE_LIMITS.maxObjects} objects.`
+        };
+      }
+
+      for (const object of effects.changedObjects) {
+        const validation = validateBoardObject(object);
+        if (!validation.ok) {
+          return {
+            ok: false,
+            reason: 'invalidObject',
+            message: `Object "${String(object.id ?? '?')}" was rejected: ${validation.message}`
+          };
+        }
+      }
 
       try {
         Y.applyUpdate(doc, update, origin);

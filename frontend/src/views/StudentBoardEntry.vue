@@ -3,7 +3,7 @@
     <div class="center-content fade-in">
       <div class="minimal-card entry-card">
         <header class="card-header">
-          <p class="eyebrow">Zaproszenie</p>
+          <p class="eyebrow">{{ isTeacher ? 'Tablica nauczyciela' : 'Zaproszenie' }}</p>
           <h1>{{ boardTitle }}</h1>
         </header>
 
@@ -13,8 +13,8 @@
             <span class="value">{{ boardInfo?.teacherName || '...' }}</span>
           </div>
           <div class="meta-item right">
-            <span class="label">Uczeń</span>
-            <span class="value">{{ boardInfo?.studentName || 'Ty' }}</span>
+            <span class="label">{{ isTeacher ? 'Rola' : 'Uczeń' }}</span>
+            <span class="value">{{ isTeacher ? 'Nauczyciel' : (boardInfo?.studentName || 'Ty') }}</span>
           </div>
         </div>
 
@@ -39,7 +39,7 @@
               Łączenie...
             </div>
             <button class="btn-primary full-width big-btn" :disabled="loading || !boardInfo" @click="startBoard">
-              Dołącz do lekcji
+              {{ isTeacher ? 'Otwórz tablicę' : 'Dołącz do lekcji' }}
             </button>
           </div>
         </div>
@@ -48,15 +48,16 @@
         <div v-if="showCanvas" class="hidden-canvas">
           <WhiteboardCanvas
             :room-id="boardInfo?.roomId"
-            :username="boardInfo?.studentName || 'Uczeń'"
+            :username="boardUsername"
             :room-key="null"
             :ws-token="boardInfo?.wsToken"
+            :role="boardInfo?.role || 'student'"
             :on-connection-status="handleStatus"
           />
         </div>
       </div>
       
-      <p class="footer-brand">WhiteVue Student</p>
+      <p class="footer-brand">WhiteVue {{ isTeacher ? 'Teacher' : 'Student' }}</p>
     </div>
   </div>
 </template>
@@ -76,6 +77,10 @@ const showCanvas = ref(false);
 const connectionStatus = ref('connecting');
 
 const boardTitle = computed(() => boardInfo.value?.title || 'Tablica');
+const isTeacher = computed(() => boardInfo.value?.role === 'teacher');
+const boardUsername = computed(() =>
+  isTeacher.value ? (boardInfo.value?.teacherName || 'Nauczyciel') : (boardInfo.value?.studentName || 'Uczeń')
+);
 const validUntil = computed(() => {
   try { return boardInfo.value?.validUntil ? new Date(boardInfo.value.validUntil).toLocaleDateString() : 'Bezterminowo'; }
   catch { return '---'; }
@@ -108,7 +113,7 @@ const startBoard = () => {
   const params = new URLSearchParams({
     room: boardInfo.value.roomId,
     wsToken: boardInfo.value.wsToken,
-    name: boardInfo.value.studentName || 'Uczeń'
+    name: boardUsername.value
   });
   window.location.href = `/?${params.toString()}`;
 };

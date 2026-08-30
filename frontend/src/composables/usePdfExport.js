@@ -1,6 +1,7 @@
 import * as Y from 'yjs';
 import { drawElement } from '../utils/canvasDrawing.js';
 import { drawGrid as drawUtilGrid } from '../utils/canvasGrid.js';
+import { normalizeBoardObject } from '@pilot/boardScene';
 
 // P0-FIX: Reduced DPI from 600 to 200 to avoid OOM on iPad and reduce file size
 const EXPORT_DPI = 200;
@@ -11,7 +12,18 @@ const PAGE_PX = {
 };
 const PDF_IMAGE_COMPRESSION = 'FAST'; // Use FAST compression to reduce PDF size
 
-export function usePdfExport({ yDrawings, ydoc, smoothingFactor, imageCache, showToast, debugLog, debugWarn }) {
+export const canonicalSceneForExport = ({ session, yDrawings }) => {
+  if (session?.value) return [...session.value.snapshot()];
+  if (!yDrawings.value) return [];
+  return yDrawings.value.toArray().map((map) => normalizeBoardObject(map.toJSON()));
+};
+
+export function usePdfExport({ session, yDrawings, ydoc, smoothingFactor, imageCache, showToast, debugLog, debugWarn }) {
+
+  // PDF is a product surface, so it consumes exactly the same canonical
+  // snapshot as the renderer. The normalization fallback is only for the
+  // short connection window before WhiteboardSession has been constructed.
+  const getCanonicalElements = () => canonicalSceneForExport({ session, yDrawings });
 
   const normalizePointForBounds = (pt) => {
     if (!pt) return null;
@@ -55,17 +67,6 @@ export function usePdfExport({ yDrawings, ydoc, smoothingFactor, imageCache, sho
       if (end) addPoint(end.x, end.y);
     }
 
-    if (element?.position) {
-      const { x, y } = element.position;
-      const width = Number.isFinite(element.width)
-        ? element.width
-        : Number.isFinite(element.size) ? element.size : 0;
-      const height = Number.isFinite(element.height)
-        ? element.height
-        : Number.isFinite(element.size) ? element.size : 0;
-      addRect(x, y, width, height);
-    }
-
     if (Number.isFinite(element?.x) && Number.isFinite(element?.y)) {
       const w = Number.isFinite(element.width) ? element.width : 0;
       const h = Number.isFinite(element.height) ? element.height : 0;
@@ -99,7 +100,7 @@ export function usePdfExport({ yDrawings, ydoc, smoothingFactor, imageCache, sho
     const loaders = [];
     elements.forEach((el) => {
       if (el.type !== 'image') return;
-      const src = el.src || el.dataUrl;
+      const src = el.src;
       if (!src) return;
       const cached = imageCache.value?.get(src);
       if (cached && cached.complete) return;
@@ -168,12 +169,12 @@ export function usePdfExport({ yDrawings, ydoc, smoothingFactor, imageCache, sho
     try {
       debugLog('[usePdfExport] exportBoardAsPdf start');
       showToast('Preparing PDF...', 'info', 1500);
-      if (!yDrawings.value || !yDrawings.value.length) {
+      const elements = getCanonicalElements();
+      if (!elements.length) {
         showToast('Nothing to export yet.', 'warning');
         return;
       }
 
-      const elements = yDrawings.value.toArray().map(map => map.toJSON());
       const sceneBounds = getSceneBounds(elements);
       if (!sceneBounds) {
         showToast('Nothing to export yet.', 'warning');
@@ -252,12 +253,12 @@ export function usePdfExport({ yDrawings, ydoc, smoothingFactor, imageCache, sho
     try {
       debugLog('[usePdfExport] exportBoardAsPdfPaged start');
       showToast('Preparing PDF...', 'info', 1500);
-      if (!yDrawings.value || !yDrawings.value.length) {
+      const elements = getCanonicalElements();
+      if (!elements.length) {
         showToast('Nothing to export yet.', 'warning');
         return;
       }
 
-      const elements = yDrawings.value.toArray().map(map => map.toJSON());
       const sceneBounds = getSceneBounds(elements);
       if (!sceneBounds) {
         showToast('Nothing to export yet.', 'warning');

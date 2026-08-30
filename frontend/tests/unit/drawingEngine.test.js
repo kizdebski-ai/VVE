@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { distanceToSegment, isPointInElement } from '../../src/utils/canvasDrawing.js';
+import { normalizeBoardObject, validateBoardObject } from '@pilot/boardScene';
 
 describe('1.1: Grid snap uses correct function name', () => {
   it('useDrawingEngine source does not reference _getSnapSettingsInternal', async () => {
@@ -28,15 +29,18 @@ describe('1.2: Rough.js instance caching', () => {
 });
 
 describe('1.8: Coordinate validation', () => {
-  it('useDrawingEngine source validates isFinite before Yjs save', async () => {
-    const fs = await import('fs');
-    const path = await import('path');
-    const source = fs.readFileSync(
-      path.resolve(__dirname, '../../src/composables/useDrawingEngine.js'),
-      'utf-8'
-    );
-    expect(source).toContain('Number.isFinite(minX)');
-    expect(source).toContain('Number.isFinite(minY)');
+  it('the shared document Interface rejects non-finite drawing geometry', () => {
+    const object = normalizeBoardObject({
+      id: 'stroke-invalid',
+      type: 'pen',
+      points: [{ x: Number.NaN, y: 10 }],
+      color: '#000000',
+      lineWidth: 2
+    });
+    expect(validateBoardObject(object)).toMatchObject({
+      ok: false,
+      reason: 'invalidGeometry'
+    });
   });
 });
 

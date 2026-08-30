@@ -191,8 +191,8 @@ describe('WhiteboardCanvas.vue', () => {
     });
   });
 
-  describe('Interaction propagation to Yjs', () => {
-    it('renders MovableObject with the exact Y.Map instance from yDrawings and reacts to its select request', async () => {
+  describe('Interaction propagation through WhiteboardSession', () => {
+    it('turns a MovableObject transform intent into one canonical document command', async () => {
       geometryMock.isPointInRotatedRectangle.mockReturnValue(true);
       const canvas = wrapper.find('.whiteboard-canvas.draw-layer');
       await canvas.trigger('mousedown', { clientX: 75, clientY: 90, button: 2 });
@@ -201,13 +201,15 @@ describe('WhiteboardCanvas.vue', () => {
       const movableObjectComp = wrapper.findComponent(MovableObject);
       expect(movableObjectComp.exists()).toBe(true);
 
-      // The object handed to MovableObject IS the yDrawings entry, so any
-      // set() MovableObject performs lands in the shared document state.
+      // MovableObject remains a rendering adapter over the live entry, but it
+      // sends finished gestures back to WhiteboardCanvas instead of writing.
       expect(movableObjectComp.props('object')).toBe(initialTestObject);
 
-      initialTestObject.set('x', 200);
-      initialTestObject.set('y', 250);
-      expect(mockYDrawings.get(0).get('x')).toBe(200); // Visible through the real yArray
+      await movableObjectComp.vm.$emit('commit-transform', {
+        kind: 'move', id: 'obj1', x: 200, y: 250
+      });
+      await nextTick();
+      expect(mockYDrawings.get(0).get('x')).toBe(200);
       expect(mockYDrawings.get(0).get('y')).toBe(250);
 
       // MovableObject requests selection through WhiteboardCanvas wiring.
@@ -217,10 +219,10 @@ describe('WhiteboardCanvas.vue', () => {
     });
   });
 
-  describe('Element drawing to Yjs', () => {
-    it('draws a rectangle and commits a Y.Map element to yDrawings', async () => {
+  describe('Canonical element drawing', () => {
+    it('draws a rectangle through WhiteboardSession', async () => {
       // The real element factory (canvasTools.createNewElement) creates the
-      // preview; mouseup commits a real Y.Map inside a ydoc transaction.
+      // preview; mouseup sends an add command to WhiteboardSession.
       wrapper.vm.setTool('shapes');
       await nextTick();
 
@@ -266,7 +268,7 @@ describe('WhiteboardCanvas.vue', () => {
       });
 
       wrapper = mount(WhiteboardCanvas, {
-        props: { roomId: 'managed-board', wsToken: 'managed-token' },
+        props: { roomId: 'managed-board', wsToken: 'managed-token', role: 'student' },
       });
       await nextTick();
 

@@ -1,6 +1,11 @@
 import { defineConfig } from '@playwright/test';
 import { pilotE2eEnv } from './tests/e2e/global-setup';
 
+const frontendPort = process.env.VVE_E2E_FRONTEND_PORT || '5173';
+const backendPort = process.env.VVE_E2E_BACKEND_PORT || '8000';
+const frontendOrigin = `http://localhost:${frontendPort}`;
+const backendOrigin = `http://127.0.0.1:${backendPort}`;
+
 // VVE-100 E2E spine: backend (:8000, Pilot HTTP surface) + Vite dev app
 // (:5173, API/WS/login proxied to the backend), seeded by global-setup with
 // the deterministic local Managed Board fixture.
@@ -9,7 +14,7 @@ export default defineConfig({
   timeout: 45000,
   globalSetup: './tests/e2e/global-setup.js',
   use: {
-    baseURL: 'http://localhost:5173',
+    baseURL: frontendOrigin,
     headless: true,
     screenshot: 'only-on-failure',
   },
@@ -22,29 +27,30 @@ export default defineConfig({
     {
       command: 'npm run build && node dist/src/server.js',
       cwd: '../server',
-      url: 'http://127.0.0.1:8000/health',
+      url: `${backendOrigin}/health`,
       reuseExistingServer: !process.env.CI,
       timeout: 180_000,
       env: {
         ...process.env,
         ...pilotE2eEnv,
         HOST: '127.0.0.1',
-        PORT: '8000',
+        PORT: backendPort,
         // Pilot HTTP surface without production fail-fast checks.
         VVE_PILOT_SURFACE: '1',
-        CORS_ORIGIN: 'http://localhost:5173',
+        CORS_ORIGIN: frontendOrigin,
       },
     },
     {
-      command: 'npx vite --host 127.0.0.1 --port 5173',
-      url: 'http://localhost:5173',
+      command: `npx vite --host 127.0.0.1 --port ${frontendPort}`,
+      url: frontendOrigin,
       reuseExistingServer: !process.env.CI,
       timeout: 120_000,
       env: {
         ...process.env,
         // Same-origin API/WS through the Vite dev proxy; the Administrator
         // logs in with the passphrase (no build-time secret in the frontend).
-        VITE_BACKEND_URL: 'http://localhost:5173'
+        VITE_BACKEND_URL: frontendOrigin,
+        VVE_PROXY_TARGET: backendOrigin
       }
     },
   ],

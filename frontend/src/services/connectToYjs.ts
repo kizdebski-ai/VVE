@@ -71,9 +71,21 @@ export interface YjsConnection {
   disconnect: () => void;
 }
 
+export interface MutationDenial {
+  reason: string;
+  operationId: string;
+}
+
 export interface ConnectOptions {
   wsToken?: string | null;
   onStatus?: (status: ConnectionStatus) => void;
+  /**
+   * Called when the server rejects one specific operation (schema violation
+   * or a forbidden command such as a Student clear). The session stays
+   * connected; the caller must roll the local document back to the server
+   * state, which arrives as a fresh sync.
+   */
+  onMutationDenied?: (denial: MutationDenial) => void;
 }
 
 const buildWebSocketUrl = (roomId: string) => {
@@ -254,10 +266,28 @@ export function connectToYjs(roomId: string, options?: ConnectOptions): YjsConne
           if (acknowledgement.operationId) pending.delete(acknowledgement.operationId);
           break;
         }
-        case collaborationMessage.denial:
+        case collaborationMessage.denial: {
+          let denial: { reason?: string; operationId?: string } = {};
+          try {
+            denial = JSON.parse(decoder.decode(data.slice(1)));
+          } catch {
+            denial = { reason: decoder.decode(data.slice(1)) };
+          }
+          if (denial.operationId) {
+            // Mutation-level denial: exactly one operation was rejected
+            // (schema violation or a forbidden command). The connection and
+            // the rest of the pending queue stay valid.
+            pending.delete(denial.operationId);
+            options?.onMutationDenied?.({
+              reason: denial.reason ?? 'malformed',
+              operationId: denial.operationId
+            });
+            break;
+          }
           editable = false;
           setStatus('disconnected');
           break;
+        }
         case collaborationMessage.serverDraining:
           editable = false;
           socket?.close(4012, 'Server restarting');

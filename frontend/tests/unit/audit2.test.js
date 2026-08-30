@@ -92,18 +92,10 @@ describe('H6: Timing-safe credential comparison', () => {
   });
 });
 
-// ─── H9: redo must call updateGlobalState ────────────────────────────────────
-
-describe('H9: redo calls updateGlobalState', () => {
-  it('useUndoRedo redo function calls updateGlobalState', () => {
-    const src = readSrc('composables/useUndoRedo.js');
-    // Both undo and redo should call updateGlobalState
-    const undoMatch = src.match(/const undo[\s\S]*?updateGlobalState/);
-    const redoMatch = src.match(/const redo[\s\S]*?updateGlobalState/);
-    expect(undoMatch).not.toBeNull();
-    expect(redoMatch).not.toBeNull();
-  });
-});
+// H9 moved with VVE-104 into the participant-scoped WhiteboardSession.
+// Executable undo/redo and history-notification behavior is covered in
+// whiteboardSession.spec.ts; retaining a source-text assertion here would pin
+// the deleted, unsafe composable back into the architecture.
 
 // ─── C3: XSS prevention in MovableObject.vue ─────────────────────────────────
 

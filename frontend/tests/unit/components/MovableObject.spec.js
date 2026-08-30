@@ -2,9 +2,8 @@ import { shallowMount } from '@vue/test-utils';
 import { nextTick } from 'vue';
 import MovableObject from '@/components/MovableObject.vue';
 
-// The component consumes Pointer Events (pointerdown on the object,
-// pointermove/pointerup on document) and commits to the Yjs map on
-// pointer UP, so the tests drive that interaction model.
+// The component consumes Pointer Events and emits one canonical transform
+// intent on pointer-up. It never mutates the shared document itself.
 const dispatchPointer = (target, type, coords) => {
   const event = new PointerEvent(type, { bubbles: true, cancelable: true, ...coords });
   target.dispatchEvent(event);
@@ -110,7 +109,7 @@ describe('MovableObject.vue', () => {
   });
 
   describe('Drag (Move) Functionality', () => {
-    it('updates object position on drag and commits to Yjs on pointerup', async () => {
+    it('previews a drag and emits one move intent on pointerup', async () => {
       wrapper = createComponent({ ...defaultProps, isSelected: true });
       const contentArea = wrapper.find('.object-content');
       const startX = 50;
@@ -125,13 +124,18 @@ describe('MovableObject.vue', () => {
       // Local move feedback is emitted immediately...
       expect(wrapper.emitted('update:object')).toBeTruthy();
 
-      // ...and the Yjs commit happens once the drag ends.
+      // ...and the session command is emitted once the drag ends.
       dispatchPointer(document, 'pointerup', { button: 0 });
       await nextTick();
 
-      expect(mockObject.doc.transact).toHaveBeenCalled();
-      expect(mockObject.set).toHaveBeenCalledWith('x', initialObjectData.x + deltaX);
-      expect(mockObject.set).toHaveBeenCalledWith('y', initialObjectData.y + deltaY);
+      expect(wrapper.emitted('commit-transform')).toEqual([[{
+        kind: 'move',
+        id: initialObjectData.id,
+        x: initialObjectData.x + deltaX,
+        y: initialObjectData.y + deltaY,
+      }]]);
+      expect(mockObject.doc.transact).not.toHaveBeenCalled();
+      expect(mockObject.set).not.toHaveBeenCalled();
     });
 
     it('updates object position correctly with zoom', async () => {
@@ -153,9 +157,14 @@ describe('MovableObject.vue', () => {
       const deltaWorldX = deltaScreenX / zoomLevel;
       const deltaWorldY = deltaScreenY / zoomLevel;
 
-      expect(mockObject.doc.transact).toHaveBeenCalled();
-      expect(mockObject.set).toHaveBeenCalledWith('x', initialObjectData.x + deltaWorldX);
-      expect(mockObject.set).toHaveBeenCalledWith('y', initialObjectData.y + deltaWorldY);
+      expect(wrapper.emitted('commit-transform')).toEqual([[{
+        kind: 'move',
+        id: initialObjectData.id,
+        x: initialObjectData.x + deltaWorldX,
+        y: initialObjectData.y + deltaWorldY,
+      }]]);
+      expect(mockObject.doc.transact).not.toHaveBeenCalled();
+      expect(mockObject.set).not.toHaveBeenCalled();
       expect(wrapper.emitted('update:object')).toBeTruthy();
     });
   });
@@ -177,9 +186,14 @@ describe('MovableObject.vue', () => {
       dispatchPointer(document, 'pointerup', { button: 0 });
       await nextTick();
 
-      expect(mockObject.doc.transact).toHaveBeenCalled();
-      expect(mockObject.set).toHaveBeenCalledWith('width', initialObjectData.width + deltaX);
-      expect(mockObject.set).toHaveBeenCalledWith('height', initialObjectData.height + deltaY);
+      expect(wrapper.emitted('commit-transform')).toEqual([[expect.objectContaining({
+        kind: 'resize',
+        id: initialObjectData.id,
+        width: initialObjectData.width + deltaX,
+        height: initialObjectData.height + deltaY,
+      })]]);
+      expect(mockObject.doc.transact).not.toHaveBeenCalled();
+      expect(mockObject.set).not.toHaveBeenCalled();
       expect(wrapper.emitted('update:object')).toBeTruthy();
     });
 
@@ -203,9 +217,14 @@ describe('MovableObject.vue', () => {
       const deltaWorldX = deltaScreenX / zoomLevel;
       const deltaWorldY = deltaScreenY / zoomLevel;
 
-      expect(mockObject.doc.transact).toHaveBeenCalled();
-      expect(mockObject.set).toHaveBeenCalledWith('width', initialObjectData.width + deltaWorldX);
-      expect(mockObject.set).toHaveBeenCalledWith('height', initialObjectData.height + deltaWorldY);
+      expect(wrapper.emitted('commit-transform')).toEqual([[expect.objectContaining({
+        kind: 'resize',
+        id: initialObjectData.id,
+        width: initialObjectData.width + deltaWorldX,
+        height: initialObjectData.height + deltaWorldY,
+      })]]);
+      expect(mockObject.doc.transact).not.toHaveBeenCalled();
+      expect(mockObject.set).not.toHaveBeenCalled();
       expect(wrapper.emitted('update:object')).toBeTruthy();
     });
   });
@@ -235,12 +254,11 @@ describe('MovableObject.vue', () => {
       dispatchPointer(document, 'pointerup', { button: 0 });
       await nextTick();
 
-      expect(mockObject.doc.transact).toHaveBeenCalled();
-      const rotationCall = mockObject.set.mock.calls.find(call => call[0] === 'rotation');
-      expect(rotationCall).toBeDefined();
-      if (rotationCall) {
-        expect(rotationCall[1]).toBeCloseTo(90, 0);
-      }
+      const rotation = wrapper.emitted('commit-transform')?.[0]?.[0];
+      expect(rotation).toMatchObject({ kind: 'rotate', id: initialObjectData.id });
+      expect(rotation.rotation).toBeCloseTo(90, 0);
+      expect(mockObject.doc.transact).not.toHaveBeenCalled();
+      expect(mockObject.set).not.toHaveBeenCalled();
       expect(wrapper.emitted('update:object')).toBeTruthy();
     });
   });

@@ -22,6 +22,7 @@ export type CollaborationDenial =
   | 'readOnly'
   | 'notSynchronized'
   | 'malformed'
+  | 'forbidden'
   | 'persistenceUnavailable'
   | 'draining'
   | 'internal';
@@ -32,7 +33,7 @@ export type ServerFrame =
   | { kind: 'update'; operationId: string; update: Uint8Array }
   | { kind: 'acknowledgement'; operationId: string; digest: string; duplicate: boolean }
   | { kind: 'awareness'; update: Uint8Array }
-  | { kind: 'denial'; reason: CollaborationDenial }
+  | { kind: 'denial'; reason: CollaborationDenial; operationId?: string }
   | { kind: 'serverDraining'; reason: string };
 
 export interface CollaborationTransport {
@@ -239,6 +240,11 @@ export interface CollaborationRuntime {
 const validOperationId = (value: string): boolean =>
   value.length >= 1 && value.length <= 128 && /^[A-Za-z0-9._:-]+$/.test(value);
 
+// Fail closed: only an explicit Teacher grant carries Teacher document
+// authority. Any other role (including an unexpected one) edits as a Student.
+const documentRole = (role: string): 'teacher' | 'student' =>
+  role === 'teacher' ? 'teacher' : 'student';
+
 export const createCollaborationRuntime = (
   options: CreateCollaborationRuntimeOptions
 ): CollaborationRuntime => {
@@ -423,12 +429,17 @@ export const createCollaborationRuntime = (
         const shadow = createBoardDocument({ initialState: room.document.encode() });
         const validation = shadow.apply(frame.update, {
           kind: 'remote',
-          actorId: `${input.grant.role}:${input.grant.teacherId ?? 'student'}`
+          actorId: `${input.grant.role}:${input.grant.teacherId ?? 'student'}`,
+          role: documentRole(input.grant.role)
         });
         shadow.destroy();
         if (!validation.ok) {
-          await transport.send({ kind: 'denial', reason: 'malformed' });
-          return { accepted: false, reason: 'malformed' };
+          // A mutation-level denial keeps the connection open: the client
+          // rolls back exactly this operation and stays synchronized.
+          const reason: CollaborationDenial =
+            validation.reason === 'forbiddenCommand' ? 'forbidden' : 'malformed';
+          await transport.send({ kind: 'denial', reason, operationId: frame.operationId });
+          return { accepted: false, reason };
         }
 
         let append: AppendResult;
@@ -443,7 +454,8 @@ export const createCollaborationRuntime = (
 
         const applied = room.document.apply(frame.update, {
           kind: 'remote',
-          actorId: `${input.grant.role}:${input.grant.teacherId ?? 'student'}`
+          actorId: `${input.grant.role}:${input.grant.teacherId ?? 'student'}`,
+          role: documentRole(input.grant.role)
         });
         if (!applied.ok) {
           throw new CollaborationFailure('internal', applied.message);

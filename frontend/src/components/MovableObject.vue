@@ -45,7 +45,7 @@
       <template v-if="shouldRenderContent">
         <img
           v-if="objectData.type === 'image'"
-          :src="objectData.src || objectData.dataUrl"
+          :src="objectData.src"
           :alt="'Object ' + objectData.id"
           draggable="false"
           style="width: 100%; height: 100%; user-select: none; object-fit: contain;"
@@ -139,9 +139,8 @@ interface MovableObjectData {
   rotation: number;
   width: number;
   height: number;
-  src?: string; 
-  dataUrl?: string;
-  color?: string; 
+  src?: string;
+  color?: string;
   lineWidth?: number; 
   startX?: number;
   startY?: number;
@@ -174,9 +173,26 @@ const props = withDefaults(defineProps<{
   snapTargets: () => ({ vertical: [], horizontal: [] })
 });
 
+export interface CommitTransformPayload {
+  kind: 'move' | 'rotate' | 'resize' | 'line-endpoints';
+  id: string | number;
+  x?: number;
+  y?: number;
+  width?: number;
+  height?: number;
+  rotation?: number;
+  start?: { x: number; y: number };
+  end?: { x: number; y: number };
+  lineWidth?: number;
+}
+
 const emit = defineEmits<{
   (e: 'request-select', id: string | number): void;
   (e: 'update:object', object: Y.Map<any> | any): void;
+  // Finished direct-manipulation gesture. This component never writes to the
+  // document itself (VVE-104): the canvas turns the payload into one
+  // WhiteboardSession command, which is also the single undo entry.
+  (e: 'commit-transform', payload: CommitTransformPayload): void;
   (e: 'clone-object', data: any): void;
   (e: 'update:snap-guides', guides: any[]): void;
   (e: 'double-click', id: string | number): void;
@@ -253,14 +269,6 @@ const clonePointsArray = (pointsValue: any) => {
   return pointsValue.map((pt) => ({
     x: ensureNumber(pt.x, 0),
     y: ensureNumber(pt.y, 0),
-  }));
-};
-
-const shiftPointsArray = (pointsValue: any, dx: number, dy: number) => {
-  if (!Array.isArray(pointsValue)) return null;
-  return pointsValue.map((pt) => ({
-    x: ensureNumber(pt.x, 0) + dx,
-    y: ensureNumber(pt.y, 0) + dy,
   }));
 };
 
@@ -393,8 +401,7 @@ const bootstrapObjectData = () => {
         rotation: ensureNumber(props.object.get('rotation'), 0),
         width: ensureNumber(props.object.get('width'), fallbackBounds.width > 0 ? fallbackBounds.width : 100),
         height: ensureNumber(props.object.get('height'), fallbackBounds.height > 0 ? fallbackBounds.height : 80),
-        src: props.object.get('src') || props.object.get('dataUrl'),
-        dataUrl: props.object.get('dataUrl'),
+        src: props.object.get('src'),
         color: props.object.get('color'),
         lineWidth: props.object.get('lineWidth'),
         startX: startPoint.x,
@@ -432,8 +439,7 @@ const syncDataFromYMap = () => {
     objectData.rotation = ensureNumber(props.object.get('rotation'), 0);
     objectData.width = ensureNumber(props.object.get('width'), fallbackBounds.width > 0 ? fallbackBounds.width : 100);
     objectData.height = ensureNumber(props.object.get('height'), fallbackBounds.height > 0 ? fallbackBounds.height : 80);
-    objectData.src = props.object.get('src') || props.object.get('dataUrl');
-    objectData.dataUrl = props.object.get('dataUrl');
+    objectData.src = props.object.get('src');
     objectData.color = props.object.get('color');
     objectData.lineWidth = props.object.get('lineWidth');
     objectData.startX = startPoint.x;
@@ -605,79 +611,7 @@ const lineHandlePositions = computed(() => {
   };
 });
 
-const getStartMap = () => props.object.get('start');
-const getEndMap = () => props.object.get('end');
-const getPositionMap = () => props.object.get('position');
-
-const shiftStartEndMaps = (dx: number, dy: number) => {
-  const startMap = getStartMap();
-  if (startMap instanceof Y.Map) {
-    const newStartX = ensureNumber(startMap.get('x'), objectData.startX ?? objectData.x) + dx;
-    const newStartY = ensureNumber(startMap.get('y'), objectData.startY ?? objectData.y) + dy;
-    startMap.set('x', newStartX);
-    startMap.set('y', newStartY);
-    objectData.startX = newStartX;
-    objectData.startY = newStartY;
-  }
-  const endMap = getEndMap();
-  if (endMap instanceof Y.Map) {
-    const newEndX = ensureNumber(endMap.get('x'), objectData.endX ?? (objectData.x + objectData.width)) + dx;
-    const newEndY = ensureNumber(endMap.get('y'), objectData.endY ?? (objectData.y + objectData.height)) + dy;
-    endMap.set('x', newEndX);
-    endMap.set('y', newEndY);
-    objectData.endX = newEndX;
-    objectData.endY = newEndY;
-  }
-};
-
-const updateStartEndMaps = (startX: number, startY: number, endX: number, endY: number) => {
-  let startMap = getStartMap();
-  if (!(startMap instanceof Y.Map)) {
-    startMap = new Y.Map();
-    props.object.set('start', startMap);
-  }
-  let endMap = getEndMap();
-  if (!(endMap instanceof Y.Map)) {
-    endMap = new Y.Map();
-    props.object.set('end', endMap);
-  }
-  startMap.set('x', startX);
-  startMap.set('y', startY);
-  endMap.set('x', endX);
-  endMap.set('y', endY);
-  objectData.startX = startX;
-  objectData.startY = startY;
-  objectData.endX = endX;
-  objectData.endY = endY;
-};
-
-const shiftPositionMap = (dx: number, dy: number) => {
-  const positionMap = getPositionMap();
-  if (positionMap instanceof Y.Map) {
-    const newX = ensureNumber(positionMap.get('x'), objectData.x) + dx;
-    const newY = ensureNumber(positionMap.get('y'), objectData.y) + dy;
-    positionMap.set('x', newX);
-    positionMap.set('y', newY);
-  }
-};
-
-const updatePositionMap = (x: number, y: number) => {
-  const positionMap = getPositionMap();
-  if (positionMap instanceof Y.Map) {
-    positionMap.set('x', x);
-    positionMap.set('y', y);
-  }
-};
-
-const shiftPointsInYMap = (dx: number, dy: number) => {
-  const pointsValue = props.object.get('points');
-  const shifted = shiftPointsArray(pointsValue, dx, dy);
-  if (shifted) {
-    props.object.set('points', shifted);
-  }
-};
-
-const objectCenter = reactive({ x: 0, y: 0 }); 
+const objectCenter = reactive({ x: 0, y: 0 });
 const startAngle = ref(0); 
 
 const handleLeftClickOnObject = (event: MouseEvent) => {
@@ -798,19 +732,14 @@ const stopDrag = () => {
     document.removeEventListener('pointermove', handleDrag);
     document.removeEventListener('pointerup', stopDrag);
 
-    // Commit changes to Yjs
-    const totalDeltaX = objectData.x - initialObjectState.x;
-    const totalDeltaY = objectData.y - initialObjectState.y;
-
-    props.object.doc?.transact(() => {
-        props.object.set('x', objectData.x);
-        props.object.set('y', objectData.y);
-        shiftStartEndMaps(totalDeltaX, totalDeltaY);
-        shiftPositionMap(totalDeltaX, totalDeltaY);
-        shiftPointsInYMap(totalDeltaX, totalDeltaY);
-    }, 'local-movable-drag');
-    
-    emit('update:object', props.object);
+    // One gesture -> one session command (move translates the whole object,
+    // including line endpoints and pen points, and keeps bound lines attached).
+    emit('commit-transform', {
+      kind: 'move',
+      id: objectData.id,
+      x: objectData.x,
+      y: objectData.y,
+    });
   }
 };
 
@@ -852,10 +781,11 @@ const stopRotate = () => {
     document.removeEventListener('pointermove', handleRotate);
     document.removeEventListener('pointerup', stopRotate);
 
-    props.object.doc?.transact(() => {
-      props.object.set('rotation', objectData.rotation);
-    }, 'local-movable-rotate');
-    emit('update:object', { ...props.object.toJSON(), ...objectData });
+    emit('commit-transform', {
+      kind: 'rotate',
+      id: objectData.id,
+      rotation: objectData.rotation,
+    });
   }
 };
 
@@ -982,34 +912,17 @@ const stopLineResize = () => {
   document.removeEventListener('pointermove', handleLineResize);
   document.removeEventListener('pointerup', stopLineResize);
 
-  // Commit to Yjs with new point-based format
-  props.object.doc?.transact(() => {
-    props.object.set('x', objectData.x);
-    props.object.set('y', objectData.y);
-    props.object.set('width', objectData.width);
-    props.object.set('height', objectData.height);
-    
-    // Save points in new format
-    props.object.set('points', [
-      { x: objectData.startX! - objectData.x, y: objectData.startY! - objectData.y },
-      { x: objectData.endX! - objectData.x, y: objectData.endY! - objectData.y }
-    ]);
-    
-    // Also update start/end maps for backwards compatibility
-    const startMap = props.object.get('start');
-    if (startMap && typeof startMap.set === 'function') {
-      startMap.set('x', objectData.startX);
-      startMap.set('y', objectData.startY);
-    }
-    const endMap = props.object.get('end');
-    if (endMap && typeof endMap.set === 'function') {
-      endMap.set('x', objectData.endX);
-      endMap.set('y', objectData.endY);
-    }
-  }, 'local-line-resize');
+  // The canvas re-binds the moved endpoint to a nearby target (if any) and
+  // commits one setLineEndpoints command with canonical absolute points.
+  emit('commit-transform', {
+    kind: 'line-endpoints',
+    id: objectData.id,
+    start: { x: objectData.startX!, y: objectData.startY! },
+    end: { x: objectData.endX!, y: objectData.endY! },
+    lineWidth: ensureNumber(objectData.lineWidth, 2),
+  });
 
   currentLineHandle.value = null;
-  emit('update:object', props.object);
 };
 
 const renderLocalCanvas = () => {
@@ -1217,27 +1130,16 @@ const stopResize = () => {
   document.removeEventListener('pointermove', handleResize);
   document.removeEventListener('pointerup', stopResize);
 
-  props.object.doc?.transact(() => {
-    props.object.set('x', objectData.x);
-    props.object.set('y', objectData.y);
-    props.object.set('width', objectData.width);
-    props.object.set('height', objectData.height);
-    updatePositionMap(objectData.x, objectData.y);
-
-    if (objectData.startX !== undefined) {
-        updateStartEndMaps(objectData.startX, objectData.startY!, objectData.endX!, objectData.endY!);
-    }
-
-    if (objectData.points) {
-        props.object.set('points', objectData.points);
-    }
-
-    if (typeof props.object.get('size') === 'number') {
-        props.object.set('size', Math.max(objectData.width, objectData.height));
-    }
-  }, 'local-movable-resize');
-  
-  emit('update:object', props.object);
+  // The resize command scales pen points and mirrors position/size fields
+  // inside the shared command layer.
+  emit('commit-transform', {
+    kind: 'resize',
+    id: objectData.id,
+    x: objectData.x,
+    y: objectData.y,
+    width: objectData.width,
+    height: objectData.height,
+  });
 };
 
 
@@ -1245,16 +1147,10 @@ let ymapObserver: ((event: Y.YMapEvent<any>, transaction: Y.Transaction) => void
 
 onMounted(() => {
   syncDataFromYMap(); 
-  ymapObserver = (event, transaction) => { 
-    if (transaction.local && (
-        transaction.origin === 'local-movable-drag' || 
-        transaction.origin === 'local-movable-rotate' ||
-        transaction.origin === 'local-movable-resize' ||
-        transaction.origin === 'local-line-resize'
-        )) {
-      return;
-    }
-    syncDataFromYMap(); 
+  // Every committed change (own session command included) re-syncs the local
+  // view from the canonical document.
+  ymapObserver = () => {
+    syncDataFromYMap();
   };
   props.object.observe(ymapObserver);
 });

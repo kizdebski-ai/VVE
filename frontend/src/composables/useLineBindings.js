@@ -1,5 +1,11 @@
-import * as Y from 'yjs';
-
+/**
+ * Read-only line-binding geometry (anchors, hit-tests, draft attachment).
+ *
+ * Since VVE-104 every document WRITE flows through WhiteboardSession
+ * commands; keeping bound lines attached to a moved/resized/rotated target
+ * happens inside the shared `@pilot/boardScene` command layer. This
+ * composable only computes geometry for previews and drag interactions.
+ */
 const BINDABLE_ELEMENT_TYPES = new Set([
   'rectangle', 'circle', 'square', 'triangle', 'trapezoid', 'parallelogram',
   'deltoid', 'cube', 'cuboid', 'sphere', 'cylinder', 'cone', 'pyramid', 'tetrahedron',
@@ -11,7 +17,7 @@ const BINDING_PADDING = 8;
 const BINDING_DISTANCE_THRESHOLD = 18;
 const BINDING_GAP_DEFAULT = 4;
 
-export function useLineBindings(yDrawings, ydoc) {
+export function useLineBindings(yDrawings) {
 
   const getConnectorAnchors = (rect) => {
     if (!rect) return [];
@@ -55,10 +61,10 @@ export function useLineBindings(yDrawings, ydoc) {
     }
     const start = map.get('start');
     const end = map.get('end');
-    const sx = start?.get?.('x');
-    const sy = start?.get?.('y');
-    const ex = end?.get?.('x');
-    const ey = end?.get?.('y');
+    const sx = start?.get ? start.get('x') : start?.x;
+    const sy = start?.get ? start.get('y') : start?.y;
+    const ex = end?.get ? end.get('x') : end?.x;
+    const ey = end?.get ? end.get('y') : end?.y;
     if ([sx, sy, ex, ey].every((v) => Number.isFinite(v))) {
       return {
         x: Math.min(sx, ex),
@@ -214,36 +220,6 @@ export function useLineBindings(yDrawings, ydoc) {
     };
   };
 
-  const getLineEndpoints = (lineMap) => {
-    const startMap = lineMap?.get?.('start');
-    const endMap = lineMap?.get?.('end');
-    const start = startMap?.get ? { x: Number(startMap.get('x')), y: Number(startMap.get('y')) } : null;
-    const end = endMap?.get ? { x: Number(endMap.get('x')), y: Number(endMap.get('y')) } : null;
-    return { start, end };
-  };
-
-  const setLineEndpoints = (lineMap, start, end) => {
-    if (!lineMap || !start || !end) return;
-    let startMap = lineMap.get('start');
-    let endMap = lineMap.get('end');
-    if (!(startMap instanceof Y.Map)) {
-      startMap = new Y.Map();
-      lineMap.set('start', startMap);
-    }
-    if (!(endMap instanceof Y.Map)) {
-      endMap = new Y.Map();
-      lineMap.set('end', endMap);
-    }
-    startMap.set('x', start.x);
-    startMap.set('y', start.y);
-    endMap.set('x', end.x);
-    endMap.set('y', end.y);
-    lineMap.set('x', Math.min(start.x, end.x));
-    lineMap.set('y', Math.min(start.y, end.y));
-    lineMap.set('width', Math.abs(end.x - start.x));
-    lineMap.set('height', Math.abs(end.y - start.y));
-  };
-
   const findBindingTargetNearPoint = (point, excludeId = null, maxDistance = BINDING_DISTANCE_THRESHOLD, collectAll = false) => {
     if (!yDrawings.value || !point) return collectAll ? [] : null;
     const elements = yDrawings.value.toArray();
@@ -299,112 +275,33 @@ export function useLineBindings(yDrawings, ydoc) {
     lineDraft.height = Math.abs(lineDraft.start.y - lineDraft.end.y);
   };
 
-  const updateBindingsForTarget = (targetId) => {
-    if (!targetId || !yDrawings.value || !ydoc.value) return;
-    const target = findElementMapById(targetId);
-    const rect = getRectFromElementMap(target);
-    if (!rect) return;
-    const lines = yDrawings.value.toArray().filter((el) => el.get('type') === 'line');
-    if (!lines.length) return;
-    ydoc.value.transact(() => {
-      lines.forEach((line) => {
-        const { start, end } = getLineEndpoints(line);
-        if (!start || !end) return;
-        let nextStart = start;
-        let nextEnd = end;
-        let changed = false;
-        const startBinding = line.get('startBinding');
-        if (startBinding?.elementId === targetId) {
-          const point = resolveBindingPoint(startBinding);
-          if (point) {
-            nextStart = point;
-            changed = true;
-          }
-        }
-        const endBinding = line.get('endBinding');
-        if (endBinding?.elementId === targetId) {
-          const point = resolveBindingPoint(endBinding);
-          if (point) {
-            nextEnd = point;
-            changed = true;
-          }
-        }
-        if (changed) {
-          setLineEndpoints(line, nextStart, nextEnd);
-        }
-      });
-    }, 'auto-binding');
-  };
-
-  const refreshLineBindings = (lineMap) => {
-    if (!lineMap || lineMap.get('type') !== 'line' || !ydoc.value) return;
-    const lineId = lineMap.get('id');
-    const { start, end } = getLineEndpoints(lineMap);
-    if (!start || !end) return;
-    const lineWidth = lineMap.get('lineWidth') || 2;
-    ydoc.value.transact(() => {
-      let nextStart = start;
-      let nextEnd = end;
-      let changed = false;
-
-      const startBinding = lineMap.get('startBinding');
-      if (startBinding?.elementId) {
-        const point = resolveBindingPoint(startBinding);
-        if (point) {
-          nextStart = point;
-          changed = true;
-        } else {
-          lineMap.delete('startBinding');
-          changed = true;
-        }
-      } else {
-        const target = findBindingTargetNearPoint(start, lineId);
-        if (target) {
-          const { binding, point } = makeBindingPayload(target.map, target.rect, end, start, lineWidth, target.anchor);
-          if (binding && point) {
-            lineMap.set('startBinding', binding);
-            nextStart = point;
-            changed = true;
-          }
-        }
+  /**
+   * Compute the binding payloads a line's endpoints SHOULD carry given their
+   * current positions — nothing is written; the caller passes the result to
+   * a `setLineEndpoints` session command.
+   */
+  const computeLineBindingUpdate = (lineId, start, end, lineWidth = 2) => {
+    let nextStart = start;
+    let nextEnd = end;
+    let startBinding = null;
+    let endBinding = null;
+    const startTarget = findBindingTargetNearPoint(start, lineId);
+    if (startTarget) {
+      const { binding, point } = makeBindingPayload(startTarget.map, startTarget.rect, end, start, lineWidth, startTarget.anchor);
+      if (binding && point) {
+        startBinding = binding;
+        nextStart = point;
       }
-
-      const endBinding = lineMap.get('endBinding');
-      if (endBinding?.elementId) {
-        const point = resolveBindingPoint(endBinding);
-        if (point) {
-          nextEnd = point;
-          changed = true;
-        } else {
-          lineMap.delete('endBinding');
-          changed = true;
-        }
-      } else {
-        const target = findBindingTargetNearPoint(end, lineId);
-        if (target) {
-          const { binding, point } = makeBindingPayload(target.map, target.rect, start, end, lineWidth, target.anchor);
-          if (binding && point) {
-            lineMap.set('endBinding', binding);
-            nextEnd = point;
-            changed = true;
-          }
-        }
+    }
+    const endTarget = findBindingTargetNearPoint(end, lineId);
+    if (endTarget) {
+      const { binding, point } = makeBindingPayload(endTarget.map, endTarget.rect, start, end, lineWidth, endTarget.anchor);
+      if (binding && point) {
+        endBinding = binding;
+        nextEnd = point;
       }
-
-      if (changed && nextStart && nextEnd) {
-        setLineEndpoints(lineMap, nextStart, nextEnd);
-      }
-    }, 'auto-binding');
-  };
-
-  const detachLineBindings = (lineId) => {
-    if (!ydoc.value || !yDrawings.value) return;
-    const map = findElementMapById(lineId);
-    if (!map || map.get('type') !== 'line') return;
-    ydoc.value.transact(() => {
-      if (map.has('startBinding')) map.delete('startBinding');
-      if (map.has('endBinding')) map.delete('endBinding');
-    }, 'line-detach-binding');
+    }
+    return { start: nextStart, end: nextEnd, startBinding, endBinding };
   };
 
   return {
@@ -416,8 +313,6 @@ export function useLineBindings(yDrawings, ydoc) {
     distanceToRect,
     findBindingTargetNearPoint,
     attachBindingsToLineDraft,
-    updateBindingsForTarget,
-    refreshLineBindings,
-    detachLineBindings,
+    computeLineBindingUpdate,
   };
 }

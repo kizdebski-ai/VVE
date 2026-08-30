@@ -91,6 +91,15 @@ export interface ScenePoint {
   x: number;
   y: number;
   t?: number;
+  /** Pointer pressure in [0, 1]. Omitted when the input device did not report it. */
+  p?: number;
+}
+
+export interface SceneBounds {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
 }
 
 export interface LineBinding {
@@ -172,6 +181,12 @@ const isPlainPoint = (value: unknown): value is ScenePoint => {
   const point = value as Record<string, unknown>;
   if (!isCoordinate(point.x) || !isCoordinate(point.y)) return false;
   if (point.t !== undefined && !isFiniteNumber(point.t)) return false;
+  if (
+    point.p !== undefined &&
+    (!isFiniteNumber(point.p) || point.p < 0 || point.p > 1)
+  ) {
+    return false;
+  }
   return true;
 };
 
@@ -465,8 +480,70 @@ const boundsFromPoints = (points: ScenePoint[]) => {
   };
 };
 
-const plainPoint = (point: ScenePoint): ScenePoint =>
-  point.t === undefined ? { x: point.x, y: point.y } : { x: point.x, y: point.y, t: point.t };
+const plainPoint = (point: ScenePoint): ScenePoint => {
+  const next: ScenePoint = { x: point.x, y: point.y };
+  if (point.t !== undefined) next.t = point.t;
+  if (point.p !== undefined) next.p = point.p;
+  return next;
+};
+
+/**
+ * Axis-aligned bounds used by InputPipeline hit testing. Prefers stored
+ * `x/y/width/height` (canonical for every S4 family after VVE-104) so a
+ * pointer sample never has to convert nested Yjs values.
+ */
+export const sceneObjectBounds = (object: SceneObject): SceneBounds | null => {
+  const x = object.x;
+  const y = object.y;
+  const width = object.width;
+  const height = object.height;
+  if (isFiniteNumber(x) && isFiniteNumber(y) && isFiniteNumber(width) && isFiniteNumber(height)) {
+    return { x, y, width: Math.abs(width), height: Math.abs(height) };
+  }
+  const start = object.start as ScenePoint | undefined;
+  const end = object.end as ScenePoint | undefined;
+  if (isPlainPoint(start) && isPlainPoint(end)) {
+    return {
+      x: Math.min(start.x, end.x),
+      y: Math.min(start.y, end.y),
+      width: Math.abs(end.x - start.x),
+      height: Math.abs(end.y - start.y)
+    };
+  }
+  if (validatePointList(object.points, 1)) {
+    return boundsFromPoints(object.points as ScenePoint[]);
+  }
+  return null;
+};
+
+/**
+ * Bounded candidate query: AABB overlap around a world point. Returns
+ * top-most-first (reverse document order) so eraser/select hit testing
+ * never walks or converts the rest of the scene.
+ */
+export const queryObjectsNear = (
+  objects: readonly SceneObject[],
+  point: ScenePoint,
+  radius: number
+): SceneObject[] => {
+  if (!isPlainPoint(point) || !Number.isFinite(radius) || radius < 0) return [];
+  const hits: SceneObject[] = [];
+  for (let index = objects.length - 1; index >= 0; index--) {
+    const object = objects[index];
+    if (!object) continue;
+    const bounds = sceneObjectBounds(object);
+    if (!bounds) continue;
+    if (
+      point.x >= bounds.x - radius &&
+      point.x <= bounds.x + bounds.width + radius &&
+      point.y >= bounds.y - radius &&
+      point.y <= bounds.y + bounds.height + radius
+    ) {
+      hits.push(object);
+    }
+  }
+  return hits;
+};
 
 const CANONICAL_COMMON_KEYS = ['id', 'type', 'rotation', 'timestamp', 'color', 'lineWidth'] as const;
 const CANONICAL_KEYS: Record<string, readonly string[]> = {

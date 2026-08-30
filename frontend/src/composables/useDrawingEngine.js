@@ -9,7 +9,6 @@ import { createNewElement } from '../utils/canvasTools.js';
 import { computeGridSteps } from '../utils/canvasGrid.js';
 import { DEFAULT_PEN_PRESETS } from '../utils/penStyles.js';
 
-const PEN_SMOOTHING_WINDOW = 4;
 const PEN_COORD_PRECISION = 2;
 
 // Tools that behave like shapes (use start/end points)
@@ -81,26 +80,20 @@ export function useDrawingEngine({
 
   // --- Pen Smoothing ---
 
+  // InputPipeline (VVE-105) owns Mysz/Pióro path smoothing. The live stroke
+  // records the already-reduced point; averaging here would double-filter
+  // Pióro pressure and put corners back on Mysz.
   const addSmoothedPenPoint = (coords) => {
     const stamped = {
-      ...coords,
+      x: parseFloat(Number(coords.x).toFixed(PEN_COORD_PRECISION)),
+      y: parseFloat(Number(coords.y).toFixed(PEN_COORD_PRECISION)),
       t: coords.t ?? (typeof performance !== 'undefined' ? performance.now() : Date.now()),
     };
-    pointsBuffer.value.push(stamped);
-    if (pointsBuffer.value.length > PEN_SMOOTHING_WINDOW) {
-      pointsBuffer.value.shift();
+    if (typeof coords.p === 'number' && Number.isFinite(coords.p)) {
+      stamped.p = coords.p;
     }
-    const len = pointsBuffer.value.length;
-    if (!len) return stamped;
-    const averaged = pointsBuffer.value.reduce(
-      (acc, point) => ({ x: acc.x + point.x, y: acc.y + point.y }),
-      { x: 0, y: 0 }
-    );
-    return {
-      x: parseFloat((averaged.x / len).toFixed(PEN_COORD_PRECISION)),
-      y: parseFloat((averaged.y / len).toFixed(PEN_COORD_PRECISION)),
-      t: stamped.t,
-    };
+    pointsBuffer.value = [stamped];
+    return stamped;
   };
 
   const computePenWidthFromPreset = (presetConfig, requestedWidth) => {
@@ -202,14 +195,11 @@ export function useDrawingEngine({
 
   // --- Start Drawing ---
 
-  const startDrawing = (event, getCoordinates, transformCoordinates) => {
+  const startDrawingAt = (transformedCoords, inputTime, extras = {}) => {
     if (!ydoc.value) return;
     if (currentTool.value === 'select') return;
     const graphTools = ['mathPlot', 'physicsPlot', 'coordSystem2D', 'coordSystem3D'];
     if (graphTools.includes(currentTool.value)) return;
-
-    const coords = getCoordinates(event);
-    const transformedCoords = transformCoordinates(coords.offsetX, coords.offsetY);
 
     // Handle text tool inline
     if (currentTool.value === 'text') {
@@ -270,12 +260,23 @@ export function useDrawingEngine({
     if (currentElementPreview.value) {
       const localClientId = yjsConnection.value?.awareness?.clientID || 'unknown';
       currentElementPreview.value.id = `temp_${localClientId}_${Date.now()}`;
-      const startTime = event.timeStamp ?? (typeof performance !== 'undefined' ? performance.now() : Date.now());
+      const startTime = typeof inputTime === 'number'
+        ? inputTime
+        : (typeof performance !== 'undefined' ? performance.now() : Date.now());
+      const pressure = typeof extras.pressure === 'number' && Number.isFinite(extras.pressure)
+        ? extras.pressure
+        : undefined;
       if (toolType === 'pen') {
         const stampedStart = { ...transformedCoords, t: startTime };
+        if (pressure !== undefined) stampedStart.p = pressure;
         const snappedStart = applySoftGridSnap(stampedStart, null);
         currentElementPreview.value.rawPoints = [stampedStart];
-        currentElementPreview.value.points = [{ x: snappedStart.x, y: snappedStart.y, t: snappedStart.t ?? startTime }];
+        currentElementPreview.value.points = [{
+          x: snappedStart.x,
+          y: snappedStart.y,
+          t: snappedStart.t ?? startTime,
+          ...(pressure !== undefined ? { p: pressure } : {}),
+        }];
         currentElementPreview.value.snappedPoints = currentElementPreview.value.points;
       } else if (SHAPE_TOOLS.has(toolType) || toolType === 'line') {
         const snappedStart = applySoftGridSnap({ ...transformedCoords, t: startTime }, null);
@@ -288,6 +289,15 @@ export function useDrawingEngine({
       isDrawing.value = false;
       return;
     }
+  };
+
+  const startDrawing = (event, getCoordinates, transformCoordinates) => {
+    if (!ydoc.value) return;
+    const coords = getCoordinates(event);
+    const transformedCoords = transformCoordinates(coords.offsetX, coords.offsetY);
+    startDrawingAt(transformedCoords, event.timeStamp, {
+      pressure: typeof event.pressure === 'number' ? event.pressure : undefined,
+    });
   };
 
   // --- Draw (continuous) ---
@@ -307,6 +317,9 @@ export function useDrawingEngine({
       ? inputTime
       : (typeof performance !== 'undefined' ? performance.now() : Date.now());
     const stampedCoords = { ...coords, t: timestamp };
+    if (typeof coords.p === 'number' && Number.isFinite(coords.p)) {
+      stampedCoords.p = coords.p;
+    }
 
     if (resolvedTool === 'pen') {
       if (shiftPressedAtStart.value && startCoordsForShiftLine.value) {
@@ -337,8 +350,9 @@ export function useDrawingEngine({
         const smoothedPoint = addSmoothedPenPoint(stampedCoords);
         const snappedPoint = applySoftGridSnap(smoothedPoint, prevRaw);
 
-        // Throttling: distance check
-        const MIN_DIST_SQ = 2.25; // 1.5^2
+        // Pipeline already resamples; keep only a sub-pixel collapse guard
+        // so duplicate coalesced samples do not bloat the stroke.
+        const MIN_DIST_SQ = 0.25;
         let shouldAdd = true;
         if (preview.points.length > 0) {
           const last = preview.points[preview.points.length - 1];
@@ -351,6 +365,7 @@ export function useDrawingEngine({
             x: snappedPoint.x,
             y: snappedPoint.y,
             t: snappedPoint.t ?? smoothedPoint.t,
+            ...(smoothedPoint.p !== undefined ? { p: smoothedPoint.p } : {}),
           });
           preview.snappedPoints = preview.points;
         }
@@ -618,6 +633,7 @@ export function useDrawingEngine({
     applyGridSnapHard,
     cancelActiveDrawing,
     startDrawing,
+    startDrawingAt,
     draw,
     finishDrawing,
     eraseElement,

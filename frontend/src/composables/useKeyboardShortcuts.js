@@ -82,11 +82,11 @@ export function useKeyboardShortcuts({
       if (lowerKey === 't') { setTool('text'); return; }
       if (lowerKey === 'e') { setTool('eraser'); return; }
 
-      // 10.1: Pen preset shortcuts 1-4
+      // 10.1: Input Style shortcuts — 1 Mysz, 2 Pióro
       if (selectPenPreset) {
-        const presetMap = { '1': 'gel', '2': 'technical', '3': 'marker', '4': 'calligraphy' };
-        if (presetMap[event.key]) {
-          selectPenPreset(presetMap[event.key]);
+        const profileMap = { '1': 'mouse', '2': 'pen' };
+        if (profileMap[event.key]) {
+          selectPenPreset(profileMap[event.key]);
           return;
         }
       }

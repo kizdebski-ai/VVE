@@ -53,9 +53,8 @@
         <button
           v-if="can('panel.inputStyle')"
           class="menu-btn"
-          :class="{ 'active-feature': props.activeFeature === 'styleHandwriting' }"
-          @click="emit('toggle-feature', 'styleHandwriting')"
-          title="Styl pisania"
+          @click="emit('cycle-input-style')"
+          title="Styl wejścia: Mysz lub Pióro"
         >
           <Wand2 :size="18" />
           <span>Styl</span>
@@ -180,7 +179,7 @@ const props = defineProps({
 const can = (featureId) => featureAvailable(featureId, props.role);
 
 // Define emits
-const emit = defineEmits(['clear-canvas', 'toggle-feature', 'open-room-manager', 'export-whiteboard', 'export-pdf-single', 'export-pdf-paged', 'import-whiteboard', 'import-pdf']);
+const emit = defineEmits(['clear-canvas', 'toggle-feature', 'open-room-manager', 'export-whiteboard', 'export-pdf-single', 'export-pdf-paged', 'import-whiteboard', 'import-pdf', 'cycle-input-style']);
 
 // P0-FIX: Detect touch device and keep gear always visible on touch
 const isTouchDevice = ref(false);

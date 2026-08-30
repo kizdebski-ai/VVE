@@ -5,6 +5,7 @@
       :role="effectiveRole"
       @clear-canvas="handleClearCanvas"
       @toggle-feature="toggleFeature"
+      @cycle-input-style="cycleInputStyle"
       @open-room-manager="handleOpenRoomManager"
       @export-whiteboard="handleExportRequest"
       @export-pdf-single="handleExportPdfSingle"
@@ -32,13 +33,15 @@
         :grid-align-options="gridAlignOptions"
         :handwriting-styler-options="handwritingStylerOptions"
         :math-recognizer-options="mathRecognizerOptions"
+        :input-profile="inputProfile"
         @update:recognition-status="recognitionStatus = $event"
         @update:latex-equation="latexEquation = $event"
         @update:solution="solution = $event"
         @update:has-char-groups="hasCharGroups = $event"
         @update:has-stylized-strokes="hasStylizedStrokes = $event"
         @update:active-users="handleActiveUsers"
-        @select-pen-preset="selectPenPreset"
+        @select-pen-preset="selectInputProfile"
+        @pointer-observed="handlePointerObserved"
       />
       <AIChatPanel
         v-if="can('experiment.ai')"
@@ -54,18 +57,11 @@
          @align="triggerWhiteboardAction('alignToGrid')"
        />
 
-       <HandwritingStylerPanel
-         v-if="activeFeature === 'styleHandwriting'"
-         :options="handwritingStylerOptions"
-         :preset-cards="penPresetCards"
-         :has-char-groups="hasCharGroups"
-         :has-stylized-strokes="hasStylizedStrokes"
-         @update:options="handwritingStylerOptions = $event"
-         @close="toggleFeature(null)"
-         @select-preset="selectPenPreset"
-         @set-canvas-ref="setPresetCanvasRef"
-         @set-main-preview-ref="setMainPreviewRef"
-         @action="triggerWhiteboardAction"
+       <InputStyleControl
+         v-if="can('panel.inputStyle')"
+         class="input-style-overlay"
+         :model-value="inputProfile"
+         @update:model-value="selectInputProfile"
        />
 
       <!-- Math recognizer (AI OCR solving) is excluded from the Pilot surface;
@@ -245,7 +241,7 @@ import AIChatPanel from './components/AIChatPanel.vue';
 import ChemistryPanel from './components/ChemistryPanel.vue';
 import EncryptionStatus from './components/EncryptionStatus.vue';
 import GridAlignPanel from './components/GridAlignPanel.vue';
-import HandwritingStylerPanel from './components/HandwritingStylerPanel.vue';
+import InputStyleControl from './components/InputStyleControl.vue';
 import * as Y from 'yjs';
 import { undoRedoState as globalUndoRedoState } from './utils/undoRedoState';
 
@@ -258,6 +254,11 @@ import { usePdfImport } from './composables/usePdfImport';
 import { Users, Share2, ChevronRight, ChevronLeft } from 'lucide-vue-next';
 import PilotUnavailable from './views/PilotUnavailable.vue';
 import { featureAvailable } from './services/pilotSurface';
+import {
+  loadInputStyle,
+  saveInputStyle,
+  suggestProfile
+} from './board/inputStyle';
 
 // Debug logger
 const appDebugLog = (msg, ...args) => {
@@ -281,7 +282,7 @@ export default {
     ChemistryPanel,
     EncryptionStatus,
     GridAlignPanel,
-    HandwritingStylerPanel,
+    InputStyleControl,
     PilotUnavailable
   },
   setup() {
@@ -538,8 +539,37 @@ export default {
     };
 
     const selectPenPreset = (presetKey) => {
+      if (presetKey === 'mouse' || presetKey === 'pen') {
+        selectInputProfile(presetKey);
+        return;
+      }
       handwritingStylerOptions.value.preset = presetKey;
       queuePreviewRender();
+    };
+
+    const storedInputStyle = loadInputStyle(typeof localStorage === 'undefined' ? null : localStorage);
+    const inputProfile = ref(storedInputStyle.profile);
+    const inputStyleOverridden = ref(storedInputStyle.overridden);
+
+    const persistInputStyle = (profile, overridden) => {
+      if (profile !== 'mouse' && profile !== 'pen') return;
+      inputProfile.value = profile;
+      if (overridden) inputStyleOverridden.value = true;
+      saveInputStyle(
+        { profile, overridden: inputStyleOverridden.value },
+        typeof localStorage === 'undefined' ? null : localStorage
+      );
+    };
+
+    const selectInputProfile = (profile) => persistInputStyle(profile, true);
+
+    const cycleInputStyle = () => {
+      persistInputStyle(inputProfile.value === 'pen' ? 'mouse' : 'pen', true);
+    };
+
+    const handlePointerObserved = (pointerType) => {
+      if (inputStyleOverridden.value) return;
+      persistInputStyle(suggestProfile(pointerType === 'pen' ? 'pen' : pointerType === 'touch' ? 'touch' : 'mouse'), false);
     };
 
     const handleAddElement = (elementData) => {
@@ -1411,6 +1441,10 @@ export default {
       handwritingStylerOptions,
       penPresetCards,
       selectPenPreset,
+      selectInputProfile,
+      cycleInputStyle,
+      handlePointerObserved,
+      inputProfile,
       setPresetCanvasRef,
       setMainPreviewRef,
       penPreviewRef,
@@ -1466,6 +1500,10 @@ html, body {
 
   overflow: hidden;
 
+  touch-action: none;
+
+  overscroll-behavior: none;
+
 }
 
 
@@ -1514,6 +1552,10 @@ body {
 
   width: 100%;
 
+  touch-action: none;
+
+  overscroll-behavior: none;
+
 }
 
 
@@ -1548,6 +1590,15 @@ body {
 
   z-index: 50;
 
+}
+
+.input-style-overlay {
+  position: absolute;
+  left: 50%;
+  bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  transform: translateX(-50%);
+  z-index: 40;
+  pointer-events: auto;
 }
 
 

@@ -1,12 +1,18 @@
 <template>
-  <svg :viewBox="viewBox" class="plot-renderer" xmlns="http://www.w3.org/2000/svg">
+  <svg
+    :viewBox="viewBox"
+    class="plot-renderer"
+    xmlns="http://www.w3.org/2000/svg"
+    role="img"
+    :aria-label="accessibleLabel"
+  >
     <defs>
       <!-- Modern Arrowhead -->
-      <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <marker :id="arrowheadId" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
         <path d="M0,0 L10,3.5 L0,7" fill="currentColor" class="axis-arrow" />
       </marker>
       <!-- Dot Grid Pattern -->
-      <pattern id="grid" width="20" height="20" patternUnits="userSpaceOnUse">
+      <pattern :id="gridId" width="20" height="20" patternUnits="userSpaceOnUse">
         <circle cx="1" cy="1" r="1" fill="currentColor" opacity="0.2" class="grid-dot" />
       </pattern>
     </defs>
@@ -14,15 +20,15 @@
     <!-- Coordinate System 2D -->
     <g v-if="type === 'coordinateSystem2D'" class="plot-group">
       <!-- Background Grid -->
-      <rect width="100%" height="100%" fill="url(#grid)" />
+      <rect width="100%" height="100%" :fill="`url(#${gridId})`" />
       
       <!-- Axes -->
-      <line :x1="0" :y1="height/2" :x2="width" :y2="height/2" class="axis-line" marker-end="url(#arrowhead)" />
-      <line :x1="width/2" :y1="height" :x2="width/2" :y2="0" class="axis-line" marker-end="url(#arrowhead)" />
+      <line :x1="0" :y1="height/2" :x2="width" :y2="height/2" class="axis-line" :marker-end="`url(#${arrowheadId})`" />
+      <line :x1="width/2" :y1="height" :x2="width/2" :y2="0" class="axis-line" :marker-end="`url(#${arrowheadId})`" />
       
       <!-- Labels -->
-      <text :x="width - 20" :y="height/2 + 24" class="axis-label">x</text>
-      <text :x="width/2 + 12" :y="20" class="axis-label">y</text>
+      <text :x="width - 20" :y="height/2 + 24" class="axis-label">{{ data.xLabel || 'x' }}</text>
+      <text :x="width/2 + 12" :y="20" class="axis-label">{{ data.yLabel || 'y' }}</text>
     </g>
 
     <!-- Coordinate System 3D (Pseudo) -->
@@ -36,21 +42,21 @@
       </g>
       
       <!-- Axes -->
-      <line :x1="width*0.2" :y1="height*0.8" :x2="width*0.8" :y2="height*0.8" class="axis-line" marker-end="url(#arrowhead)" />
-      <line :x1="width*0.2" :y1="height*0.8" :x2="width*0.2" :y2="height*0.15" class="axis-line" marker-end="url(#arrowhead)" />
-      <line :x1="width*0.2" :y1="height*0.8" :x2="width*0.05" :y2="height*0.95" class="axis-line" marker-end="url(#arrowhead)" />
+      <line :x1="width*0.2" :y1="height*0.8" :x2="width*0.8" :y2="height*0.8" class="axis-line" :marker-end="`url(#${arrowheadId})`" />
+      <line :x1="width*0.2" :y1="height*0.8" :x2="width*0.2" :y2="height*0.15" class="axis-line" :marker-end="`url(#${arrowheadId})`" />
+      <line :x1="width*0.2" :y1="height*0.8" :x2="width*0.05" :y2="height*0.95" class="axis-line" :marker-end="`url(#${arrowheadId})`" />
 
       <!-- Axis Labels -->
-      <text :x="width*0.82" :y="height*0.8 - 10" class="axis-label">X</text>
-      <text :x="width*0.2 + 10" :y="height*0.16" class="axis-label">Y</text>
-      <text :x="width*0.02" :y="height*0.97" class="axis-label">Z</text>
+      <text :x="width*0.82" :y="height*0.8 - 10" class="axis-label">{{ data.xLabel || 'x' }}</text>
+      <text :x="width*0.2 + 10" :y="height*0.16" class="axis-label">{{ data.yLabel || 'y' }}</text>
+      <text :x="width*0.02" :y="height*0.97" class="axis-label">{{ data.zLabel || 'z' }}</text>
     </g>
 
     <!-- Math Function Plot -->
     <g v-else-if="type === 'mathFunctionPlot'" class="plot-group">
       <!-- Axes -->
-      <line :x1="0" :y1="height/2" :x2="width" :y2="height/2" class="axis-line-subtle" marker-end="url(#arrowhead)" />
-      <line :x1="width/2" :y1="height" :x2="width/2" :y2="0" class="axis-line-subtle" marker-end="url(#arrowhead)" />
+      <line :x1="0" :y1="height/2" :x2="width" :y2="height/2" class="axis-line-subtle" :marker-end="`url(#${arrowheadId})`" />
+      <line :x1="width/2" :y1="height" :x2="width/2" :y2="0" class="axis-line-subtle" :marker-end="`url(#${arrowheadId})`" />
       
       <text :x="width - 20" :y="height/2 + 20" class="axis-label-subtle">x</text>
       <text :x="width/2 + 10" :y="20" class="axis-label-subtle">f(x)</text>
@@ -62,11 +68,11 @@
     <!-- Physics Data Plot -->
     <g v-else-if="type === 'physicsDataPlot'" class="plot-group">
       <!-- Axes -->
-      <line :x1="0" :y1="height" :x2="width" :y2="height" class="axis-line" marker-end="url(#arrowhead)" /> <!-- X -->
-      <line :x1="0" :y1="height" :x2="0" :y2="0" class="axis-line" marker-end="url(#arrowhead)" /> <!-- Y -->
+      <line :x1="0" :y1="height" :x2="width" :y2="height" class="axis-line" :marker-end="`url(#${arrowheadId})`" /> <!-- X -->
+      <line :x1="0" :y1="height" :x2="0" :y2="0" class="axis-line" :marker-end="`url(#${arrowheadId})`" /> <!-- Y -->
 
-      <text :x="width - 20" :y="height - 10" class="axis-label">t</text>
-      <text :x="15" :y="20" class="axis-label">v</text>
+      <text :x="width - 20" :y="height - 10" class="axis-label">{{ data.xLabel || 't' }}</text>
+      <text :x="15" :y="20" class="axis-label">{{ data.yLabel || 'v' }}</text>
 
       <!-- Connecting Line -->
       <polyline :points="scaledPointsString" :stroke="color" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round" opacity="0.7" />
@@ -94,6 +100,15 @@ const props = defineProps({
 const emit = defineEmits(['render-error']);
 
 const viewBox = computed(() => `0 0 ${props.width} ${props.height}`);
+const objectKey = computed(() => String(props.data?.id || props.type || 'plot').replace(/[^a-zA-Z0-9_-]/g, '-'));
+const arrowheadId = computed(() => `arrowhead-${objectKey.value}`);
+const gridId = computed(() => `grid-${objectKey.value}`);
+const accessibleLabel = computed(() => {
+  if (props.type === 'mathFunctionPlot') return `Wykres funkcji ${props.data.expression || ''}`.trim();
+  if (props.type === 'physicsDataPlot') return 'Wykres fizyczny';
+  if (props.type === 'coordinateSystem3D') return 'Trójwymiarowy układ współrzędnych';
+  return 'Dwuwymiarowy układ współrzędnych';
+});
 // Use props color or fallback to a nice blue accent from theme
 const color = computed(() => props.data.color || '#2563eb');
 

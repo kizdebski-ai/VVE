@@ -71,6 +71,55 @@ const image = (id = 'image-1'): SceneObject => ({
   height: 90
 });
 
+const coordinate2d = (id = 'coord-2d'): SceneObject => ({
+  id,
+  type: 'coordinateSystem2D',
+  x: 50,
+  y: 60,
+  width: 400,
+  height: 300,
+  color: '#1f2937',
+  lineWidth: 2,
+  grid: true,
+  xLabel: 'x',
+  yLabel: 'y'
+});
+
+const coordinate3d = (id = 'coord-3d'): SceneObject => ({
+  ...coordinate2d(id),
+  type: 'coordinateSystem3D',
+  width: 320,
+  height: 320,
+  zLabel: 'z'
+});
+
+const mathPlot = (id = 'math-plot'): SceneObject => ({
+  id,
+  type: 'mathFunctionPlot',
+  x: 100,
+  y: 120,
+  width: 400,
+  height: 300,
+  expression: 'sin(x)',
+  xRange: [-10, 10],
+  color: '#2563eb',
+  lineWidth: 3
+});
+
+const physicsPlot = (id = 'physics-plot'): SceneObject => ({
+  id,
+  type: 'physicsDataPlot',
+  x: 140,
+  y: 160,
+  width: 400,
+  height: 300,
+  points: [{ x: 0, y: 0 }, { x: 1, y: 9.8 }, { x: 2, y: 19.6 }],
+  xLabel: 't',
+  yLabel: 'v',
+  color: '#f59e0b',
+  lineWidth: 2.5
+});
+
 const sceneJson = (doc: Y.Doc) => sceneDrawings(doc).toJSON() as Array<Record<string, unknown>>;
 
 const addAll = (doc: Y.Doc, objects: SceneObject[]) => {
@@ -91,6 +140,9 @@ describe('canonical schema validation', () => {
     expect(validateBoardObject(normalizeBoardObject(line()))).toEqual({ ok: true });
     expect(validateBoardObject(normalizeBoardObject(textObject()))).toEqual({ ok: true });
     expect(validateBoardObject(normalizeBoardObject(image()))).toEqual({ ok: true });
+    for (const object of [coordinate2d(), coordinate3d(), mathPlot(), physicsPlot()]) {
+      expect(validateBoardObject(normalizeBoardObject(object))).toEqual({ ok: true });
+    }
   });
 
   it('rejects unknown types, missing ids and non-finite geometry', () => {
@@ -159,6 +211,56 @@ describe('canonical schema validation', () => {
       ok: false,
       reason: 'invalidContent'
     });
+    expect(validateBoardObject({ ...mathPlot(), position: { x: 100, y: 120 } })).toMatchObject({
+      ok: false,
+      reason: 'invalidContent'
+    });
+  });
+
+  it('canonicalizes legacy lesson-tool geometry and physical data once at intake', () => {
+    const coordinate = normalizeBoardObject({
+      ...coordinate3d(),
+      x: undefined,
+      y: undefined,
+      width: undefined,
+      height: undefined,
+      position: { x: 25, y: 35 },
+      size: 240
+    });
+    expect(coordinate).toMatchObject({ x: 25, y: 35, width: 240, height: 240 });
+    expect(coordinate).not.toHaveProperty('position');
+    expect(coordinate).not.toHaveProperty('size');
+
+    const physics = normalizeBoardObject({
+      ...physicsPlot(),
+      points: undefined,
+      xData: [0, 1, 2],
+      yData: [0, 9.8, 19.6]
+    });
+    expect(physics.points).toEqual([{ x: 0, y: 0 }, { x: 1, y: 9.8 }, { x: 2, y: 19.6 }]);
+    expect(physics).not.toHaveProperty('xData');
+    expect(physics).not.toHaveProperty('yData');
+  });
+
+  it('rejects incomplete or unbounded lesson-tool payloads', () => {
+    expect(validateBoardObject({ ...mathPlot(), expression: '' })).toMatchObject({
+      ok: false,
+      reason: 'invalidContent'
+    });
+    expect(validateBoardObject({ ...mathPlot(), xRange: [10, -10] })).toMatchObject({
+      ok: false,
+      reason: 'invalidGeometry'
+    });
+    expect(validateBoardObject({ ...physicsPlot(), points: [{ x: 0, y: 0 }] })).toMatchObject({
+      ok: false,
+      reason: 'invalidGeometry'
+    });
+    expect(
+      validateBoardObject({
+        ...physicsPlot(),
+        points: [{ x: 0, y: 0 }, { x: 1, y: Number.NaN }]
+      })
+    ).toMatchObject({ ok: false, reason: 'invalidGeometry' });
   });
 });
 
@@ -454,6 +556,111 @@ describe('board commands', () => {
     expect(sceneJson(alpha).find((object) => object.id === 'pen-1')).toMatchObject({
       color: '#16a34a'
     });
+  });
+
+  it('runs every canonical lesson object through create, style, transform, clone, and reload', () => {
+    const doc = new Y.Doc();
+    const objects = [coordinate2d(), coordinate3d(), mathPlot(), physicsPlot()];
+    addAll(doc, objects);
+
+    for (const [index, object] of objects.entries()) {
+      expect(
+        applyBoardCommand(
+          doc,
+          { kind: 'updateStyle', id: object.id, patch: { color: '#7c3aed', lineWidth: 4 } },
+          student
+        )
+      ).toEqual({ ok: true });
+      expect(
+        applyBoardCommand(
+          doc,
+          { kind: 'move', id: object.id, x: 200 + index * 20, y: 220 + index * 20 },
+          student
+        )
+      ).toEqual({ ok: true });
+      expect(
+        applyBoardCommand(
+          doc,
+          {
+            kind: 'resize',
+            id: object.id,
+            x: 200 + index * 20,
+            y: 220 + index * 20,
+            width: 500,
+            height: 360
+          },
+          student
+        )
+      ).toEqual({ ok: true });
+      expect(
+        applyBoardCommand(doc, { kind: 'rotate', id: object.id, rotation: 15 }, student)
+      ).toEqual({ ok: true });
+      expect(
+        applyBoardCommand(
+          doc,
+          { kind: 'clone', id: object.id, newId: `${object.id}-copy`, offset: 12 },
+          student
+        )
+      ).toEqual({ ok: true });
+    }
+
+    const reloaded = new Y.Doc();
+    Y.applyUpdate(reloaded, Y.encodeStateAsUpdate(doc));
+    expect(sceneJson(reloaded)).toEqual(sceneJson(doc));
+    expect(sceneJson(reloaded)).toHaveLength(objects.length * 2);
+    for (const object of sceneJson(reloaded)) {
+      expect(object).not.toHaveProperty('position');
+      expect(object).not.toHaveProperty('xData');
+      expect(object).not.toHaveProperty('yData');
+      expect(validateBoardObject(object)).toEqual({ ok: true });
+    }
+    for (const object of sceneJson(reloaded).filter(({ type }) => type === 'physicsDataPlot')) {
+      expect(object.points).toEqual([
+        { x: 0, y: 0 },
+        { x: 1, y: 9.8 },
+        { x: 2, y: 19.6 }
+      ]);
+    }
+  });
+
+  it('accepts every visible line style, arrow style, and shape family', () => {
+    const doc = new Y.Doc();
+    for (const [index, type] of SHAPE_TYPES.entries()) {
+      const lineStyle = ['solid', 'dashed', 'dotted'][index % 3] as 'solid' | 'dashed' | 'dotted';
+      expect(
+        applyBoardCommand(
+          doc,
+          {
+            kind: 'add',
+            object: {
+              ...shape(`inventory-${type}`),
+              type,
+              lineStyle,
+              roughness: index % 3,
+              fillColor: index % 2 ? '#dbeafe' : null
+            }
+          },
+          student
+        )
+      ).toEqual({ ok: true });
+    }
+    for (const [index, arrowStyle] of ['none', 'start', 'end', 'both'].entries()) {
+      expect(
+        applyBoardCommand(
+          doc,
+          {
+            kind: 'add',
+            object: {
+              ...line(`inventory-line-${arrowStyle}`),
+              arrowStyle,
+              lineStyle: ['solid', 'dashed', 'dotted'][index % 3]
+            }
+          },
+          student
+        )
+      ).toEqual({ ok: true });
+    }
+    expect(sceneJson(doc)).toHaveLength(SHAPE_TYPES.length + 4);
   });
 });
 

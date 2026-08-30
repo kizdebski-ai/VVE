@@ -41,20 +41,25 @@ export const SHAPE_TYPES = [
 ] as const;
 export type ShapeType = (typeof SHAPE_TYPES)[number];
 
-/**
- * Tool families whose full collaborative workflow lands with VVE-106. Their
- * objects already flow through the same command layer, but only a bounded
- * generic validation applies until that slice canonicalizes each of them.
- */
-export const EXTENSION_TYPES = [
+/** VVE-106 lesson objects with fully canonical, bounded schemas. */
+export const LESSON_OBJECT_TYPES = [
   'coordinateSystem2D',
   'coordinateSystem3D',
   'mathFunctionPlot',
-  'physicsDataPlot',
+  'physicsDataPlot'
+] as const;
+export type LessonObjectType = (typeof LESSON_OBJECT_TYPES)[number];
+
+/**
+ * Developer-only historical objects. They remain readable for internal
+ * fixtures, but are not present in the Pilot manifest and are deliberately
+ * kept outside the release-critical lesson-object contract.
+ */
+export const INTERNAL_EXTENSION_TYPES = [
   'functionPlot',
   'latex'
 ] as const;
-export type ExtensionType = (typeof EXTENSION_TYPES)[number];
+export type InternalExtensionType = (typeof INTERNAL_EXTENSION_TYPES)[number];
 
 export const BINDABLE_TYPES: ReadonlySet<string> = new Set([
   ...SHAPE_TYPES,
@@ -434,7 +439,62 @@ export const validateBoardObject = (value: unknown): ValidationResult => {
     return validateBounds(object);
   }
 
-  if ((EXTENSION_TYPES as readonly string[]).includes(type)) {
+  if (type === 'coordinateSystem2D' || type === 'coordinateSystem3D') {
+    const bounds = validateBounds(object);
+    if (!bounds.ok) return bounds;
+    const labels = type === 'coordinateSystem3D'
+      ? [object.xLabel, object.yLabel, object.zLabel]
+      : [object.xLabel, object.yLabel];
+    if (labels.some((label) => label !== undefined && !isBoundedString(label, 32))) {
+      return fail('invalidContent', 'An axis label is missing or too long.');
+    }
+    if (object.grid !== undefined && typeof object.grid !== 'boolean') {
+      return fail('invalidContent', 'The coordinate grid setting is invalid.');
+    }
+    return { ok: true };
+  }
+
+  if (type === 'mathFunctionPlot') {
+    const bounds = validateBounds(object);
+    if (!bounds.ok) return bounds;
+    if (!isBoundedString(object.expression, 1_024)) {
+      return fail('invalidContent', 'A mathematical graph needs a bounded expression.');
+    }
+    if (
+      !Array.isArray(object.xRange) ||
+      object.xRange.length !== 2 ||
+      !object.xRange.every(isCoordinate) ||
+      object.xRange[0] >= object.xRange[1]
+    ) {
+      return fail('invalidGeometry', 'The mathematical graph range is invalid.');
+    }
+    return { ok: true };
+  }
+
+  if (type === 'physicsDataPlot') {
+    const bounds = validateBounds(object);
+    if (!bounds.ok) return bounds;
+    if (!validatePointList(object.points, 2)) {
+      return fail('invalidGeometry', 'A physical graph needs at least two finite data points.');
+    }
+    if (
+      (object.points as ScenePoint[]).some((point) =>
+        Object.keys(point).some((key) => key !== 'x' && key !== 'y')
+      )
+    ) {
+      return fail('invalidContent', 'A physical graph point must contain only x and y.');
+    }
+    if (
+      [object.xLabel, object.yLabel].some(
+        (label) => label !== undefined && !isBoundedString(label, 32)
+      )
+    ) {
+      return fail('invalidContent', 'A physical graph axis label is missing or too long.');
+    }
+    return { ok: true };
+  }
+
+  if ((INTERNAL_EXTENSION_TYPES as readonly string[]).includes(type)) {
     if (jsonByteLength(object) > SCENE_LIMITS.maxExtensionJsonBytes) {
       return fail('oversized', 'The object payload is too large.');
     }
@@ -497,6 +557,46 @@ const CANONICAL_KEYS: Record<string, readonly string[]> = {
   ],
   text: [...CANONICAL_COMMON_KEYS, 'text', 'fontSize', 'x', 'y', 'width', 'height'],
   image: [...CANONICAL_COMMON_KEYS, 'src', 'x', 'y', 'width', 'height'],
+  coordinateSystem2D: [
+    ...CANONICAL_COMMON_KEYS,
+    'x',
+    'y',
+    'width',
+    'height',
+    'grid',
+    'xLabel',
+    'yLabel'
+  ],
+  coordinateSystem3D: [
+    ...CANONICAL_COMMON_KEYS,
+    'x',
+    'y',
+    'width',
+    'height',
+    'grid',
+    'xLabel',
+    'yLabel',
+    'zLabel'
+  ],
+  mathFunctionPlot: [
+    ...CANONICAL_COMMON_KEYS,
+    'x',
+    'y',
+    'width',
+    'height',
+    'expression',
+    'xRange'
+  ],
+  physicsDataPlot: [
+    ...CANONICAL_COMMON_KEYS,
+    'x',
+    'y',
+    'width',
+    'height',
+    'points',
+    'xLabel',
+    'yLabel'
+  ],
   shape: [
     ...CANONICAL_COMMON_KEYS,
     'lineStyle',
@@ -516,9 +616,8 @@ const CANONICAL_KEYS: Record<string, readonly string[]> = {
 
 /**
  * Normalize a candidate object to its canonical shape: derive bounds, keep
- * only canonical keys for the S4 families, and strip legacy aliases
- * (`position`, `dataUrl`, `strokeColor`, relative line points). Extension
- * types pass through minus known aliases until VVE-106 canonicalizes them.
+ * only canonical keys, and strip legacy aliases (`position`, `dataUrl`,
+ * `strokeColor`, relative line points, and graph xData/yData).
  */
 export const normalizeBoardObject = (candidate: SceneObject): SceneObject => {
   const object: Record<string, unknown> = { ...candidate };
@@ -545,6 +644,58 @@ export const normalizeBoardObject = (candidate: SceneObject): SceneObject => {
   }
   delete object.strokeColor;
   delete object.dataUrl;
+  delete object.position;
+
+  if (
+    type === 'physicsDataPlot' &&
+    object.points === undefined &&
+    Array.isArray(object.xData) &&
+    Array.isArray(object.yData) &&
+    object.xData.length === object.yData.length
+  ) {
+    object.points = object.xData.map((x, index) => ({
+      x,
+      y: (object.yData as unknown[])[index]
+    }));
+  }
+  delete object.xData;
+  delete object.yData;
+
+  if (
+    type === 'coordinateSystem3D' &&
+    (!isSizeValue(object.width) || !isSizeValue(object.height)) &&
+    isSizeValue(object.size)
+  ) {
+    object.width = object.size;
+    object.height = object.size;
+  }
+  delete object.size;
+
+  if (type === 'coordinateSystem2D') {
+    if (object.grid === undefined) object.grid = true;
+    if (object.xLabel === undefined) object.xLabel = 'x';
+    if (object.yLabel === undefined) object.yLabel = 'y';
+  }
+  if (type === 'coordinateSystem3D') {
+    if (object.grid === undefined) object.grid = true;
+    if (object.xLabel === undefined) object.xLabel = 'x';
+    if (object.yLabel === undefined) object.yLabel = 'y';
+    if (object.zLabel === undefined) object.zLabel = 'z';
+  }
+  if (type === 'mathFunctionPlot' && object.xRange === undefined) {
+    object.xRange = [-10, 10];
+  }
+  if (type === 'physicsDataPlot' && Array.isArray(object.points)) {
+    object.points = object.points.map((point) => {
+      if (!point || typeof point !== 'object' || Array.isArray(point)) return point;
+      return {
+        x: (point as Record<string, unknown>).x,
+        y: (point as Record<string, unknown>).y
+      };
+    });
+    if (object.xLabel === undefined) object.xLabel = 't';
+    if (object.yLabel === undefined) object.yLabel = 'v';
+  }
 
   if (object.rotation === undefined) object.rotation = 0;
 
@@ -574,14 +725,6 @@ export const normalizeBoardObject = (candidate: SceneObject): SceneObject => {
   if (canonicalKeys) {
     for (const key of Object.keys(object)) {
       if (!canonicalKeys.includes(key)) delete object[key];
-    }
-  } else {
-    // Extension types keep their payload (bounded by validation) so VVE-106
-    // can canonicalize them without a data migration; keep x/y mirrored for
-    // the movable overlay.
-    if (position && object.x !== undefined && (object.position as Record<string, unknown>)) {
-      (object.position as Record<string, unknown>).x = object.x;
-      (object.position as Record<string, unknown>).y = object.y;
     }
   }
   return object as SceneObject;
@@ -618,6 +761,68 @@ const toSceneMap = (object: SceneObject): Y.Map<unknown> => {
 };
 
 const objectJson = (map: Y.Map<unknown>): SceneObject => map.toJSON() as SceneObject;
+
+const equivalentJson = (left: unknown, right: unknown): boolean => {
+  if (Object.is(left, right)) return true;
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return (
+      Array.isArray(left) &&
+      Array.isArray(right) &&
+      left.length === right.length &&
+      left.every((value, index) => equivalentJson(value, right[index]))
+    );
+  }
+  if (
+    left &&
+    right &&
+    typeof left === 'object' &&
+    typeof right === 'object'
+  ) {
+    const leftObject = left as Record<string, unknown>;
+    const rightObject = right as Record<string, unknown>;
+    const leftKeys = Object.keys(leftObject).sort();
+    const rightKeys = Object.keys(rightObject).sort();
+    return (
+      leftKeys.length === rightKeys.length &&
+      leftKeys.every(
+        (key, index) =>
+          key === rightKeys[index] &&
+          equivalentJson(leftObject[key], rightObject[key])
+      )
+    );
+  }
+  return false;
+};
+
+/**
+ * Replace pre-VVE-106 lesson-object aliases after stored snapshots and update
+ * rows have all been replayed. The migration edits the existing Yjs entries
+ * so object identity and collaboration history remain intact. Invalid
+ * historical objects are preserved rather than silently discarded.
+ */
+export const migrateLegacyLessonObjects = (doc: Y.Doc): number => {
+  let migrated = 0;
+  doc.transact(() => {
+    sceneDrawings(doc).forEach((map) => {
+      if (!(map instanceof Y.Map)) return;
+      const type = map.get('type');
+      if (!(LESSON_OBJECT_TYPES as readonly string[]).includes(String(type))) return;
+
+      const current = objectJson(map);
+      const canonical = normalizeBoardObject(current);
+      if (!validateBoardObject(canonical).ok || equivalentJson(current, canonical)) return;
+
+      for (const key of Array.from(map.keys())) {
+        if (!Object.prototype.hasOwnProperty.call(canonical, key)) map.delete(key);
+      }
+      for (const [key, value] of Object.entries(canonical)) {
+        if (!equivalentJson(map.get(key), value)) map.set(key, value);
+      }
+      migrated += 1;
+    });
+  }, 'schema-migration:vve-106');
+  return migrated;
+};
 
 const rectOf = (map: Y.Map<unknown>) => {
   const x = map.get('x');
@@ -737,29 +942,25 @@ const translateObjectMap = (map: Y.Map<unknown>, dx: number, dy: number) => {
   }
   if (isFiniteNumber(map.get('x'))) map.set('x', (map.get('x') as number) + dx);
   if (isFiniteNumber(map.get('y'))) map.set('y', (map.get('y') as number) + dy);
-  const points = map.get('points');
-  if (Array.isArray(points)) {
-    map.set(
-      'points',
-      points.map((point: ScenePoint) => ({ ...point, x: point.x + dx, y: point.y + dy }))
-    );
-  }
-  if (Array.isArray(map.get('rawPoints'))) {
-    map.set(
-      'rawPoints',
-      (map.get('rawPoints') as ScenePoint[]).map((point) => ({
-        ...point,
-        x: point.x + dx,
-        y: point.y + dy
-      }))
-    );
-  }
-  // Extension objects mirror x/y in `position` until VVE-106 canonicalizes them.
-  const position = map.get('position');
-  if (position && typeof position === 'object' && !Array.isArray(position)) {
-    const point = position as Record<string, unknown>;
-    if (isFiniteNumber(point.x) && isFiniteNumber(point.y)) {
-      map.set('position', { ...point, x: (point.x as number) + dx, y: (point.y as number) + dy });
+  // Pen points are board-space geometry. Physics points are domain data and
+  // must remain unchanged when the plot frame moves.
+  if (type === 'pen') {
+    const points = map.get('points');
+    if (Array.isArray(points)) {
+      map.set(
+        'points',
+        points.map((point: ScenePoint) => ({ ...point, x: point.x + dx, y: point.y + dy }))
+      );
+    }
+    if (Array.isArray(map.get('rawPoints'))) {
+      map.set(
+        'rawPoints',
+        (map.get('rawPoints') as ScenePoint[]).map((point) => ({
+          ...point,
+          x: point.x + dx,
+          y: point.y + dy
+        }))
+      );
     }
   }
 };
@@ -775,38 +976,35 @@ const resizeObjectMap = (
   }
   const scaleX = rect.width === 0 ? 1 : frame.width / rect.width;
   const scaleY = rect.height === 0 ? 1 : frame.height / rect.height;
-  const points = map.get('points');
-  if (Array.isArray(points)) {
-    map.set(
-      'points',
-      (points as ScenePoint[]).map((point) => ({
-        ...point,
-        x: frame.x + (point.x - rect.x) * scaleX,
-        y: frame.y + (point.y - rect.y) * scaleY
-      }))
-    );
-    if (Array.isArray(map.get('rawPoints'))) {
+  // Only pen points describe board-space geometry. Resizing a physical graph
+  // changes its frame, not the measured values stored in `points`.
+  if (map.get('type') === 'pen') {
+    const points = map.get('points');
+    if (Array.isArray(points)) {
       map.set(
-        'rawPoints',
-        (map.get('rawPoints') as ScenePoint[]).map((point) => ({
+        'points',
+        (points as ScenePoint[]).map((point) => ({
           ...point,
           x: frame.x + (point.x - rect.x) * scaleX,
           y: frame.y + (point.y - rect.y) * scaleY
         }))
       );
+      if (Array.isArray(map.get('rawPoints'))) {
+        map.set(
+          'rawPoints',
+          (map.get('rawPoints') as ScenePoint[]).map((point) => ({
+            ...point,
+            x: frame.x + (point.x - rect.x) * scaleX,
+            y: frame.y + (point.y - rect.y) * scaleY
+          }))
+        );
+      }
     }
   }
   map.set('x', frame.x);
   map.set('y', frame.y);
   map.set('width', frame.width);
   map.set('height', frame.height);
-  const position = map.get('position');
-  if (position && typeof position === 'object' && !Array.isArray(position)) {
-    map.set('position', { ...(position as Record<string, unknown>), x: frame.x, y: frame.y });
-  }
-  if (isFiniteNumber(map.get('size'))) {
-    map.set('size', Math.max(frame.width, frame.height));
-  }
   return { ok: true };
 };
 

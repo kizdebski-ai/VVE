@@ -4,6 +4,8 @@
     class="movable-object"
     :class="{ 'is-selected': isSelected, 'is-line-type': isLineType }"
     :style="objectStyle"
+    :data-object-id="String(objectData.id)"
+    :data-object-type="objectData.type"
     @pointerdown.stop="handleLeftClickOnObject" 
     @dblclick.stop="handleDoubleClick" touch-action="none"
   >
@@ -159,6 +161,9 @@ interface MovableObjectData {
   expression?: string; // For math plot
   xRange?: number[]; // For math plot
   points?: {x: number, y: number}[]; // For physics plot
+  xLabel?: string;
+  yLabel?: string;
+  zLabel?: string;
 }
 
 const props = withDefaults(defineProps<{
@@ -390,14 +395,13 @@ watch(() => props.isSelected, (newValue) => {
 const bootstrapObjectData = () => {
     const startPoint = extractPoint(props.object.get('start'));
     const endPoint = extractPoint(props.object.get('end'));
-    const positionPoint = extractPoint(props.object.get('position'));
     const fallbackBounds = deriveBoundsFromPoints(startPoint, endPoint);
 
     return {
         id: props.object.get('id'),
         type: props.object.get('type'),
-        x: ensureNumber(props.object.get('x'), ensureNumber(positionPoint.x, fallbackBounds.x)),
-        y: ensureNumber(props.object.get('y'), ensureNumber(positionPoint.y, fallbackBounds.y)),
+        x: ensureNumber(props.object.get('x'), fallbackBounds.x),
+        y: ensureNumber(props.object.get('y'), fallbackBounds.y),
         rotation: ensureNumber(props.object.get('rotation'), 0),
         width: ensureNumber(props.object.get('width'), fallbackBounds.width > 0 ? fallbackBounds.width : 100),
         height: ensureNumber(props.object.get('height'), fallbackBounds.height > 0 ? fallbackBounds.height : 80),
@@ -420,6 +424,9 @@ const bootstrapObjectData = () => {
         expression: props.object.get('expression'),
         xRange: props.object.get('xRange'),
         points: props.object.get('points'),
+        xLabel: props.object.get('xLabel'),
+        yLabel: props.object.get('yLabel'),
+        zLabel: props.object.get('zLabel'),
     } as MovableObjectData;
 };
 
@@ -429,13 +436,12 @@ const isLineType = computed(() => objectData.type === 'line');
 const syncDataFromYMap = () => {
     const startPoint = extractPoint(props.object.get('start'));
     const endPoint = extractPoint(props.object.get('end'));
-    const positionPoint = extractPoint(props.object.get('position'));
     const fallbackBounds = deriveBoundsFromPoints(startPoint, endPoint);
 
     objectData.id = props.object.get('id');
     objectData.type = props.object.get('type');
-    objectData.x = ensureNumber(props.object.get('x'), ensureNumber(positionPoint.x, fallbackBounds.x));
-    objectData.y = ensureNumber(props.object.get('y'), ensureNumber(positionPoint.y, fallbackBounds.y));
+    objectData.x = ensureNumber(props.object.get('x'), fallbackBounds.x);
+    objectData.y = ensureNumber(props.object.get('y'), fallbackBounds.y);
     objectData.rotation = ensureNumber(props.object.get('rotation'), 0);
     objectData.width = ensureNumber(props.object.get('width'), fallbackBounds.width > 0 ? fallbackBounds.width : 100);
     objectData.height = ensureNumber(props.object.get('height'), fallbackBounds.height > 0 ? fallbackBounds.height : 80);
@@ -459,6 +465,9 @@ const syncDataFromYMap = () => {
     objectData.xRange = props.object.get('xRange');
     objectData.points = props.object.get('points');
     objectData.latex = props.object.get('latex');
+    objectData.xLabel = props.object.get('xLabel');
+    objectData.yLabel = props.object.get('yLabel');
+    objectData.zLabel = props.object.get('zLabel');
 };
 
 const lineHitPadding = computed(() => {
@@ -1130,8 +1139,7 @@ const stopResize = () => {
   document.removeEventListener('pointermove', handleResize);
   document.removeEventListener('pointerup', stopResize);
 
-  // The resize command scales pen points and mirrors position/size fields
-  // inside the shared command layer.
+  // The resize command updates canonical bounds inside the shared command layer.
   emit('commit-transform', {
     kind: 'resize',
     id: objectData.id,

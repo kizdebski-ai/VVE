@@ -137,7 +137,7 @@ describe('H3: withAiMutex handles rejected promises', () => {
 // ─── H8: Per-IP WebSocket connection limiting ────────────────────────────────
 
 describe('H8: Per-IP WebSocket connection limiting', () => {
-  const src = readServer('server.ts');
+  const src = readServer('pilot/realtimeListener.ts');
 
   it('defines MAX_CONNECTIONS_PER_IP constant', () => {
     expect(src).toContain('MAX_CONNECTIONS_PER_IP');

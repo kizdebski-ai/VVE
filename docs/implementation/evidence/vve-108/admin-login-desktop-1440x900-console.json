@@ -1,0 +1,10 @@
+{
+  "errors": [
+    "Failed to load resource: the server responded with a status of 401 (Unauthorized)"
+  ],
+  "url": "http://127.0.0.1:5175/admin/teachers",
+  "viewport": {
+    "width": 1440,
+    "height": 900
+  }
+}

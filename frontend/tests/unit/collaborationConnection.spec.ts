@@ -176,6 +176,8 @@ describe('acknowledged collaboration client', () => {
     expect(connection.isEditable()).toBe(true);
     vi.useRealTimers();
   });
+
+  it('applies a versioned remote update without re-sending it', () => {
     const connection = connectToYjs('board-1', { wsToken: 'managed-token' });
     const socket = FakeWebSocket.instances[0]!;
     socket.open();

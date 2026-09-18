@@ -562,15 +562,24 @@ export default {
       cancellable: false
     });
     let artifactAbort = null;
+    let artifactProgressResetTimer = null;
     const cancelArtifactWork = () => artifactAbort?.abort();
+    const clearArtifactProgressResetTimer = () => {
+      if (artifactProgressResetTimer !== null) {
+        window.clearTimeout(artifactProgressResetTimer);
+        artifactProgressResetTimer = null;
+      }
+    };
     const resetArtifactProgress = () => {
+      clearArtifactProgressResetTimer();
       artifactProgress.visible = false;
       artifactProgress.message = '';
       artifactProgress.current = 0;
       artifactProgress.total = 1;
       artifactProgress.cancellable = false;
     };
-    const applyArtifactProgress = (event) => {
+    const applyArtifactProgress = (event, controller) => {
+      clearArtifactProgressResetTimer();
       artifactProgress.visible = event.phase !== 'done';
       artifactProgress.message = event.message;
       artifactProgress.current = event.current;
@@ -578,7 +587,10 @@ export default {
       artifactProgress.cancellable = event.phase === 'planning' || event.phase === 'decoding' || event.phase === 'committing';
       if (event.phase === 'done' || event.phase === 'failed' || event.phase === 'cancelled') {
         showToast(event.message, event.phase === 'done' ? 'success' : event.phase === 'cancelled' ? 'warning' : 'error', 4000);
-        window.setTimeout(resetArtifactProgress, event.phase === 'done' ? 400 : 1200);
+        artifactProgressResetTimer = window.setTimeout(() => {
+          artifactProgressResetTimer = null;
+          if (artifactAbort === controller) resetArtifactProgress();
+        }, event.phase === 'done' ? 400 : 1200);
       }
     };
     const artifactTarget = (origin) => ({
@@ -601,6 +613,7 @@ export default {
     const runArtifactImport = async (bytes, fileName, declaredMime, origin) => {
       if (!canMutateDocument()) return denyReadOnlyMutation();
       artifactAbort?.abort();
+      clearArtifactProgressResetTimer();
       const controller = new AbortController();
       artifactAbort = controller;
       artifactProgress.visible = true;
@@ -614,7 +627,7 @@ export default {
         let last = null;
         for await (const event of artifactPipeline.import(plan, artifactTarget(origin), controller.signal)) {
           last = event;
-          if (artifactAbort === controller) applyArtifactProgress(event);
+          if (artifactAbort === controller) applyArtifactProgress(event, controller);
         }
         return last;
       } catch (error) {
@@ -640,6 +653,7 @@ export default {
     const exportBoardWithPipeline = async (mode) => {
       const elements = session.value?.snapshot() ?? [];
       artifactAbort?.abort();
+      clearArtifactProgressResetTimer();
       const controller = new AbortController();
       artifactAbort = controller;
       artifactProgress.visible = true;

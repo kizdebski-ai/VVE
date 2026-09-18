@@ -480,6 +480,23 @@ export const createArtifactPipeline = (
           return;
         }
 
+        // A decoder may resolve at the same moment that the user cancels the
+        // job. Never admit or insert that raster after cancellation: the
+        // committed count must describe document mutations, not decoded work.
+        if (signal?.aborted) {
+          raster.release();
+          yield withMessage({
+            phase: 'cancelled',
+            current: index,
+            total,
+            committed,
+            messageKey: 'artifact.cancelled',
+            objectIds: [...objectIds],
+            extras: { committed, total }
+          });
+          return;
+        }
+
         const imageAdmit = governor.admit(
           {
             kind: 'decodedImage',
@@ -504,6 +521,19 @@ export const createArtifactPipeline = (
         if (!target.isEditable()) {
           raster.release();
           yield failed('artifact.readOnlyMutation', index + 1, total, committed, [...objectIds]);
+          return;
+        }
+        if (signal?.aborted) {
+          raster.release();
+          yield withMessage({
+            phase: 'cancelled',
+            current: index,
+            total,
+            committed,
+            messageKey: 'artifact.cancelled',
+            objectIds: [...objectIds],
+            extras: { committed, total }
+          });
           return;
         }
         const id = target.newObjectId();

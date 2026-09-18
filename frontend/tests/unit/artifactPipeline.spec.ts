@@ -148,6 +148,32 @@ describe('ArtifactPipeline Interface', () => {
     session.dispose();
   });
 
+  it('does not commit a decoded page when cancellation arrives before insertion', async () => {
+    const abort = new AbortController();
+    const codecs = fakeCodecs([{ width: 400, height: 600 }]);
+    codecs.renderPdfPage = async () => {
+      abort.abort();
+      return raster('cancelled-before-insert', 400, 600);
+    };
+    const pipeline = createArtifactPipeline({ codecs, governor: createResourceGovernor() });
+    const plan = await pipeline.planImport({ bytes: new TextEncoder().encode('%PDF-1.4') });
+    let addCalls = 0;
+    const events = [];
+    for await (const event of pipeline.import(plan, {
+      origin: { x: 0, y: 0 },
+      newObjectId: () => 'page',
+      isEditable: () => true,
+      addImage: () => {
+        addCalls += 1;
+        return { ok: true };
+      }
+    }, abort.signal)) {
+      events.push(event);
+    }
+    expect(addCalls).toBe(0);
+    expect(events.at(-1)).toMatchObject({ phase: 'cancelled', committed: 0 });
+  });
+
   it('rejects oversized and malformed input without mutating the board', async () => {
     const pipeline = createArtifactPipeline({
       codecs: fakeCodecs(),

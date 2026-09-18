@@ -398,6 +398,47 @@ describe('WhiteboardCanvas.vue', () => {
       expect(mockYDrawings.length).toBe(before);
       expect(wrapper.vm.isDrawing).toBe(false);
     });
+
+    it('does not count denied input as a paint sample', async () => {
+      await wrapper.setProps({ wsToken: 'read-only-token' });
+      wrapper.vm.setTool('pen');
+      const canvas = wrapper.find('.whiteboard-canvas.draw-layer');
+      await canvas.trigger('pointerdown', {
+        clientX: 20, clientY: 20, button: 0, pointerId: 12,
+        pointerType: 'pen', isPrimary: true, buttons: 1, pressure: 0.4
+      });
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      expect(wrapper.vm.inputPaintSampleCount).toBe(0);
+    });
+
+    it('counts an accepted preview only after a frame renders it', async () => {
+      wrapper.vm.setTool('pen');
+      const canvas = wrapper.find('.whiteboard-canvas.draw-layer');
+      await canvas.trigger('pointerdown', {
+        clientX: 20, clientY: 20, button: 0, pointerId: 13,
+        pointerType: 'pen', isPrimary: true, buttons: 1, pressure: 0.4
+      });
+      await canvas.trigger('pointermove', {
+        clientX: 48, clientY: 36, pointerId: 13,
+        pointerType: 'pen', isPrimary: true, buttons: 1, pressure: 0.6
+      });
+      await vi.waitFor(() => expect(wrapper.vm.inputPaintSampleCount).toBeGreaterThan(0));
+    });
+
+    it('drops a queued sample when the stroke is cancelled before its frame', async () => {
+      wrapper.vm.setTool('pen');
+      const canvas = wrapper.find('.whiteboard-canvas.draw-layer');
+      await canvas.trigger('pointerdown', {
+        clientX: 20, clientY: 20, button: 0, pointerId: 14,
+        pointerType: 'pen', isPrimary: true, buttons: 1, pressure: 0.4
+      });
+      await canvas.trigger('pointercancel', {
+        clientX: 20, clientY: 20, pointerId: 14,
+        pointerType: 'pen', isPrimary: true, buttons: 0, pressure: 0
+      });
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      expect(wrapper.vm.inputPaintSampleCount).toBe(0);
+    });
   });
   describe('ArtifactPipeline overlay', () => {
     it('keeps progress hidden until import starts and exposes importArtifactFile', () => {

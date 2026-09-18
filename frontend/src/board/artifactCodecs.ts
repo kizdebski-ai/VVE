@@ -187,9 +187,12 @@ export const createBrowserArtifactCodecs = (
         for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
           throwIfAborted(signal);
           const page = await pdf.getPage(pageNumber);
-          const viewport = page.getViewport({ scale: 1 });
-          pages.push({ width: viewport.width, height: viewport.height });
-          page.cleanup();
+          try {
+            const viewport = page.getViewport({ scale: 1 });
+            pages.push({ width: viewport.width, height: viewport.height });
+          } finally {
+            page.cleanup();
+          }
         }
         return { pages };
       } finally {
@@ -201,31 +204,11 @@ export const createBrowserArtifactCodecs = (
       const pdf = await loadPdf(bytes, signal);
       throwIfAborted(signal);
       const page = await pdf.getPage(pageIndex + 1);
-      const base = page.getViewport({ scale: 1 });
-      const viewport = page.getViewport({ scale });
-      // Validate the real viewport before any canvas backing store is allocated.
-      const width = Math.max(1, Math.floor(viewport.width));
-      const height = Math.max(1, Math.floor(viewport.height));
-      if (!Number.isFinite(width) || !Number.isFinite(height) || viewport.width <= 0 || viewport.height <= 0 || width * height > defaultMaxPixels) {
-        throw new ArtifactCodecError('resource.imageTooLarge', polishArtifactMessage('resource.imageTooLarge'));
-      }
-      throwIfAborted(signal);
-      const canvas = document.createElement('canvas');
-      canvas.width = width;
-      canvas.height = height;
-      const ctx = canvas.getContext('2d', { alpha: false });
-      if (!ctx) {
-        releaseCanvas(canvas);
-        throw new ArtifactCodecError('artifact.decodeFailed', 'Canvas unavailable.');
-      }
-      // `intent: 'print'` renders through the microtask scheduler instead of
-      // requestAnimationFrame, which never fires in embedded webviews that
-      // suspend frame callbacks for backgrounded panes (the default display
-      // intent would deadlock there, leaving renderTask.promise pending).
-      const renderTask = page.render({ canvasContext: ctx, viewport, intent: 'print' });
+      let canvas: HTMLCanvasElement | null = null;
+      let renderTask: { promise: Promise<void>; cancel: () => void } | null = null;
       const onAbort = () => {
         try {
-          renderTask.cancel();
+          renderTask?.cancel();
         } catch {
           // ignore
         }
@@ -238,9 +221,31 @@ export const createBrowserArtifactCodecs = (
         }
       }
       try {
+        const base = page.getViewport({ scale: 1 });
+        const viewport = page.getViewport({ scale });
+        // Validate the real viewport before any canvas backing store is allocated.
+        const width = Math.max(1, Math.floor(viewport.width));
+        const height = Math.max(1, Math.floor(viewport.height));
+        if (!Number.isFinite(width) || !Number.isFinite(height) || viewport.width <= 0 || viewport.height <= 0 || width * height > defaultMaxPixels) {
+          throw new ArtifactCodecError('resource.imageTooLarge', polishArtifactMessage('resource.imageTooLarge'));
+        }
+        throwIfAborted(signal);
+        canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d', { alpha: false });
+        if (!ctx) {
+          throw new ArtifactCodecError('artifact.decodeFailed', 'Canvas unavailable.');
+        }
+        // `intent: 'print'` renders through the microtask scheduler instead of
+        // requestAnimationFrame, which never fires in embedded webviews that
+        // suspend frame callbacks for backgrounded panes (the default display
+        // intent would deadlock there, leaving renderTask.promise pending).
+        renderTask = page.render({ canvasContext: ctx, viewport, intent: 'print' });
         await renderTask.promise;
         throwIfAborted(signal);
         const raster = rasterFromCanvas(canvas, base.width, base.height, 'image/jpeg', 0.84);
+        canvas = null;
         return raster;
       } catch (error) {
         releaseCanvas(canvas);
@@ -253,6 +258,7 @@ export const createBrowserArtifactCodecs = (
         if (signal) {
           signal.removeEventListener('abort', onAbort);
         }
+        page.cleanup();
       }
     },
 

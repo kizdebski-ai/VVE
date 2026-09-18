@@ -36,6 +36,24 @@ describe('browser artifact allocation and ownership', () => {
     await codecs.releasePdf!(bytes);
   });
 
+  it('cleans each PDF page after raster rendering', async () => {
+    const task = pdfTask();
+    mock.getDocument.mockReturnValue(task);
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({} as CanvasRenderingContext2D);
+    vi.spyOn(HTMLCanvasElement.prototype, 'toDataURL').mockReturnValue('data:image/jpeg;base64,AA==');
+    const codecs = createBrowserArtifactCodecs();
+    await codecs.renderPdfPage(new Uint8Array([1]), 0, 1);
+    expect(task.page.cleanup).toHaveBeenCalledOnce();
+  });
+
+  it('cleans an inspected PDF page when viewport metadata is malformed', async () => {
+    const task = pdfTask();
+    task.page.getViewport = () => { throw new Error('bad viewport'); };
+    mock.getDocument.mockReturnValue(task);
+    await expect(createBrowserArtifactCodecs().inspectPdf(new Uint8Array([1]))).rejects.toThrow('bad viewport');
+    expect(task.page.cleanup).toHaveBeenCalledOnce();
+  });
+
   it('cancels a loading document without waiting for its unresolved promise', async () => {
     const task = { promise: new Promise(() => {}), destroy: vi.fn(async () => {}) };
     mock.getDocument.mockReturnValue(task);

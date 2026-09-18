@@ -68,6 +68,20 @@ export type GateReport = {
   coverage: 'complete' | 'smoke-only';
   fixtures: { pdfBytes: number; imageBytes: number } | null;
   passed: boolean;
+  soakDetails?: SoakDetails;
+};
+
+type SoakDetails = {
+  activeDurationMs: number;
+  studentCounts: number[];
+  injectedReconnects: number;
+  adapterReloads: number;
+  maxHeapUsedBytes: number;
+  writeToPeerP95Ms: number;
+  openingP95Ms: number;
+  restartRecoveryMs: number;
+  freshRestartClients: number;
+  roomDigests: Record<string, string>;
 };
 
 const usage = (): never => {
@@ -488,7 +502,7 @@ const loadProductionClient = async (): Promise<ProductionClientModule> => {
           },
           dedupe: ['yjs']
         },
-        server: { middlewareMode: true },
+        server: { middlewareMode: true, hmr: false },
         appType: 'custom',
         logLevel: 'error'
       });
@@ -501,6 +515,7 @@ const loadProductionClient = async (): Promise<ProductionClientModule> => {
 };
 
 class ProductionGateClient {
+  synchronizationMs = 0;
   private connection: ProductionConnection | null = null;
   private canonical: BoardDocument | null = null;
   private session: ReturnType<NonNullable<ProductionClientModule['createWhiteboardSession']>> | null = null;
@@ -517,6 +532,7 @@ class ProductionGateClient {
   ) {}
 
   async connect(base: string): Promise<void> {
+    const openedAt = performance.now();
     const module = await loadProductionClient();
     const browserWindow = (globalThis as unknown as { window: { location: { protocol: string; host: string; origin: string; port: string } } }).window;
     const url = new URL(base);
@@ -549,6 +565,7 @@ class ProductionGateClient {
     if (!createSession) throw new Error('Production whiteboard session module is unavailable.');
     this.session = createSession({ ydoc: this.connection.ydoc, role: this.role, isEditable: this.connection.isEditable });
     this.refreshCanonical();
+    this.synchronizationMs = performance.now() - openedAt;
   }
 
   private refreshCanonical(): BoardDocument {
@@ -790,12 +807,13 @@ const runChangeGate = async (base: string, boards: BoardAccess[], options: Relea
   return { clients: 4, acknowledged, reconnects: 1, restarts: 1, digestMismatches: 0, leaks: 0 };
 };
 
-const runMatureGate = async (base: string, boards: BoardAccess[], options: ReleaseGateOptions): Promise<{ clients: number; acknowledged: number; fixtures: { pdfBytes: number; imageBytes: number } }> => {
+const runMatureGate = async (base: string, boards: BoardAccess[], options: ReleaseGateOptions, restart: () => Promise<void>): Promise<{ clients: number; acknowledged: number; fixtures: { pdfBytes: number; imageBytes: number } }> => {
   const board = boards[0]!;
   const pdfPath = resolve(ROOT, '..', 'frontend', 'tests', 'fixtures', 'artifacts', 'lesson-2page.pdf');
   const imagePath = resolve(ROOT, '..', 'frontend', 'tests', 'fixtures', 'artifacts', 'pixel.png');
   const scenario = await runMatureBoardScenario({
     base,
+    restart,
     fixtures: { pdfPath, imagePath },
     createClient: async (role, label) => {
       const client = new ProductionGateClient(board.boardId, role === 'teacher' ? board.teacherWsToken : board.studentWsToken, role, label);
@@ -843,9 +861,16 @@ const assertSoakCheckpoint = async (clients: ProductionGateClient[], boards: Boa
   }
 };
 
-const runSoak = async (base: string, boards: BoardAccess[], options: ReleaseGateOptions, restart: (afterStop?: () => Promise<void>) => Promise<void>, adminCookie: string): Promise<{ clients: number; acknowledged: number; reconnects: number; restarts: number; maxRssBytes: number; maxEventLoopDelayMs: number; samples: number; blockerEvents: number; digestMismatches: number; crossBoardLeaks: number }> => {
-  const studentCounts = boards.map((_, index) => index < 13 ? 2 : 1);
-  let clients = await connectClients(base, boards, studentCounts);
+const runSoak = async (base: string, boards: BoardAccess[], options: ReleaseGateOptions, restart: (afterStop?: () => Promise<void>) => Promise<void>, adminCookie: string): Promise<{ details: SoakDetails; clients: number; acknowledged: number; reconnects: number; restarts: number; maxRssBytes: number; maxEventLoopDelayMs: number; samples: number; blockerEvents: number; digestMismatches: number; crossBoardLeaks: number }> => {
+  const studentCounts = boards.map((_, index) => index === 0 ? 3 : index < 12 ? 2 : 1);
+  const clients = await connectClients(base, boards, studentCounts);
+  const openingSamples = clients.map((client) => client.synchronizationMs);
+  const propagationSamples: number[] = [];
+  let injectedReconnects = 0;
+  let adapterReloads = 0;
+  let maxHeapUsedBytes = 0;
+  let restartRecoveryMs = 0;
+  let freshRestartClients = 0;
   let acknowledged = 0;
   let reconnects = 0;
   let restarts = 0;
@@ -867,6 +892,8 @@ const runSoak = async (base: string, boards: BoardAccess[], options: ReleaseGate
     const errors = (soak.errors ?? {}) as Record<string, unknown>;
     const currentBlockers = Number(soak.eventsLost ?? 0) + Number(errors.persistence ?? 0) + Number(errors.unhandled ?? 0);
     blockerEvents = Math.max(blockerEvents, currentBlockers);
+    if (currentBlockers) throw new Error(`Runtime recorded ${currentBlockers} blocker event(s).`);
+    maxHeapUsedBytes = Math.max(maxHeapUsedBytes, Number(memory.heapUsedBytes ?? 0));
     if (Number(soak.connections ?? -1) !== clients.length || Number(soak.boards ?? -1) !== boards.length) {
       throw new Error(`Readiness connection/board count mismatch: expected ${clients.length}/${boards.length}, got ${String(soak.connections)}/${String(soak.boards)}.`);
     }
@@ -875,20 +902,52 @@ const runSoak = async (base: string, boards: BoardAccess[], options: ReleaseGate
     const index = acknowledged % clients.length;
     const operationBoardIndex = boards.findIndex((board) => board.boardId === clients[index]!.boardId);
     if (operationBoardIndex < 0) throw new Error(`Soak client ${clients[index]!.boardId} is not one of the gate boards.`);
-    await clients[index]!.addObject(objectFor(operationBoardIndex, acknowledged + 10_000));
+    const mutationStarted = performance.now();
+    await clients[index]!.addObject(seededChangeObject(operationBoardIndex, acknowledged + 10_000));
     acknowledged += 1;
     const checkpoint = await assertSoakCheckpoint(clients, boards);
+    propagationSamples.push(performance.now() - mutationStarted);
     digestMismatches += checkpoint.digestMismatches;
     crossBoardLeaks += checkpoint.crossBoardLeaks;
+    if (digestMismatches || crossBoardLeaks) throw new Error('Soak checkpoint found divergent or cross-board state.');
+    const elapsed = Date.now() - started;
+    if ((!injectedReconnects && elapsed >= options.durationMs / 4) || (!adapterReloads && elapsed >= options.durationMs * 3 / 4)) {
+      const reload = injectedReconnects > 0;
+      const selected = reload ? 2 : 1;
+      const expected = clients[selected]!.digest();
+      clients[selected]!.close();
+      if (clients[selected]!.isEditable()) throw new Error('Disconnected adapter remained editable.');
+      const disconnectedDeadline = Date.now() + 5_000;
+      while (Number(((await waitForReady(base, adminCookie)).soak as Record<string, unknown>).connections) !== 56) {
+        if (Date.now() >= disconnectedDeadline) throw new Error('Disconnected adapter was not released by the runtime.');
+        await sleep(25);
+      }
+      if (reload) clients[selected] = new ProductionGateClient(boards[0]!.boardId, boards[0]!.studentWsToken, 'student', 'soak-student-reload');
+      await clients[selected]!.connect(base);
+      openingSamples.push(clients[selected]!.synchronizationMs);
+      if (clients[selected]!.digest() !== expected) throw new Error('Reconnect/reload lost acknowledged state.');
+      if (reload) adapterReloads += 1;
+      else injectedReconnects += 1;
+      reconnects += 1;
+    }
     if (!restarted && Date.now() - started >= Math.max(1_000, Math.floor(options.durationMs / 2))) {
       const beforeRestart = new Map<string, { digest: string; drawings: number }>();
       for (const client of clients) {
         if (!beforeRestart.has(client.boardId)) beforeRestart.set(client.boardId, { digest: client.digest(), drawings: (client.snapshot().drawings as unknown[]).length });
       }
+      const recoveryStarted = performance.now();
       await restart(async () => {
         if (clients.some((client) => client.isEditable())) throw new Error('A production client remained editable during backend drain.');
+        // Dispose every local Y.Doc before the server starts. A surviving client
+        // could resend its document and conceal missing durable state.
+        closeClients(clients);
       });
-      await Promise.all(clients.map((client) => client.waitUntilEditable()));
+      const freshClients = await connectClients(base, boards, studentCounts);
+      clients.splice(0, clients.length, ...freshClients);
+      freshRestartClients = freshClients.length;
+      openingSamples.push(...freshClients.map((client) => client.synchronizationMs));
+      restartRecoveryMs = performance.now() - recoveryStarted;
+      if (restartRecoveryMs > 30_000) throw new Error('Controlled restart exceeded the 30 second recovery target.');
       for (const client of clients) {
         const before = beforeRestart.get(client.boardId)!;
         const afterDrawings = (client.snapshot().drawings as unknown[]).length;
@@ -905,7 +964,7 @@ const runSoak = async (base: string, boards: BoardAccess[], options: ReleaseGate
       console.log(`VVE-109 soak progress elapsedMs=${Date.now() - started} samples=${samples} clients=${clients.length} acknowledged=${acknowledged} reconnects=${reconnects} blockers=${blockerEvents}`);
       lastProgressAt = Date.now();
     }
-    await sleep(Math.min(15_000, Math.max(500, Math.floor(options.durationMs / 10))));
+    await sleep(options.smoke ? 500 : 1_000);
   }
   const digestByBoard = new Map<string, string>();
   for (const client of clients) {
@@ -926,7 +985,13 @@ const runSoak = async (base: string, boards: BoardAccess[], options: ReleaseGate
   }
   if (crossBoardLeaks) throw new Error(`Detected ${crossBoardLeaks} cross-board object leak(s).`);
   closeClients(clients);
-  return { clients: 57, acknowledged, reconnects, restarts, maxRssBytes, maxEventLoopDelayMs, samples, blockerEvents, digestMismatches, crossBoardLeaks };
+  const p95 = (values: number[]): number => values.sort((a, b) => a - b)[Math.max(0, Math.ceil(values.length * 0.95) - 1)] ?? 0;
+  const details: SoakDetails = {
+    activeDurationMs: Date.now() - started, studentCounts, injectedReconnects, adapterReloads,
+    maxHeapUsedBytes, writeToPeerP95Ms: p95(propagationSamples), openingP95Ms: p95(openingSamples),
+    restartRecoveryMs, freshRestartClients, roomDigests: Object.fromEntries(digestByBoard)
+  };
+  return { details, clients: 57, acknowledged, reconnects, restarts, maxRssBytes, maxEventLoopDelayMs, samples, blockerEvents, digestMismatches, crossBoardLeaks };
 };
 
 const reportJson = (report: GateReport): string => `${JSON.stringify(report, null, 2)}\n`;
@@ -938,6 +1003,20 @@ export const assertGateReport = (report: GateReport): void => {
   }
   if (report.profile === 'soak' && !report.smoke && report.durationMs < SOAK_MS) {
     throw new Error('A non-smoke soak report shorter than three hours cannot pass.');
+  }
+  if (report.profile === 'soak' && !report.smoke) {
+    const details = report.soakDetails;
+    if (!details || details.activeDurationMs < SOAK_MS || report.clients !== 57 || report.boards !== 22) {
+      throw new Error('The full soak requires three active hours with 57 clients on 22 boards.');
+    }
+    if (details.studentCounts.length !== 22 || details.studentCounts.reduce((sum, n) => sum + n, 0) !== 35 ||
+        !details.studentCounts.includes(1) || !details.studentCounts.includes(3) ||
+        !details.injectedReconnects || !details.adapterReloads || !details.restartRecoveryMs || details.freshRestartClients !== 57) {
+      throw new Error('The full soak is missing lesson composition or recovery coverage.');
+    }
+    if (details.writeToPeerP95Ms > 250 || details.openingP95Ms > 5_000 || details.restartRecoveryMs > 30_000) {
+      throw new Error('The soak exceeded a documented propagation, synchronization, or recovery target.');
+    }
   }
   if (report.coverage === 'smoke-only' && !report.smoke) {
     throw new Error(`The ${report.profile} profile is smoke-only until its required artifact workflow is implemented.`);
@@ -962,6 +1041,7 @@ export const main = async (argv = process.argv.slice(2)): Promise<GateReport> =>
   let blockerEvents = 0;
   let digestMismatches = 0;
   let crossBoardLeaks = 0;
+  let soakDetails: SoakDetails | undefined;
   try {
     await runCommand('npm', ['run', 'build']);
     stopPostgres = await startPostgres(options.pgPort);
@@ -992,12 +1072,13 @@ export const main = async (argv = process.argv.slice(2)): Promise<GateReport> =>
       clientCount = result.clients; acknowledgedOperations = result.acknowledged; reconnects = result.reconnects;
       digestMismatches = result.digestMismatches;
     } else if (options.profile === 'mature') {
-      const result = await runMatureGate(base, boards, options);
+      const result = await runMatureGate(base, boards, options, restart);
       clientCount = result.clients; acknowledgedOperations = result.acknowledged; fixtures = result.fixtures;
     } else if (options.profile === 'destructive') {
       await runDestructiveGate(base, boards[0]!); clientCount = 1;
     } else if (options.profile === 'soak') {
       const result = await runSoak(base, boards, options, restart, adminCookie);
+      soakDetails = result.details;
       clientCount = result.clients; acknowledgedOperations = result.acknowledged; reconnects = result.reconnects;
       soakSamples = result.samples; maxRssBytes = result.maxRssBytes; maxEventLoopDelayMs = result.maxEventLoopDelayMs; blockerEvents = result.blockerEvents; digestMismatches = result.digestMismatches; crossBoardLeaks = result.crossBoardLeaks;
     } else {
@@ -1019,6 +1100,7 @@ export const main = async (argv = process.argv.slice(2)): Promise<GateReport> =>
       backendRestarts,
       metrics: { samples: options.profile === 'soak' ? soakSamples : 1, maxRssBytes, maxEventLoopDelayMs, blockerEvents, digestMismatches, crossBoardLeaks },
       fixtures,
+      ...(soakDetails ? { soakDetails } : {}),
       coverage: options.profile === 'mature' || options.profile === 'destructive' ? (options.smoke ? 'complete' : 'smoke-only') : 'complete',
       passed: options.profile === 'mature' || options.profile === 'destructive' ? options.smoke : true
     };

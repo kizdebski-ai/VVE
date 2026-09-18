@@ -1,7 +1,7 @@
 /**
  * useDrawingEngine - core drawing logic extracted from WhiteboardCanvas.
  *
- * Contains: pen smoothing, grid snapping, startDrawing, draw, finishDrawing,
+ * Contains: pen smoothing, grid snapping, startDrawingAt, draw, finishDrawing,
  * eraseElement, and the Ramer-Douglas-Peucker simplification algorithm.
  */
 import { ref, computed, nextTick } from 'vue';
@@ -9,7 +9,6 @@ import { createNewElement } from '../utils/canvasTools.js';
 import { computeGridSteps } from '../utils/canvasGrid.js';
 import { DEFAULT_PEN_PRESETS } from '../utils/penStyles.js';
 
-const PEN_SMOOTHING_WINDOW = 4;
 const PEN_COORD_PRECISION = 2;
 
 // Tools that behave like shapes (use start/end points)
@@ -36,28 +35,28 @@ export function useDrawingEngine({
   yjsConnection,
   session,
   smoothingFactor,
-  debugModeEnabled,
+  debugModeEnabled = ref(false),
   // Props getters
-  getCurrentShape,
-  getCurrentLineStyle,
-  getCurrentRoughness,
-  getCurrentFillColor,
-  getCurrentArrowStyle,
-  getActiveFeature,
-  getHandwritingStylerOptions,
+  getCurrentShape = () => 'rectangle',
+  getCurrentLineStyle = () => 'solid',
+  getCurrentRoughness = () => 0,
+  getCurrentFillColor = () => 'transparent',
+  getCurrentArrowStyle = () => 'none',
+  getActiveFeature = () => null,
+  getHandwritingStylerOptions = () => ({}),
   // Functions
-  updateGlobalState,
-  redrawCanvas,
-  scheduleRedraw,
-  refreshMovableElements,
-  openConfigPanel,
-  startInlineText,
-  attachBindingsToLineDraft,
-  getActiveModule,
-  emit,
-  debugLog,
-  debugWarn,
-  showToast,
+  updateGlobalState = () => {},
+  redrawCanvas = () => {},
+  scheduleRedraw = () => {},
+  refreshMovableElements = () => {},
+  openConfigPanel = () => {},
+  startInlineText = () => {},
+  attachBindingsToLineDraft = () => {},
+  getActiveModule = () => null,
+  emit = () => {},
+  debugLog = () => {},
+  debugWarn = () => {},
+  showToast = () => {},
 }) {
 
   // --- Internal state ---
@@ -68,12 +67,12 @@ export function useDrawingEngine({
   const startCoordsForShiftLine = ref(null);
 
   const activePenPresetKey = computed(() => {
-    const opts = getHandwritingStylerOptions();
+    const opts = typeof getHandwritingStylerOptions === 'function' ? getHandwritingStylerOptions() : null;
     return opts?.preset || 'gel';
   });
 
   const activePenPreset = computed(() => {
-    const options = getHandwritingStylerOptions() || {};
+    const options = (typeof getHandwritingStylerOptions === 'function' ? getHandwritingStylerOptions() : null) || {};
     return (options.presets && options.presets[activePenPresetKey.value])
       || DEFAULT_PEN_PRESETS[activePenPresetKey.value]
       || {};
@@ -81,26 +80,26 @@ export function useDrawingEngine({
 
   // --- Pen Smoothing ---
 
+  // InputPipeline (VVE-105) owns Mysz/Pióro path smoothing. The live stroke
+  // records the already-reduced point; averaging here would double-filter
+  // Pióro pressure and put corners back on Mysz.
   const addSmoothedPenPoint = (coords) => {
     const stamped = {
-      ...coords,
+      x: parseFloat(Number(coords.x).toFixed(PEN_COORD_PRECISION)),
+      y: parseFloat(Number(coords.y).toFixed(PEN_COORD_PRECISION)),
       t: coords.t ?? (typeof performance !== 'undefined' ? performance.now() : Date.now()),
     };
-    pointsBuffer.value.push(stamped);
-    if (pointsBuffer.value.length > PEN_SMOOTHING_WINDOW) {
-      pointsBuffer.value.shift();
+    if (typeof coords.p === 'number' && Number.isFinite(coords.p)) {
+      stamped.p = coords.p;
     }
-    const len = pointsBuffer.value.length;
-    if (!len) return stamped;
-    const averaged = pointsBuffer.value.reduce(
-      (acc, point) => ({ x: acc.x + point.x, y: acc.y + point.y }),
-      { x: 0, y: 0 }
-    );
-    return {
-      x: parseFloat((averaged.x / len).toFixed(PEN_COORD_PRECISION)),
-      y: parseFloat((averaged.y / len).toFixed(PEN_COORD_PRECISION)),
-      t: stamped.t,
-    };
+    if (typeof coords.tiltX === 'number' && Number.isFinite(coords.tiltX)) {
+      stamped.tiltX = coords.tiltX;
+    }
+    if (typeof coords.tiltY === 'number' && Number.isFinite(coords.tiltY)) {
+      stamped.tiltY = coords.tiltY;
+    }
+    pointsBuffer.value = [stamped];
+    return stamped;
   };
 
   const computePenWidthFromPreset = (presetConfig, requestedWidth) => {
@@ -202,14 +201,11 @@ export function useDrawingEngine({
 
   // --- Start Drawing ---
 
-  const startDrawing = (event, getCoordinates, transformCoordinates) => {
+  const startDrawingAt = (transformedCoords, inputTime, extras = {}) => {
     if (!ydoc.value) return;
     if (currentTool.value === 'select') return;
     const graphTools = ['mathPlot', 'physicsPlot', 'coordSystem2D', 'coordSystem3D'];
     if (graphTools.includes(currentTool.value)) return;
-
-    const coords = getCoordinates(event);
-    const transformedCoords = transformCoordinates(coords.offsetX, coords.offsetY);
 
     // Handle text tool inline
     if (currentTool.value === 'text') {
@@ -270,12 +266,33 @@ export function useDrawingEngine({
     if (currentElementPreview.value) {
       const localClientId = yjsConnection.value?.awareness?.clientID || 'unknown';
       currentElementPreview.value.id = `temp_${localClientId}_${Date.now()}`;
-      const startTime = event.timeStamp ?? (typeof performance !== 'undefined' ? performance.now() : Date.now());
+      const startTime = typeof inputTime === 'number'
+        ? inputTime
+        : (typeof performance !== 'undefined' ? performance.now() : Date.now());
+      const pressure = typeof extras.pressure === 'number' && Number.isFinite(extras.pressure)
+        ? extras.pressure
+        : undefined;
+      const tiltX = typeof extras.tiltX === 'number' && Number.isFinite(extras.tiltX)
+        ? extras.tiltX
+        : undefined;
+      const tiltY = typeof extras.tiltY === 'number' && Number.isFinite(extras.tiltY)
+        ? extras.tiltY
+        : undefined;
       if (toolType === 'pen') {
         const stampedStart = { ...transformedCoords, t: startTime };
+        if (pressure !== undefined) stampedStart.p = pressure;
+        if (tiltX !== undefined) stampedStart.tiltX = tiltX;
+        if (tiltY !== undefined) stampedStart.tiltY = tiltY;
         const snappedStart = applySoftGridSnap(stampedStart, null);
         currentElementPreview.value.rawPoints = [stampedStart];
-        currentElementPreview.value.points = [{ x: snappedStart.x, y: snappedStart.y, t: snappedStart.t ?? startTime }];
+        currentElementPreview.value.points = [{
+          x: snappedStart.x,
+          y: snappedStart.y,
+          t: snappedStart.t ?? startTime,
+          ...(pressure !== undefined ? { p: pressure } : {}),
+          ...(tiltX !== undefined ? { tiltX } : {}),
+          ...(tiltY !== undefined ? { tiltY } : {}),
+        }];
         currentElementPreview.value.snappedPoints = currentElementPreview.value.points;
       } else if (SHAPE_TOOLS.has(toolType) || toolType === 'line') {
         const snappedStart = applySoftGridSnap({ ...transformedCoords, t: startTime }, null);
@@ -307,6 +324,15 @@ export function useDrawingEngine({
       ? inputTime
       : (typeof performance !== 'undefined' ? performance.now() : Date.now());
     const stampedCoords = { ...coords, t: timestamp };
+    if (typeof coords.p === 'number' && Number.isFinite(coords.p)) {
+      stampedCoords.p = coords.p;
+    }
+    if (typeof coords.tiltX === 'number' && Number.isFinite(coords.tiltX)) {
+      stampedCoords.tiltX = coords.tiltX;
+    }
+    if (typeof coords.tiltY === 'number' && Number.isFinite(coords.tiltY)) {
+      stampedCoords.tiltY = coords.tiltY;
+    }
 
     if (resolvedTool === 'pen') {
       if (shiftPressedAtStart.value && startCoordsForShiftLine.value) {
@@ -337,8 +363,9 @@ export function useDrawingEngine({
         const smoothedPoint = addSmoothedPenPoint(stampedCoords);
         const snappedPoint = applySoftGridSnap(smoothedPoint, prevRaw);
 
-        // Throttling: distance check
-        const MIN_DIST_SQ = 2.25; // 1.5^2
+        // Pipeline already resamples; keep only a sub-pixel collapse guard
+        // so duplicate coalesced samples do not bloat the stroke.
+        const MIN_DIST_SQ = 0.25;
         let shouldAdd = true;
         if (preview.points.length > 0) {
           const last = preview.points[preview.points.length - 1];
@@ -351,6 +378,7 @@ export function useDrawingEngine({
             x: snappedPoint.x,
             y: snappedPoint.y,
             t: snappedPoint.t ?? smoothedPoint.t,
+            ...(smoothedPoint.p !== undefined ? { p: smoothedPoint.p } : {}),
           });
           preview.snappedPoints = preview.points;
         }
@@ -617,7 +645,7 @@ export function useDrawingEngine({
     applySoftGridSnap,
     applyGridSnapHard,
     cancelActiveDrawing,
-    startDrawing,
+    startDrawingAt,
     draw,
     finishDrawing,
     eraseElement,

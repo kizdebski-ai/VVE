@@ -1,0 +1,10 @@
+{
+  "capture": "ZCode built-in browser (GUI), capture-boundary redaction: query strings stripped from URLs",
+  "url": "http://127.0.0.1:5188/ (board canvas, redacted query)",
+  "viewport": {
+    "width": 1440,
+    "height": 900
+  },
+  "errors": [],
+  "notes": "During SIGTERM drain: persistent Polish banner visible; page error collector empty across the restart window."
+}

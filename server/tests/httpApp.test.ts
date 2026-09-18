@@ -39,11 +39,32 @@ const createTestApp = (solver?: EquationSolver) =>
   });
 
 describe('HTTP API', () => {
-  it('exposes health endpoint', async () => {
+  it('fails /health closed when no RuntimeControl gateway is injected', async () => {
     const app = createTestApp();
     const res = await request(app).get('/health');
+    expect(res.status).toBe(503);
+    expect(res.body.status).toBe('not-ready');
+    expect(res.body.ready).toBe(false);
+  });
+
+  it('separates liveness from readiness when no RuntimeControl gateway is injected', async () => {
+    const app = createTestApp();
+    const live = await request(app).get('/live');
+    expect(live.status).toBe(200);
+    expect(live.body.live).toBe(true);
+    // Fail closed: without a health owner, readiness cannot be proven.
+    const ready = await request(app).get('/ready');
+    expect(ready.status).toBe(503);
+    expect(ready.body.ready).toBe(false);
+  });
+
+  it('exposes live resource governor limits for client policy adoption (VVE-107)', async () => {
+    const app = createTestApp();
+    const res = await request(app).get('/api/resource-limits');
     expect(res.status).toBe(200);
-    expect(res.body.status).toBe('ok');
+    expect(res.body.maxWebsocketPayloadBytes).toBeGreaterThan(0);
+    expect(res.body.maxImageDataUrlChars).toBeLessThanOrEqual(res.body.maxWebsocketPayloadBytes);
+    expect(res.body.maxEncodedImageBytes).toBeGreaterThan(0);
   });
 
   it('creates and retrieves rooms (development dev surface only)', async () => {

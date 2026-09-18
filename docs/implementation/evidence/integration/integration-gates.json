@@ -1,0 +1,46 @@
+{
+  "gate": "VVE-108 final four-slice integration verification",
+  "assembledFrom": {
+    "method": "each slice's full remediation state (branch tip + uncommitted diff) materialized on temp branches in a scratch clone, merged sequentially 105 -> 106 -> 107 -> 108 with deliberate conflict resolutions (no blanket ours/theirs); resulting tree transferred into this worktree as an uncommitted reviewable diff",
+    "perMergeResolutions": [
+      "reconciliation-105-106.patch: App.vue pen-preset handler naming (105 owns input) + 106 lesson-panel binding; both spatial-index teardown and panel reset in session dispose; both test blocks; boardScene import union deduplicated; WhiteboardCanvas pointer events (105) with Polish copy (106) and unified emits",
+      "reconciliation-107.patch: App.vue imports the artifact pipeline (107 deletes usePdfImport) while keeping 105/106 plot+coordinate handlers; WhiteboardCanvas imports union (input pipeline + artifact pipeline + governor); audit2 H8 governor block + e2e input-style block kept alongside prior blocks",
+      "reconciliation-108.patch: composition-owned files taken from 108 (httpApp with fail-closed health, capabilityAccess governor+signals, collaborationRuntime signals/stats/drain-hardening, server.ts RuntimeControl adapter); deliberate reconciliations: env-aware governor fallback restored in httpApp (107 contract), optional denial digest field restored (107 client contract), knexfile taken from 106 (superset comment, agreed migration contract); connectToYjs union (107 denial reconciliation + 108 draining persistence); audit2 H8 split into governor (server.ts) + listener (realtimeListener) describes; WhiteboardCanvas keeps merged 105/106/107 state plus 108 banner computed (106 ellipsis copy preserved)"
+    ],
+    "snapshotNote": "The assembled source is committed in the integration branch; the redundant full-tree patch is retained locally outside the repository."
+  },
+  "combinedTestsWithIsolatedPostgreSQL": {
+    "server": "171 passed / 171 (0 skipped), 17 files \u2014 includes 106 boardDocument, 105 boardScene/spatial, 107 resourceGovernor/denial-reconciliation, 108 runtimeControl/realtimeComposition + REAL PostgreSQL restart gate",
+    "frontend": "197 passed / 197, 23 files",
+    "builds": "server tsc clean; frontend vite production build clean"
+  },
+  "live57ClientGateOnMergedServer": {
+    "method": "22 real Managed Boards created through the merged HTTP API; 57 ws connections from 127.0.0.1 with real wsTokens",
+    "admittedAndSynchronized": 57,
+    "closedDuringAdmission": 0,
+    "acknowledgedMutations": "22/22 (one canonical rectangle per board, peer fan-out)"
+  },
+  "liveRestartGateOnMergedServer": {
+    "canonicalObjects": [
+      "cuboid",
+      "cuboid"
+    ],
+    "drawnVia": "ZCode built-in browser GUI (pointer drags through the shapes tool), desktop 1440x900",
+    "stopReport": {
+      "clean": true
+    },
+    "clientReadmissionMsAfterListenerBound": 1202,
+    "durableDigestBefore": "668e00513397a6564ea41208700979716fd550e91464d8852ec1d2cb874f924d",
+    "digestParity": true,
+    "portrait768x1024": {
+      "horizontalOverflow": false,
+      "objectsVisibleAfterRestart": 2,
+      "inputStyleControlPresent": true
+    }
+  },
+  "notClaimed": [
+    "physical iPad / Apple Pencil hardware",
+    "Railway deployment restart",
+    "three-hour 57-client soak (VVE-109)"
+  ]
+}

@@ -23,3 +23,92 @@ Implement section `S8 - Runtime Recovery and Observability` in [VVE Deep Module 
 ## Resolution evidence
 
 Return liveness and readiness contracts, startup failure tests, drain and flush results, controlled restart timing, structured redacted event examples, soak metric availability, timer and resource ownership proof, rollback notes, and the focused commit.
+
+## Resolution
+
+Delivered `OperationalSignals` and `RuntimeControl` (Modules 10 and 11) so the Pilot process starts only after configuration, database, migrations, Module construction, and a persistence probe succeed; answers separate `/live` and `/ready`; drains collaboration, flushes snapshots, stops owned timers, and closes listeners/pools without `process.exit`; and emits bounded, redacted JSON evidence. Acknowledged Managed Board work survives two controlled restarts on the same PostgreSQL database with digest equality. Clients treat `serverDraining` as read-only and show Polish recovery copy.
+
+### Owned Interfaces
+
+- `OperationalSignals` (`server/src/pilot/operationalSignals.ts`): `record`, `measure`, `snapshot`. JSON stdout Adapter plus in-memory recording Adapter. Redacts tokens, passphrases, URLs, Student Labels, and binary payloads by construction.
+- `RuntimeControl` (`server/src/pilot/runtimeControl.ts`): `start`, `status`, `stop`. Typed failures: `invalid-configuration`, `dependency-unavailable`, `migration-failed`, `listener-failed`, `drain-timeout`/`flush` remaining in the shutdown report. Liveness ≠ readiness.
+
+### Consumed Interfaces
+
+- `PilotAvailability`, `CapabilityAccess`, `BoardLifecycle`, `BoardDocumentStore` / `CollaborationRuntime`, HTTP/WS transport (`realtimeListener`).
+- `CollaborationRuntime.stats()` was added so soak snapshots do not scrape logs. `drain` now flushes, emits `serverDraining`, and closes transports (1012). Optional `signals` on CapabilityAccess, BoardLifecycle, and CollaborationRuntime.
+
+### HTTP contracts
+
+- `GET /live` — 200 `{ live: true }` while the process is serving HTTP (including drain).
+- `GET /ready` — 200 only when database + collaboration persistence probes pass; body includes content-free `soak`. 503 during drain and before ready.
+- `GET /health` — Railway/Playwright wait target; 200 iff ready (`status: "ok"`). The previous `rooms` count is gone.
+
+Example `/ready` (trimmed): `{ "live": true, "ready": true, "status": "ready", "checks": { "database": true, "persistence": true }, "soak": { "eventLoopDelayMs": { "p95": 20.2 }, "memory": { "rssBytes": 150462464 }, "connections": 0, "boards": 0, "errors": { "persistence": 0, "unhandled": 0 } } }`.
+
+Redacted event example: `{ "name": "access.decision", "dimensions": { "action": "board.edit", "granted": false, "reason": "revoked", "credentialKind": "boardWs", "passphrase": "[redacted]" } }`.
+
+### Migrations and removed legacy paths
+
+- No new PostgreSQL schema. RuntimeControl runs `migrate.latest()` against `migrations-js`. `server/knexfile.ts` now uses the same `.js` directory so CLI and process lifecycle do not disagree on filenames.
+- Removed: import-time `server.listen` / `process.exit(0)` in `server.ts`; FilePersistence constructor I/O; RoomManager constructor disk load; `/health` room-count “ok”. Process Adapter only starts when `argv[1]` is `server.js|ts` and sets `process.exitCode` after `stop()` if the shutdown was unclean.
+- Legacy peer rooms remain ADR-0010 / dev-only; RuntimeControl hydrates and flushes `RoomManager` on start/stop.
+
+### Timer and resource ownership
+
+Ping, soak sampling, and `monitorEventLoopDelay` are registered by name on RuntimeControl. BoardLifecycle deletion sweep is started after construction and stopped on drain. After `stop()`, `status().resources.timers` is empty; double `stop()` returns the first report.
+
+### Focused commits
+
+- `e111aa6158f1b76b2bf43fae3cf1b3c8f3288fb5` — RuntimeControl, OperationalSignals, drain/restart tests, client draining copy.
+- `a1f8247931b177cd2a323b4176e9c7daf0b7d70e` — knexfile alignment, source-text test retargeting, visual evidence, this resolution.
+
+### Build and tests (2026-08-30)
+
+- Server `npm run build` (tsc) passed.
+- Server `npm test`: **132 passed / 132** across **15** files (was 118). New: `operationalSignals.test.ts` (3), `runtimeControl.test.ts` (9), drain oracle, `/live`/`/ready`.
+- Frontend `npm run build` passed.
+- Frontend `npm test`: **126 passed / 126** across **11** files (was 124). Added draining protocol + Polish banner tests.
+- Playwright Pilot flow: **9/9** then **9/9** again against the same persistent `vve_test` database with no manual cleanup (`CI=1`, `VVE_E2E_BACKEND_PORT=8001`).
+- `git diff --check` clean.
+- Controlled restart: two sequential start→acknowledge→stop→start→digest-equality cycles; both `< 30s` (test body 268ms for both cycles on this host). `remaining`/`clean:false` when the deadline has already passed.
+
+### Browser and visual evidence
+
+Built-in computerUse was not in this agent’s tool catalog. Verification used Playwright Chromium (`channel: chrome`) against the real Vite+RuntimeControl stack:
+
+- Desktop 1440×900 and iPad 768×1024 student canvas: `docs/implementation/evidence/vve-108/student-desktop-1440x900.png`, `student-ipad-768x1024.png`.
+- Student entry (iPad): `student-entry-ipad-768x1024.png`.
+- Teacher dashboard: `teacher-desktop-1440x900.png`.
+- Overflow: `overflow.json` — no horizontal overflow at 1440×900 or 768×1024.
+- Console: `*-console.json` — no page errors.
+- Health JSON: `live.json`, `ready.json`, `health.json`.
+- Draining/cancelled overlay copy is covered by unit tests (`Serwer jest restartowany. Twoja praca zostanie przywrócona.`); reduced-motion disables the connecting spinner animation.
+
+### Rollback
+
+Revert the slice commits. No schema migration to undo. A previous known-good Railway revision remains the operational rollback path (Pilot release gate).
+
+### Bounded deviations (later slices)
+
+- Three-hour 57-client soak and 88-client stress remain **VVE-109**.
+- Snapshot `eventLoopDelayMs.p50` is the last sample; p95 uses `monitorEventLoopDelay` percentile at sample time (and max of recorded samples in the aggregate).
+- Apple Pencil / graphics-tablet confirmation remains Kordian’s hardware gate.
+- `FilePersistence` still exists for the internal legacy peer-room surface; it is not the Managed Board path.
+
+## Remediation (2026-09-18, uncommitted diff on `codex/antigravity-vve-108-remediation`)
+
+All review findings for this slice (Fable 5121473594 + inline threads, Codex follow-up 5122516738) are addressed and verified locally; matrix and evidence in `antigravity-remediation-coordination/VVE-108.md`.
+
+- 108-R1 P1: bounded refreshed read/write readiness (1s probe deadline, 200ms interval, read-only/recovery DB rejected, probe reason surfaced, startup-exception cleanup).
+- 108-R2 P1: one deadline through drain/compaction/flush/listener/pool; phase-accurate `remaining`; 400ms drain under 80ms deadline now stops <380ms (was 402ms).
+- 108-Q1 P2: true percentile window (500 samples) with controlled-distribution test.
+- 108-S1 P2: capture-boundary redaction; all evidence JSONs sanitized; teacher/admin screenshots replaced; hygiene test added (`evidenceHygiene.spec.ts`).
+- 108-S2 P2: PG restart gate on REAL `knex migrate.latest()` + canonical `drawings` rectangle mutations + live client; run against isolated PostgreSQL (docker, port 5499): **143/143 server tests, 0 skipped**.
+- 108-I1 P1: VVE-107 ResourceGovernor composed through RuntimeControl into httpApp (JSON limit, `/api/resource-limits`), capabilityAccess (admin login), listener (maxPayload/IP/message window/slow client/legacy rooms) and collaboration runtime; 57 clients / 22 boards / shared IP admitted with mutations + awareness (`realtimeComposition.test.ts`); Polish typed denial on board cap.
+- Browser restart gate (ZCode built-in browser, GUI): read-only banner 340–462ms after SIGTERM, persistent through reconnect; server-side WS re-admission 154ms after listen; client recovery 1.8–3.5s; durable digest parity `8b331a34…` with zero acknowledged loss; process exits by itself 1.1s after SIGTERM (bounded adapter exit).
+- Final suites: server 143/143 (0 skipped with PG), frontend 128/128, both production builds clean.
+
+### Final integration evidence (2026-09-18)
+
+Four-slice integration assembled in this worktree as an uncommitted diff (105→106→107→108, deliberate conflict resolutions — see `docs/implementation/evidence/integration/`). Combined: server **171/171** (0 skipped, isolated PostgreSQL on port 5499), frontend **197/197**, both builds clean. Live merged-server gates: 57 clients / 22 boards / shared IP fully admitted with 22/22 acknowledged mutations; controlled restart with GUI-drawn canonical objects → clean stop, client re-admission 1202ms after listen, durable digest parity, portrait viewport without overflow.

@@ -14,17 +14,22 @@
 import * as Y from 'yjs';
 import {
   applyBoardCommand,
+  createBoardSpatialIndex,
   normalizeBoardObject,
   sceneDrawings,
   type BoardCommand,
   type BoardRole,
+  type BoardSpatialIndex,
   type CommandFailure,
-  type SceneObject
+  type SceneObject,
+  type ScenePoint
 } from '@pilot/boardScene';
 
 export type SessionResult =
   | { ok: true }
   | { ok: false; reason: CommandFailure['reason'] | 'readOnly'; message: string };
+
+export type LessonPanel = 'calculator' | 'mathGraph' | 'physicsGraph';
 
 export interface WhiteboardSession {
   execute(command: BoardCommand): SessionResult;
@@ -33,6 +38,8 @@ export interface WhiteboardSession {
   canUndo(): boolean;
   canRedo(): boolean;
   snapshot(): readonly SceneObject[];
+  queryObjectsNear(point: ScenePoint, radius: number): SceneObject[];
+  spatialIndex(): BoardSpatialIndex;
   select(id: string | null): boolean;
   selectedObjectId(): string | null;
   viewport(): Readonly<SessionViewport>;
@@ -40,6 +47,10 @@ export interface WhiteboardSession {
   panBy(dx: number, dy: number): Readonly<SessionViewport>;
   zoomAt(screenX: number, screenY: number, zoom: number): Readonly<SessionViewport>;
   resetViewport(): Readonly<SessionViewport>;
+  /** Local panel state; setting one panel atomically closes the previous one. */
+  setActivePanel(panel: LessonPanel | null): LessonPanel | null;
+  togglePanel(panel: LessonPanel): LessonPanel | null;
+  activePanel(): LessonPanel | null;
   newObjectId(): string;
   /** True while this session may write (synchronized or local board). */
   isEditable(): boolean;
@@ -59,6 +70,7 @@ export interface CreateWhiteboardSessionOptions {
   isEditable?: () => boolean;
   initialViewport?: SessionViewport;
   onHistoryChange?: (state: { canUndo: boolean; canRedo: boolean }) => void;
+  onPanelChange?: (panel: LessonPanel | null) => void;
 }
 
 /** Polish copy for the user-facing failure surface (spec: Polish UI text). */
@@ -95,6 +107,72 @@ export const createWhiteboardSession = (
   undoManager.on('stack-cleared', notifyHistory);
   let selection: string | null = null;
   let viewport: SessionViewport = options.initialViewport ?? { zoom: 1, panX: 0, panY: 0 };
+  let activePanel: LessonPanel | null = null;
+
+  // Incremental spatial index. Per-map observers catch field mutations
+  // (points appended, move/resize fields); the array observer replays its
+  // delta so insertions and deletions update the index without ever
+  // rebuilding the whole scene per document change or pointer sample.
+  const spatialIndex = createBoardSpatialIndex();
+  const mapObservers = new WeakMap<Y.Map<unknown>, () => void>();
+  const trackedMaps = new Map<string, Y.Map<unknown>>();
+  const orderedIds: string[] = [];
+  const toSceneObject = (map: Y.Map<unknown>): SceneObject | null => {
+    const object = normalizeBoardObject(map.toJSON() as SceneObject);
+    return object && typeof object.id === 'string' && object.id ? object : null;
+  };
+  const trackMap = (map: Y.Map<unknown>): void => {
+    if (mapObservers.has(map)) return;
+    const handler = () => {
+      const object = toSceneObject(map);
+      if (object) spatialIndex.update(object);
+    };
+    mapObservers.set(map, handler);
+    map.observe(handler);
+    const object = toSceneObject(map);
+    if (object) {
+      trackedMaps.set(object.id, map);
+      orderedIds.push(object.id);
+      spatialIndex.insert(object);
+    }
+  };
+  const untrackMap = (map: Y.Map<unknown>): void => {
+    const handler = mapObservers.get(map);
+    if (handler) {
+      map.unobserve(handler);
+      mapObservers.delete(map);
+    }
+    const object = toSceneObject(map);
+    if (object) trackedMaps.delete(object.id);
+  };
+  const syncSpatialIndexArray = (event: Y.YArrayEvent<unknown>): void => {
+    let offset = 0;
+    for (const deltaItem of event.delta) {
+      if (typeof deltaItem.retain === 'number') {
+        offset += deltaItem.retain;
+      } else if (Array.isArray(deltaItem.insert)) {
+        for (const item of deltaItem.insert) {
+          if (item instanceof Y.Map) {
+            trackMap(item);
+            offset++;
+          } else {
+            offset++;
+          }
+        }
+      } else if (typeof deltaItem.delete === 'number') {
+        const removedIds = orderedIds.splice(offset, deltaItem.delete);
+        for (const id of removedIds) {
+          const map = trackedMaps.get(id);
+          if (map) untrackMap(map);
+          spatialIndex.remove(id);
+        }
+      }
+    }
+  };
+  for (const map of drawings.toArray()) {
+    if (map instanceof Y.Map) trackMap(map);
+  }
+  drawings.observe(syncSpatialIndexArray);
 
   const commitViewport = (next: SessionViewport): Readonly<SessionViewport> => {
     if (
@@ -136,6 +214,8 @@ export const createWhiteboardSession = (
     snapshot: () => sceneDrawings(ydoc).toArray().map((map) =>
       normalizeBoardObject(map.toJSON() as SceneObject)
     ),
+    queryObjectsNear: (point: ScenePoint, radius: number) => spatialIndex.queryNear(point, radius),
+    spatialIndex: () => spatialIndex,
     select: (id) => {
       if (id === null) {
         selection = null;
@@ -166,6 +246,17 @@ export const createWhiteboardSession = (
       });
     },
     resetViewport: () => commitViewport({ zoom: 1, panX: 0, panY: 0 }),
+    setActivePanel: (panel) => {
+      activePanel = panel;
+      options.onPanelChange?.(activePanel);
+      return activePanel;
+    },
+    togglePanel: (panel) => {
+      activePanel = activePanel === panel ? null : panel;
+      options.onPanelChange?.(activePanel);
+      return activePanel;
+    },
+    activePanel: () => activePanel,
     newObjectId: () => {
       if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
         return crypto.randomUUID();
@@ -176,6 +267,10 @@ export const createWhiteboardSession = (
     role,
     dispose: () => {
       selection = null;
+      drawings.unobserve(syncSpatialIndexArray);
+      for (const map of Array.from(trackedMaps.values())) untrackMap(map);
+      spatialIndex.clear();
+      activePanel = null;
       undoManager.off('stack-item-added', notifyHistory);
       undoManager.off('stack-item-popped', notifyHistory);
       undoManager.off('stack-cleared', notifyHistory);

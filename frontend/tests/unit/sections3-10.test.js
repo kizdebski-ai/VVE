@@ -52,22 +52,18 @@ describe('3.5: ColorPicker click-outside handler', () => {
 // ─── Section 5: Memory Leaks ─────────────────────────────────────────────────
 
 describe('5.7: WebSocket max payload', () => {
-  it('server.ts sets maxPayload on WebSocketServer', () => {
+  it('realtime listener sets maxPayload on WebSocketServer', () => {
     const src = readFileSync(
-      resolve(__dirname, '../../../server/src/server.ts'),
+      resolve(__dirname, '../../../server/src/pilot/realtimeListener.ts'),
       'utf-8'
     );
     expect(src).toContain('maxPayload');
   });
 });
 
-describe('5.8: Specific watchers instead of deep watcher', () => {
-  it('App.vue watches preset and smoothingFactor separately', () => {
-    const src = readSrc('App.vue');
-    expect(src).toContain("handwritingStylerOptions.value.preset");
-    expect(src).toContain("handwritingStylerOptions.value.smoothingFactor");
-  });
-});
+// 5.8: Obsolete unmounted HandwritingStyler preview RAF loops and competing
+// smoothing watchers were removed with VVE-105. Input pipeline smoothing and
+// input style selection are verified behaviorally in inputPipeline.test.ts.
 
 // ─── Section 6: Synchronization ──────────────────────────────────────────────
 
@@ -277,14 +273,13 @@ describe('9.8: Unused CSS variables removed', () => {
 
 // ─── Section 10: Missing Features ────────────────────────────────────────────
 
-describe('10.1: Pen preset keyboard shortcuts 1-4', () => {
-  it('useKeyboardShortcuts.js has pen preset shortcuts', () => {
+describe('10.1: Input Style keyboard shortcuts', () => {
+  it('useKeyboardShortcuts.js maps 1/2 to Mysz/Pióro Input Style', () => {
     const src = readSrc('composables/useKeyboardShortcuts.js');
     expect(src).toContain('selectPenPreset');
-    expect(src).toContain("'1': 'gel'");
-    expect(src).toContain("'2': 'technical'");
-    expect(src).toContain("'3': 'marker'");
-    expect(src).toContain("'4': 'calligraphy'");
+    expect(src).toContain("'1': 'mouse'");
+    expect(src).toContain("'2': 'pen'");
+    expect(src).not.toContain("'1': 'gel'");
   });
 
   it('WhiteboardCanvas.vue wires up useKeyboardShortcuts composable', () => {
@@ -292,8 +287,14 @@ describe('10.1: Pen preset keyboard shortcuts 1-4', () => {
     expect(src).toContain('useKeyboardShortcuts({');
     expect(src).toContain("emit('select-pen-preset'");
   });
-});
 
+  it('App.vue auto-selects Input Style from observed pointer type until override', () => {
+    const src = readSrc('App.vue');
+    expect(src).toContain('@pointer-observed="handlePointerObserved"');
+    expect(src).toContain('handlePointerObserved,');
+    expect(src).toContain('suggestProfile');
+  });
+});
 describe('10.3: Extended color palette (20+ colors)', () => {
   it('ColorPicker.vue has 20+ basic colors', () => {
     const src = readSrc('components/ColorPicker.vue');

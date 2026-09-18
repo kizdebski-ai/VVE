@@ -25,6 +25,7 @@ export function useKeyboardShortcuts({
   endTouchGesture,
   applyMathAnswer,
   selectPenPreset,
+  deleteSelection,
 }) {
 
   const handleKeyDown = (event) => {
@@ -81,15 +82,22 @@ export function useKeyboardShortcuts({
       if (lowerKey === 'p') { setTool('pen'); return; }
       if (lowerKey === 't') { setTool('text'); return; }
       if (lowerKey === 'e') { setTool('eraser'); return; }
+      if (lowerKey === 's') { setTool('shapes'); return; }
+      if (lowerKey === 'l') { setTool('lines'); return; }
 
-      // 10.1: Pen preset shortcuts 1-4
+      // 10.1: Input Style shortcuts — 1 Mysz, 2 Pióro
       if (selectPenPreset) {
-        const presetMap = { '1': 'gel', '2': 'technical', '3': 'marker', '4': 'calligraphy' };
-        if (presetMap[event.key]) {
-          selectPenPreset(presetMap[event.key]);
+        const profileMap = { '1': 'mouse', '2': 'pen' };
+        if (profileMap[event.key]) {
+          selectPenPreset(profileMap[event.key]);
           return;
         }
       }
+    }
+
+    if ((event.key === 'Delete' || event.key === 'Backspace') && deleteSelection?.()) {
+      event.preventDefault();
+      return;
     }
 
     // Undo / Redo

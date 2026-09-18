@@ -262,4 +262,81 @@ describe('MovableObject.vue', () => {
       expect(wrapper.emitted('update:object')).toBeTruthy();
     });
   });
+
+  describe('Gesture cancellation and pointer identity', () => {
+    const dragSetup = async () => {
+      wrapper = createComponent({ ...defaultProps, isSelected: true });
+      const contentArea = wrapper.find('.object-content');
+      await contentArea.trigger('pointerdown', {
+        clientX: 50, clientY: 60, button: 0, pointerId: 5, pointerType: 'touch', isPrimary: true, buttons: 1
+      });
+      dispatchPointer(document, 'pointermove', { clientX: 70, clientY: 90, buttons: 1, pointerId: 5 });
+      await nextTick();
+      return contentArea;
+    };
+
+    it('moves a touch-type pointer drag and commits one move intent on pointerup', async () => {
+      await dragSetup();
+      dispatchPointer(document, 'pointerup', { button: 0, pointerId: 5 });
+      await nextTick();
+
+      expect(wrapper.emitted('commit-transform')).toEqual([[{
+        kind: 'move',
+        id: initialObjectData.id,
+        x: initialObjectData.x + 20,
+        y: initialObjectData.y + 30,
+      }]]);
+    });
+
+    it('pointercancel ends the drag without committing a transform and detaches listeners', async () => {
+      const contentArea = await dragSetup();
+      const updatesBeforeCancel = (wrapper.emitted('update:object') || []).length;
+
+      dispatchPointer(document, 'pointercancel', { pointerId: 5 });
+      await nextTick();
+
+      // No transform command and no partial state: the preview reset restores
+      // the original position from the document.
+      expect(wrapper.emitted('commit-transform')).toBeFalsy();
+      expect(wrapper.emitted('interaction-end')).toEqual([[initialObjectData.id]]);
+      const restoration = wrapper.emitted('update:object')[wrapper.emitted('update:object').length - 1][0];
+      expect(restoration).toMatchObject({ x: initialObjectData.x, y: initialObjectData.y });
+
+      // Listeners are cleaned up: later moves for the same gesture are inert.
+      dispatchPointer(document, 'pointermove', { clientX: 200, clientY: 260, buttons: 1, pointerId: 5 });
+      await nextTick();
+      expect(wrapper.emitted('commit-transform')).toBeFalsy();
+      expect((wrapper.emitted('update:object') || []).length).toBe(updatesBeforeCancel + 1);
+    });
+
+    it('window blur cancels an in-progress drag without committing', async () => {
+      await dragSetup();
+
+      window.dispatchEvent(new Event('blur'));
+      await nextTick();
+
+      expect(wrapper.emitted('commit-transform')).toBeFalsy();
+      expect(wrapper.emitted('interaction-end')).toEqual([[initialObjectData.id]]);
+
+      dispatchPointer(document, 'pointerup', { button: 0, pointerId: 5 });
+      await nextTick();
+      expect(wrapper.emitted('commit-transform')).toBeFalsy();
+    });
+
+    it('pointercancel during a resize gesture does not emit a resize commit', async () => {
+      wrapper = createComponent({ ...defaultProps, isSelected: true });
+      const handle = wrapper.findAll('.resize-handle').at(-1);
+      await handle.trigger('pointerdown', {
+        clientX: 300, clientY: 250, button: 0, pointerId: 9, pointerType: 'pen', isPrimary: true, buttons: 1
+      });
+      dispatchPointer(document, 'pointermove', { clientX: 340, clientY: 290, buttons: 1, pointerId: 9 });
+      await nextTick();
+
+      dispatchPointer(document, 'pointercancel', { pointerId: 9 });
+      await nextTick();
+
+      expect(wrapper.emitted('commit-transform')).toBeFalsy();
+      expect(wrapper.emitted('interaction-end')).toEqual([[initialObjectData.id]]);
+    });
+  });
 });

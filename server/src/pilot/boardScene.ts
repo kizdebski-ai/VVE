@@ -13,6 +13,7 @@
 //   distinguishable from ordinary deletion and reserved for the Teacher;
 // - validation bounds coordinates, point counts, string sizes and image size.
 import * as Y from 'yjs';
+import { MEASURED_RESOURCE_LIMITS } from './resourceLimits';
 
 export type BoardRole = 'teacher' | 'student' | 'developer';
 
@@ -41,20 +42,54 @@ export const SHAPE_TYPES = [
 ] as const;
 export type ShapeType = (typeof SHAPE_TYPES)[number];
 
-/**
- * Tool families whose full collaborative workflow lands with VVE-106. Their
- * objects already flow through the same command layer, but only a bounded
- * generic validation applies until that slice canonicalizes each of them.
- */
-export const EXTENSION_TYPES = [
+/** VVE-106 lesson objects with fully canonical, bounded schemas. */
+export const LESSON_OBJECT_TYPES = [
   'coordinateSystem2D',
   'coordinateSystem3D',
   'mathFunctionPlot',
-  'physicsDataPlot',
-  'functionPlot',
-  'latex'
+  'physicsDataPlot'
 ] as const;
-export type ExtensionType = (typeof EXTENSION_TYPES)[number];
+export type LessonObjectType = (typeof LESSON_OBJECT_TYPES)[number];
+
+export const LESSON_OBJECT_DEFAULTS = {
+  coordinateSystem2D: {
+    width: 400,
+    height: 300,
+    grid: true,
+    xLabel: 'x',
+    yLabel: 'y',
+    lineWidth: 2,
+    color: '#1f2937'
+  },
+  coordinateSystem3D: {
+    width: 400,
+    height: 300,
+    grid: true,
+    xLabel: 'x',
+    yLabel: 'y',
+    zLabel: 'z',
+    lineWidth: 2,
+    color: '#1f2937'
+  },
+  mathFunctionPlot: {
+    width: 400,
+    height: 300,
+    expression: 'x',
+    xRange: [-10, 10] as [number, number],
+    xLabel: 'x',
+    yLabel: 'f(x)',
+    lineWidth: 3,
+    color: '#2563eb'
+  },
+  physicsDataPlot: {
+    width: 400,
+    height: 300,
+    xLabel: 't',
+    yLabel: 'v',
+    lineWidth: 2,
+    color: '#2563eb'
+  }
+} as const;
 
 export const BINDABLE_TYPES: ReadonlySet<string> = new Set([
   ...SHAPE_TYPES,
@@ -82,7 +117,7 @@ export const SCENE_LIMITS = {
   maxFontSize: 400,
   minFontSize: 4,
   maxRoughness: 3,
-  maxImageSrcBytes: 5 * 1024 * 1024,
+  maxImageSrcBytes: MEASURED_RESOURCE_LIMITS.maxImageDataUrlChars,
   maxExtensionJsonBytes: 512 * 1024,
   maxPenConfigJsonBytes: 4 * 1024
 } as const;
@@ -91,6 +126,15 @@ export interface ScenePoint {
   x: number;
   y: number;
   t?: number;
+  /** Pointer pressure in [0, 1]. Omitted when the input device did not report it. */
+  p?: number;
+}
+
+export interface SceneBounds {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
 }
 
 export interface LineBinding {
@@ -172,6 +216,12 @@ const isPlainPoint = (value: unknown): value is ScenePoint => {
   const point = value as Record<string, unknown>;
   if (!isCoordinate(point.x) || !isCoordinate(point.y)) return false;
   if (point.t !== undefined && !isFiniteNumber(point.t)) return false;
+  if (
+    point.p !== undefined &&
+    (!isFiniteNumber(point.p) || point.p < 0 || point.p > 1)
+  ) {
+    return false;
+  }
   return true;
 };
 
@@ -284,38 +334,6 @@ const jsonByteLength = (value: unknown): number => {
   }
 };
 
-const validateExtensionValue = (value: unknown, depth = 0): ValidationResult => {
-  if (depth > 6) return fail('oversized', 'The object nests too deeply.');
-  if (value === null || value === undefined || typeof value === 'boolean') return { ok: true };
-  if (typeof value === 'number') {
-    return Number.isFinite(value)
-      ? { ok: true }
-      : fail('invalidGeometry', 'A numeric field is not finite.');
-  }
-  if (typeof value === 'string') {
-    return value.length <= SCENE_LIMITS.maxStringLength
-      ? { ok: true }
-      : fail('oversized', 'A text field exceeds the allowed length.');
-  }
-  if (Array.isArray(value)) {
-    if (value.length > SCENE_LIMITS.maxPoints) {
-      return fail('oversized', 'An array field exceeds the allowed length.');
-    }
-    for (const item of value) {
-      const result = validateExtensionValue(item, depth + 1);
-      if (!result.ok) return result;
-    }
-    return { ok: true };
-  }
-  if (typeof value === 'object') {
-    for (const item of Object.values(value as Record<string, unknown>)) {
-      const result = validateExtensionValue(item, depth + 1);
-      if (!result.ok) return result;
-    }
-    return { ok: true };
-  }
-  return fail('invalidContent', 'The object contains an unsupported value.');
-};
 
 /**
  * Validate one scene object against the canonical schema. The input is plain
@@ -434,12 +452,63 @@ export const validateBoardObject = (value: unknown): ValidationResult => {
     return validateBounds(object);
   }
 
-  if ((EXTENSION_TYPES as readonly string[]).includes(type)) {
-    if (jsonByteLength(object) > SCENE_LIMITS.maxExtensionJsonBytes) {
-      return fail('oversized', 'The object payload is too large.');
+  if (type === 'coordinateSystem2D' || type === 'coordinateSystem3D') {
+    const bounds = validateBounds(object);
+    if (!bounds.ok) return bounds;
+    const labels = type === 'coordinateSystem3D'
+      ? [object.xLabel, object.yLabel, object.zLabel]
+      : [object.xLabel, object.yLabel];
+    if (labels.some((label) => label !== undefined && !isBoundedString(label, 32))) {
+      return fail('invalidContent', 'An axis label is missing or too long.');
     }
-    return validateExtensionValue(object);
+    if (object.grid !== undefined && typeof object.grid !== 'boolean') {
+      return fail('invalidContent', 'The coordinate grid setting is invalid.');
+    }
+    return { ok: true };
   }
+
+  if (type === 'mathFunctionPlot') {
+    const bounds = validateBounds(object);
+    if (!bounds.ok) return bounds;
+    if (!isBoundedString(object.expression, 1_024)) {
+      return fail('invalidContent', 'A mathematical graph needs a bounded expression.');
+    }
+    const range = object.xRange;
+    if (
+      !Array.isArray(range) ||
+      range.length !== 2 ||
+      !isCoordinate(range[0]) ||
+      !isCoordinate(range[1]) ||
+      range[0] >= range[1]
+    ) {
+      return fail('invalidGeometry', 'The mathematical graph range is invalid.');
+    }
+    return { ok: true };
+  }
+
+  if (type === 'physicsDataPlot') {
+    const bounds = validateBounds(object);
+    if (!bounds.ok) return bounds;
+    if (!validatePointList(object.points, 2)) {
+      return fail('invalidGeometry', 'A physical graph needs at least two finite data points.');
+    }
+    if (
+      (object.points as ScenePoint[]).some((point) =>
+        Object.keys(point).some((key) => key !== 'x' && key !== 'y')
+      )
+    ) {
+      return fail('invalidContent', 'A physical graph point must contain only x and y.');
+    }
+    if (
+      [object.xLabel, object.yLabel].some(
+        (label) => label !== undefined && !isBoundedString(label, 32)
+      )
+    ) {
+      return fail('invalidContent', 'A physical graph axis label is missing or too long.');
+    }
+    return { ok: true };
+  }
+
 
   return fail('unknownType', `The object type "${type}" is not part of the Pilot schema.`);
 };
@@ -465,8 +534,312 @@ const boundsFromPoints = (points: ScenePoint[]) => {
   };
 };
 
-const plainPoint = (point: ScenePoint): ScenePoint =>
-  point.t === undefined ? { x: point.x, y: point.y } : { x: point.x, y: point.y, t: point.t };
+const plainPoint = (point: ScenePoint): ScenePoint => {
+  const next: ScenePoint = { x: point.x, y: point.y };
+  if (point.t !== undefined) next.t = point.t;
+  if (point.p !== undefined) next.p = point.p;
+  return next;
+};
+
+/**
+ * Axis-aligned bounds used by InputPipeline hit testing. Prefers stored
+ * `x/y/width/height` (canonical for every S4 family after VVE-104) so a
+ * pointer sample never has to convert nested Yjs values.
+ */
+export const sceneObjectBounds = (object: SceneObject): SceneBounds | null => {
+  const x = object.x;
+  const y = object.y;
+  const width = object.width;
+  const height = object.height;
+  if (isFiniteNumber(x) && isFiniteNumber(y) && isFiniteNumber(width) && isFiniteNumber(height)) {
+    return { x, y, width: Math.abs(width), height: Math.abs(height) };
+  }
+  const start = object.start as ScenePoint | undefined;
+  const end = object.end as ScenePoint | undefined;
+  if (isPlainPoint(start) && isPlainPoint(end)) {
+    return {
+      x: Math.min(start.x, end.x),
+      y: Math.min(start.y, end.y),
+      width: Math.abs(end.x - start.x),
+      height: Math.abs(end.y - start.y)
+    };
+  }
+  if (validatePointList(object.points, 1)) {
+    return boundsFromPoints(object.points as ScenePoint[]);
+  }
+  return null;
+};
+
+/**
+ * Spatial candidate index: spatial hash grid for fast, bounded hit testing.
+ * Updated incrementally on document changes instead of converting or scanning
+ * the full scene per pointer sample.
+ */
+export interface BoardSpatialIndex {
+  insert(object: SceneObject): void;
+  update(object: SceneObject): void;
+  remove(id: string): void;
+  clear(): void;
+  load(objects: readonly SceneObject[]): void;
+  size(): number;
+  queryNear(point: ScenePoint, radius: number): SceneObject[];
+  lastQueryCandidateCount(): number;
+}
+
+const DEFAULT_CELL_SIZE = 256;
+const MAX_CELL_SPAN = 64;
+
+export const createBoardSpatialIndex = (
+  initialObjects?: readonly SceneObject[],
+  cellSize = DEFAULT_CELL_SIZE
+): BoardSpatialIndex => {
+  const grid = new Map<string, Set<string>>();
+  interface Entry {
+    object: SceneObject;
+    bounds: SceneBounds | null;
+    cellKeys: string[];
+    isLarge: boolean;
+    order: number;
+  }
+  const entries = new Map<string, Entry>();
+  const largeObjectIds = new Set<string>();
+  let orderSeq = 0;
+  let lastCandidatesCount = 0;
+
+  const computeCells = (bounds: SceneBounds): { cellKeys: string[]; isLarge: boolean } => {
+    const minCX = Math.floor(bounds.x / cellSize);
+    const maxCX = Math.floor((bounds.x + bounds.width) / cellSize);
+    const minCY = Math.floor(bounds.y / cellSize);
+    const maxCY = Math.floor((bounds.y + bounds.height) / cellSize);
+    const totalCells = (maxCX - minCX + 1) * (maxCY - minCY + 1);
+    if (totalCells > MAX_CELL_SPAN) {
+      return { cellKeys: [], isLarge: true };
+    }
+    const cellKeys: string[] = [];
+    for (let cx = minCX; cx <= maxCX; cx++) {
+      for (let cy = minCY; cy <= maxCY; cy++) {
+        cellKeys.push(`${cx}:${cy}`);
+      }
+    }
+    return { cellKeys, isLarge: false };
+  };
+
+  const removeEntryCells = (entry: Entry) => {
+    if (entry.isLarge) {
+      largeObjectIds.delete(entry.object.id);
+    }
+    for (const key of entry.cellKeys) {
+      const set = grid.get(key);
+      if (set) {
+        set.delete(entry.object.id);
+        if (set.size === 0) grid.delete(key);
+      }
+    }
+  };
+
+  const insert = (object: SceneObject): void => {
+    if (!object || !object.id) return;
+    const existing = entries.get(object.id);
+    if (existing) {
+      update(object);
+      return;
+    }
+    orderSeq++;
+    const bounds = sceneObjectBounds(object);
+    if (!bounds) {
+      largeObjectIds.add(object.id);
+      entries.set(object.id, {
+        object,
+        bounds: null,
+        cellKeys: [],
+        isLarge: true,
+        order: orderSeq
+      });
+      return;
+    }
+    const { cellKeys, isLarge } = computeCells(bounds);
+    if (isLarge) {
+      largeObjectIds.add(object.id);
+    } else {
+      for (const key of cellKeys) {
+        let set = grid.get(key);
+        if (!set) {
+          set = new Set();
+          grid.set(key, set);
+        }
+        set.add(object.id);
+      }
+    }
+    entries.set(object.id, {
+      object,
+      bounds,
+      cellKeys,
+      isLarge,
+      order: orderSeq
+    });
+  };
+
+  const update = (object: SceneObject): void => {
+    if (!object || !object.id) return;
+    const existing = entries.get(object.id);
+    if (!existing) {
+      insert(object);
+      return;
+    }
+    removeEntryCells(existing);
+    const bounds = sceneObjectBounds(object);
+    if (!bounds) {
+      largeObjectIds.add(object.id);
+      existing.object = object;
+      existing.bounds = null;
+      existing.cellKeys = [];
+      existing.isLarge = true;
+      return;
+    }
+    const { cellKeys, isLarge } = computeCells(bounds);
+    if (isLarge) {
+      largeObjectIds.add(object.id);
+    } else {
+      for (const key of cellKeys) {
+        let set = grid.get(key);
+        if (!set) {
+          set = new Set();
+          grid.set(key, set);
+        }
+        set.add(object.id);
+      }
+    }
+    existing.object = object;
+    existing.bounds = bounds;
+    existing.cellKeys = cellKeys;
+    existing.isLarge = isLarge;
+  };
+
+  const remove = (id: string): void => {
+    const existing = entries.get(id);
+    if (!existing) return;
+    removeEntryCells(existing);
+    entries.delete(id);
+  };
+
+  const clear = (): void => {
+    grid.clear();
+    entries.clear();
+    largeObjectIds.clear();
+    orderSeq = 0;
+    lastCandidatesCount = 0;
+  };
+
+  const load = (objects: readonly SceneObject[]): void => {
+    clear();
+    if (!Array.isArray(objects)) return;
+    for (const obj of objects) {
+      insert(obj);
+    }
+  };
+
+  const queryNear = (point: ScenePoint, radius: number): SceneObject[] => {
+    if (!isPlainPoint(point) || !Number.isFinite(radius) || radius < 0) {
+      lastCandidatesCount = 0;
+      return [];
+    }
+    const minCX = Math.floor((point.x - radius) / cellSize);
+    const maxCX = Math.floor((point.x + radius) / cellSize);
+    const minCY = Math.floor((point.y - radius) / cellSize);
+    const maxCY = Math.floor((point.y + radius) / cellSize);
+
+    const candidateIds = new Set<string>();
+    for (const id of largeObjectIds) {
+      candidateIds.add(id);
+    }
+    for (let cx = minCX; cx <= maxCX; cx++) {
+      for (let cy = minCY; cy <= maxCY; cy++) {
+        const set = grid.get(`${cx}:${cy}`);
+        if (set) {
+          for (const id of set) candidateIds.add(id);
+        }
+      }
+    }
+    lastCandidatesCount = candidateIds.size;
+    if (candidateIds.size === 0) return [];
+
+    const hits: Entry[] = [];
+    for (const id of candidateIds) {
+      const entry = entries.get(id);
+      if (!entry) continue;
+      const bounds = entry.bounds;
+      if (!bounds) {
+        hits.push(entry);
+        continue;
+      }
+      if (
+        point.x >= bounds.x - radius &&
+        point.x <= bounds.x + bounds.width + radius &&
+        point.y >= bounds.y - radius &&
+        point.y <= bounds.y + bounds.height + radius
+      ) {
+        hits.push(entry);
+      }
+    }
+    // Return top-most-first (reverse document order)
+    hits.sort((a, b) => b.order - a.order);
+    return hits.map((entry) => entry.object);
+  };
+
+  if (initialObjects) {
+    load(initialObjects);
+  }
+
+  return {
+    insert,
+    update,
+    remove,
+    clear,
+    load,
+    size: () => entries.size,
+    queryNear,
+    lastQueryCandidateCount: () => lastCandidatesCount
+  };
+};
+
+/**
+ * Bounded candidate query: AABB overlap around a world point. Returns
+ * top-most-first (reverse document order) so eraser/select hit testing
+ * never walks or converts the rest of the scene. Supports BoardSpatialIndex
+ * or a static object array.
+ */
+export const queryObjectsNear = (
+  objectsOrIndex: readonly SceneObject[] | BoardSpatialIndex,
+  point: ScenePoint,
+  radius: number
+): SceneObject[] => {
+  if (!isPlainPoint(point) || !Number.isFinite(radius) || radius < 0) return [];
+  if (
+    typeof objectsOrIndex === 'object' &&
+    objectsOrIndex !== null &&
+    'queryNear' in objectsOrIndex &&
+    typeof (objectsOrIndex as BoardSpatialIndex).queryNear === 'function'
+  ) {
+    return (objectsOrIndex as BoardSpatialIndex).queryNear(point, radius);
+  }
+  const objects = objectsOrIndex as readonly SceneObject[];
+  const hits: SceneObject[] = [];
+  for (let index = objects.length - 1; index >= 0; index--) {
+    const object = objects[index];
+    if (!object) continue;
+    const bounds = sceneObjectBounds(object);
+    if (!bounds) continue;
+    if (
+      point.x >= bounds.x - radius &&
+      point.x <= bounds.x + bounds.width + radius &&
+      point.y >= bounds.y - radius &&
+      point.y <= bounds.y + bounds.height + radius
+    ) {
+      hits.push(object);
+    }
+  }
+  return hits;
+};
 
 const CANONICAL_COMMON_KEYS = ['id', 'type', 'rotation', 'timestamp', 'color', 'lineWidth'] as const;
 const CANONICAL_KEYS: Record<string, readonly string[]> = {
@@ -497,6 +870,48 @@ const CANONICAL_KEYS: Record<string, readonly string[]> = {
   ],
   text: [...CANONICAL_COMMON_KEYS, 'text', 'fontSize', 'x', 'y', 'width', 'height'],
   image: [...CANONICAL_COMMON_KEYS, 'src', 'x', 'y', 'width', 'height'],
+  coordinateSystem2D: [
+    ...CANONICAL_COMMON_KEYS,
+    'x',
+    'y',
+    'width',
+    'height',
+    'grid',
+    'xLabel',
+    'yLabel'
+  ],
+  coordinateSystem3D: [
+    ...CANONICAL_COMMON_KEYS,
+    'x',
+    'y',
+    'width',
+    'height',
+    'grid',
+    'xLabel',
+    'yLabel',
+    'zLabel'
+  ],
+  mathFunctionPlot: [
+    ...CANONICAL_COMMON_KEYS,
+    'x',
+    'y',
+    'width',
+    'height',
+    'expression',
+    'xRange',
+    'xLabel',
+    'yLabel'
+  ],
+  physicsDataPlot: [
+    ...CANONICAL_COMMON_KEYS,
+    'x',
+    'y',
+    'width',
+    'height',
+    'points',
+    'xLabel',
+    'yLabel'
+  ],
   shape: [
     ...CANONICAL_COMMON_KEYS,
     'lineStyle',
@@ -515,36 +930,63 @@ const CANONICAL_KEYS: Record<string, readonly string[]> = {
 };
 
 /**
- * Normalize a candidate object to its canonical shape: derive bounds, keep
- * only canonical keys for the S4 families, and strip legacy aliases
- * (`position`, `dataUrl`, `strokeColor`, relative line points). Extension
- * types pass through minus known aliases until VVE-106 canonicalizes them.
+ * Normalize a candidate object to its canonical shape: apply canonical
+ * lesson-object defaults, derive bounds, keep only canonical keys, and strip
+ * the remaining historical aliases (`position`, `dataUrl`). Legacy
+ * `strokeColor`, `xData`/`yData` and `size` are no longer read anywhere:
+ * canonical producers emit canonical fields (no old-data migration promise).
  */
 export const normalizeBoardObject = (candidate: SceneObject): SceneObject => {
   const object: Record<string, unknown> = { ...candidate };
   const type = String(object.type ?? '');
 
-  // Legacy alias intake (import edge): aliases are read once here and never
-  // stored. `strokeColor` -> color, `dataUrl`/`src`, nested `position` -> x/y.
-  if (object.color === undefined && typeof object.strokeColor === 'string') {
-    object.color = object.strokeColor;
-  }
-  if (type === 'image' && object.src === undefined && typeof object.dataUrl === 'string') {
+  if (type === 'image' && object.dataUrl !== undefined && object.src === undefined) {
     object.src = object.dataUrl;
   }
-  const position = object.position as Record<string, unknown> | undefined;
-  if (
-    object.x === undefined &&
-    position &&
-    typeof position === 'object' &&
-    isFiniteNumber(position.x) &&
-    isFiniteNumber(position.y)
-  ) {
-    object.x = position.x;
-    object.y = position.y;
+  if (object.position && typeof object.position === 'object') {
+    const pos = object.position as { x?: unknown; y?: unknown };
+    if (object.x === undefined && typeof pos.x === 'number') object.x = pos.x;
+    if (object.y === undefined && typeof pos.y === 'number') object.y = pos.y;
   }
-  delete object.strokeColor;
-  delete object.dataUrl;
+
+  if (type === 'coordinateSystem2D') {
+    if (object.grid === undefined) object.grid = LESSON_OBJECT_DEFAULTS.coordinateSystem2D.grid;
+    if (object.xLabel === undefined) object.xLabel = LESSON_OBJECT_DEFAULTS.coordinateSystem2D.xLabel;
+    if (object.yLabel === undefined) object.yLabel = LESSON_OBJECT_DEFAULTS.coordinateSystem2D.yLabel;
+    if (object.width === undefined) object.width = LESSON_OBJECT_DEFAULTS.coordinateSystem2D.width;
+    if (object.height === undefined) object.height = LESSON_OBJECT_DEFAULTS.coordinateSystem2D.height;
+  }
+  if (type === 'coordinateSystem3D') {
+    if (object.grid === undefined) object.grid = LESSON_OBJECT_DEFAULTS.coordinateSystem3D.grid;
+    if (object.xLabel === undefined) object.xLabel = LESSON_OBJECT_DEFAULTS.coordinateSystem3D.xLabel;
+    if (object.yLabel === undefined) object.yLabel = LESSON_OBJECT_DEFAULTS.coordinateSystem3D.yLabel;
+    if (object.zLabel === undefined) object.zLabel = LESSON_OBJECT_DEFAULTS.coordinateSystem3D.zLabel;
+    if (object.width === undefined) object.width = LESSON_OBJECT_DEFAULTS.coordinateSystem3D.width;
+    if (object.height === undefined) object.height = LESSON_OBJECT_DEFAULTS.coordinateSystem3D.height;
+  }
+  if (type === 'mathFunctionPlot') {
+    if (object.xRange === undefined) object.xRange = [...LESSON_OBJECT_DEFAULTS.mathFunctionPlot.xRange];
+    if (object.expression === undefined) object.expression = LESSON_OBJECT_DEFAULTS.mathFunctionPlot.expression;
+    if (object.xLabel === undefined) object.xLabel = LESSON_OBJECT_DEFAULTS.mathFunctionPlot.xLabel;
+    if (object.yLabel === undefined) object.yLabel = LESSON_OBJECT_DEFAULTS.mathFunctionPlot.yLabel;
+    if (object.width === undefined) object.width = LESSON_OBJECT_DEFAULTS.mathFunctionPlot.width;
+    if (object.height === undefined) object.height = LESSON_OBJECT_DEFAULTS.mathFunctionPlot.height;
+  }
+  if (type === 'physicsDataPlot') {
+    if (Array.isArray(object.points)) {
+      object.points = object.points.map((point) => {
+        if (!point || typeof point !== 'object' || Array.isArray(point)) return point;
+        return {
+          x: (point as Record<string, unknown>).x,
+          y: (point as Record<string, unknown>).y
+        };
+      });
+    }
+    if (object.xLabel === undefined) object.xLabel = LESSON_OBJECT_DEFAULTS.physicsDataPlot.xLabel;
+    if (object.yLabel === undefined) object.yLabel = LESSON_OBJECT_DEFAULTS.physicsDataPlot.yLabel;
+    if (object.width === undefined) object.width = LESSON_OBJECT_DEFAULTS.physicsDataPlot.width;
+    if (object.height === undefined) object.height = LESSON_OBJECT_DEFAULTS.physicsDataPlot.height;
+  }
 
   if (object.rotation === undefined) object.rotation = 0;
 
@@ -574,14 +1016,6 @@ export const normalizeBoardObject = (candidate: SceneObject): SceneObject => {
   if (canonicalKeys) {
     for (const key of Object.keys(object)) {
       if (!canonicalKeys.includes(key)) delete object[key];
-    }
-  } else {
-    // Extension types keep their payload (bounded by validation) so VVE-106
-    // can canonicalize them without a data migration; keep x/y mirrored for
-    // the movable overlay.
-    if (position && object.x !== undefined && (object.position as Record<string, unknown>)) {
-      (object.position as Record<string, unknown>).x = object.x;
-      (object.position as Record<string, unknown>).y = object.y;
     }
   }
   return object as SceneObject;
@@ -618,6 +1052,67 @@ const toSceneMap = (object: SceneObject): Y.Map<unknown> => {
 };
 
 const objectJson = (map: Y.Map<unknown>): SceneObject => map.toJSON() as SceneObject;
+
+/**
+ * Canonical scene bounds for any board scene object.
+ *
+ * For canonical lesson objects (`physicsDataPlot`, `mathFunctionPlot`),
+ * bounds are strictly defined by their displayed layout rectangle
+ * `[x, y, x + width, y + height]`. The `points` property on a physical graph
+ * contains plotted data values (e.g. time vs velocity, 0..1,000,000) and
+ * must NEVER be treated as world coordinates.
+ */
+export const canonicalObjectBounds = (
+  object: SceneObject | Record<string, unknown>
+): [number, number, number, number] | null => {
+  if (!object || typeof object !== 'object') return null;
+  const type = String(object.type ?? '');
+
+  if (type === 'pen' && Array.isArray(object.points) && object.points.length > 0) {
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const p of object.points as ScenePoint[]) {
+      if (p && isFiniteNumber(p.x) && isFiniteNumber(p.y)) {
+        if (p.x < minX) minX = p.x;
+        if (p.y < minY) minY = p.y;
+        if (p.x > maxX) maxX = p.x;
+        if (p.y > maxY) maxY = p.y;
+      }
+    }
+    if (minX !== Infinity && minY !== Infinity && maxX !== -Infinity && maxY !== -Infinity) {
+      return [minX, minY, maxX, maxY];
+    }
+    return null;
+  }
+
+  if (type === 'line' && object.start && object.end) {
+    const start = object.start as ScenePoint;
+    const end = object.end as ScenePoint;
+    if (isFiniteNumber(start.x) && isFiniteNumber(start.y) && isFiniteNumber(end.x) && isFiniteNumber(end.y)) {
+      return [
+        Math.min(start.x, end.x),
+        Math.min(start.y, end.y),
+        Math.max(start.x, end.x),
+        Math.max(start.y, end.y)
+      ];
+    }
+    return null;
+  }
+
+  // All rectangular objects (shapes, lesson objects, text, image, coordinate systems)
+  const x = object.x;
+  const y = object.y;
+  const width = object.width;
+  const height = object.height;
+  if (isFiniteNumber(x) && isFiniteNumber(y) && isFiniteNumber(width) && isFiniteNumber(height)) {
+    const minX = Math.min(x as number, (x as number) + (width as number));
+    const maxX = Math.max(x as number, (x as number) + (width as number));
+    const minY = Math.min(y as number, (y as number) + (height as number));
+    const maxY = Math.max(y as number, (y as number) + (height as number));
+    return [minX, minY, maxX, maxY];
+  }
+
+  return null;
+};
 
 const rectOf = (map: Y.Map<unknown>) => {
   const x = map.get('x');
@@ -737,29 +1232,25 @@ const translateObjectMap = (map: Y.Map<unknown>, dx: number, dy: number) => {
   }
   if (isFiniteNumber(map.get('x'))) map.set('x', (map.get('x') as number) + dx);
   if (isFiniteNumber(map.get('y'))) map.set('y', (map.get('y') as number) + dy);
-  const points = map.get('points');
-  if (Array.isArray(points)) {
-    map.set(
-      'points',
-      points.map((point: ScenePoint) => ({ ...point, x: point.x + dx, y: point.y + dy }))
-    );
-  }
-  if (Array.isArray(map.get('rawPoints'))) {
-    map.set(
-      'rawPoints',
-      (map.get('rawPoints') as ScenePoint[]).map((point) => ({
-        ...point,
-        x: point.x + dx,
-        y: point.y + dy
-      }))
-    );
-  }
-  // Extension objects mirror x/y in `position` until VVE-106 canonicalizes them.
-  const position = map.get('position');
-  if (position && typeof position === 'object' && !Array.isArray(position)) {
-    const point = position as Record<string, unknown>;
-    if (isFiniteNumber(point.x) && isFiniteNumber(point.y)) {
-      map.set('position', { ...point, x: (point.x as number) + dx, y: (point.y as number) + dy });
+  // Pen points are board-space geometry. Physics points are domain data and
+  // must remain unchanged when the plot frame moves.
+  if (type === 'pen') {
+    const points = map.get('points');
+    if (Array.isArray(points)) {
+      map.set(
+        'points',
+        points.map((point: ScenePoint) => ({ ...point, x: point.x + dx, y: point.y + dy }))
+      );
+    }
+    if (Array.isArray(map.get('rawPoints'))) {
+      map.set(
+        'rawPoints',
+        (map.get('rawPoints') as ScenePoint[]).map((point) => ({
+          ...point,
+          x: point.x + dx,
+          y: point.y + dy
+        }))
+      );
     }
   }
 };
@@ -775,38 +1266,35 @@ const resizeObjectMap = (
   }
   const scaleX = rect.width === 0 ? 1 : frame.width / rect.width;
   const scaleY = rect.height === 0 ? 1 : frame.height / rect.height;
-  const points = map.get('points');
-  if (Array.isArray(points)) {
-    map.set(
-      'points',
-      (points as ScenePoint[]).map((point) => ({
-        ...point,
-        x: frame.x + (point.x - rect.x) * scaleX,
-        y: frame.y + (point.y - rect.y) * scaleY
-      }))
-    );
-    if (Array.isArray(map.get('rawPoints'))) {
+  // Only pen points describe board-space geometry. Resizing a physical graph
+  // changes its frame, not the measured values stored in `points`.
+  if (map.get('type') === 'pen') {
+    const points = map.get('points');
+    if (Array.isArray(points)) {
       map.set(
-        'rawPoints',
-        (map.get('rawPoints') as ScenePoint[]).map((point) => ({
+        'points',
+        (points as ScenePoint[]).map((point) => ({
           ...point,
           x: frame.x + (point.x - rect.x) * scaleX,
           y: frame.y + (point.y - rect.y) * scaleY
         }))
       );
+      if (Array.isArray(map.get('rawPoints'))) {
+        map.set(
+          'rawPoints',
+          (map.get('rawPoints') as ScenePoint[]).map((point) => ({
+            ...point,
+            x: frame.x + (point.x - rect.x) * scaleX,
+            y: frame.y + (point.y - rect.y) * scaleY
+          }))
+        );
+      }
     }
   }
   map.set('x', frame.x);
   map.set('y', frame.y);
   map.set('width', frame.width);
   map.set('height', frame.height);
-  const position = map.get('position');
-  if (position && typeof position === 'object' && !Array.isArray(position)) {
-    map.set('position', { ...(position as Record<string, unknown>), x: frame.x, y: frame.y });
-  }
-  if (isFiniteNumber(map.get('size'))) {
-    map.set('size', Math.max(frame.width, frame.height));
-  }
   return { ok: true };
 };
 

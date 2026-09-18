@@ -35,8 +35,8 @@
           </div>
 
           <div class="actions">
-            <div v-if="connectionStatus === 'reconnecting' || connectionStatus === 'disconnected'" class="status-msg">
-              Łączenie...
+            <div v-if="connectionStatus === 'reconnecting' || connectionStatus === 'disconnected' || connectionStatus === 'draining'" class="status-msg">
+              {{ connectionStatus === 'draining' ? 'Serwer jest restartowany. Twoja praca zostanie przywrócona.' : 'Łączenie...' }}
             </div>
             <button class="btn-primary full-width big-btn" :disabled="loading || !boardInfo" @click="startBoard">
               {{ isTeacher ? 'Otwórz tablicę' : 'Dołącz do lekcji' }}

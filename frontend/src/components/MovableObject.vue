@@ -1,11 +1,13 @@
-﻿<template>
+<template>
   <div
     ref="movableObjectRef"
     class="movable-object"
     :class="{ 'is-selected': isSelected, 'is-line-type': isLineType }"
     :style="objectStyle"
+    :data-object-id="String(objectData.id)"
+    :data-object-type="objectData.type"
     @pointerdown.stop="handleLeftClickOnObject" 
-    @dblclick.stop="handleDoubleClick" touch-action="none"
+    @dblclick.stop="handleDoubleClick"
   >
     <!-- Rotation Handle -->
     <div
@@ -66,7 +68,7 @@
                userSelect: 'none',
                cursor: 'grab'
              }"
-             @mousedown.stop="startDragIfSelectedOrRequestSelect">
+             @pointerdown.stop="startDragIfSelectedOrRequestSelect">
           {{ objectData.text }}
         </div>
         <div v-else-if="objectData.type === 'latex'"
@@ -159,6 +161,9 @@ interface MovableObjectData {
   expression?: string; // For math plot
   xRange?: number[]; // For math plot
   points?: {x: number, y: number}[]; // For physics plot
+  xLabel?: string;
+  yLabel?: string;
+  zLabel?: string;
 }
 
 const props = withDefaults(defineProps<{
@@ -390,14 +395,13 @@ watch(() => props.isSelected, (newValue) => {
 const bootstrapObjectData = () => {
     const startPoint = extractPoint(props.object.get('start'));
     const endPoint = extractPoint(props.object.get('end'));
-    const positionPoint = extractPoint(props.object.get('position'));
     const fallbackBounds = deriveBoundsFromPoints(startPoint, endPoint);
 
     return {
         id: props.object.get('id'),
         type: props.object.get('type'),
-        x: ensureNumber(props.object.get('x'), ensureNumber(positionPoint.x, fallbackBounds.x)),
-        y: ensureNumber(props.object.get('y'), ensureNumber(positionPoint.y, fallbackBounds.y)),
+        x: ensureNumber(props.object.get('x'), fallbackBounds.x),
+        y: ensureNumber(props.object.get('y'), fallbackBounds.y),
         rotation: ensureNumber(props.object.get('rotation'), 0),
         width: ensureNumber(props.object.get('width'), fallbackBounds.width > 0 ? fallbackBounds.width : 100),
         height: ensureNumber(props.object.get('height'), fallbackBounds.height > 0 ? fallbackBounds.height : 80),
@@ -420,6 +424,9 @@ const bootstrapObjectData = () => {
         expression: props.object.get('expression'),
         xRange: props.object.get('xRange'),
         points: props.object.get('points'),
+        xLabel: props.object.get('xLabel'),
+        yLabel: props.object.get('yLabel'),
+        zLabel: props.object.get('zLabel'),
     } as MovableObjectData;
 };
 
@@ -429,13 +436,12 @@ const isLineType = computed(() => objectData.type === 'line');
 const syncDataFromYMap = () => {
     const startPoint = extractPoint(props.object.get('start'));
     const endPoint = extractPoint(props.object.get('end'));
-    const positionPoint = extractPoint(props.object.get('position'));
     const fallbackBounds = deriveBoundsFromPoints(startPoint, endPoint);
 
     objectData.id = props.object.get('id');
     objectData.type = props.object.get('type');
-    objectData.x = ensureNumber(props.object.get('x'), ensureNumber(positionPoint.x, fallbackBounds.x));
-    objectData.y = ensureNumber(props.object.get('y'), ensureNumber(positionPoint.y, fallbackBounds.y));
+    objectData.x = ensureNumber(props.object.get('x'), fallbackBounds.x);
+    objectData.y = ensureNumber(props.object.get('y'), fallbackBounds.y);
     objectData.rotation = ensureNumber(props.object.get('rotation'), 0);
     objectData.width = ensureNumber(props.object.get('width'), fallbackBounds.width > 0 ? fallbackBounds.width : 100);
     objectData.height = ensureNumber(props.object.get('height'), fallbackBounds.height > 0 ? fallbackBounds.height : 80);
@@ -459,6 +465,9 @@ const syncDataFromYMap = () => {
     objectData.xRange = props.object.get('xRange');
     objectData.points = props.object.get('points');
     objectData.latex = props.object.get('latex');
+    objectData.xLabel = props.object.get('xLabel');
+    objectData.yLabel = props.object.get('yLabel');
+    objectData.zLabel = props.object.get('zLabel');
 };
 
 const lineHitPadding = computed(() => {
@@ -551,6 +560,7 @@ const objectStyle = computed(() => {
       ? (isDragging.value ? 'grabbing' : (internalIsSelected.value ? 'grab' : 'pointer'))
       : 'default',
     pointerEvents: (props.interactionEnabled ? 'auto' : 'none') as 'auto' | 'none',
+    touchAction: 'none' as const,
     // Lines don't get a rectangular border - only endpoint handles
     border: isLineType.value 
       ? 'none' 
@@ -640,7 +650,22 @@ const startDragIfSelectedOrRequestSelect = (event: MouseEvent) => {
   startDrag(event);
 };
 
-const startDrag = (event: MouseEvent) => {
+let activePointerId: number | null = null;
+let activeCaptureTarget: HTMLElement | null = null;
+
+const releaseCapture = () => {
+  if (activeCaptureTarget && activePointerId !== null) {
+    try {
+      if (typeof activeCaptureTarget.releasePointerCapture === 'function' && activeCaptureTarget.hasPointerCapture?.(activePointerId)) {
+        activeCaptureTarget.releasePointerCapture(activePointerId);
+      }
+    } catch {}
+  }
+  activeCaptureTarget = null;
+  activePointerId = null;
+};
+
+const startDrag = (event: PointerEvent | MouseEvent) => {
   if (!movableObjectRef.value || !internalIsSelected.value) return; 
   
   // Check for Alt key for duplication
@@ -654,8 +679,46 @@ const startDrag = (event: MouseEvent) => {
   initialMousePos.y = event.clientY;
   initialObjectState.x = objectData.x;
   initialObjectState.y = objectData.y;
+
+  const target = (event.currentTarget || event.target || movableObjectRef.value) as HTMLElement | null;
+  const pointerId = 'pointerId' in event && typeof event.pointerId === 'number' ? event.pointerId : null;
+  if (target && pointerId !== null && typeof target.setPointerCapture === 'function') {
+    try {
+      target.setPointerCapture(pointerId);
+      activeCaptureTarget = target;
+      activePointerId = pointerId;
+    } catch {}
+  }
+
   document.addEventListener('pointermove', handleDrag);
   document.addEventListener('pointerup', stopDrag);
+  document.addEventListener('pointercancel', cancelDrag);
+  if (target) {
+    target.addEventListener('lostpointercapture', cancelDrag);
+  }
+  window.addEventListener('blur', cancelDrag);
+};
+
+const cleanupDragListeners = () => {
+  document.removeEventListener('pointermove', handleDrag);
+  document.removeEventListener('pointerup', stopDrag);
+  document.removeEventListener('pointercancel', cancelDrag);
+  if (activeCaptureTarget) {
+    activeCaptureTarget.removeEventListener('lostpointercapture', cancelDrag);
+  }
+  window.removeEventListener('blur', cancelDrag);
+  releaseCapture();
+};
+
+const cancelDrag = () => {
+  if (isDragging.value) {
+    isDragging.value = false;
+    cleanupDragListeners();
+    emit('update:snap-guides', []);
+    emit('interaction-end', objectData.id);
+    syncDataFromYMap();
+    emit('update:object', { ...props.object.toJSON(), ...objectData });
+  }
 };
 
 const handleDrag = (event: MouseEvent) => {
@@ -727,10 +790,9 @@ const handleDrag = (event: MouseEvent) => {
 const stopDrag = () => {
   if (isDragging.value) {
     isDragging.value = false;
+    cleanupDragListeners();
     emit('interaction-end', objectData.id); // Notify end of interaction
     emit('update:snap-guides', []); // Clear guides
-    document.removeEventListener('pointermove', handleDrag);
-    document.removeEventListener('pointerup', stopDrag);
 
     // One gesture -> one session command (move translates the whole object,
     // including line endpoints and pen points, and keeps bound lines attached).
@@ -743,7 +805,7 @@ const stopDrag = () => {
   }
 };
 
-const startRotate = (event: MouseEvent) => {
+const startRotate = (event: PointerEvent | MouseEvent) => {
     if (!movableObjectRef.value || !internalIsSelected.value) return; 
     isRotating.value = true;
     
@@ -758,8 +820,45 @@ const startRotate = (event: MouseEvent) => {
     startAngle.value = Math.atan2(event.clientY - objectCenter.y, event.clientX - objectCenter.x);
     initialObjectState.rotation = objectData.rotation;
     emit('interaction-start', objectData.id);
+
+    const target = (event.currentTarget || event.target) as HTMLElement | null;
+    const pointerId = 'pointerId' in event && typeof event.pointerId === 'number' ? event.pointerId : null;
+    if (target && pointerId !== null && typeof target.setPointerCapture === 'function') {
+      try {
+        target.setPointerCapture(pointerId);
+        activeCaptureTarget = target;
+        activePointerId = pointerId;
+      } catch {}
+    }
+
     document.addEventListener('pointermove', handleRotate);
     document.addEventListener('pointerup', stopRotate);
+    document.addEventListener('pointercancel', cancelRotate);
+    if (target) {
+      target.addEventListener('lostpointercapture', cancelRotate);
+    }
+    window.addEventListener('blur', cancelRotate);
+};
+
+const cleanupRotateListeners = () => {
+  document.removeEventListener('pointermove', handleRotate);
+  document.removeEventListener('pointerup', stopRotate);
+  document.removeEventListener('pointercancel', cancelRotate);
+  if (activeCaptureTarget) {
+    activeCaptureTarget.removeEventListener('lostpointercapture', cancelRotate);
+  }
+  window.removeEventListener('blur', cancelRotate);
+  releaseCapture();
+};
+
+const cancelRotate = () => {
+  if (isRotating.value) {
+    isRotating.value = false;
+    cleanupRotateListeners();
+    emit('interaction-end', objectData.id);
+    syncDataFromYMap();
+    emit('update:object', props.object);
+  }
 };
 
 const handleRotate = (event: MouseEvent) => {
@@ -777,9 +876,8 @@ const handleRotate = (event: MouseEvent) => {
 const stopRotate = () => {
   if (isRotating.value) {
     isRotating.value = false;
+    cleanupRotateListeners();
     emit('interaction-end', objectData.id);
-    document.removeEventListener('pointermove', handleRotate);
-    document.removeEventListener('pointerup', stopRotate);
 
     emit('commit-transform', {
       kind: 'rotate',
@@ -789,7 +887,7 @@ const stopRotate = () => {
   }
 };
 
-const startResize = (event: MouseEvent, handle: string) => {
+const startResize = (event: PointerEvent | MouseEvent, handle: string) => {
   if (!movableObjectRef.value) return;
   if (isLineType.value) return; // Lines use dedicated endpoint handles
    if (!internalIsSelected.value) {
@@ -826,11 +924,50 @@ const startResize = (event: MouseEvent, handle: string) => {
   initialGeometrySnapshot.points = clonePointsArray(props.object.get('points'));
 
   emit('interaction-start', objectData.id);
+
+  const target = (event.currentTarget || event.target) as HTMLElement | null;
+  const pointerId = 'pointerId' in event && typeof event.pointerId === 'number' ? event.pointerId : null;
+  if (target && pointerId !== null && typeof target.setPointerCapture === 'function') {
+    try {
+      target.setPointerCapture(pointerId);
+      activeCaptureTarget = target;
+      activePointerId = pointerId;
+    } catch {}
+  }
+
   document.addEventListener('pointermove', handleResize);
   document.addEventListener('pointerup', stopResize);
+  document.addEventListener('pointercancel', cancelResize);
+  if (target) {
+    target.addEventListener('lostpointercapture', cancelResize);
+  }
+  window.addEventListener('blur', cancelResize);
 };
 
-const startLineEndpointDrag = (event: MouseEvent, handle: 'start' | 'end') => {
+const cleanupResizeListeners = () => {
+  document.removeEventListener('pointermove', handleResize);
+  document.removeEventListener('pointerup', stopResize);
+  document.removeEventListener('pointercancel', cancelResize);
+  if (activeCaptureTarget) {
+    activeCaptureTarget.removeEventListener('lostpointercapture', cancelResize);
+  }
+  window.removeEventListener('blur', cancelResize);
+  releaseCapture();
+};
+
+const cancelResize = () => {
+  if (isResizing.value) {
+    isResizing.value = false;
+    currentResizeHandle.value = null;
+    currentLineHandle.value = null;
+    cleanupResizeListeners();
+    emit('interaction-end', objectData.id);
+    syncDataFromYMap();
+    emit('update:object', { ...props.object.toJSON(), ...objectData });
+  }
+};
+
+const startLineEndpointDrag = (event: PointerEvent | MouseEvent, handle: 'start' | 'end') => {
   if (!internalIsSelected.value) {
     emit('request-select', objectData.id);
     return;
@@ -857,8 +994,46 @@ const startLineEndpointDrag = (event: MouseEvent, handle: 'start' | 'end') => {
   }
   
   emit('interaction-start', objectData.id);
+
+  const target = (event.currentTarget || event.target) as HTMLElement | null;
+  const pointerId = 'pointerId' in event && typeof event.pointerId === 'number' ? event.pointerId : null;
+  if (target && pointerId !== null && typeof target.setPointerCapture === 'function') {
+    try {
+      target.setPointerCapture(pointerId);
+      activeCaptureTarget = target;
+      activePointerId = pointerId;
+    } catch {}
+  }
+
   document.addEventListener('pointermove', handleLineResize);
   document.addEventListener('pointerup', stopLineResize);
+  document.addEventListener('pointercancel', cancelLineResize);
+  if (target) {
+    target.addEventListener('lostpointercapture', cancelLineResize);
+  }
+  window.addEventListener('blur', cancelLineResize);
+};
+
+const cleanupLineResizeListeners = () => {
+  document.removeEventListener('pointermove', handleLineResize);
+  document.removeEventListener('pointerup', stopLineResize);
+  document.removeEventListener('pointercancel', cancelLineResize);
+  if (activeCaptureTarget) {
+    activeCaptureTarget.removeEventListener('lostpointercapture', cancelLineResize);
+  }
+  window.removeEventListener('blur', cancelLineResize);
+  releaseCapture();
+};
+
+const cancelLineResize = () => {
+  if (isResizing.value || currentLineHandle.value) {
+    isResizing.value = false;
+    currentLineHandle.value = null;
+    cleanupLineResizeListeners();
+    emit('interaction-end', objectData.id);
+    syncDataFromYMap();
+    emit('update:object', { ...props.object.toJSON(), ...objectData });
+  }
 };
 
 const handleLineResize = (event: MouseEvent) => {
@@ -909,8 +1084,7 @@ const stopLineResize = () => {
   
   isResizing.value = false;
   emit('interaction-end', objectData.id);
-  document.removeEventListener('pointermove', handleLineResize);
-  document.removeEventListener('pointerup', stopLineResize);
+  cleanupLineResizeListeners();
 
   // The canvas re-binds the moved endpoint to a nearby target (if any) and
   // commits one setLineEndpoints command with canonical absolute points.
@@ -960,9 +1134,20 @@ const renderLocalCanvas = () => {
 
   // Construct local element relative to (0,0) - NO CLIPPING for lines
   let localElement: any;
-  
-  if (isLineType.value || objectData.type === 'pen') {
-    // For lines and pen strokes: use point-based rendering with normalization
+
+  if (isLineType.value) {
+    // Lines: canonical start/end rendered relative to the local frame. The
+    // drawElement line painter consumes start/end only — feeding the points
+    // form clears start/end and paints nothing (and would drop arrowheads).
+    localElement = {
+      ...objectData,
+      x: 0,
+      y: 0,
+      start: { x: (objectData.startX || 0) - objectData.x, y: (objectData.startY || 0) - objectData.y },
+      end: { x: (objectData.endX || 0) - objectData.x, y: (objectData.endY || 0) - objectData.y }
+    };
+  } else if (objectData.type === 'pen') {
+    // Pen strokes: use point-based rendering with normalization
     const linePoints = getLinePointsForRender(objectData);
 
     if (linePoints && linePoints.length >= 1) {
@@ -973,15 +1158,6 @@ const renderLocalCanvas = () => {
         points: linePoints,
         start: undefined,
         end: undefined
-      };
-    } else if (isLineType.value) {
-      // Fallback to old format (lines only)
-      localElement = {
-        ...objectData,
-        x: 0,
-        y: 0,
-        start: { x: (objectData.startX || 0) - objectData.x, y: (objectData.startY || 0) - objectData.y },
-        end: { x: (objectData.endX || 0) - objectData.x, y: (objectData.endY || 0) - objectData.y }
       };
     } else {
       // Pen with no points - shouldn't happen, but fallback
@@ -1127,11 +1303,9 @@ const stopResize = () => {
   currentResizeHandle.value = null;
   currentLineHandle.value = null;
 
-  document.removeEventListener('pointermove', handleResize);
-  document.removeEventListener('pointerup', stopResize);
+  cleanupResizeListeners();
 
-  // The resize command scales pen points and mirrors position/size fields
-  // inside the shared command layer.
+  // The resize command updates canonical bounds inside the shared command layer.
   emit('commit-transform', {
     kind: 'resize',
     id: objectData.id,
@@ -1155,16 +1329,12 @@ onMounted(() => {
   props.object.observe(ymapObserver);
 });
 
-// 2.4: Use pointer events for touch support (cleanup)
+// Gesture arbitration and cleanup
 onUnmounted(() => {
-  document.removeEventListener('pointermove', handleDrag);
-  document.removeEventListener('pointerup', stopDrag);
-  document.removeEventListener('pointermove', handleRotate);
-  document.removeEventListener('pointerup', stopRotate);
-  document.removeEventListener('pointermove', handleResize);
-  document.removeEventListener('pointerup', stopResize);
-  document.removeEventListener('pointermove', handleLineResize);
-  document.removeEventListener('pointerup', stopLineResize);
+  cleanupDragListeners();
+  cleanupRotateListeners();
+  cleanupResizeListeners();
+  cleanupLineResizeListeners();
   if (ymapObserver) props.object.unobserve(ymapObserver);
 });
 
@@ -1174,6 +1344,7 @@ onUnmounted(() => {
 .movable-object {
   position: absolute;
   box-sizing: border-box;
+  touch-action: none;
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 

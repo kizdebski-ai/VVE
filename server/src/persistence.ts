@@ -16,10 +16,9 @@ export class FilePersistence implements PersistenceLayer {
 
     constructor(dataDir: string) {
         this.dataDir = dataDir;
-        this.init();
     }
 
-    private async init() {
+    private async ensureDir() {
         try {
             await fs.mkdir(this.dataDir, { recursive: true });
         } catch (error) {
@@ -35,6 +34,7 @@ export class FilePersistence implements PersistenceLayer {
 
     async saveRoom(roomId: string, doc: Y.Doc, meta: RoomMetadata): Promise<void> {
         try {
+            await this.ensureDir();
             const docState = Y.encodeStateAsUpdate(doc);
             const metaJson = JSON.stringify(meta, null, 2);
 
@@ -49,6 +49,7 @@ export class FilePersistence implements PersistenceLayer {
 
     async loadRoom(roomId: string): Promise<{ doc: Y.Doc; meta: RoomMetadata } | null> {
         try {
+            await this.ensureDir();
             const metaPath = this.getFilePath(roomId, 'json');
             const binPath = this.getFilePath(roomId, 'bin');
 
@@ -76,6 +77,7 @@ export class FilePersistence implements PersistenceLayer {
 
     async listRooms(): Promise<RoomMetadata[]> {
         try {
+            await this.ensureDir();
             const files = await fs.readdir(this.dataDir);
             const jsonFiles = files.filter(f => f.endsWith('.json'));
             const rooms: RoomMetadata[] = [];

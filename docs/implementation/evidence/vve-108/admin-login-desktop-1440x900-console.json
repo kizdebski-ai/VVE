@@ -1,0 +1,10 @@
+{
+  "capture": "ZCode built-in browser (GUI), capture-boundary redaction: query strings stripped from URLs",
+  "url": "http://127.0.0.1:5188/admin/teachers",
+  "viewport": {
+    "width": 1440,
+    "height": 900
+  },
+  "errors": [],
+  "notes": "Fresh capture of the full administrator login (correct passphrase on first attempt). No 401; no page errors. Post-login dashboard NOT captured because it displays access-link capability material."
+}

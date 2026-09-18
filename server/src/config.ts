@@ -76,24 +76,47 @@ export const config = {
     (process.env.VVE_DEV_SURFACE === '1' || process.env.VVE_DEV_SURFACE === 'true')
 };
 
-// 4.1: Fail-fast if critical secrets are missing in production
-if (config.nodeEnv === 'production') {
+export type RuntimeSecretSnapshot = {
+  nodeEnv: string;
+  databaseUrl: string | undefined;
+  adminPassphrase: string | undefined;
+  teacherSessionSecret: string;
+  adminSessionSecret: string;
+};
+
+/** Typed secret check owned by RuntimeControl.start; also used at import in production. */
+export const collectMissingProductionSecrets = (
+  snapshot: RuntimeSecretSnapshot = {
+    nodeEnv: config.nodeEnv,
+    databaseUrl: config.databaseUrl,
+    adminPassphrase: config.adminPassphrase,
+    teacherSessionSecret: config.teacherSessionSecret,
+    adminSessionSecret: config.adminSessionSecret
+  }
+): string[] => {
   const missing: string[] = [];
   if (!process.env.TEACHER_SESSION_SECRET && !process.env.SESSION_SECRET) {
     missing.push('TEACHER_SESSION_SECRET (or SESSION_SECRET)');
   }
-  if (config.teacherSessionSecret === 'change-me-in-prod') {
+  if (snapshot.teacherSessionSecret === 'change-me-in-prod') {
     missing.push('TEACHER_SESSION_SECRET (still using default fallback)');
   }
-  if (!config.adminPassphrase) {
+  if (!snapshot.adminPassphrase) {
     missing.push('ADMIN_PASSPHRASE (shared Administrator passphrase, ADR-0005)');
   }
-  if (config.adminSessionSecret === 'change-me-in-prod') {
+  if (snapshot.adminSessionSecret === 'change-me-in-prod') {
     missing.push('ADMIN_SESSION_SECRET (still using default fallback)');
   }
-  if (!config.databaseUrl) {
+  if (!snapshot.databaseUrl) {
     missing.push('DATABASE_URL');
   }
+  return missing;
+};
+
+// 4.1: Fail-fast if critical secrets are missing in production. RuntimeControl
+// re-runs the same check with a typed invalid-configuration outcome before listen.
+if (config.nodeEnv === 'production') {
+  const missing = collectMissingProductionSecrets();
   if (missing.length > 0) {
     throw new Error(
       `[config] Missing required secrets in production:\n  - ${missing.join('\n  - ')}\nSet these environment variables before starting the server.`

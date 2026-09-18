@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'fs';
 import { resolve } from 'path';
+import { ref } from 'vue';
+import * as Y from 'yjs';
+import { useDrawingEngine } from '../../src/composables/useDrawingEngine.js';
+import { createInputPipeline } from '../../src/board/inputPipeline';
+import { mapGovernorDenialToSocketClose } from '@pilot/resourceGovernor';
 
 const readSrc = (relativePath) =>
   readFileSync(resolve(__dirname, '../../src', relativePath), 'utf-8');
@@ -21,12 +26,9 @@ describe('C1: Composable wiring in WhiteboardCanvas', () => {
     expect(src).toContain('} = useDrawingEngine({');
   });
 
-  it('destructures critical functions from useDrawingEngine', () => {
-    expect(src).toMatch(/const\s*\{[^}]*startDrawing[^}]*\}\s*=\s*useDrawingEngine/s);
-    expect(src).toMatch(/const\s*\{[^}]*finishDrawing[^}]*\}\s*=\s*useDrawingEngine/s);
-    expect(src).toMatch(/const\s*\{[^}]*draw[,\s][^}]*\}\s*=\s*useDrawingEngine/s);
-    expect(src).toMatch(/const\s*\{[^}]*eraseElement[^}]*\}\s*=\s*useDrawingEngine/s);
-  });
+  // Destructuring and dispatch source-text assertions were removed with
+  // VVE-105: behavior is covered through the useDrawingEngine seam below and
+  // the InputPipeline interface tests (inputPipeline.spec.ts).
 
   it('destructures critical functions from useHelperModules', () => {
     expect(src).toMatch(/const\s*\{[^}]*getActiveModule[^}]*\}\s*=\s*useHelperModules/s);
@@ -35,13 +37,86 @@ describe('C1: Composable wiring in WhiteboardCanvas', () => {
     expect(src).toMatch(/const\s*\{[^}]*applyMathAnswer[^}]*\}\s*=\s*useHelperModules/s);
   });
 
-  it('passes getCoordinates and transformCoordinates to startDrawing', () => {
-    expect(src).toContain('startDrawing(event, getCoordinates, transformCoordinates)');
+  it('useDrawingEngine creates and cancels in-progress stroke preview via startDrawingAt and cancelActiveDrawing', () => {
+    const ydoc = new Y.Doc();
+    const isDrawing = ref(false);
+    const engine = useDrawingEngine({
+      isDrawing,
+      currentTool: ref('pen'),
+      currentColor: ref('#000000'),
+      currentLineWidth: ref(2),
+      zoomLevel: ref(1),
+      panOffset: ref({ x: 0, y: 0 }),
+      ydoc: ref(ydoc),
+      yDrawings: ref(ydoc.getArray('drawings')),
+      yjsConnection: ref(null),
+    });
+
+    engine.startDrawingAt({ x: 10, y: 20 }, 100, { pressure: 0.75, tiltX: 12, tiltY: -8 });
+    expect(isDrawing.value).toBe(true);
+    expect(engine.currentElementPreview.value).toBeTruthy();
+    expect(engine.currentElementPreview.value.type).toBe('pen');
+    expect(engine.currentElementPreview.value.points[0]).toMatchObject({
+      x: 10,
+      y: 20,
+      p: 0.75,
+      tiltX: 12,
+      tiltY: -8
+    });
+
+    engine.cancelActiveDrawing();
+    expect(isDrawing.value).toBe(false);
+    expect(engine.currentElementPreview.value).toBeNull();
   });
 
-  it('useKeyboardShortcuts uses real cancelActiveDrawing (not inline stub)', () => {
-    // Should NOT have the old inline stub
-    expect(src).not.toMatch(/cancelActiveDrawing:\s*\(\)\s*=>\s*\{/);
+  it('InputPipeline cancel emits drawCancel intent on gesture and blur', () => {
+    const pipeline = createInputPipeline({
+      profile: 'pen',
+      onProfileChange: () => {},
+      onPointerTypeObserved: () => {}
+    });
+
+    pipeline.ingest({
+      samples: [{
+        pointerId: 1,
+        pointerType: 'pen',
+        isPrimary: true,
+        buttons: 1,
+        pressure: 0.5,
+        clientX: 100,
+        clientY: 100,
+        timeStamp: 10
+      }],
+      phase: 'down',
+      viewport: { zoom: 1, panX: 0, panY: 0, canvasLeft: 0, canvasTop: 0 }
+    });
+
+    const cancelGestureResult = pipeline.cancel('gesture');
+    expect(cancelGestureResult.intents).toContainEqual(expect.objectContaining({
+      kind: 'drawCancel',
+      reason: 'gesture'
+    }));
+
+    pipeline.ingest({
+      samples: [{
+        pointerId: 2,
+        pointerType: 'pen',
+        isPrimary: true,
+        buttons: 1,
+        pressure: 0.5,
+        clientX: 100,
+        clientY: 100,
+        timeStamp: 20
+      }],
+      phase: 'down',
+      viewport: { zoom: 1, panX: 0, panY: 0, canvasLeft: 0, canvasTop: 0 }
+    });
+
+    const cancelBlurResult = pipeline.cancel('blur');
+    expect(cancelBlurResult.intents).toContainEqual(expect.objectContaining({
+      kind: 'drawCancel',
+      reason: 'blur'
+    }));
   });
 
   it('useKeyboardShortcuts uses real applyMathAnswer (not empty function)', () => {
@@ -136,11 +211,34 @@ describe('H3: withAiMutex handles rejected promises', () => {
 
 // ─── H8: Per-IP WebSocket connection limiting ────────────────────────────────
 
-describe('H8: Per-IP WebSocket connection limiting', () => {
+describe('H8: ResourceGovernor owns WebSocket occupancy', () => {
   const src = readServer('server.ts');
 
-  it('defines MAX_CONNECTIONS_PER_IP constant', () => {
-    expect(src).toContain('MAX_CONNECTIONS_PER_IP');
+  it('constructs ResourceGovernor and passes it to collaboration', () => {
+    expect(src).toContain('createResourceGovernor');
+    expect(src).toContain('resourceGovernor');
+  });
+
+  it('maps connection overload to a bounded Polish connection close', () => {
+    const mapping = mapGovernorDenialToSocketClose({
+      decision: 'reject',
+      reason: 'ipConnectionLimit',
+      messageKey: 'resource.connectionLimit'
+    });
+    expect(mapping.code).toBe(1013);
+    expect(mapping.reason).toContain('Zbyt wiele połączeń');
+  });
+});
+
+describe('H8b: realtime listener composition reads the shared governor', () => {
+  const src = readServer('pilot/realtimeListener.ts');
+
+  // 108-I1: the per-IP cap is owned by ResourceGovernor (VVE-107 policy,
+  // composed by RuntimeControl). The listener reads the limit through
+  // governor.limits() instead of declaring a hardcoded product constant.
+  it('derives the per-IP cap from the shared ResourceGovernor, not a hardcoded constant', () => {
+    expect(src).toContain('governor.limits().maxConnectionsPerIp');
+    expect(src).not.toMatch(/MAX_CONNECTIONS_PER_IP\s*=\s*\d+/);
   });
 
   it('implements trackIpConnect and trackIpDisconnect', () => {
@@ -148,23 +246,19 @@ describe('H8: Per-IP WebSocket connection limiting', () => {
     expect(src).toContain('trackIpDisconnect');
   });
 
-  it('checks per-IP limit on WebSocket connection', () => {
-    expect(src).toContain('Too many connections');
+  it('denies over-limit connections with the typed Polish resource message', () => {
+    expect(src).toContain("polishResourceMessage('resource.connectionLimit')");
   });
-
-  // Connection release is now idempotent through one local releaseIp()
-  // closure. Counting source occurrences would reward duplicated cleanup;
-  // runtime connection behavior is covered at the CollaborationRuntime seam.
 });
 
 // ─── Canvas memory cleanup in PDF export ─────────────────────────────────────
 
-describe('Canvas memory cleanup in usePdfExport', () => {
-  const src = readSrc('composables/usePdfExport.js');
+describe('Canvas memory cleanup in ArtifactPipeline export', () => {
+  const src = readSrc('board/artifactPipeline.ts');
 
   it('resets offscreen canvas dimensions to release memory', () => {
-    expect(src).toContain('off.width = 0');
-    expect(src).toContain('offscreen.width = 0');
+    expect(src).toContain('canvas.width = 0');
+    expect(src).toContain('canvas.height = 0');
   });
 });
 

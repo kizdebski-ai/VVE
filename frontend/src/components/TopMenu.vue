@@ -9,7 +9,7 @@
               @click="toggleMenu"
               @mouseenter="cancelHide"
               @mouseleave="handleMouseLeave"
-              title="Settings">
+              title="Ustawienia">
         <Settings :size="20" />
       </button>
     </transition>
@@ -41,11 +41,10 @@
           <Upload :size="18" />
           <span>Import</span>
         </button>
-        <button v-if="can('panel.pdfImport')" class="menu-btn" @click="triggerPdfImport" title="Zaimportuj PDF jako tło">
+        <button v-if="can('panel.pdfImport')" class="menu-btn" data-testid="pdf-import-button" @click="triggerPdfImport" title="Zaimportuj PDF lub obraz">
           <FileUp :size="18" />
           <span>PDF</span>
         </button>
-        <input ref="pdfFileInput" type="file" accept=".pdf" style="display:none" @change="handlePdfFileSelected" />
 
         <div class="divider-vertical"></div>
 
@@ -53,9 +52,8 @@
         <button
           v-if="can('panel.inputStyle')"
           class="menu-btn"
-          :class="{ 'active-feature': props.activeFeature === 'styleHandwriting' }"
-          @click="emit('toggle-feature', 'styleHandwriting')"
-          title="Styl pisania"
+          @click="emit('cycle-input-style')"
+          title="Styl wejścia: Mysz lub Pióro"
         >
           <Wand2 :size="18" />
           <span>Styl</span>
@@ -83,62 +81,71 @@
       </div>
     </transition>
 
+    <input
+      ref="pdfFileInput"
+      type="file"
+      accept=".pdf,application/pdf,image/png,image/jpeg,image/webp,image/svg+xml,.png,.jpg,.jpeg,.webp,.svg"
+      style="display:none"
+      data-testid="artifact-file-input"
+      @change="handlePdfFileSelected"
+    />
+
      <!-- Keyboard shortcuts info dialog -->
     <div v-if="showShortcutsInfo" class="shortcuts-dialog glass-panel">
        <div class="shortcuts-dialog-header">
-        <h3>Keyboard Shortcuts</h3>
-         <button class="close-btn" @click="toggleShortcuts">
+        <h3>Skróty klawiszowe</h3>
+         <button class="close-btn" aria-label="Zamknij skróty" @click="toggleShortcuts">
             <X :size="20" />
          </button>
        </div>
        <div class="shortcuts-list">
           <div class="shortcut-item">
             <div class="shortcut-key">P</div>
-            <div class="shortcut-desc">Pen Tool</div>
+            <div class="shortcut-desc">Pióro</div>
           </div>
           <div class="shortcut-item">
             <div class="shortcut-key">H</div>
-            <div class="shortcut-desc">Hand/Pan Tool</div>
+            <div class="shortcut-desc">Przesuwanie tablicy</div>
           </div>
           <div class="shortcut-item">
             <div class="shortcut-key">E</div>
-            <div class="shortcut-desc">Eraser Tool</div>
+            <div class="shortcut-desc">Gumka</div>
           </div>
           <div class="shortcut-item">
-            <div class="shortcut-key">S</div>
-            <div class="shortcut-desc">Shapes Tool</div>
+            <div class="shortcut-key">V</div>
+            <div class="shortcut-desc">Zaznaczanie</div>
           </div>
           <div class="shortcut-item">
             <div class="shortcut-key">T</div>
-            <div class="shortcut-desc">Text Tool</div>
+            <div class="shortcut-desc">Tekst</div>
           </div>
           <div class="shortcut-item">
-            <div class="shortcut-key">I</div>
-            <div class="shortcut-desc">Image Tool</div>
+            <div class="shortcut-key">S / L</div>
+            <div class="shortcut-desc">Kształt / linia</div>
           </div>
           <div class="shortcut-item">
             <div class="shortcut-key">Ctrl+Z</div>
-            <div class="shortcut-desc">Undo</div>
+            <div class="shortcut-desc">Cofnij</div>
           </div>
           <div class="shortcut-item">
             <div class="shortcut-key">Ctrl+Y</div>
-            <div class="shortcut-desc">Redo</div>
+            <div class="shortcut-desc">Ponów</div>
           </div>
           <div class="shortcut-item">
             <div class="shortcut-key">Delete</div>
-            <div class="shortcut-desc">Delete Selected Element</div>
+            <div class="shortcut-desc">Usuń zaznaczony obiekt</div>
           </div>
           <div class="shortcut-item">
             <div class="shortcut-key">Ctrl+V</div>
-            <div class="shortcut-desc">Paste Image from Clipboard</div>
+            <div class="shortcut-desc">Wklej obraz ze schowka</div>
+          </div>
+          <div class="shortcut-item" v-for="panelShortcut in panelShortcutHints" :key="panelShortcut.id">
+            <div class="shortcut-key">{{ panelShortcut.shortcut }}</div>
+            <div class="shortcut-desc">{{ panelShortcut.label }}</div>
           </div>
           <div class="shortcut-item">
-            <div class="shortcut-key">Alt+Click+Drag</div>
-            <div class="shortcut-desc">Pan Canvas</div>
-          </div>
-          <div class="shortcut-item">
-            <div class="shortcut-key">Scroll Wheel</div>
-            <div class="shortcut-desc">Zoom In/Out</div>
+            <div class="shortcut-key">+ / − / 0</div>
+            <div class="shortcut-desc">Powiększ / pomniejsz / wyzeruj widok</div>
           </div>
         </div>
     </div>
@@ -163,6 +170,13 @@ import {
   Minimize
 } from 'lucide-vue-next';
 import { featureAvailable } from '../services/pilotSurface';
+import { PANEL_SHORTCUTS } from '../utils/lessonObjectDefaults.js';
+
+const panelShortcutHints = Object.entries(PANEL_SHORTCUTS).map(([id, value]) => ({
+  id,
+  shortcut: value.shortcut,
+  label: value.label
+}));
 
 // Define props
 const props = defineProps({
@@ -180,7 +194,7 @@ const props = defineProps({
 const can = (featureId) => featureAvailable(featureId, props.role);
 
 // Define emits
-const emit = defineEmits(['clear-canvas', 'toggle-feature', 'open-room-manager', 'export-whiteboard', 'export-pdf-single', 'export-pdf-paged', 'import-whiteboard', 'import-pdf']);
+const emit = defineEmits(['clear-canvas', 'toggle-feature', 'open-room-manager', 'export-whiteboard', 'export-pdf-single', 'export-pdf-paged', 'import-whiteboard', 'import-pdf', 'cycle-input-style']);
 
 // P0-FIX: Detect touch device and keep gear always visible on touch
 const isTouchDevice = ref(false);
@@ -285,7 +299,7 @@ const triggerPdfImport = () => {
 };
 const handlePdfFileSelected = (event) => {
   const file = event.target.files[0];
-  if (file && file.type === 'application/pdf') {
+  if (file) {
     emit('import-pdf', file);
   }
   event.target.value = '';

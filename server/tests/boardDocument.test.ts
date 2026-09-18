@@ -136,6 +136,101 @@ describe('BoardDocument Interface', () => {
     expect(drawingsOf(document)).toMatchObject([{ id: 'rect-1', x: 42, y: 24 }]);
   });
 
+  it('validates and converges canonical math, physics, and coordinate updates', () => {
+    const document = createBoardDocument();
+    const objects = [
+      {
+        id: 'coordinate',
+        type: 'coordinateSystem2D',
+        x: 10,
+        y: 20,
+        width: 400,
+        height: 300,
+        grid: true,
+        xLabel: 'x',
+        yLabel: 'y'
+      },
+      {
+        id: 'math',
+        type: 'mathFunctionPlot',
+        x: 30,
+        y: 40,
+        width: 400,
+        height: 300,
+        expression: 'x^2',
+        xRange: [-10, 10]
+      },
+      {
+        id: 'physics',
+        type: 'physicsDataPlot',
+        x: 50,
+        y: 60,
+        width: 400,
+        height: 300,
+        points: [{ x: 0, y: 0 }, { x: 1, y: 9.8 }],
+        xLabel: 't',
+        yLabel: 'v'
+      }
+    ];
+
+    for (const object of objects) {
+      const result = document.apply(
+        commandUpdate(document, { kind: 'add', object }, 'student'),
+        { kind: 'remote', actorId: 'student-1', role: 'student' }
+      );
+      expect(result.ok).toBe(true);
+    }
+    const replica = createBoardDocument();
+    expect(replica.apply(document.encode(), { kind: 'hydrate' }).ok).toBe(true);
+    expect(replica.digest()).toBe(document.digest());
+    expect(replica.snapshot()).toEqual(document.snapshot());
+    expect(drawingsOf(replica)).toHaveLength(3);
+  });
+
+  it('replays canonical lesson objects with snapshot and update parity', () => {
+    const source = createBoardDocument();
+    const math = {
+      id: 'canon-math',
+      type: 'mathFunctionPlot',
+      x: 75,
+      y: 85,
+      width: 400,
+      height: 300,
+      expression: 'x^2',
+      xRange: [-10, 10],
+      xLabel: 'x',
+      yLabel: 'f(x)',
+      lineWidth: 3,
+      color: '#2563eb',
+      rotation: 0
+    };
+    const physics = {
+      id: 'canon-physics',
+      type: 'physicsDataPlot',
+      x: 30,
+      y: 40,
+      width: 400,
+      height: 300,
+      points: [{ x: 0, y: 0 }, { x: 1, y: 9.8 }, { x: 2, y: 19.6 }],
+      xLabel: 't',
+      yLabel: 'v',
+      lineWidth: 2,
+      color: '#2563eb',
+      rotation: 0
+    };
+    expect(source.apply(commandUpdate(source, { kind: 'add', object: math }, 'teacher'), { kind: 'local', actorId: 't1', role: 'teacher' }).ok).toBe(true);
+    const snapshot = source.encode();
+
+    const replica = createBoardDocument({ initialState: snapshot });
+    expect(source.apply(commandUpdate(source, { kind: 'add', object: physics }, 'teacher'), { kind: 'local', actorId: 't1', role: 'teacher' }).ok).toBe(true);
+
+    const update = source.encode(replica.stateVector());
+    expect(replica.apply(update, { kind: 'hydrate' }).ok).toBe(true);
+
+    expect(drawingsOf(replica)).toEqual([math, physics]);
+    expect(replica.digest()).toBe(source.digest());
+  });
+
   it('hydrate updates bypass schema authorization (trusted stored history)', () => {
     const source = createBoardDocument();
     source.apply(commandUpdate(source, { kind: 'add', object: rectangle }, 'teacher'), {

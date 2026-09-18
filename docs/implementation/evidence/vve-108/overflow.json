@@ -1,0 +1,54 @@
+[
+  {
+    "name": "desktop",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "overflowX": false,
+    "overflowY": false,
+    "scrollWidth": 1440,
+    "clientWidth": 1440,
+    "scrollHeight": 900,
+    "clientHeight": 900
+  },
+  {
+    "name": "ipad",
+    "viewport": {
+      "width": 768,
+      "height": 1024
+    },
+    "overflowX": false,
+    "overflowY": false,
+    "scrollWidth": 768,
+    "clientWidth": 768,
+    "scrollHeight": 1024,
+    "clientHeight": 1024
+  },
+  {
+    "name": "entry-ipad",
+    "viewport": {
+      "width": 768,
+      "height": 1024
+    },
+    "overflowX": false,
+    "overflowY": false,
+    "scrollWidth": 768,
+    "clientWidth": 768,
+    "scrollHeight": 1024,
+    "clientHeight": 1024
+  },
+  {
+    "name": "teacher",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "overflowX": false,
+    "overflowY": false,
+    "scrollWidth": 1440,
+    "clientWidth": 1440,
+    "scrollHeight": 900,
+    "clientHeight": 900
+  }
+]

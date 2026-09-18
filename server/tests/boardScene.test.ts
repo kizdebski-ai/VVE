@@ -3,15 +3,21 @@ import * as Y from 'yjs';
 
 import {
   applyBoardCommand,
+  canonicalObjectBounds,
   collectUpdateEffects,
+  createBoardSpatialIndex,
+  LESSON_OBJECT_DEFAULTS,
   normalizeBoardObject,
+  queryObjectsNear,
   sceneClearEpoch,
   sceneDrawings,
+  sceneObjectBounds,
   validateBoardObject,
   SCENE_LIMITS,
   SHAPE_TYPES,
   type BoardCommand,
   type BoardRole,
+  type BoardSpatialIndex,
   type SceneObject
 } from '../src/pilot/boardScene';
 
@@ -71,6 +77,55 @@ const image = (id = 'image-1'): SceneObject => ({
   height: 90
 });
 
+const coordinate2d = (id = 'coord-2d'): SceneObject => ({
+  id,
+  type: 'coordinateSystem2D',
+  x: 50,
+  y: 60,
+  width: 400,
+  height: 300,
+  color: '#1f2937',
+  lineWidth: 2,
+  grid: true,
+  xLabel: 'x',
+  yLabel: 'y'
+});
+
+const coordinate3d = (id = 'coord-3d'): SceneObject => ({
+  ...coordinate2d(id),
+  type: 'coordinateSystem3D',
+  width: 320,
+  height: 320,
+  zLabel: 'z'
+});
+
+const mathPlot = (id = 'math-plot'): SceneObject => ({
+  id,
+  type: 'mathFunctionPlot',
+  x: 100,
+  y: 120,
+  width: 400,
+  height: 300,
+  expression: 'sin(x)',
+  xRange: [-10, 10],
+  color: '#2563eb',
+  lineWidth: 3
+});
+
+const physicsPlot = (id = 'physics-plot'): SceneObject => ({
+  id,
+  type: 'physicsDataPlot',
+  x: 140,
+  y: 160,
+  width: 400,
+  height: 300,
+  points: [{ x: 0, y: 0 }, { x: 1, y: 9.8 }, { x: 2, y: 19.6 }],
+  xLabel: 't',
+  yLabel: 'v',
+  color: '#f59e0b',
+  lineWidth: 2.5
+});
+
 const sceneJson = (doc: Y.Doc) => sceneDrawings(doc).toJSON() as Array<Record<string, unknown>>;
 
 const addAll = (doc: Y.Doc, objects: SceneObject[]) => {
@@ -91,6 +146,9 @@ describe('canonical schema validation', () => {
     expect(validateBoardObject(normalizeBoardObject(line()))).toEqual({ ok: true });
     expect(validateBoardObject(normalizeBoardObject(textObject()))).toEqual({ ok: true });
     expect(validateBoardObject(normalizeBoardObject(image()))).toEqual({ ok: true });
+    for (const object of [coordinate2d(), coordinate3d(), mathPlot(), physicsPlot()]) {
+      expect(validateBoardObject(normalizeBoardObject(object))).toEqual({ ok: true });
+    }
   });
 
   it('rejects unknown types, missing ids and non-finite geometry', () => {
@@ -127,30 +185,84 @@ describe('canonical schema validation', () => {
     ).toMatchObject({ ok: false, reason: 'invalidContent' });
   });
 
-  it('normalization strips legacy aliases and derives canonical bounds', () => {
-    const normalized = normalizeBoardObject({
-      id: 'legacy-1',
-      type: 'image',
-      dataUrl: 'data:image/png;base64,iVBORw0KGgo=',
-      position: { x: 5, y: 7 },
-      width: 10,
-      height: 10,
-      strokeColor: '#123456'
+  it('normalization applies canonical lesson-object defaults and derives canonical bounds', () => {
+    const coord2d = normalizeBoardObject({
+      id: 'c2d',
+      type: 'coordinateSystem2D',
+      x: 10,
+      y: 20
     });
-    expect(normalized).not.toHaveProperty('dataUrl');
-    expect(normalized).not.toHaveProperty('position');
-    expect(normalized).not.toHaveProperty('strokeColor');
-    expect(normalized).toMatchObject({ src: 'data:image/png;base64,iVBORw0KGgo=', x: 5, y: 7 });
+    expect(coord2d).toMatchObject({
+      x: 10,
+      y: 20,
+      width: LESSON_OBJECT_DEFAULTS.coordinateSystem2D.width,
+      height: LESSON_OBJECT_DEFAULTS.coordinateSystem2D.height,
+      grid: true,
+      xLabel: 'x',
+      yLabel: 'y'
+    });
+
+    const math = normalizeBoardObject({
+      id: 'm1',
+      type: 'mathFunctionPlot',
+      x: 50,
+      y: 60
+    });
+    expect(math).toMatchObject({
+      x: 50,
+      y: 60,
+      width: LESSON_OBJECT_DEFAULTS.mathFunctionPlot.width,
+      height: LESSON_OBJECT_DEFAULTS.mathFunctionPlot.height,
+      expression: 'x',
+      xRange: [-10, 10],
+      xLabel: 'x',
+      yLabel: 'f(x)'
+    });
 
     const stroke = normalizeBoardObject(pen());
     expect(stroke).toMatchObject({ x: 10, y: 10, width: 20, height: 40 });
 
-    const connector = normalizeBoardObject({ ...line(), points: [[0.1, 0.2]] });
-    expect(connector).not.toHaveProperty('points');
+    const connector = normalizeBoardObject(line());
     expect(connector).toMatchObject({ x: 0, y: 0, width: 50, height: 50 });
   });
 
-  it('rejects aliases and unknown fields after the legacy intake edge', () => {
+  it('canonicalObjectBounds preserves plotted data values and computes display rectangle', () => {
+    const physics = {
+      id: 'physics-canonical-fixture',
+      type: 'physicsDataPlot',
+      x: 100,
+      y: 100,
+      width: 400,
+      height: 300,
+      points: [
+        { x: 0, y: 0 },
+        { x: 1_000_000, y: 1_000_000 }
+      ],
+      xLabel: 't',
+      yLabel: 'v',
+      rotation: 0
+    };
+    const bounds = canonicalObjectBounds(physics);
+    expect(bounds).toEqual([100, 100, 500, 400]);
+
+    // Data points are not treated as world coordinates
+    expect(bounds?.[2]).toBe(500);
+    expect(bounds?.[3]).toBe(400);
+
+    const math = {
+      id: 'math-1',
+      type: 'mathFunctionPlot',
+      x: 200,
+      y: 150,
+      width: 400,
+      height: 300,
+      expression: '1/x',
+      xRange: [-10, 10]
+    };
+    expect(canonicalObjectBounds(math)).toEqual([200, 150, 600, 450]);
+  });
+
+  it('rejects aliases and unknown fields', () => {
     expect(validateBoardObject({ ...image(), dataUrl: image().src })).toMatchObject({
       ok: false,
       reason: 'invalidContent'
@@ -159,6 +271,35 @@ describe('canonical schema validation', () => {
       ok: false,
       reason: 'invalidContent'
     });
+    expect(validateBoardObject({ ...mathPlot(), position: { x: 100, y: 120 } })).toMatchObject({
+      ok: false,
+      reason: 'invalidContent'
+    });
+    expect(validateBoardObject({ ...physicsPlot(), xData: [0, 1] })).toMatchObject({
+      ok: false,
+      reason: 'invalidContent'
+    });
+  });
+
+  it('rejects incomplete or unbounded lesson-tool payloads', () => {
+    expect(validateBoardObject({ ...mathPlot(), expression: '' })).toMatchObject({
+      ok: false,
+      reason: 'invalidContent'
+    });
+    expect(validateBoardObject({ ...mathPlot(), xRange: [10, -10] })).toMatchObject({
+      ok: false,
+      reason: 'invalidGeometry'
+    });
+    expect(validateBoardObject({ ...physicsPlot(), points: [{ x: 0, y: 0 }] })).toMatchObject({
+      ok: false,
+      reason: 'invalidGeometry'
+    });
+    expect(
+      validateBoardObject({
+        ...physicsPlot(),
+        points: [{ x: 0, y: 0 }, { x: 1, y: Number.NaN }]
+      })
+    ).toMatchObject({ ok: false, reason: 'invalidGeometry' });
   });
 });
 
@@ -455,6 +596,111 @@ describe('board commands', () => {
       color: '#16a34a'
     });
   });
+
+  it('runs every canonical lesson object through create, style, transform, clone, and reload', () => {
+    const doc = new Y.Doc();
+    const objects = [coordinate2d(), coordinate3d(), mathPlot(), physicsPlot()];
+    addAll(doc, objects);
+
+    for (const [index, object] of objects.entries()) {
+      expect(
+        applyBoardCommand(
+          doc,
+          { kind: 'updateStyle', id: object.id, patch: { color: '#7c3aed', lineWidth: 4 } },
+          student
+        )
+      ).toEqual({ ok: true });
+      expect(
+        applyBoardCommand(
+          doc,
+          { kind: 'move', id: object.id, x: 200 + index * 20, y: 220 + index * 20 },
+          student
+        )
+      ).toEqual({ ok: true });
+      expect(
+        applyBoardCommand(
+          doc,
+          {
+            kind: 'resize',
+            id: object.id,
+            x: 200 + index * 20,
+            y: 220 + index * 20,
+            width: 500,
+            height: 360
+          },
+          student
+        )
+      ).toEqual({ ok: true });
+      expect(
+        applyBoardCommand(doc, { kind: 'rotate', id: object.id, rotation: 15 }, student)
+      ).toEqual({ ok: true });
+      expect(
+        applyBoardCommand(
+          doc,
+          { kind: 'clone', id: object.id, newId: `${object.id}-copy`, offset: 12 },
+          student
+        )
+      ).toEqual({ ok: true });
+    }
+
+    const reloaded = new Y.Doc();
+    Y.applyUpdate(reloaded, Y.encodeStateAsUpdate(doc));
+    expect(sceneJson(reloaded)).toEqual(sceneJson(doc));
+    expect(sceneJson(reloaded)).toHaveLength(objects.length * 2);
+    for (const object of sceneJson(reloaded)) {
+      expect(object).not.toHaveProperty('position');
+      expect(object).not.toHaveProperty('xData');
+      expect(object).not.toHaveProperty('yData');
+      expect(validateBoardObject(object)).toEqual({ ok: true });
+    }
+    for (const object of sceneJson(reloaded).filter(({ type }) => type === 'physicsDataPlot')) {
+      expect(object.points).toEqual([
+        { x: 0, y: 0 },
+        { x: 1, y: 9.8 },
+        { x: 2, y: 19.6 }
+      ]);
+    }
+  });
+
+  it('accepts every visible line style, arrow style, and shape family', () => {
+    const doc = new Y.Doc();
+    for (const [index, type] of SHAPE_TYPES.entries()) {
+      const lineStyle = ['solid', 'dashed', 'dotted'][index % 3] as 'solid' | 'dashed' | 'dotted';
+      expect(
+        applyBoardCommand(
+          doc,
+          {
+            kind: 'add',
+            object: {
+              ...shape(`inventory-${type}`),
+              type,
+              lineStyle,
+              roughness: index % 3,
+              fillColor: index % 2 ? '#dbeafe' : null
+            }
+          },
+          student
+        )
+      ).toEqual({ ok: true });
+    }
+    for (const [index, arrowStyle] of ['none', 'start', 'end', 'both'].entries()) {
+      expect(
+        applyBoardCommand(
+          doc,
+          {
+            kind: 'add',
+            object: {
+              ...line(`inventory-line-${arrowStyle}`),
+              arrowStyle,
+              lineStyle: ['solid', 'dashed', 'dotted'][index % 3]
+            }
+          },
+          student
+        )
+      ).toEqual({ ok: true });
+    }
+    expect(sceneJson(doc)).toHaveLength(SHAPE_TYPES.length + 4);
+  });
 });
 
 describe('collectUpdateEffects', () => {
@@ -518,5 +764,151 @@ describe('collectUpdateEffects', () => {
     });
     const effects = collectUpdateEffects(Y.encodeStateAsUpdate(base), update);
     expect(effects.changedObjects.map((object) => object.id)).toEqual(['legacy-nested']);
+  });
+});
+
+describe('sceneObjectBounds canonical geometry vs plotted data', () => {
+  it('physicsDataPlot data values never expand bounds used by hit testing', () => {
+    const plot: SceneObject = {
+      id: 'physics-canonical-fixture',
+      type: 'physicsDataPlot',
+      x: 100,
+      y: 100,
+      width: 400,
+      height: 300,
+      points: [
+        { x: 0, y: 0 },
+        { x: 1000000, y: 1000000 }
+      ],
+      xLabel: 't [s]',
+      yLabel: 'v [m/s]',
+      rotation: 0
+    } as unknown as SceneObject;
+
+    const bounds = sceneObjectBounds(plot);
+    expect(bounds).toEqual({ x: 100, y: 100, width: 400, height: 300 });
+
+    const index = createBoardSpatialIndex([plot]);
+    expect(index.queryNear({ x: 300, y: 250 }, 5).map((o) => o.id)).toEqual(['physics-canonical-fixture']);
+    // A query near the data value magnitude (1,000,000) must not match the plot.
+    expect(index.queryNear({ x: 1000000, y: 1000000 }, 50)).toHaveLength(0);
+  });
+});
+
+describe('BoardDocument candidate query', () => {
+  it('keeps optional pen pressure through normalization', () => {
+    const object = normalizeBoardObject({
+      id: 'pressured',
+      type: 'pen',
+      points: [
+        { x: 0, y: 0, t: 1, p: 0.2 },
+        { x: 8, y: 3, t: 4, p: 0.9 }
+      ],
+      color: '#111827',
+      lineWidth: 2
+    });
+    expect(object.points).toEqual([
+      { x: 0, y: 0, t: 1, p: 0.2 },
+      { x: 8, y: 3, t: 4, p: 0.9 }
+    ]);
+  });
+
+  it('rejects out-of-range pressure instead of storing a corrupt point', () => {
+    expect(
+      validateBoardObject({
+        id: 'bad-pressure',
+        type: 'pen',
+        points: [{ x: 0, y: 0, p: 1.4 }],
+        color: '#111827',
+        lineWidth: 2
+      })
+    ).toMatchObject({ ok: false, reason: 'invalidGeometry' });
+  });
+
+  it('returns nearby objects without scanning past the AABB', () => {
+    const far = normalizeBoardObject({
+      id: 'far',
+      type: 'rectangle',
+      x: 400,
+      y: 400,
+      width: 40,
+      height: 40,
+      color: '#111827',
+      lineWidth: 2
+    });
+    const near = normalizeBoardObject(pen('near'));
+    const hits = queryObjectsNear([far, near], { x: 12, y: 12 }, 8);
+    expect(hits.map((object) => object.id)).toEqual(['near']);
+    expect(sceneObjectBounds(near)).toMatchObject({ x: 10, y: 10 });
+  });
+
+  it('BoardSpatialIndex avoids scanning 10,000 objects on empty-area queries', () => {
+    const objects: SceneObject[] = [];
+    for (let i = 0; i < 10000; i++) {
+      const col = i % 100;
+      const row = Math.floor(i / 100);
+      objects.push({
+        id: `obj-${i}`,
+        type: 'rectangle',
+        x: col * 20,
+        y: row * 20,
+        width: 15,
+        height: 15,
+        color: '#000',
+        lineWidth: 2
+      });
+    }
+
+    const index = createBoardSpatialIndex(objects);
+    expect(index.size()).toBe(10000);
+
+    // Query an empty area far away from [0..2000, 0..2000]
+    const emptyHits = index.queryNear({ x: 50000, y: 50000 }, 16);
+    expect(emptyHits).toHaveLength(0);
+    // Crucial: 0 candidates tested out of 10,000 objects!
+    expect(index.lastQueryCandidateCount()).toBe(0);
+
+    // Query directly over obj-0 at (5, 5) with radius 10
+    const nearHits = index.queryNear({ x: 5, y: 5 }, 10);
+    expect(nearHits.length).toBeGreaterThanOrEqual(1);
+    expect(nearHits.some((o) => o.id === 'obj-0')).toBe(true);
+    // Bounded candidate count: only a single cell checked (~169 objects), not all 10,000!
+    expect(index.lastQueryCandidateCount()).toBeLessThan(200);
+    expect(index.lastQueryCandidateCount()).toBeGreaterThan(0);
+  });
+
+  it('BoardSpatialIndex updates candidate hits correctly on move, resize, and delete', () => {
+    const rect: SceneObject = {
+      id: 'target-rect',
+      type: 'rectangle',
+      x: 100,
+      y: 100,
+      width: 50,
+      height: 50,
+      color: '#111827',
+      lineWidth: 2
+    };
+    const index = createBoardSpatialIndex([rect]);
+
+    // Initial hit at center
+    expect(index.queryNear({ x: 120, y: 120 }, 5).map((o) => o.id)).toEqual(['target-rect']);
+    // Miss outside
+    expect(index.queryNear({ x: 500, y: 500 }, 5)).toHaveLength(0);
+
+    // Move object to (500, 500)
+    index.update({ ...rect, x: 500, y: 500 });
+    // Old position now empty
+    expect(index.queryNear({ x: 120, y: 120 }, 5)).toHaveLength(0);
+    // New position hits
+    expect(index.queryNear({ x: 520, y: 520 }, 5).map((o) => o.id)).toEqual(['target-rect']);
+
+    // Resize object to width: 400 (extending to x=900)
+    index.update({ ...rect, x: 500, y: 500, width: 400 });
+    expect(index.queryNear({ x: 850, y: 520 }, 5).map((o) => o.id)).toEqual(['target-rect']);
+
+    // Delete object
+    index.remove('target-rect');
+    expect(index.size()).toBe(0);
+    expect(index.queryNear({ x: 520, y: 520 }, 5)).toHaveLength(0);
   });
 });

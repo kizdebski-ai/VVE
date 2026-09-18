@@ -315,7 +315,9 @@ export const createRuntimeControl = (options: RuntimeControlOptions = {}): Runti
       const sequence = ++probeSequence;
       const controller = new AbortController();
       probeAbortController = controller;
-      const tracked = {} as ProbeWork;
+      const tracked: ProbeWork = {
+        promise: Promise.resolve({ database: false, persistence: false })
+      };
       // Publish the work before starting it. This also handles a probe that
       // fails synchronously: its finally block can still clear this exact
       // generation before the promise becomes observable to callers.

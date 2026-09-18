@@ -168,7 +168,7 @@ const startBackend = async (port: number, pgPort: number): Promise<RunningBacken
       ...process.env,
       NODE_ENV: 'development',
       VVE_PILOT_SURFACE: '1',
-      HOST: '0.0.0.0',
+      HOST: '127.0.0.1',
       PORT: String(port),
       DATABASE_URL: `postgres://postgres:vve_109_password@127.0.0.1:${pgPort}/vve_109_gate`,
       ADMIN_PASSPHRASE: TEST_PASS,
@@ -489,6 +489,8 @@ class ProductionGateClient {
   private canonical: BoardDocument | null = null;
   private socketError: Error | null = null;
   private closed = false;
+  private acknowledged = new Map<string, string>();
+  private denied = new Map<string, string>();
 
   constructor(
     public readonly boardId: string,
@@ -506,6 +508,8 @@ class ProductionGateClient {
     browserWindow.location.port = url.port;
     this.closed = false;
     this.socketError = null;
+    this.acknowledged.clear();
+    this.denied.clear();
     this.connection = module.connectToYjs(this.boardId, {
       wsToken: this.wsToken,
       onStatus: (status) => {
@@ -516,6 +520,7 @@ class ProductionGateClient {
     socket?.on?.('error', (error) => {
       if (!this.closed) this.socketError = error;
     });
+    this.attachProtocolHooks();
     const deadline = Date.now() + 10_000;
     while (!this.connection.isEditable()) {
       if (this.socketError) throw new Error(`Production connectToYjs socket failed for ${this.actorId}: ${(this.socketError as Error).message}`);
@@ -532,17 +537,58 @@ class ProductionGateClient {
     return this.canonical;
   }
 
+  private attachProtocolHooks(): void {
+    const connection = this.connection as (ProductionConnection & { socket?: any }) | null;
+    const socket = connection?.socket as any;
+    if (!socket || socket.__vve109Hooks) return;
+    socket.__vve109Hooks = true;
+    const originalSend = socket.send.bind(socket);
+    socket.send = (data: unknown) => {
+      const bytes = data instanceof Uint8Array
+        ? data
+        : data instanceof ArrayBuffer
+          ? new Uint8Array(data)
+          : new Uint8Array((data as ArrayBufferView).buffer, (data as ArrayBufferView).byteOffset, (data as ArrayBufferView).byteLength);
+      if (bytes[0] === collaborationMessage.mutation && bytes.length >= 3) {
+        const idLength = new DataView(bytes.buffer, bytes.byteOffset + 1, 2).getUint16(0);
+        socket.__vve109LastOperationId = new TextDecoder().decode(bytes.slice(3, 3 + idLength));
+      }
+      return originalSend(data);
+    };
+    const originalMessage = socket.onmessage;
+    socket.onmessage = (event: MessageEvent) => {
+      const bytes = event.data instanceof ArrayBuffer ? new Uint8Array(event.data) : event.data instanceof Uint8Array ? event.data : null;
+      if (bytes?.[0] === collaborationMessage.acknowledgement) {
+        const body = JSON.parse(new TextDecoder().decode(bytes.slice(1))) as { operationId?: string; digest?: string };
+        if (body.operationId && body.digest) this.acknowledged.set(body.operationId, body.digest);
+      } else if (bytes?.[0] === collaborationMessage.denial) {
+        const body = JSON.parse(new TextDecoder().decode(bytes.slice(1))) as { operationId?: string; reason?: string };
+        if (body.operationId) this.denied.set(body.operationId, body.reason ?? 'unknown');
+      }
+      originalMessage?.call(socket, event);
+    };
+  }
+
   async addObject(object: Record<string, unknown>): Promise<string> {
     if (!this.connection?.isEditable()) throw new Error(`Production client ${this.actorId} is not editable.`);
     // This call mutates the production adapter's own Y.Doc. Plain JSON is
     // intentional here: the frontend module owns its Yjs constructor.
     this.connection.yDrawings.push([object]);
+    this.attachProtocolHooks();
+    const socket = (this.connection as ProductionConnection & { socket?: any }).socket;
+    const operationId = socket?.__vve109LastOperationId as string | undefined;
+    if (!operationId) throw new Error(`Production connectToYjs did not expose a mutation operation for ${this.actorId}.`);
     const deadline = Date.now() + 10_000;
-    while (this.connection.pendingOperationCount() !== 0) {
+    while (!this.acknowledged.has(operationId) && !this.denied.has(operationId)) {
       if (Date.now() >= deadline) throw new Error(`Production connectToYjs ACK timeout for ${this.actorId}.`);
       await sleep(10);
     }
-    return this.refreshCanonical().digest();
+    const denial = this.denied.get(operationId);
+    if (denial) throw new Error(`Production connectToYjs denied operation for ${this.actorId}: ${denial}.`);
+    const ackDigest = this.acknowledged.get(operationId)!;
+    const localDigest = this.refreshCanonical().digest();
+    if (ackDigest !== localDigest) throw new Error(`Server ACK digest mismatch for ${this.actorId}.`);
+    return ackDigest;
   }
 
   async waitUntilEditable(timeoutMs = 10_000): Promise<void> {
@@ -552,7 +598,12 @@ class ProductionGateClient {
       if (Date.now() >= deadline) throw new Error(`Production connectToYjs did not recover for ${this.actorId}.`);
       await sleep(25);
     }
+    this.attachProtocolHooks();
     this.refreshCanonical();
+  }
+
+  isEditable(): boolean {
+    return this.connection?.isEditable() ?? false;
   }
 
   digest(): string {
@@ -606,6 +657,11 @@ const matureObjects = (board: number): Record<string, unknown>[] => [
   { ...objectFor(board, 8, 'physicsDataPlot'), points: [{ x: 0, y: 0 }, { x: 1, y: 2 }, { x: 2, y: 4 }], xLabel: 't', yLabel: 'v' }
 ];
 
+const seededChangeObject = (board: number, index: number): Record<string, unknown> => {
+  const template = matureObjects(board)[index % matureObjects(board).length]!;
+  return { ...template, id: `b${board}-o${index}`, timestamp: index };
+};
+
 const connectClients = async (base: string, boards: BoardAccess[], studentCounts: number[]): Promise<ProductionGateClient[]> => {
   const clients: ProductionGateClient[] = [];
   for (let boardIndex = 0; boardIndex < boards.length; boardIndex += 1) {
@@ -633,11 +689,17 @@ const runChangeGate = async (base: string, boards: BoardAccess[], options: Relea
   let acknowledged = 0;
   const count = options.operations;
   const changeStarted = Date.now();
+  const paceMs = options.smoke ? 0 : Math.max(1, Math.floor((options.durationMs * 0.9) / Math.max(count, 1)));
   for (let index = 0; index < count || (!options.smoke && Date.now() - changeStarted < options.durationMs); index += 1) {
+    if (!options.smoke && index >= count) {
+      await sleep(250);
+      continue;
+    }
     const client = clients[index % clients.length]!;
-    const ackDigest = await client.addObject(objectFor(0, index));
+    const ackDigest = await client.addObject(seededChangeObject(0, index));
     if (ackDigest !== client.digest()) throw new Error(`Acknowledgement digest mismatch at operation ${index}.`);
     acknowledged += 1;
+    if (!options.smoke && paceMs > 0) await sleep(paceMs);
   }
   const beforeRestart = clients[0]!.digest();
   closeClients(clients);
@@ -651,7 +713,7 @@ const runChangeGate = async (base: string, boards: BoardAccess[], options: Relea
   if (afterRestart !== beforeRestart) throw new Error('Acknowledged state digest changed after backend restart.');
   const snapshot = reloaded[0]!.snapshot();
   const drawings = Array.isArray(snapshot.drawings) ? snapshot.drawings as Array<Record<string, unknown>> : [];
-  if (drawings.length !== count) throw new Error(`Reloaded ${drawings.length} objects; expected ${count}.`);
+  if (drawings.length !== acknowledged) throw new Error(`Reloaded ${drawings.length} objects; expected ${acknowledged}.`);
   closeClients(reloaded);
   return { clients: 4, acknowledged, reconnects: 1, restarts: 1, digestMismatches: 0, leaks: 0 };
 };
@@ -686,7 +748,30 @@ const runDestructiveGate = async (base: string, board: BoardAccess): Promise<voi
   client.close();
 };
 
-const runSoak = async (base: string, boards: BoardAccess[], options: ReleaseGateOptions, restart: () => Promise<void>): Promise<{ clients: number; acknowledged: number; reconnects: number; restarts: number; maxRssBytes: number; maxEventLoopDelayMs: number; samples: number; blockerEvents: number; digestMismatches: number; crossBoardLeaks: number }> => {
+const assertSoakCheckpoint = async (clients: ProductionGateClient[], boards: BoardAccess[]): Promise<{ digestMismatches: number; crossBoardLeaks: number }> => {
+  const deadline = Date.now() + 5_000;
+  while (true) {
+    const digests = new Map<string, string>();
+    let digestMismatches = 0;
+    let crossBoardLeaks = 0;
+    for (const client of clients) {
+      const digest = client.digest();
+      const existing = digests.get(client.boardId);
+      if (existing && existing !== digest) digestMismatches += 1;
+      digests.set(client.boardId, digest);
+      const boardIndex = boards.findIndex((board) => board.boardId === client.boardId);
+      const drawings = client.snapshot().drawings as Array<Record<string, unknown>>;
+      for (const drawing of drawings) {
+        if (typeof drawing.id === 'string' && drawing.id.startsWith('b') && !drawing.id.startsWith(`b${boardIndex}-`)) crossBoardLeaks += 1;
+      }
+    }
+    if (digestMismatches === 0 && crossBoardLeaks === 0) return { digestMismatches, crossBoardLeaks };
+    if (Date.now() >= deadline) return { digestMismatches, crossBoardLeaks };
+    await sleep(50);
+  }
+};
+
+const runSoak = async (base: string, boards: BoardAccess[], options: ReleaseGateOptions, restart: (afterStop?: () => Promise<void>) => Promise<void>): Promise<{ clients: number; acknowledged: number; reconnects: number; restarts: number; maxRssBytes: number; maxEventLoopDelayMs: number; samples: number; blockerEvents: number; digestMismatches: number; crossBoardLeaks: number }> => {
   const studentCounts = boards.map((_, index) => index < 13 ? 2 : 1);
   let clients = await connectClients(base, boards, studentCounts);
   let acknowledged = 0;
@@ -696,8 +781,10 @@ const runSoak = async (base: string, boards: BoardAccess[], options: ReleaseGate
   let maxEventLoopDelayMs = 0;
   let blockerEvents = 0;
   let digestMismatches = 0;
+  let crossBoardLeaks = 0;
   let samples = 0;
   const started = Date.now();
+  let lastProgressAt = started;
   let restarted = false;
   while (Date.now() - started < options.durationMs) {
     const ready = await waitForReady(base);
@@ -708,6 +795,9 @@ const runSoak = async (base: string, boards: BoardAccess[], options: ReleaseGate
     const errors = (soak.errors ?? {}) as Record<string, unknown>;
     const currentBlockers = Number(soak.eventsLost ?? 0) + Number(errors.persistence ?? 0) + Number(errors.unhandled ?? 0);
     blockerEvents = Math.max(blockerEvents, currentBlockers);
+    if (Number(soak.connections ?? -1) !== clients.length || Number(soak.boards ?? -1) !== boards.length) {
+      throw new Error(`Readiness connection/board count mismatch: expected ${clients.length}/${boards.length}, got ${String(soak.connections)}/${String(soak.boards)}.`);
+    }
     maxRssBytes = Math.max(maxRssBytes, Number(memory.rssBytes ?? 0));
     maxEventLoopDelayMs = Math.max(maxEventLoopDelayMs, Number(loop.p95 ?? 0));
     const index = acknowledged % clients.length;
@@ -715,17 +805,37 @@ const runSoak = async (base: string, boards: BoardAccess[], options: ReleaseGate
     if (operationBoardIndex < 0) throw new Error(`Soak client ${clients[index]!.boardId} is not one of the gate boards.`);
     await clients[index]!.addObject(objectFor(operationBoardIndex, acknowledged + 10_000));
     acknowledged += 1;
+    const checkpoint = await assertSoakCheckpoint(clients, boards);
+    digestMismatches += checkpoint.digestMismatches;
+    crossBoardLeaks += checkpoint.crossBoardLeaks;
     if (!restarted && Date.now() - started >= Math.max(1_000, Math.floor(options.durationMs / 2))) {
-      await restart();
+      const beforeRestart = new Map<string, { digest: string; drawings: number }>();
+      for (const client of clients) {
+        if (!beforeRestart.has(client.boardId)) beforeRestart.set(client.boardId, { digest: client.digest(), drawings: (client.snapshot().drawings as unknown[]).length });
+      }
+      await restart(async () => {
+        if (clients.some((client) => client.isEditable())) throw new Error('A production client remained editable during backend drain.');
+      });
       await Promise.all(clients.map((client) => client.waitUntilEditable()));
+      for (const client of clients) {
+        const before = beforeRestart.get(client.boardId)!;
+        const afterDrawings = (client.snapshot().drawings as unknown[]).length;
+        if (client.digest() !== before.digest || afterDrawings !== before.drawings) throw new Error(`Board ${client.boardId} changed across backend restart.`);
+      }
+      const restartCheckpoint = await assertSoakCheckpoint(clients, boards);
+      digestMismatches += restartCheckpoint.digestMismatches;
+      crossBoardLeaks += restartCheckpoint.crossBoardLeaks;
       reconnects += clients.length;
       restarts += 1;
       restarted = true;
     }
+    if (Date.now() - lastProgressAt >= 60_000) {
+      console.log(`VVE-109 soak progress elapsedMs=${Date.now() - started} samples=${samples} clients=${clients.length} acknowledged=${acknowledged} reconnects=${reconnects} blockers=${blockerEvents}`);
+      lastProgressAt = Date.now();
+    }
     await sleep(Math.min(15_000, Math.max(500, Math.floor(options.durationMs / 10))));
   }
   const digestByBoard = new Map<string, string>();
-  let crossBoardLeaks = 0;
   for (const client of clients) {
     const existing = digestByBoard.get(client.boardId);
     const digest = client.digest();
@@ -785,8 +895,9 @@ export const main = async (argv = process.argv.slice(2)): Promise<GateReport> =>
     stopPostgres = await startPostgres(options.pgPort);
     const base = `http://127.0.0.1:${options.backendPort}`;
     backend = await startBackend(options.backendPort, options.pgPort);
-    const restart = async (): Promise<void> => {
+    const restart = async (afterStop?: () => Promise<void>): Promise<void> => {
       await backend?.stop();
+      await afterStop?.();
       backend = await startBackend(options.backendPort, options.pgPort);
       backendRestarts += 1;
     };

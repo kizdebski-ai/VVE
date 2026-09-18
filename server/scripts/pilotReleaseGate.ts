@@ -13,12 +13,14 @@
  *   destructive  malformed/oversized/invalid input remains bounded
  *   stress       optional 88-client safe-overload probe
  */
-import { readFileSync, writeFileSync } from 'fs';
+import { writeFileSync } from 'fs';
 import { join, resolve } from 'path';
 import { spawn, spawnSync, type ChildProcess } from 'child_process';
 import * as Y from 'yjs';
 import WebSocket from 'ws';
 import { createBoardDocument, type BoardDocument } from '../src/pilot/boardDocument';
+import { runMatureBoardScenario, type ScenarioResult } from './pilotGateScenarios';
+import type { BoardCommand } from '../src/pilot/boardScene';
 import type { BoardRole } from '../src/pilot/boardScene';
 import { collaborationMessage } from '../src/pilot/collaborationProtocol';
 
@@ -440,6 +442,12 @@ type ProductionConnection = {
 
 type ProductionClientModule = {
   connectToYjs: (roomId: string, options: { wsToken: string; onStatus?: (status: string) => void }) => ProductionConnection;
+  createWhiteboardSession?: (options: { ydoc: Y.Doc; role: 'teacher' | 'student'; isEditable: () => boolean }) => {
+    execute: (command: BoardCommand) => { ok: true } | { ok: false; reason: string; message: string };
+    undo: () => boolean;
+    redo: () => boolean;
+    dispose: () => void;
+  };
 };
 
 let productionClientModule: Promise<ProductionClientModule> | null = null;
@@ -473,12 +481,20 @@ const loadProductionClient = async (): Promise<ProductionClientModule> => {
         root: resolve(ROOT, '..', 'frontend'),
         configFile: false,
         optimizeDeps: { disabled: true },
+        resolve: {
+          alias: {
+            '@': resolve(ROOT, '..', 'frontend', 'src'),
+            '@pilot': resolve(ROOT, 'src', 'pilot')
+          },
+          dedupe: ['yjs']
+        },
         server: { middlewareMode: true },
         appType: 'custom',
         logLevel: 'error'
       });
       const loaded = await productionVite.ssrLoadModule('/src/services/connectToYjs.ts');
-      return loaded as unknown as ProductionClientModule;
+      const session = await productionVite.ssrLoadModule('/src/board/whiteboardSession.ts');
+      return { ...loaded, ...session } as unknown as ProductionClientModule;
     })();
   }
   return productionClientModule;
@@ -487,6 +503,7 @@ const loadProductionClient = async (): Promise<ProductionClientModule> => {
 class ProductionGateClient {
   private connection: ProductionConnection | null = null;
   private canonical: BoardDocument | null = null;
+  private session: ReturnType<NonNullable<ProductionClientModule['createWhiteboardSession']>> | null = null;
   private socketError: Error | null = null;
   private closed = false;
   private acknowledged = new Map<string, string>();
@@ -495,6 +512,7 @@ class ProductionGateClient {
   constructor(
     public readonly boardId: string,
     private readonly wsToken: string,
+    private readonly role: 'teacher' | 'student',
     private readonly actorId: string
   ) {}
 
@@ -527,6 +545,9 @@ class ProductionGateClient {
       if (Date.now() >= deadline) throw new Error(`Production connectToYjs did not synchronize for ${this.actorId}.`);
       await sleep(25);
     }
+    const createSession = module.createWhiteboardSession;
+    if (!createSession) throw new Error('Production whiteboard session module is unavailable.');
+    this.session = createSession({ ydoc: this.connection.ydoc, role: this.role, isEditable: this.connection.isEditable });
     this.refreshCanonical();
   }
 
@@ -591,6 +612,50 @@ class ProductionGateClient {
     return ackDigest;
   }
 
+  async apply(command: BoardCommand): Promise<ScenarioResult> {
+    if (!this.session) throw new Error(`Production whiteboard session is not ready for ${this.actorId}.`);
+    const result = this.session.execute(command);
+    if (!result.ok) return { ok: false, message: result.message };
+    await this.waitForActualAcknowledgement();
+    return { ok: true, digest: this.refreshCanonical().digest() };
+  }
+
+  private async waitForActualAcknowledgement(): Promise<string> {
+    this.attachProtocolHooks();
+    const socket = (this.connection as ProductionConnection & { socket?: any }).socket;
+    const operationId = socket?.__vve109LastOperationId as string | undefined;
+    if (!operationId) throw new Error(`Production session did not expose a mutation operation for ${this.actorId}.`);
+    const deadline = Date.now() + 10_000;
+    while (!this.acknowledged.has(operationId) && !this.denied.has(operationId)) {
+      if (Date.now() >= deadline) throw new Error(`Production session ACK timeout for ${this.actorId}.`);
+      await sleep(10);
+    }
+    const denial = this.denied.get(operationId);
+    if (denial) throw new Error(`Production session denied operation for ${this.actorId}: ${denial}.`);
+    return this.acknowledged.get(operationId)!;
+  }
+
+  async undo(): Promise<boolean> {
+    if (!this.session?.undo()) return false;
+    await this.waitForActualAcknowledgement();
+    return true;
+  }
+
+  async redo(): Promise<boolean> {
+    if (!this.session?.redo()) return false;
+    await this.waitForActualAcknowledgement();
+    return true;
+  }
+
+  async reorder(ids: readonly string[]): Promise<void> {
+    if (!this.connection?.isEditable()) throw new Error(`Production client ${this.actorId} is not editable.`);
+    const byId = new Map(this.connection.yDrawings.toArray().map((entry: any) => [entry?.get?.('id') ?? entry?.id, entry]));
+    const ordered = ids.map((id) => byId.get(id)).filter((entry) => entry !== undefined);
+    this.connection.yDrawings.delete(0, this.connection.yDrawings.length);
+    this.connection.yDrawings.insert(0, ordered);
+    await this.waitForActualAcknowledgement();
+  }
+
   async waitUntilEditable(timeoutMs = 10_000): Promise<void> {
     if (!this.connection) throw new Error(`Production client ${this.actorId} is disconnected.`);
     const deadline = Date.now() + timeoutMs;
@@ -617,6 +682,8 @@ class ProductionGateClient {
 
   close(): void {
     this.closed = true;
+    this.session?.dispose();
+    this.session = null;
     this.connection?.disconnect();
     this.connection?.ydoc.destroy();
     this.connection = null;
@@ -666,10 +733,10 @@ const connectClients = async (base: string, boards: BoardAccess[], studentCounts
   const clients: ProductionGateClient[] = [];
   for (let boardIndex = 0; boardIndex < boards.length; boardIndex += 1) {
     const board = boards[boardIndex]!;
-    const teacher = new ProductionGateClient(board.boardId, board.teacherWsToken, `teacher-${boardIndex}`);
+    const teacher = new ProductionGateClient(board.boardId, board.teacherWsToken, 'teacher', `teacher-${boardIndex}`);
     clients.push(teacher);
     for (let studentIndex = 0; studentIndex < studentCounts[boardIndex]!; studentIndex += 1) {
-      clients.push(new ProductionGateClient(board.boardId, board.studentWsToken, `student-${boardIndex}-${studentIndex}`));
+      clients.push(new ProductionGateClient(board.boardId, board.studentWsToken, 'student', `student-${boardIndex}-${studentIndex}`));
     }
   }
   await Promise.all(clients.map((client) => client.connect(base)));
@@ -678,9 +745,14 @@ const connectClients = async (base: string, boards: BoardAccess[], studentCounts
 
 const closeClients = (clients: GateClient[]): void => clients.forEach((client) => client.close());
 
-const waitForReady = async (base: string): Promise<Record<string, unknown>> => {
+const waitForReady = async (base: string, adminCookie?: string): Promise<Record<string, unknown>> => {
   const result = await fetchJson<Record<string, unknown>>(base, '/ready');
   if (result.status !== 200) throw new Error(`Backend readiness failed with HTTP ${result.status}.`);
+  if (adminCookie) {
+    const runtime = await fetchJson<{ soak?: Record<string, unknown> }>(base, '/api/admin/runtime', { headers: { cookie: adminCookie } });
+    if (runtime.status !== 200 || !runtime.body.soak) throw new Error(`Protected runtime readiness failed with HTTP ${runtime.status}.`);
+    return { ...result.body, soak: runtime.body.soak };
+  }
   return result.body;
 };
 
@@ -719,23 +791,23 @@ const runChangeGate = async (base: string, boards: BoardAccess[], options: Relea
 };
 
 const runMatureGate = async (base: string, boards: BoardAccess[], options: ReleaseGateOptions): Promise<{ clients: number; acknowledged: number; fixtures: { pdfBytes: number; imageBytes: number } }> => {
-  const clients = await connectClients(base, [boards[0]!], [3]);
-  let acknowledged = 0;
-  for (const object of matureObjects(0)) {
-    const digest = await clients[0]!.addObject(object);
-    if (!digest) throw new Error('Mature-board operation returned an empty digest.');
-    acknowledged += 1;
-  }
-  for (let index = 0; index < Math.min(options.operations, 120); index += 1) {
-    await clients[index % clients.length]!.addObject(objectFor(0, 100 + index));
-    acknowledged += 1;
-  }
+  const board = boards[0]!;
   const pdfPath = resolve(ROOT, '..', 'frontend', 'tests', 'fixtures', 'artifacts', 'lesson-2page.pdf');
   const imagePath = resolve(ROOT, '..', 'frontend', 'tests', 'fixtures', 'artifacts', 'pixel.png');
-  const fixtures = { pdfBytes: readFileSync(pdfPath).byteLength, imageBytes: readFileSync(imagePath).byteLength };
-  if (!fixtures.pdfBytes || !fixtures.imageBytes) throw new Error('Mature-board fixtures are missing or empty.');
-  closeClients(clients);
-  return { clients: 4, acknowledged, fixtures };
+  const scenario = await runMatureBoardScenario({
+    base,
+    fixtures: { pdfPath, imagePath },
+    createClient: async (role, label) => {
+      const client = new ProductionGateClient(board.boardId, role === 'teacher' ? board.teacherWsToken : board.studentWsToken, role, label);
+      await client.connect(base);
+      return client;
+    }
+  }, { historyOperations: options.smoke ? 12 : 48 });
+  return {
+    clients: scenario.clients,
+    acknowledged: scenario.acceptedOperations,
+    fixtures: { pdfBytes: scenario.fixtures.pdfBytes, imageBytes: scenario.fixtures.imageBytes }
+  };
 };
 
 const runDestructiveGate = async (base: string, board: BoardAccess): Promise<void> => {
@@ -771,7 +843,7 @@ const assertSoakCheckpoint = async (clients: ProductionGateClient[], boards: Boa
   }
 };
 
-const runSoak = async (base: string, boards: BoardAccess[], options: ReleaseGateOptions, restart: (afterStop?: () => Promise<void>) => Promise<void>): Promise<{ clients: number; acknowledged: number; reconnects: number; restarts: number; maxRssBytes: number; maxEventLoopDelayMs: number; samples: number; blockerEvents: number; digestMismatches: number; crossBoardLeaks: number }> => {
+const runSoak = async (base: string, boards: BoardAccess[], options: ReleaseGateOptions, restart: (afterStop?: () => Promise<void>) => Promise<void>, adminCookie: string): Promise<{ clients: number; acknowledged: number; reconnects: number; restarts: number; maxRssBytes: number; maxEventLoopDelayMs: number; samples: number; blockerEvents: number; digestMismatches: number; crossBoardLeaks: number }> => {
   const studentCounts = boards.map((_, index) => index < 13 ? 2 : 1);
   let clients = await connectClients(base, boards, studentCounts);
   let acknowledged = 0;
@@ -787,7 +859,7 @@ const runSoak = async (base: string, boards: BoardAccess[], options: ReleaseGate
   let lastProgressAt = started;
   let restarted = false;
   while (Date.now() - started < options.durationMs) {
-    const ready = await waitForReady(base);
+    const ready = await waitForReady(base, adminCookie);
     samples += 1;
     const soak = (ready.soak ?? {}) as Record<string, unknown>;
     const memory = (soak.memory ?? {}) as Record<string, unknown>;
@@ -925,7 +997,7 @@ export const main = async (argv = process.argv.slice(2)): Promise<GateReport> =>
     } else if (options.profile === 'destructive') {
       await runDestructiveGate(base, boards[0]!); clientCount = 1;
     } else if (options.profile === 'soak') {
-      const result = await runSoak(base, boards, options, restart);
+      const result = await runSoak(base, boards, options, restart, adminCookie);
       clientCount = result.clients; acknowledgedOperations = result.acknowledged; reconnects = result.reconnects;
       soakSamples = result.samples; maxRssBytes = result.maxRssBytes; maxEventLoopDelayMs = result.maxEventLoopDelayMs; blockerEvents = result.blockerEvents; digestMismatches = result.digestMismatches; crossBoardLeaks = result.crossBoardLeaks;
     } else {

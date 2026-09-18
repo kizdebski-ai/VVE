@@ -20,7 +20,7 @@ import * as Y from 'yjs';
 import WebSocket from 'ws';
 import { createBoardDocument, type BoardDocument } from '../src/pilot/boardDocument';
 import { runMatureBoardScenario, type ScenarioResult } from './pilotGateScenarios';
-import type { BoardCommand } from '../src/pilot/boardScene';
+import type { BoardCommand, SceneObject } from '../src/pilot/boardScene';
 import type { BoardRole } from '../src/pilot/boardScene';
 import { collaborationMessage } from '../src/pilot/collaborationProtocol';
 
@@ -461,6 +461,7 @@ type ProductionClientModule = {
     undo: () => boolean;
     redo: () => boolean;
     dispose: () => void;
+    snapshot: () => readonly SceneObject[];
   };
 };
 
@@ -607,25 +608,15 @@ class ProductionGateClient {
     };
   }
 
-  async addObject(object: Record<string, unknown>): Promise<string> {
-    if (!this.connection?.isEditable()) throw new Error(`Production client ${this.actorId} is not editable.`);
-    // This call mutates the production adapter's own Y.Doc. Plain JSON is
-    // intentional here: the frontend module owns its Yjs constructor.
-    this.connection.yDrawings.push([object]);
-    this.attachProtocolHooks();
-    const socket = (this.connection as ProductionConnection & { socket?: any }).socket;
-    const operationId = socket?.__vve109LastOperationId as string | undefined;
-    if (!operationId) throw new Error(`Production connectToYjs did not expose a mutation operation for ${this.actorId}.`);
-    const deadline = Date.now() + 10_000;
-    while (!this.acknowledged.has(operationId) && !this.denied.has(operationId)) {
-      if (Date.now() >= deadline) throw new Error(`Production connectToYjs ACK timeout for ${this.actorId}.`);
-      await sleep(10);
+  async addObject(object: SceneObject): Promise<string> {
+    if (!this.session) throw new Error(`Production client ${this.actorId} has no whiteboard session.`);
+    const result = this.session.execute({ kind: 'add', object });
+    if (!result.ok) throw new Error(`Production command rejected for ${this.actorId}: ${result.message}`);
+    const ackDigest = await this.waitForActualAcknowledgement();
+    if (!this.session.snapshot().some((entry) => entry.id === object.id)) {
+      throw new Error(`Acknowledged object ${object.id} is absent from the production scene.`);
     }
-    const denial = this.denied.get(operationId);
-    if (denial) throw new Error(`Production connectToYjs denied operation for ${this.actorId}: ${denial}.`);
-    const ackDigest = this.acknowledged.get(operationId)!;
-    const localDigest = this.refreshCanonical().digest();
-    if (ackDigest !== localDigest) throw new Error(`Server ACK digest mismatch for ${this.actorId}.`);
+    if (ackDigest !== this.refreshCanonical().digest()) throw new Error(`Server ACK digest mismatch for ${this.actorId}.`);
     return ackDigest;
   }
 
@@ -694,7 +685,7 @@ class ProductionGateClient {
 
   snapshot(): Record<string, unknown> {
     if (!this.connection) throw new Error('Production client is not connected.');
-    return { drawings: this.connection.yDrawings.toJSON() };
+    return { drawings: this.session?.snapshot() ?? [] };
   }
 
   close(): void {
@@ -712,13 +703,13 @@ class ProductionGateClient {
 type GateClient = {
   boardId: string;
   connect: (base: string) => Promise<void>;
-  addObject: (object: Record<string, unknown>) => Promise<string>;
+  addObject: (object: SceneObject) => Promise<string>;
   digest: () => string;
   snapshot: () => Record<string, unknown>;
   close: () => void;
 };
 
-const objectFor = (board: number, index: number, kind = 'rectangle'): Record<string, unknown> => ({
+const objectFor = (board: number, index: number, kind = 'rectangle'): SceneObject => ({
   id: `b${board}-o${index}`,
   type: kind,
   x: (index * 37) % 10_000,
@@ -730,7 +721,7 @@ const objectFor = (board: number, index: number, kind = 'rectangle'): Record<str
   timestamp: index
 });
 
-const matureObjects = (board: number): Record<string, unknown>[] => [
+const matureObjects = (board: number): SceneObject[] => [
   objectFor(board, 1, 'rectangle'),
   { ...objectFor(board, 2, 'line'), start: { x: 0, y: 0 }, end: { x: 240, y: 120 }, arrowStyle: 'end', lineStyle: 'dashed' },
   { ...objectFor(board, 3, 'text'), text: 'VVE-109 mature lesson history', fontSize: 24 },
@@ -741,7 +732,7 @@ const matureObjects = (board: number): Record<string, unknown>[] => [
   { ...objectFor(board, 8, 'physicsDataPlot'), points: [{ x: 0, y: 0 }, { x: 1, y: 2 }, { x: 2, y: 4 }], xLabel: 't', yLabel: 'v' }
 ];
 
-const seededChangeObject = (board: number, index: number): Record<string, unknown> => {
+const seededChangeObject = (board: number, index: number): SceneObject => {
   const template = matureObjects(board)[index % matureObjects(board).length]!;
   return { ...template, id: `b${board}-o${index}`, timestamp: index };
 };

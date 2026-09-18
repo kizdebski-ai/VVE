@@ -773,6 +773,7 @@ describe('board commands', () => {
     expect(sceneJson(doc)).toEqual([]);
     expect(applyBoardCommand(doc, { kind: 'erasePen', id: 'covered-pen', segments: [] }, student))
       .toMatchObject({ ok: false, reason: 'missingObject' });
+    expect(splitPenStroke([], { x: 0, y: 0 }, 10)).toEqual([]);
   });
 });
 

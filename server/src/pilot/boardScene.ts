@@ -561,12 +561,12 @@ export const splitPenStroke = (
 ): ScenePoint[][] => {
   if (
     !Array.isArray(points) ||
-    points.length === 0 ||
     !isCoordinate(center.x) ||
     !isCoordinate(center.y) ||
     !Number.isFinite(radius) ||
     radius <= 0
   ) {
+    if (Array.isArray(points) && points.length === 0) return [];
     return [points.map(plainPoint)];
   }
 

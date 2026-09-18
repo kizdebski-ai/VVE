@@ -259,7 +259,16 @@ export const runMatureBoardScenario = async (
       const x = 100 + index * 7;
       const y = 120 + index * 5;
       await requireApplied(client, { kind: 'move', id, x, y });
-      await requireApplied(client, { kind: 'resize', id, x, y, width: 100 + (index % 5) * 20, height: 70 + (index % 4) * 15 });
+      if (id === 'mature-line') {
+        await requireApplied(client, {
+          kind: 'setLineEndpoints',
+          id,
+          start: { x, y },
+          end: { x: x + 160 + (index % 5) * 20, y: y + 90 + (index % 4) * 15 }
+        });
+      } else {
+        await requireApplied(client, { kind: 'resize', id, x, y, width: 100 + (index % 5) * 20, height: 70 + (index % 4) * 15 });
+      }
       await requireApplied(client, { kind: 'updateStyle', id, patch: { lineWidth: 2 + (index % 3), color: index % 2 ? '#1d4ed8' : '#2563eb' } });
       coverage.edits += 3;
       acceptedOperations += 3;

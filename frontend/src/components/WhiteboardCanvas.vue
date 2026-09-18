@@ -74,7 +74,6 @@
       ref="inlineTextRef"
       v-model="inlineTextEditor.value"
       class="inline-text-editor"
-      autofocus
       :style="inlineTextStyle"
       @blur="finalizeInlineText"
       @keydown.enter.stop="handleInlineTextEnter"
@@ -339,14 +338,20 @@ export default {
     const inlineTextStyle = computed(() => {
       const screenX = inlineTextEditor.x * zoomLevel.value + panOffset.value.x;
       const screenY = inlineTextEditor.y * zoomLevel.value + panOffset.value.y;
+      // Keep the editor inside the viewport so focusing its caret cannot
+      // scroll the canvas container independently of the board transform.
+      const left = Math.max(0, Math.min(screenX, canvasWidth.value - 80));
+      const top = Math.max(0, Math.min(screenY, canvasHeight.value - 60));
       const safeColor = currentColor.value || '#000000';
       return {
         position: 'absolute',
-        left: `${screenX}px`,
-        top: `${screenY}px`,
+        left: `${left}px`,
+        top: `${top}px`,
+        width: `${Math.max(1, Math.min(400, canvasWidth.value - left - 4))}px`,
+        maxHeight: `${Math.max(1, canvasHeight.value - top - 4)}px`,
         fontSize: `${inlineTextEditor.fontSize * zoomLevel.value}px`,
         color: safeColor,
-        minWidth: '50px',
+        minWidth: '0',
         minHeight: '1.2em',
         zIndex: 2000,
         background: 'rgba(255, 255, 255, 0.05)',
@@ -354,7 +359,7 @@ export default {
         outline: 'none',
         borderRadius: '2px',
         resize: 'none',
-        overflow: 'hidden',
+        overflow: 'auto',
         fontFamily: '"Kalam", cursive', // Hand-like font
         fontWeight: '400',
         lineHeight: '1.2',

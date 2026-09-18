@@ -931,23 +931,12 @@ const CANONICAL_KEYS: Record<string, readonly string[]> = {
 
 /**
  * Normalize a candidate object to its canonical shape: apply canonical
- * lesson-object defaults, derive bounds, keep only canonical keys, and strip
- * the remaining historical aliases (`position`, `dataUrl`). Legacy
- * `strokeColor`, `xData`/`yData` and `size` are no longer read anywhere:
- * canonical producers emit canonical fields (no old-data migration promise).
+ * lesson-object defaults, derive bounds, and keep only canonical keys.
+ * Canonical command paths deliberately do not migrate historical aliases.
  */
 export const normalizeBoardObject = (candidate: SceneObject): SceneObject => {
   const object: Record<string, unknown> = { ...candidate };
   const type = String(object.type ?? '');
-
-  if (type === 'image' && object.dataUrl !== undefined && object.src === undefined) {
-    object.src = object.dataUrl;
-  }
-  if (object.position && typeof object.position === 'object') {
-    const pos = object.position as { x?: unknown; y?: unknown };
-    if (object.x === undefined && typeof pos.x === 'number') object.x = pos.x;
-    if (object.y === undefined && typeof pos.y === 'number') object.y = pos.y;
-  }
 
   if (type === 'coordinateSystem2D') {
     if (object.grid === undefined) object.grid = LESSON_OBJECT_DEFAULTS.coordinateSystem2D.grid;
@@ -1019,6 +1008,25 @@ export const normalizeBoardObject = (candidate: SceneObject): SceneObject => {
     }
   }
   return object as SceneObject;
+};
+
+/**
+ * Normalize an object arriving through an explicitly legacy-aware import
+ * boundary. General board commands must use `normalizeBoardObject` so a
+ * newly submitted alias is rejected by the canonical schema.
+ */
+export const normalizeImportedBoardObject = (candidate: SceneObject): SceneObject => {
+  const object: Record<string, unknown> = { ...candidate };
+  const type = String(object.type ?? '');
+  if (type === 'image' && object.dataUrl !== undefined && object.src === undefined) {
+    object.src = object.dataUrl;
+  }
+  if (object.position && typeof object.position === 'object') {
+    const position = object.position as { x?: unknown; y?: unknown };
+    if (object.x === undefined && typeof position.x === 'number') object.x = position.x;
+    if (object.y === undefined && typeof position.y === 'number') object.y = position.y;
+  }
+  return normalizeBoardObject(object as SceneObject);
 };
 
 // --- Yjs access helpers ------------------------------------------------------

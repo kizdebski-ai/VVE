@@ -121,7 +121,7 @@ export const createWhiteboardSession = (
     const object = normalizeBoardObject(map.toJSON() as SceneObject);
     return object && typeof object.id === 'string' && object.id ? object : null;
   };
-  const trackMap = (map: Y.Map<unknown>): void => {
+  const trackMap = (map: Y.Map<unknown>, insertionIndex?: number): void => {
     if (mapObservers.has(map)) return;
     const handler = () => {
       const object = toSceneObject(map);
@@ -132,7 +132,7 @@ export const createWhiteboardSession = (
     const object = toSceneObject(map);
     if (object) {
       trackedMaps.set(object.id, map);
-      orderedIds.push(object.id);
+      orderedIds.splice(insertionIndex ?? orderedIds.length, 0, object.id);
       spatialIndex.insert(object);
     }
   };
@@ -153,7 +153,7 @@ export const createWhiteboardSession = (
       } else if (Array.isArray(deltaItem.insert)) {
         for (const item of deltaItem.insert) {
           if (item instanceof Y.Map) {
-            trackMap(item);
+            trackMap(item, offset);
             offset++;
           } else {
             offset++;

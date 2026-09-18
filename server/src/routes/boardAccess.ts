@@ -94,7 +94,7 @@ export const createBoardAccessRouter = (access: CapabilityAccess, lifecycle: Boa
       role: decision.role,
       publicSlug: resolveById ? null : slug,
       title: boardFacts.title,
-      studentLabel: boardFacts.studentLabel,
+      ...(decision.role === 'teacher' ? { studentLabel: boardFacts.studentLabel } : {}),
       teacherName: PUBLIC_TEACHER_IDENTITY,
       validUntil: boardFacts.validUntil,
       wsToken,

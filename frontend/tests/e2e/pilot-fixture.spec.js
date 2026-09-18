@@ -26,6 +26,16 @@ const fixturePath = path.resolve(
 const fixture = JSON.parse(readFileSync(fixturePath, 'utf8'));
 
 const adminPassphrase = process.env.PILOT_ADMIN_PASSPHRASE || 'pilot-e2e-admin-passphrase';
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
+const captureTrackedArtifacts = process.env.VVE_CAPTURE_VISUALS === '1' || process.env.CAPTURE_EVIDENCE === '1';
+
+const artifactDirectory = (testInfo, temporaryRelativePath, trackedRelativePath) => {
+  const root = captureTrackedArtifacts ? repoRoot : path.join(testInfo.outputDir, 'artifacts');
+  const relativePath = captureTrackedArtifacts ? trackedRelativePath : temporaryRelativePath;
+  const directory = path.join(root, relativePath);
+  mkdirSync(directory, { recursive: true });
+  return directory;
+};
 
 test.describe('Pilot fixture: Administrator, Teacher, Student browser contexts', () => {
   test.describe.configure({ mode: 'serial' });
@@ -388,7 +398,7 @@ test.describe('Pilot fixture: Administrator, Teacher, Student browser contexts',
     await teacherContext.close();
   });
 
-  test('lesson panels remain focused and inside desktop and iPad portrait viewports', async ({ browser }) => {
+  test('lesson panels remain focused and inside desktop and iPad portrait viewports', async ({ browser }, testInfo) => {
     const profiles = [
       { name: 'desktop', viewport: { width: 1440, height: 900 }, hasTouch: false },
       { name: 'ipad-portrait', viewport: { width: 768, height: 1024 }, hasTouch: true }
@@ -447,17 +457,14 @@ test.describe('Pilot fixture: Administrator, Teacher, Student browser contexts',
       expect(layout.scrollWidth).toBeLessThanOrEqual(layout.innerWidth);
       expect(layout.panelIsTopmost).toBe(true);
 
-      if (process.env.VVE_CAPTURE_VISUALS === '1') {
+      if (captureTrackedArtifacts) {
+        const evidenceDir = artifactDirectory(
+          testInfo,
+          path.join('vve-106'),
+          path.join('docs', 'implementation')
+        );
         await page.screenshot({
-          path: path.resolve(
-            path.dirname(fileURLToPath(import.meta.url)),
-            '..',
-            '..',
-            '..',
-            'docs',
-            'implementation',
-            `VVE-106-${profile.name}.png`
-          ),
+          path: path.join(evidenceDir, `VVE-106-${profile.name}.png`),
           fullPage: true
         });
       }
@@ -774,22 +781,16 @@ test.describe('Pilot fixture: Administrator, Teacher, Student browser contexts',
     await context.close();
   });
 
-  test('Pointer pipeline: persistence, cancel, p95, desktop and iPad layout', async ({ browser }) => {
+  test('Pointer pipeline: persistence, cancel, p95, desktop and iPad layout', async ({ browser }, testInfo) => {
     test.setTimeout(90_000);
-    const evidenceDir = path.resolve(
-      path.dirname(fileURLToPath(import.meta.url)),
-      '..',
-      '..',
-      '..',
-      'docs',
-      'implementation',
-      'evidence',
-      'vve-105'
-    );
-    const shouldCapture = Boolean(process.env.VVE_CAPTURE_VISUALS || process.env.CAPTURE_EVIDENCE);
-    if (shouldCapture) {
-      mkdirSync(evidenceDir, { recursive: true });
-    }
+    const shouldCapture = captureTrackedArtifacts;
+    const evidenceDir = shouldCapture
+      ? artifactDirectory(
+        testInfo,
+        path.join('vve-105'),
+        path.join('docs', 'implementation', 'evidence', 'vve-105')
+      )
+      : null;
 
     const assertNoPageOverflow = async (page) => {
       const box = await page.evaluate(() => ({
@@ -1001,7 +1002,7 @@ test.describe('Pilot fixture: Administrator, Teacher, Student browser contexts',
     await autoContext.close();
   });
 
-  test('PDF import collaborates, reloads, and exports from the synchronized board', async ({ browser }) => {
+  test('PDF import collaborates, reloads, and exports from the synchronized board', async ({ browser }, testInfo) => {
     test.setTimeout(120_000);
     const teacherContext = await browser.newContext();
     const teacher = await teacherContext.newPage();
@@ -1031,9 +1032,10 @@ test.describe('Pilot fixture: Administrator, Teacher, Student browser contexts',
     await join(first);
     await join(second);
 
-    const evidenceDir = path.resolve(
-      path.dirname(fileURLToPath(import.meta.url)),
-      '../../../docs/implementation/evidence/vve-107'
+    const evidenceDir = artifactDirectory(
+      testInfo,
+      path.join('vve-107'),
+      path.join('docs', 'implementation', 'evidence', 'vve-107')
     );
     const pdfBytes = readFileSync(
       path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'fixtures', 'artifacts', 'lesson-2page.pdf')

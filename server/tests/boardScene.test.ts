@@ -8,6 +8,7 @@ import {
   createBoardSpatialIndex,
   LESSON_OBJECT_DEFAULTS,
   normalizeBoardObject,
+  normalizeImportedBoardObject,
   queryObjectsNear,
   sceneClearEpoch,
   sceneDrawings,
@@ -279,6 +280,27 @@ describe('canonical schema validation', () => {
       ok: false,
       reason: 'invalidContent'
     });
+  });
+
+  it('migrates legacy aliases only at the explicit import boundary', () => {
+    const { src: _src, x: _x, y: _y, ...legacyBase } = image();
+    const legacyImage = {
+      ...legacyBase,
+      dataUrl: image().src,
+      position: { x: 100, y: 120 }
+    } as SceneObject;
+
+    expect(validateBoardObject(normalizeBoardObject(legacyImage))).toMatchObject({
+      ok: false,
+      reason: 'invalidContent'
+    });
+    expect(normalizeImportedBoardObject(legacyImage)).toMatchObject({
+      type: 'image',
+      src: image().src,
+      x: 100,
+      y: 120
+    });
+    expect(validateBoardObject(normalizeImportedBoardObject(legacyImage))).toEqual({ ok: true });
   });
 
   it('rejects incomplete or unbounded lesson-tool payloads', () => {

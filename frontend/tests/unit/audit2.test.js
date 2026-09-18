@@ -13,30 +13,9 @@ const readSrc = (relativePath) =>
 const readServer = (relativePath) =>
   readFileSync(resolve(__dirname, '../../../server/src', relativePath), 'utf-8');
 
-// ─── C1: Composable wiring — useDrawingEngine & useHelperModules ─────────────
+// ─── C1: Composable behavior at executable seams ────────────────────────────
 
-describe('C1: Composable wiring in WhiteboardCanvas', () => {
-  const src = readSrc('components/WhiteboardCanvas.vue');
-
-  it('calls useHelperModules() (not just import)', () => {
-    expect(src).toContain('} = useHelperModules({');
-  });
-
-  it('calls useDrawingEngine() (not just import)', () => {
-    expect(src).toContain('} = useDrawingEngine({');
-  });
-
-  // Destructuring and dispatch source-text assertions were removed with
-  // VVE-105: behavior is covered through the useDrawingEngine seam below and
-  // the InputPipeline interface tests (inputPipeline.spec.ts).
-
-  it('destructures critical functions from useHelperModules', () => {
-    expect(src).toMatch(/const\s*\{[^}]*getActiveModule[^}]*\}\s*=\s*useHelperModules/s);
-    expect(src).toMatch(/const\s*\{[^}]*syncModulesWithYjs[^}]*\}\s*=\s*useHelperModules/s);
-    expect(src).toMatch(/const\s*\{[^}]*renderLatex[^}]*\}\s*=\s*useHelperModules/s);
-    expect(src).toMatch(/const\s*\{[^}]*applyMathAnswer[^}]*\}\s*=\s*useHelperModules/s);
-  });
-
+describe('C1: Composable behavior', () => {
   it('useDrawingEngine creates and cancels in-progress stroke preview via startDrawingAt and cancelActiveDrawing', () => {
     const ydoc = new Y.Doc();
     const isDrawing = ref(false);
@@ -119,10 +98,6 @@ describe('C1: Composable wiring in WhiteboardCanvas', () => {
     }));
   });
 
-  it('useKeyboardShortcuts uses real applyMathAnswer (not empty function)', () => {
-    // Should NOT have the old empty stub
-    expect(src).not.toMatch(/applyMathAnswer:\s*\(\)\s*=>\s*\{\s*\}/);
-  });
 });
 
 // ─── C2: Path traversal fix ─────────────────────────────────────────────────

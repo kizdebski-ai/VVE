@@ -273,28 +273,9 @@ describe('9.8: Unused CSS variables removed', () => {
 
 // ─── Section 10: Missing Features ────────────────────────────────────────────
 
-describe('10.1: Input Style keyboard shortcuts', () => {
-  it('useKeyboardShortcuts.js maps 1/2 to Mysz/Pióro Input Style', () => {
-    const src = readSrc('composables/useKeyboardShortcuts.js');
-    expect(src).toContain('selectPenPreset');
-    expect(src).toContain("'1': 'mouse'");
-    expect(src).toContain("'2': 'pen'");
-    expect(src).not.toContain("'1': 'gel'");
-  });
-
-  it('WhiteboardCanvas.vue wires up useKeyboardShortcuts composable', () => {
-    const src = readSrc('components/WhiteboardCanvas.vue');
-    expect(src).toContain('useKeyboardShortcuts({');
-    expect(src).toContain("emit('select-pen-preset'");
-  });
-
-  it('App.vue auto-selects Input Style from observed pointer type until override', () => {
-    const src = readSrc('App.vue');
-    expect(src).toContain('@pointer-observed="handlePointerObserved"');
-    expect(src).toContain('handlePointerObserved,');
-    expect(src).toContain('suggestProfile');
-  });
-});
+// Input Style shortcut behavior is covered by keyboardShortcuts.spec.js and
+// the mounted WhiteboardCanvas interaction tests. Keep this suite focused on
+// executable feature behavior instead of mirroring component source text.
 describe('10.3: Extended color palette (20+ colors)', () => {
   it('ColorPicker.vue has 20+ basic colors', () => {
     const src = readSrc('components/ColorPicker.vue');

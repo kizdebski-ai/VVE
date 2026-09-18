@@ -1,5 +1,5 @@
 import * as Y from 'yjs';
-import { normalizeBoardObject } from '@pilot/boardScene';
+import { normalizeImportedBoardObject } from '@pilot/boardScene';
 
 /**
  * Snapshot helpers for the developer raw-board transfer. Product PDF export
@@ -8,7 +8,7 @@ import { normalizeBoardObject } from '@pilot/boardScene';
 export const canonicalSceneForExport = ({ session, yDrawings }) => {
   if (session?.value) return [...session.value.snapshot()];
   if (!yDrawings.value) return [];
-  return yDrawings.value.toArray().map((map) => normalizeBoardObject(map.toJSON()));
+  return yDrawings.value.toArray().map((map) => normalizeImportedBoardObject(map.toJSON()));
 };
 
 export function usePdfExport({ ydoc, debugWarn }) {

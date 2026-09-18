@@ -25,8 +25,9 @@ describe('WhiteboardSession Interface', () => {
       object: {
         ...rectangle('image-1'),
         type: 'image',
-        dataUrl: 'data:image/png;base64,iVBORw0KGgo=',
-        position: { x: 25, y: 35 }
+        src: 'data:image/png;base64,iVBORw0KGgo=',
+        x: 25,
+        y: 35
       }
     })).toEqual({ ok: true });
 
@@ -35,12 +36,30 @@ describe('WhiteboardSession Interface', () => {
         id: 'image-1',
         type: 'image',
         src: 'data:image/png;base64,iVBORw0KGgo=',
-        x: 0,
-        y: 10
+        x: 25,
+        y: 35
       })
     ]);
     expect(session.snapshot()[0]).not.toHaveProperty('dataUrl');
     expect(session.snapshot()[0]).not.toHaveProperty('position');
+    session.dispose();
+  });
+
+  it('keeps the spatial index aligned with Y.Array insertion and deletion order', () => {
+    const ydoc = new Y.Doc();
+    const session = createWhiteboardSession({ ydoc, role: 'student' });
+    expect(session.execute({ kind: 'add', object: rectangle('first', 0) })).toEqual({ ok: true });
+    expect(session.execute({ kind: 'add', object: rectangle('last', 200) })).toEqual({ ok: true });
+
+    const inserted = new Y.Map<unknown>();
+    for (const [key, value] of Object.entries(rectangle('inserted', 100))) inserted.set(key, value);
+    const drawings = ydoc.getArray<Y.Map<unknown>>('drawings');
+    ydoc.transact(() => drawings.insert(0, [inserted]), 'remote-import');
+    expect(session.queryObjectsNear({ x: 110, y: 40 }, 5).map((object) => object.id)).toContain('inserted');
+
+    ydoc.transact(() => drawings.delete(0, 1), 'remote-delete');
+    expect(session.queryObjectsNear({ x: 110, y: 40 }, 5).map((object) => object.id)).not.toContain('inserted');
+    expect(session.queryObjectsNear({ x: 10, y: 40 }, 5).map((object) => object.id)).toContain('first');
     session.dispose();
   });
 

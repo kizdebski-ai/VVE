@@ -680,6 +680,7 @@ describe.skipIf(!hasPostgres)('CapabilityAccess decision matrix (local PostgreSQ
     expect(studentView.status).toBe(200);
     expect(studentView.body.teacherName).toBe('Dawid Furmaniuk - Matsin');
     expect(studentView.body.role).toBe('student');
+    expect(studentView.body).not.toHaveProperty('studentLabel');
     expect(studentView.body.wsToken).toBeTruthy();
 
     // Expired board: Polish 401 with the typed reason.

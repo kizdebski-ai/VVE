@@ -894,6 +894,11 @@ export const TEACHER_SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 30;
 export const issueTeacherSessionToken = (teacherId: string, cv: number): string =>
   signPayload({ teacherId, cv, exp: Date.now() + TEACHER_SESSION_TTL_MS }, config.teacherSessionSecret);
 
+// A lesson may run for three hours and survive a controlled restart. The
+// transport token remains bounded at four hours while every mutation still
+// revalidates durable board and teacher state.
+export const BOARD_WS_TOKEN_TTL_MS = 1000 * 60 * 60 * 4;
+
 export const issueBoardWsToken = (input: {
   boardId: string;
   role: 'teacher' | 'student';
@@ -907,7 +912,7 @@ export const issueBoardWsToken = (input: {
       role: input.role,
       ...(input.role === 'teacher' && input.teacherId ? { teacherId: input.teacherId } : {}),
       cv: input.cv,
-      exp: Date.now() + (input.ttlMs ?? 1000 * 60 * 60 * 2)
+      exp: Date.now() + (input.ttlMs ?? BOARD_WS_TOKEN_TTL_MS)
     },
     config.boardWsSecret
   );

@@ -72,6 +72,7 @@ export type GateReport = {
   destructive?: {
     attemptedInvalidOperations: number;
     rejectedInvalidOperations: number;
+    nonMapEntryRejectionReason: string;
     malformedFrameCloseCode: number;
     oversizedFrameCloseCode: number;
     preservedState: boolean;
@@ -757,6 +758,33 @@ class ProductionGateClient {
     return result.reason ?? 'unknown';
   }
 
+  /** Send a Y.Array entry that is JSON rather than the canonical Y.Map. */
+  async rejectNonMapEntry(operationId: string): Promise<string> {
+    if (!this.connection) throw new Error(`Production client ${this.actorId} is not connected.`);
+    const base = Y.encodeStateAsUpdate(this.connection.ydoc);
+    const current = new Y.Doc();
+    const next = new Y.Doc();
+    Y.applyUpdate(current, base);
+    Y.applyUpdate(next, base);
+    next.getArray('drawings').push([{
+      id: `non-map-${this.actorId}`,
+      type: 'rectangle',
+      x: 1,
+      y: 1,
+      width: 20,
+      height: 20,
+      color: '#2563eb',
+      lineWidth: 2,
+      timestamp: 1
+    }]);
+    const update = Y.encodeStateAsUpdate(next, Y.encodeStateVector(current));
+    current.destroy();
+    next.destroy();
+    const result = await this.sendMutationUpdate(update, operationId);
+    if (result.acknowledged) throw new Error('Production server accepted a non-Y.Map drawings entry.');
+    return result.reason ?? 'unknown';
+  }
+
   async sendRawFrame(frame: Uint8Array): Promise<number> {
     if (!this.connection) throw new Error(`Production client ${this.actorId} is not connected.`);
     const socket = (this.connection as (ProductionConnection & { socket?: any })).socket;
@@ -989,6 +1017,7 @@ const runDestructiveGate = async (
 ): Promise<{
   attemptedInvalidOperations: number;
   rejectedInvalidOperations: number;
+  nonMapEntryRejectionReason: string;
   malformedFrameCloseCode: number;
   oversizedFrameCloseCode: number;
   preservedState: boolean;
@@ -1031,6 +1060,12 @@ const runDestructiveGate = async (
     }
   }, { invalidOperations: options.smoke ? 12 : 24 });
 
+  const nonMapClient = await createClient('destructive-non-map-entry');
+  const nonMapEntryRejectionReason = await nonMapClient.rejectNonMapEntry(
+    `vve109-destructive-non-map-${Date.now()}`
+  );
+  nonMapClient.close();
+
   const malformedClient = await createClient('destructive-malformed-frame');
   const malformedFrameCloseCode = await malformedClient.sendRawFrame(
     new Uint8Array([collaborationMessage.mutation, 0, 0, 1])
@@ -1055,6 +1090,7 @@ const runDestructiveGate = async (
   return {
     attemptedInvalidOperations: scenario.attemptedInvalidOperations,
     rejectedInvalidOperations: scenario.rejectedInvalidOperations,
+    nonMapEntryRejectionReason,
     malformedFrameCloseCode,
     oversizedFrameCloseCode,
     preservedState: scenario.preservedState,

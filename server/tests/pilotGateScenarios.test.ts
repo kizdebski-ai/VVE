@@ -3,6 +3,7 @@ import type { BoardCommand, SceneObject } from '../src/pilot/boardScene';
 import {
   runDestructiveScenario,
   runMatureBoardScenario,
+  ScenarioCommandDenied,
   type ScenarioClient,
   type ScenarioContext,
   type ScenarioResult
@@ -68,15 +69,19 @@ const contextFor = (): ScenarioContext => {
   const order: string[] = [];
   return {
     base: 'http://scenario.invalid',
-    createClient: async () => new ScenarioClientDouble(state, order)
+    createClient: async () => new ScenarioClientDouble(state, order),
+    restart: async () => {}
   };
 };
 
 describe('VVE-109 mature and destructive scenario contracts', () => {
   it('exercises canonical fixtures, history, peer convergence, and durable reload', async () => {
-    const report = await runMatureBoardScenario(contextFor(), { seed: 1091, historyOperations: 16 });
+    const report = await runMatureBoardScenario(contextFor(), { seed: 1091, canonicalObjectCount: 100, historyOperations: 48 });
     expect(report.profile).toBe('mature');
     expect(report.canonicalObjects).toBeGreaterThanOrEqual(9);
+    expect(report.canonicalObjects).toBeGreaterThanOrEqual(100);
+    expect(report.canonicalObjectBytes).toBeGreaterThan(0);
+    expect(report.snapshotBytes).toBeGreaterThan(0);
     expect(report.acceptedOperations).toBeGreaterThan(report.canonicalObjects);
     expect(report.historyCoverage.edits).toBeGreaterThan(0);
     expect(report.historyCoverage.deletes).toBeGreaterThan(0);
@@ -86,6 +91,7 @@ describe('VVE-109 mature and destructive scenario contracts', () => {
     expect(report.peerConverged).toBe(true);
     expect(report.reloadDigest).toBeTruthy();
     expect(report.fixtures.pdfHeader).toBe('%PDF-');
+    expect(report.fixtures.encodedImageBytes).toBeGreaterThan(report.fixtures.imageBytes);
     expect(report.fixtures.artifactImportExport).toBe('browser-owned');
   });
 
@@ -96,5 +102,49 @@ describe('VVE-109 mature and destructive scenario contracts', () => {
     expect(report.validOperations).toBe(1);
     expect(report.reloadDigest).not.toBe(report.digestBeforeInvalid);
     expect(report.preservedState).toBe(true);
+    expect(report.restartVerified).toBe(true);
+  });
+
+  it('propagates unexpected adapter failures instead of counting them as denials', async () => {
+    const state = new Map<string, SceneObject>();
+    const order: string[] = [];
+    const context: ScenarioContext = {
+      ...contextFor(),
+      createClient: async () => {
+      const client = new ScenarioClientDouble(state, order);
+      client.apply = async (command: BoardCommand): Promise<ScenarioResult> => {
+        if (command.kind === 'add' && command.object.id.startsWith('invalid-')) {
+          throw new Error('persistence connection lost');
+        }
+        return ScenarioClientDouble.prototype.apply.call(client, command);
+      };
+      return client;
+      }
+    };
+
+    await expect(runDestructiveScenario(context, { seed: 404, invalidOperations: 24 }))
+      .rejects.toThrow('persistence connection lost');
+  });
+
+  it('accepts only the explicit typed denial when an adapter throws', async () => {
+    const state = new Map<string, SceneObject>();
+    const order: string[] = [];
+    const context: ScenarioContext = {
+      ...contextFor(),
+      createClient: async () => {
+      const client = new ScenarioClientDouble(state, order);
+      client.apply = async (command: BoardCommand): Promise<ScenarioResult> => {
+        if (command.kind === 'add' && command.object.id.startsWith('invalid-')) {
+          throw new ScenarioCommandDenied('invalid object');
+        }
+        return ScenarioClientDouble.prototype.apply.call(client, command);
+      };
+      return client;
+      }
+    };
+
+    const report = await runDestructiveScenario(context, { seed: 404, invalidOperations: 24 });
+    expect(report.rejectedInvalidOperations).toBe(24);
+    expect(report.restartVerified).toBe(true);
   });
 });

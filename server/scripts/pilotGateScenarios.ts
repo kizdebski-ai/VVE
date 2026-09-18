@@ -17,6 +17,20 @@ export type ScenarioResult =
   | { ok: true; digest?: string }
   | { ok: false; reason?: string; message?: string };
 
+/**
+ * An adapter may reject a deliberately malformed command by throwing this
+ * typed denial. Other thrown errors are harness failures and must escape the
+ * destructive scenario instead of being counted as successful rejections.
+ */
+export class ScenarioCommandDenied extends Error {
+  readonly code = 'SCENARIO_COMMAND_DENIED';
+
+  constructor(message = 'The scenario command was denied.') {
+    super(message);
+    this.name = 'ScenarioCommandDenied';
+  }
+}
+
 export interface ScenarioClient {
   readonly boardId: string;
   apply(command: BoardCommand): Promise<ScenarioResult | void>;
@@ -32,13 +46,15 @@ export interface ScenarioClient {
 export interface ScenarioContext {
   readonly base: string;
   readonly createClient: (role: ScenarioRole, label: string) => Promise<ScenarioClient>;
-  readonly restart?: () => Promise<void>;
+  /** A release gate must prove durability across a controlled backend restart. */
+  readonly restart: () => Promise<void>;
   readonly fixtures?: { pdfPath?: string; imagePath?: string };
 }
 
 export interface ScenarioFixtureEvidence {
   pdfBytes: number;
   imageBytes: number;
+  encodedImageBytes: number;
   pdfHeader: string;
   imageMime: 'image/png' | 'image/jpeg' | 'image/webp';
   artifactImportExport: 'browser-owned';
@@ -49,11 +65,14 @@ export interface MatureScenarioReport {
   seed: number;
   clients: number;
   canonicalObjects: number;
+  canonicalObjectBytes: number;
+  snapshotBytes: number;
   historyOperations: number;
   acceptedOperations: number;
   reloadDigest: string;
   peerDigests: string[];
   peerConverged: boolean;
+  restartVerified: boolean;
   historyCoverage: { edits: number; deletes: number; reorders: number; undos: number; redos: number };
   fixtures: ScenarioFixtureEvidence;
 }
@@ -95,7 +114,13 @@ const requireRejected = async (client: ScenarioClient, command: BoardCommand): P
     }
   } catch (error) {
     if (error instanceof Error && /accepted invalid|did not report/.test(error.message)) throw error;
-    // Production adapters surface a typed denial as a rejected operation.
+    if (error instanceof ScenarioCommandDenied) return;
+    if (
+      error &&
+      typeof error === 'object' &&
+      (error as { code?: unknown }).code === 'SCENARIO_COMMAND_DENIED'
+    ) return;
+    throw error;
   }
 };
 
@@ -107,6 +132,20 @@ const digestOf = async (client: ScenarioClient): Promise<string> => {
 
 const closeAll = async (clients: readonly ScenarioClient[]): Promise<void> => {
   await Promise.all(clients.map((client) => awaitValue(client.close())));
+};
+
+const convergeDigests = async (
+  clients: readonly ScenarioClient[],
+  options: { attempts?: number; delayMs?: number } = {}
+): Promise<string[]> => {
+  const attempts = options.attempts ?? 40;
+  const delayMs = options.delayMs ?? 25;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const digests = await Promise.all(clients.map((client) => digestOf(client)));
+    if (digests.every((digest) => digest === digests[0])) return digests;
+    if (attempt + 1 < attempts) await new Promise((resolve) => setTimeout(resolve, delayMs));
+  }
+  throw new Error(`Mature scenario peers did not converge within ${attempts} checks.`);
 };
 
 const seededRandom = (seed: number): (() => number) => {
@@ -143,6 +182,7 @@ const readFixtureEvidence = (paths: ScenarioContext['fixtures'] = {}): ScenarioF
   return {
     pdfBytes: pdf.byteLength,
     imageBytes: image.byteLength,
+    encodedImageBytes: Buffer.byteLength(`data:${imageMime};base64,${image.toString('base64')}`, 'utf8'),
     pdfHeader,
     imageMime,
     artifactImportExport: 'browser-owned'
@@ -161,9 +201,24 @@ const canonicalObjects = (imageDataUrl: string): SceneObject[] => [
   { ...objectFor('mature-physics', 9, 'physicsDataPlot'), points: [{ x: 0, y: 0 }, { x: 1, y: 2 }, { x: 2, y: 4 }], xLabel: 't', yLabel: 'v' }
 ];
 
+export const MATURE_PRETELEMETRY_PRESET = Object.freeze({
+  canonicalObjectCount: 120,
+  historyOperations: 96
+});
+
+const boundedCanonicalObjects = (imageDataUrl: string, count: number): SceneObject[] => {
+  const base = canonicalObjects(imageDataUrl);
+  const shapeTypes = ['rectangle', 'ellipse', 'triangle', 'diamond', 'trapezoid'] as const;
+  for (let index = base.length; index < count; index += 1) {
+    const type = shapeTypes[index % shapeTypes.length]!;
+    base.push(objectFor(`mature-shape-${index}`, index + 1, type));
+  }
+  return base;
+};
+
 export const runMatureBoardScenario = async (
   context: ScenarioContext,
-  options: { seed?: number; historyOperations?: number } = {}
+  options: { seed?: number; historyOperations?: number; canonicalObjectCount?: number } = {}
 ): Promise<MatureScenarioReport> => {
   const seed = options.seed ?? 109_2026;
   const random = seededRandom(seed);
@@ -171,16 +226,24 @@ export const runMatureBoardScenario = async (
   const evidence = readFixtureEvidence(fixturePaths);
   const imageBytes = readFileSync(fixturePaths.imagePath ?? DEFAULT_IMAGE);
   const imageDataUrl = `data:${evidence.imageMime};base64,${imageBytes.toString('base64')}`;
-  const objects = canonicalObjects(imageDataUrl);
-  const historyOperations = options.historyOperations ?? 48;
-  if (historyOperations < 12) throw new Error('Mature scenario requires at least 12 history operations.');
+  const canonicalObjectCount = options.canonicalObjectCount ?? MATURE_PRETELEMETRY_PRESET.canonicalObjectCount;
+  const objects = boundedCanonicalObjects(imageDataUrl, canonicalObjectCount);
+  const historyOperations = options.historyOperations ?? MATURE_PRETELEMETRY_PRESET.historyOperations;
+  if (canonicalObjectCount < 100) throw new Error('Mature scenario requires at least 100 canonical objects.');
+  if (historyOperations < 48) throw new Error('Mature scenario requires at least 48 history operations.');
 
-  const clients = await Promise.all([
-    context.createClient('teacher', 'mature-teacher'),
-    context.createClient('student', 'mature-student-1'),
-    context.createClient('student', 'mature-student-2'),
-    context.createClient('student', 'mature-student-3')
-  ]);
+  const clients: ScenarioClient[] = [];
+  const tracked = new Set<ScenarioClient>();
+  const createTracked = async (role: ScenarioRole, label: string): Promise<ScenarioClient> => {
+    const client = await context.createClient(role, label);
+    clients.push(client);
+    tracked.add(client);
+    return client;
+  };
+  await createTracked('teacher', 'mature-teacher');
+  await createTracked('student', 'mature-student-1');
+  await createTracked('student', 'mature-student-2');
+  await createTracked('student', 'mature-student-3');
   const activeIds = new Set(objects.map((object) => object.id));
   const coverage = { edits: 0, deletes: 0, reorders: 0, undos: 0, redos: 0 };
   let acceptedOperations = 0;
@@ -230,29 +293,43 @@ export const runMatureBoardScenario = async (
         coverage.redos += 1;
       }
     }
-    const peerDigests = await Promise.all(clients.map((client) => digestOf(client)));
-    const peerConverged = peerDigests.every((digest) => digest === peerDigests[0]);
-    if (!peerConverged) throw new Error('Mature scenario peers diverged before reload.');
+    const peerDigests = await convergeDigests(clients);
+    const peerConverged = true;
     const beforeReload = peerDigests[0]!;
-    await awaitValue(clients[1]!.close());
+    const closeTracked = async (client: ScenarioClient): Promise<void> => {
+      if (!tracked.delete(client)) return;
+      await awaitValue(client.close());
+    };
+    await closeTracked(clients[1]!);
     clients[1] = await context.createClient('student', 'mature-student-reload');
+    tracked.add(clients[1]!);
     const reloadDigest = await digestOf(clients[1]!);
     if (reloadDigest !== beforeReload) throw new Error('Mature scenario durable reload changed the acknowledged digest.');
+    await Promise.all([...tracked].map((client) => closeTracked(client)));
+    await context.restart();
+    const restartClient = await createTracked('student', 'mature-student-restart');
+    const restartDigest = await digestOf(restartClient);
+    if (restartDigest !== beforeReload) throw new Error('Mature scenario lost acknowledged state after backend restart.');
+    const snapshot = await awaitValue(restartClient.snapshot());
+    const snapshotBytes = Buffer.byteLength(JSON.stringify(snapshot) ?? 'null', 'utf8');
     return {
       profile: 'mature',
       seed,
-      clients: clients.length,
+      clients: 4,
       canonicalObjects: objects.length,
+      canonicalObjectBytes: Buffer.byteLength(JSON.stringify(objects), 'utf8'),
+      snapshotBytes,
       historyOperations,
       acceptedOperations,
       reloadDigest,
-      peerDigests: await Promise.all(clients.map((client) => digestOf(client))),
+      peerDigests,
       peerConverged: true,
+      restartVerified: true,
       historyCoverage: coverage,
       fixtures: evidence
     };
   } finally {
-    await closeAll(clients);
+    await closeAll([...tracked]);
   }
 };
 
@@ -274,7 +351,9 @@ export const runDestructiveScenario = async (
   options: { seed?: number; invalidOperations?: number } = {}
 ): Promise<DestructiveScenarioReport> => {
   const seed = options.seed ?? 109_404;
+  const clients = new Set<ScenarioClient>();
   const client = await context.createClient('student', 'destructive-student');
+  clients.add(client);
   const attemptedInvalidOperations = options.invalidOperations ?? 24;
   if (attemptedInvalidOperations < 12) throw new Error('Destructive scenario requires at least 12 invalid operations.');
   try {
@@ -293,19 +372,17 @@ export const runDestructiveScenario = async (
     const afterValid = await digestOf(client);
     if (afterValid === digestBeforeInvalid) throw new Error('Destructive scenario valid write did not change the board.');
     await awaitValue(client.close());
+    clients.delete(client);
     const reloaded = await context.createClient('student', 'destructive-reload');
+    clients.add(reloaded);
     let reloadDigest = await digestOf(reloaded);
-    let restartVerified = false;
-    if (context.restart) {
-      await context.restart();
-      await awaitValue(reloaded.close());
-      const afterRestart = await context.createClient('student', 'destructive-restart-reload');
-      reloadDigest = await digestOf(afterRestart);
-      await awaitValue(afterRestart.close());
-      restartVerified = true;
-    } else {
-      await awaitValue(reloaded.close());
-    }
+    await awaitValue(reloaded.close());
+    clients.delete(reloaded);
+    await context.restart();
+    const afterRestart = await context.createClient('student', 'destructive-restart-reload');
+    clients.add(afterRestart);
+    reloadDigest = await digestOf(afterRestart);
+    const restartVerified = true;
     if (reloadDigest !== afterValid) throw new Error('Destructive scenario lost the valid write after reload/restart.');
     return {
       profile: 'destructive',
@@ -320,6 +397,6 @@ export const runDestructiveScenario = async (
       restartVerified
     };
   } finally {
-    await awaitValue(client.close());
+    await closeAll([...clients]);
   }
 };

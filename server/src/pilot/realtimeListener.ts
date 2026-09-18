@@ -336,6 +336,24 @@ export const createRealtimeListener = (deps: RealtimeListenerDeps): RealtimeList
       trackIpDisconnect(clientIp);
     };
 
+    // The socket can disappear while admission/authentication is awaiting the
+    // database. Install the idempotent transport cleanup before that first
+    // await; a handle returned later is closed by the post-connect check.
+    let handle: ConnectionHandle | null = null;
+    let socketClosed = false;
+    const closeManagedConnection = (reason: string): void => {
+      if (socketClosed) return;
+      socketClosed = true;
+      releaseIp();
+      const closing = handle?.close(reason);
+      void closing?.catch(() => undefined);
+    };
+    socket.on('close', () => closeManagedConnection('socket closed'));
+    socket.on('error', (error) => {
+      logger.warn('WebSocket error', { error: error.message });
+      closeManagedConnection('socket error');
+    });
+
     (async () => {
       const parsed = parseWsParams(request.url);
       if (!parsed) {
@@ -365,6 +383,11 @@ export const createRealtimeListener = (deps: RealtimeListenerDeps): RealtimeList
         });
         releaseIp();
         socket.close(1013, 'Server draining');
+        return;
+      }
+
+      if (socketClosed || socket.readyState !== WebSocket.OPEN) {
+        releaseIp();
         return;
       }
 
@@ -399,24 +422,6 @@ export const createRealtimeListener = (deps: RealtimeListenerDeps): RealtimeList
           }
         };
 
-        let handle: ConnectionHandle | null = null;
-        let socketClosed = false;
-        const closeManagedConnection = (reason: string): void => {
-          if (socketClosed) return;
-          socketClosed = true;
-          releaseIp();
-          const closing = handle?.close(reason);
-          void closing?.catch(() => undefined);
-        };
-        // Attach lifecycle handlers before the asynchronous runtime connect:
-        // auth, hydration, and the initial sync can all outlive the browser
-        // socket. The handlers are idempotent and the post-connect check below
-        // closes a handle that settled after its transport disappeared.
-        socket.on('close', () => closeManagedConnection('socket closed'));
-        socket.on('error', (error) => {
-          logger.warn('Managed Board WebSocket error', { boardId: roomId, error: error.message });
-          closeManagedConnection('socket error');
-        });
         handle = await collaborationRuntime.connect(
           {
             boardId: roomId,

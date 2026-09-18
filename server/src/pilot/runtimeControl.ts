@@ -297,7 +297,6 @@ export const createRuntimeControl = (options: RuntimeControlOptions = {}): Runti
   // the first database/store operation is still running.
   type ProbeWork = {
     promise: Promise<{ database: boolean; persistence: boolean }>;
-    settled: boolean;
   };
   let probeWorkInFlight: ProbeWork | null = null;
   let probeAbortController: AbortController | null = null;
@@ -311,53 +310,53 @@ export const createRuntimeControl = (options: RuntimeControlOptions = {}): Runti
 
     const currentDb = activeDb;
     const currentStore = activeStore;
-    // Let an abort-aware probe publish its settled state before this request
-    // decides whether it may start the next generation. This yields only one
-    // microtask; a still-running adapter remains single-flight.
-    if (probeWorkInFlight) {
-      await Promise.resolve();
-      if (probeWorkInFlight?.settled) probeWorkInFlight = null;
-    }
+    let work: Promise<{ database: boolean; persistence: boolean }>;
     if (!probeWorkInFlight) {
       const sequence = ++probeSequence;
       const controller = new AbortController();
       probeAbortController = controller;
-      const tracked: ProbeWork = {
-        promise: Promise.resolve({ database: false, persistence: false }),
-        settled: false
-      };
+      const tracked = {} as ProbeWork;
+      // Publish the work before starting it. This also handles a probe that
+      // fails synchronously: its finally block can still clear this exact
+      // generation before the promise becomes observable to callers.
+      probeWorkInFlight = tracked;
       tracked.promise = (async (): Promise<{ database: boolean; persistence: boolean }> => {
         try {
-          const probeFn = options.probe ?? defaultProbe;
-          const res = await probeFn({ db: currentDb, store: currentStore, signal: controller.signal });
-          if (sequence !== probeSequence || currentDb !== activeDb || currentStore !== activeStore) {
-            return checks;
+          try {
+            const probeFn = options.probe ?? defaultProbe;
+            const res = await probeFn({ db: currentDb, store: currentStore, signal: controller.signal });
+            if (sequence !== probeSequence || currentDb !== activeDb || currentStore !== activeStore) {
+              return checks;
+            }
+            checks = { database: Boolean(res.database), persistence: Boolean(res.persistence) };
+            probeError = null;
+          } catch (error) {
+            if (sequence !== probeSequence || currentDb !== activeDb || currentStore !== activeStore) {
+              return checks;
+            }
+            checks = { database: false, persistence: false };
+            probeError = (error as Error).message.slice(0, 160);
+            signals.record({
+              name: 'persistence.error',
+              dimensions: { stage: 'readiness-probe', error: probeError }
+            });
           }
-          checks = { database: Boolean(res.database), persistence: Boolean(res.persistence) };
-          probeError = null;
-        } catch (error) {
-          if (sequence !== probeSequence || currentDb !== activeDb || currentStore !== activeStore) {
-            return checks;
+          return checks;
+        } finally {
+          // Cleanup belongs to the underlying operation, rather than to the
+          // caller's deadline race. A timeout therefore cannot clear a still
+          // running probe and start an overlapping generation.
+          if (probeWorkInFlight === tracked) {
+            probeWorkInFlight = null;
+            probeAbortController = null;
           }
-          checks = { database: false, persistence: false };
-          probeError = (error as Error).message.slice(0, 160);
-          signals.record({
-            name: 'persistence.error',
-            dimensions: { stage: 'readiness-probe', error: probeError }
-          });
         }
-        return checks;
-      })().finally(() => {
-        tracked.settled = true;
-        if (probeWorkInFlight === tracked) {
-          probeWorkInFlight = null;
-          probeAbortController = null;
-        }
-      });
-      probeWorkInFlight = tracked;
+      })();
+      work = tracked.promise;
+    } else {
+      work = probeWorkInFlight.promise;
     }
 
-    const work = probeWorkInFlight.promise;
     const ms = 1_000;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const timeoutPromise = new Promise<never>((_, reject) => {

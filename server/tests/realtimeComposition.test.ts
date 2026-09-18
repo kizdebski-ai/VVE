@@ -348,6 +348,85 @@ describe('Realtime composition through the shared ResourceGovernor (108-I1)', ()
 });
 
 describe('Composition honours environment-tuned governor limits (108-I1)', () => {
+  it('releases the IP slot when auth disconnects before admission settles', async () => {
+    let releaseAdmission!: () => void;
+    let admissionStarted!: () => void;
+    const admissionGate = new Promise<void>((resolve) => { releaseAdmission = resolve; });
+    const admissionStartedPromise = new Promise<void>((resolve) => { admissionStarted = resolve; });
+    let admissionCount = 0;
+    let connectCount = 0;
+    let closeCount = 0;
+    const capabilityAccess = {
+      decide: vi.fn(async (input: { target?: { boardId?: string | null } }) => {
+        admissionCount += 1;
+        if (admissionCount === 1) {
+          admissionStarted();
+          await admissionGate;
+        }
+        return {
+          granted: true as const,
+          action: 'board.edit' as const,
+          role: 'teacher' as const,
+          teacherId: 'teacher-auth',
+          boardId: input.target?.boardId ?? null,
+          credentialVersion: 1,
+          validUntil: null
+        };
+      })
+    } as unknown as CapabilityAccess;
+    const collaboration = {
+      connect: vi.fn(async () => {
+        connectCount += 1;
+        return {
+          receive: async () => ({ accepted: false as const, reason: 'unauthorized' as const }),
+          close: async () => { closeCount += 1; }
+        };
+      }),
+      inspect: async () => ({ boardId: boardId(0), digest: '', encodedState: new Uint8Array(), connections: 0, lastSequence: 0 }),
+      unloadIdle: async () => [],
+      closeBoard: async () => false,
+      drain: async () => ({ boards: 0, connections: 0, complete: true }),
+      stats: () => ({ boards: 0, connections: 0, draining: false })
+    } as unknown as CollaborationRuntime;
+    const signals = createOperationalSignals({ emitJson: false });
+    const governor = createResourceGovernor({
+      limits: createResourceLimits({ maxConnectionsPerIp: 1, maxProcessConnections: 1, maxBoardConnections: 1 })
+    });
+    const listener = createRealtimeListener({
+      roomManager: stubRoomManager(),
+      aiSolver: stubSolver(),
+      capabilityAccess,
+      boardLifecycle: stubLifecycle(),
+      collaborationRuntime: collaboration,
+      signals,
+      health: {
+        live: () => true,
+        ready: () => true,
+        checks: () => ({ database: true, persistence: true }),
+        snapshot: () => signals.snapshot()
+      },
+      admitting: () => true,
+      environment: 'pilot',
+      devSurface: false,
+      resourceGovernor: governor
+    });
+    const port = await listener.listen('127.0.0.1', 0);
+    const target = boardId(7);
+    const first = new WebSocket(`ws://127.0.0.1:${port}/ws/whiteboard/${target}?wsToken=t`);
+    first.on('error', () => undefined);
+    await admissionStartedPromise;
+    first.terminate();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    const second = new WebSocket(`ws://127.0.0.1:${port}/ws/whiteboard/${target}?wsToken=t`);
+    await vi.waitFor(() => expect(connectCount).toBe(1));
+    releaseAdmission();
+    await vi.waitFor(() => expect(admissionCount).toBe(2));
+    expect(closeCount).toBe(0);
+    second.terminate();
+    await closeListener(listener);
+  });
+
   it('closes a managed handle that settles after its socket disconnects during connect', async () => {
     let releaseConnect!: () => void;
     let connectStarted!: () => void;

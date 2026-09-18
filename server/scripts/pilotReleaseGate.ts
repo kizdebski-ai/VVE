@@ -195,6 +195,7 @@ const startPostgres = async (port: number): Promise<() => Promise<void>> => {
 };
 
 type RunningBackend = { process: ChildProcess; stop: () => Promise<void> };
+type BackendSpawnObserver = (child: ChildProcess) => void;
 
 const hasExited = (child: ChildProcess): boolean => child.exitCode !== null || child.signalCode !== null;
 
@@ -237,7 +238,7 @@ export const stopChildProcess = async (
   }
 };
 
-const startBackend = async (port: number, pgPort: number): Promise<RunningBackend> => {
+const startBackend = async (port: number, pgPort: number, onSpawn?: BackendSpawnObserver): Promise<RunningBackend> => {
   await assertPortAvailable(port);
   const child = spawn('node', ['dist/src/server.js'], {
     cwd: ROOT,
@@ -257,6 +258,7 @@ const startBackend = async (port: number, pgPort: number): Promise<RunningBacken
     },
     stdio: ['ignore', 'pipe', 'pipe']
   });
+  onSpawn?.(child);
   const output: string[] = [];
   const capture = (chunk: Buffer): void => {
     const scrubbed = chunk.toString().replace(/(?:token|secret|password|wsToken)[^\s]*/gi, '[redacted]');
@@ -271,9 +273,18 @@ const startBackend = async (port: number, pgPort: number): Promise<RunningBacken
   });
   let readyOutput = '';
   const detectChildReady = (chunk: Buffer): void => {
-    readyOutput += chunk.toString();
-    if (readyOutput.includes('"name":"process.phase"') && readyOutput.includes('"phase":"ready"')) {
-      resolveChildReady();
+    const lines = `${readyOutput}${chunk.toString()}`.split(/\r?\n/);
+    readyOutput = (lines.pop() ?? '').slice(-4_096);
+    for (const line of lines) {
+      try {
+        const event = JSON.parse(line) as { name?: string; dimensions?: { phase?: string } };
+        if (event.name === 'process.phase' && event.dimensions?.phase === 'ready') {
+          resolveChildReady();
+          return;
+        }
+      } catch {
+        // Logger and diagnostics are not all JSON; only structured ready events count.
+      }
     }
   };
   child.stdout?.on('data', detectChildReady);
@@ -297,13 +308,24 @@ const startBackend = async (port: number, pgPort: number): Promise<RunningBacken
     }
     throw new Error(`Backend did not become ready within 20 seconds. ${output.join('').slice(-400)}`);
   })();
+  let startupTimer: ReturnType<typeof setTimeout> | null = null;
+  const startupDeadline = new Promise<never>((_, rejectPromise) => {
+    startupTimer = setTimeout(() => rejectPromise(new Error('Backend did not report readiness within 20 seconds.')), 20_000);
+  });
   try {
     // A stale listener can answer /ready before the spawned child reports its
     // own ready phase. Requiring both signals ties readiness to this child.
-    await Promise.race([Promise.all([waitReady, childReady]), earlyExit]);
+    await Promise.race([Promise.all([waitReady, childReady]), earlyExit, startupDeadline]);
   } catch (error) {
-    await stopChildProcess(child).catch(() => undefined);
+    try {
+      await stopChildProcess(child);
+    } catch (cleanupError) {
+      throw new Error(`Backend startup failed and cleanup failed: ${(cleanupError as Error).message}`);
+    }
     throw error;
+  } finally {
+    if (startupTimer) clearTimeout(startupTimer);
+    child.stdout?.removeListener('data', detectChildReady);
   }
   let stopPromise: Promise<void> | null = null;
   const stop = (): Promise<void> => {
@@ -1117,38 +1139,56 @@ export const main = async (argv = process.argv.slice(2)): Promise<GateReport> =>
   let digestMismatches = 0;
   let crossBoardLeaks = 0;
   let soakDetails: SoakDetails | undefined;
-  let cleanup: (() => Promise<void>) | null = null;
-  let signalHandlers: Array<[NodeJS.Signals, () => void]> = [];
+  let backendStarting: ChildProcess | null = null;
+  let postgresOwned = false;
+  let cleanupPromise: Promise<void> | null = null;
+  const cleanup = (): Promise<void> => {
+    cleanupPromise ??= (async () => {
+      if (backend) await backend.stop();
+      else if (backendStarting) await stopChildProcess(backendStarting);
+      if (stopPostgres) await stopPostgres();
+      else if (postgresOwned) await runCommand('docker', ['rm', '--force', dockerName]).catch(() => undefined);
+      await productionVite?.close();
+      productionVite = null;
+      productionClientModule = null;
+    })();
+    return cleanupPromise;
+  };
+  const signalHandlers: Array<[NodeJS.Signals, () => void]> = (['SIGINT', 'SIGTERM'] as const).map((signal) => {
+    const handler = (): void => {
+      const exitCode = signal === 'SIGINT' ? 130 : 143;
+      process.exitCode = exitCode;
+      void cleanup().then(
+        () => process.exit(exitCode),
+        (error) => {
+          console.error(`VVE-109 cleanup failed: ${(error as Error).message}`);
+          process.exit(1);
+        }
+      );
+    };
+    process.once(signal, handler);
+    return [signal, handler];
+  });
+  const startOwnedBackend = async (): Promise<RunningBackend> => {
+    const launched = await startBackend(options.backendPort, options.pgPort, (child) => {
+      backendStarting = child;
+    });
+    backendStarting = null;
+    return launched;
+  };
   try {
     await assertPortAvailable(options.backendPort);
     await assertPortAvailable(options.pgPort);
     await runCommand('npm', ['run', 'build']);
+    postgresOwned = true;
     stopPostgres = await startPostgres(options.pgPort);
     const base = `http://127.0.0.1:${options.backendPort}`;
-    backend = await startBackend(options.backendPort, options.pgPort);
-    let cleanupPromise: Promise<void> | null = null;
-    cleanup = (): Promise<void> => {
-      cleanupPromise ??= (async () => {
-        await backend?.stop().catch(() => undefined);
-        await stopPostgres?.();
-        await productionVite?.close().catch(() => undefined);
-        productionVite = null;
-        productionClientModule = null;
-      })();
-      return cleanupPromise;
-    };
-    signalHandlers = (['SIGINT', 'SIGTERM'] as const).map((signal) => {
-      const handler = (): void => {
-        process.exitCode = signal === 'SIGINT' ? 130 : 143;
-        void cleanup?.();
-      };
-      process.once(signal, handler);
-      return [signal, handler];
-    });
+    backend = await startOwnedBackend();
     const restart = async (afterStop?: () => Promise<void>): Promise<void> => {
       await backend?.stop();
+      backend = null;
       await afterStop?.();
-      backend = await startBackend(options.backendPort, options.pgPort);
+      backend = await startOwnedBackend();
       backendRestarts += 1;
     };
     const admin = await fetchJson<{ ok: boolean }>(base, '/api/admin/session', {
@@ -1206,14 +1246,7 @@ export const main = async (argv = process.argv.slice(2)): Promise<GateReport> =>
     return report;
   } finally {
     signalHandlers.forEach(([signal, handler]) => process.removeListener(signal, handler));
-    if (cleanup) await cleanup();
-    else {
-      await backend?.stop().catch(() => undefined);
-      await stopPostgres?.();
-      await productionVite?.close().catch(() => undefined);
-      productionVite = null;
-      productionClientModule = null;
-    }
+    await cleanup();
   }
 };
 

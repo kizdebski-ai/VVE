@@ -1606,6 +1606,16 @@ export const collectUpdateEffects = (
 
     const changed = new Set<Y.Map<unknown>>();
     let removedCount = 0;
+    let incompatibleCollections = false;
+    const meta = doc.getMap(BOARD_META_KEY);
+    const inspectCollections = (transaction: Y.Transaction) => {
+      // Root collection types are not encoded in Yjs updates. Reject a peer
+      // writing map fields into drawings or array items into boardMeta.
+      const drawingChanges = transaction.changed.get(drawings);
+      const metaChanges = transaction.changed.get(meta);
+      if (drawingChanges && [...drawingChanges].some((key) => key !== null)) incompatibleCollections = true;
+      if (metaChanges?.has(null)) incompatibleCollections = true;
+    };
     const observer = (events: Y.YEvent<any>[]) => {
       for (const event of events) {
         if (event.target === drawings) {
@@ -1614,6 +1624,7 @@ export const collectUpdateEffects = (
             if (Array.isArray(delta.insert)) {
               for (const inserted of delta.insert) {
                 if (inserted instanceof Y.Map) changed.add(inserted);
+                else incompatibleCollections = true;
               }
             }
           }
@@ -1627,11 +1638,18 @@ export const collectUpdateEffects = (
       }
     };
     drawings.observeDeep(observer);
+    doc.on('afterTransaction', inspectCollections);
     try {
       Y.applyUpdate(doc, update, 'effects-candidate');
     } finally {
       drawings.unobserveDeep(observer);
+      doc.off('afterTransaction', inspectCollections);
     }
+    const clearEpoch = meta.get(CLEAR_EPOCH_KEY);
+    if (clearEpoch !== undefined && (!Number.isSafeInteger(clearEpoch) || Number(clearEpoch) < 0)) {
+      incompatibleCollections = true;
+    }
+    if (incompatibleCollections) throw new Error('The update does not use canonical board collections.');
 
     const changedObjects: SceneObject[] = [];
     for (const map of changed) {

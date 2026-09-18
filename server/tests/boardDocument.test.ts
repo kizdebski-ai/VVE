@@ -95,6 +95,33 @@ describe('BoardDocument Interface', () => {
     expect(document.digest()).toBe(before);
   });
 
+  it.each(['plain-object', 'scalar', 'nested-array', 'drawings-map', 'meta-array', 'invalid-epoch'])(
+    'rejects malformed scene collections (%s) without accepting hidden state', (kind) => {
+      const document = createBoardDocument();
+      document.apply(commandUpdate(document, { kind: 'add', object: rectangle }, 'teacher'), {
+        kind: 'remote', actorId: 'teacher', role: 'teacher'
+      });
+      const before = document.digest();
+      const rogue = new Y.Doc();
+      Y.applyUpdate(rogue, document.encode());
+      const vector = Y.encodeStateVector(rogue);
+      if (kind === 'drawings-map') rogue.getMap('drawings').set('hidden', 'not an object');
+      else if (kind === 'meta-array') rogue.getArray('boardMeta').push(['not metadata']);
+      else if (kind === 'invalid-epoch') rogue.getMap('boardMeta').set('clearEpoch', 'invalid');
+      else rogue.getArray('drawings').push([
+        kind === 'plain-object' ? { ...rectangle, id: 'plain' } : kind === 'scalar' ? 17 : new Y.Array()
+      ]);
+      const result = document.apply(Y.encodeStateAsUpdate(rogue, vector), {
+        kind: 'remote', actorId: 'student', role: 'student'
+      });
+      expect(result).toMatchObject({ ok: false, reason: 'incompatibleUpdate' });
+      expect(document.digest()).toBe(before);
+      expect(drawingsOf(document)).toMatchObject([rectangle]);
+      rogue.destroy();
+      document.destroy();
+    }
+  );
+
   it('authorizes a whole-board clear for the Teacher only', () => {
     const document = createBoardDocument();
     const add = document.apply(

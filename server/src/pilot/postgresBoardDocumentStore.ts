@@ -38,6 +38,11 @@ const sequence = (value: string | number): number => {
 const updateDigest = (update: Uint8Array): string =>
   createHash('sha256').update(update).digest('hex');
 
+// Drain compaction is allowed to finish only inside a bounded database
+// statement. Ordinary compaction has no signal and keeps the normal pool
+// timeout policy.
+const DRAIN_COMPACTION_STATEMENT_TIMEOUT_MS = 1_000;
+
 export interface CreatePostgresBoardDocumentStoreOptions {
   db?: Knex;
 }
@@ -133,6 +138,10 @@ export const createPostgresBoardDocumentStore = (
         // on a row lock. Throwing at every transaction boundary is required:
         // returning here would let Knex commit the partial compaction.
         throwIfAborted();
+        if (signal) {
+          await trx.raw(`SET LOCAL statement_timeout = ${DRAIN_COMPACTION_STATEMENT_TIMEOUT_MS}`);
+          throwIfAborted();
+        }
         const updatedAt = new Date();
         await trx('board_yjs_state')
           .insert({

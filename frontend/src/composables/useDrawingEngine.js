@@ -606,7 +606,7 @@ export function useDrawingEngine({
 
   // --- Eraser ---
 
-  const eraseElement = (indexOrId, point = null) => {
+  const eraseElement = (indexOrId, point = null, hitElement = null) => {
     if (!yDrawings.value || !session.value) return;
 
     let elementId = null;
@@ -617,7 +617,9 @@ export function useDrawingEngine({
     }
 
     if (elementId) {
-      const element = session.value.snapshot().find((candidate) => candidate.id === elementId);
+      const element = hitElement?.id === elementId
+        ? hitElement
+        : session.value.snapshot().find((candidate) => candidate.id === elementId);
       if (!element) {
         debugWarn?.(`[eraseElement] Element not found for index/ID: ${indexOrId}`);
         return;

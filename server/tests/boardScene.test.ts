@@ -739,6 +739,16 @@ describe('board commands', () => {
     expect(pieces[1].at(-1)).toMatchObject({ x: 100, p: 0.4 });
   });
 
+  it('keeps native endpoint pressure when neighboring samples are mixed', () => {
+    const pieces = splitPenStroke([
+      { x: 0, y: 0, p: 0.25 },
+      { x: 50, y: 0 },
+      { x: 100, y: 0, p: 0.75 }
+    ], { x: 50, y: 0 }, 10);
+    expect(pieces[0][0]).toMatchObject({ x: 0, p: 0.25 });
+    expect(pieces[1].at(-1)).toMatchObject({ x: 100, p: 0.75 });
+  });
+
   it('splits a sparse two-point stroke and applies one canonical erase command', () => {
     const doc = new Y.Doc();
     const source: SceneObject = {

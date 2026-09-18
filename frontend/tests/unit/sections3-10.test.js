@@ -163,10 +163,11 @@ describe('8.1: No position:relative on * selector', () => {
 });
 
 describe('8.3: Dark mode uses @media instead of :deep(.dark-mode)', () => {
-  it('EraserModeControls.vue uses @media prefers-color-scheme', () => {
+  it('EraserModeControls.vue uses the shared tactile material tokens', () => {
     const src = readSrc('components/EraserModeControls.vue');
-    expect(src).toContain('prefers-color-scheme: dark');
-    expect(src).not.toContain(':deep(.dark-mode)');
+    expect(src).toContain('var(--glass-surface');
+    expect(src).toContain('var(--glass-shadow');
+    expect(src).not.toContain('prefers-color-scheme: dark');
   });
 
   it('ZoomPanControls.vue uses @media prefers-color-scheme', () => {

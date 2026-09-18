@@ -1867,7 +1867,7 @@ export default {
               isDrawing.value = true;
               const hit = hitTestAt(intent.world);
               setEraserHover(hit?.id);
-              if (hit?.id) eraseElement(hit.id, intent.world);
+              if (hit?.id) eraseElement(hit.id, intent.world, hit);
               break;
             }
             if (currentTool.value === 'mathPlot') {
@@ -1905,7 +1905,7 @@ export default {
             if (currentTool.value === 'eraser') {
               const hit = hitTestAt(intent.world);
               setEraserHover(hit?.id);
-              if (isDrawing.value && hit?.id) eraseElement(hit.id, intent.world);
+              if (isDrawing.value && hit?.id) eraseElement(hit.id, intent.world, hit);
             } else if (isDrawing.value) {
               draw(
                 { ...intent.world, p: intent.pressure, tiltX: intent.tiltX, tiltY: intent.tiltY },

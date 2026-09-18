@@ -7,7 +7,7 @@
         :class="['eraser-mode-btn', { active: mode === 'erase' }]" 
         :aria-pressed="mode === 'erase'"
         @click="setMode('erase')"
-        title="Ścieranie — usuwa fragmenty obiektu">
+        title="Ścieranie — usuwa fragmenty kreski">
         Ścieraj
       </button>
       <button
@@ -47,54 +47,70 @@ export default {
   max-width: calc(100% - 24px);
   display: flex;
   flex-direction: column;
-  background-color: white;
-  border-radius: 8px;
-  padding: 10px;
-  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+  gap: 6px;
+  min-width: 168px;
+  padding: 8px 10px;
+  background: var(--glass-surface, #e8edf4);
+  border: 1px solid var(--glass-border, rgba(148, 163, 184, 0.3));
+  border-radius: 18px;
+  box-shadow: var(--glass-shadow, 6px 6px 14px rgba(163, 177, 198, 0.45), -6px -6px 14px rgba(255, 255, 255, 0.9));
   z-index: 10;
 }
 
 .eraser-mode-label {
-  font-size: 12px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
   margin-bottom: 5px;
   text-align: center;
+  color: var(--color-text, #64748b);
 }
 
 .eraser-mode-options {
   display: flex;
-  gap: 5px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 14px;
+  background: var(--surface-pressed, #dfe6ef);
+  box-shadow: inset 2px 2px 5px rgba(163, 177, 198, 0.55), inset -2px -2px 5px rgba(255, 255, 255, 0.8);
 }
 
 .eraser-mode-btn {
   min-width: 76px;
   min-height: 44px;
   padding: 8px 12px;
-  border: 1px solid #ddd;
-  border-radius: 4px;
-  background-color: white;
-  color: #333;
+  border: 0;
+  border-radius: 11px;
+  background: transparent;
+  color: var(--color-text, #64748b);
   cursor: pointer;
   font-size: 12px;
   touch-action: manipulation;
 }
 
 .eraser-mode-btn.active {
-  background-color: var(--accent-primary, #2563eb);
-  border-color: var(--accent-primary, #2563eb);
-  color: white;
+  background: var(--glass-highlight, #f4f7fb);
+  color: var(--color-heading, #1e293b);
+  box-shadow: 3px 3px 8px rgba(163, 177, 198, 0.5), -2px -2px 6px rgba(255, 255, 255, 0.95);
 }
 
-@media (prefers-color-scheme: dark) {
-  .eraser-mode-controls {
-    background-color: #333;
-    color: #f0f0f0;
-    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.4);
-  }
+.eraser-mode-btn:focus-visible {
+  outline: 2px solid var(--accent-primary, #2563eb);
+  outline-offset: 2px;
+}
 
+@media (prefers-reduced-transparency: reduce) {
+  .eraser-mode-controls {
+    background: #e2e8f0;
+    box-shadow: 0 1px 3px rgba(15, 23, 42, 0.18);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
   .eraser-mode-btn {
-    border-color: #555;
-    background-color: #444;
-    color: #f0f0f0;
+    transition: none;
   }
 }
 </style>

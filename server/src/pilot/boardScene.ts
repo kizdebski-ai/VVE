@@ -536,6 +536,8 @@ const boundsFromPoints = (points: ScenePoint[]) => {
 };
 
 const interpolatePoint = (a: ScenePoint, b: ScenePoint, ratio: number): ScenePoint => {
+  if (ratio <= 0) return plainPoint(a);
+  if (ratio >= 1) return plainPoint(b);
   const point: ScenePoint = {
     x: a.x + (b.x - a.x) * ratio,
     y: a.y + (b.y - a.y) * ratio
@@ -559,14 +561,13 @@ export const splitPenStroke = (
   center: { x: number; y: number },
   radius: number
 ): ScenePoint[][] => {
+  if (!Array.isArray(points) || points.length === 0) return [];
   if (
-    !Array.isArray(points) ||
     !isCoordinate(center.x) ||
     !isCoordinate(center.y) ||
     !Number.isFinite(radius) ||
     radius <= 0
   ) {
-    if (Array.isArray(points) && points.length === 0) return [];
     return [points.map(plainPoint)];
   }
 
@@ -1519,6 +1520,9 @@ export const applyBoardCommand = (
       }
       const source = objectJson(entry.map);
       const segmentIds = new Set<string>();
+      const existingIds = new Set(
+        drawings.toArray().map((map) => String(map.get('id')))
+      );
       const replacements: SceneObject[] = [];
       for (const [index, segment] of command.segments.entries()) {
         if (
@@ -1526,7 +1530,7 @@ export const applyBoardCommand = (
           !isBoundedString(segment.id, SCENE_LIMITS.maxIdLength) ||
           (index === 0 && segment.id !== command.id) ||
           segmentIds.has(segment.id) ||
-          (segment.id !== command.id && findObjectEntry(doc, segment.id)) ||
+          (segment.id !== command.id && existingIds.has(segment.id)) ||
           !validatePointList(segment.points, 1)
         ) {
           return commandFail('invalidObject', 'A replacement pen stroke is invalid.');

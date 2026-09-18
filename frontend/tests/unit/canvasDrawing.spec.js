@@ -62,4 +62,19 @@ describe('canvas image preload used by artifact export', () => {
     ], cache, { maxTotalPixels: 1 })).rejects.toMatchObject({ code: 'resource.imageTooLarge' });
     expect(cache.size).toBe(2);
   });
+
+  it('rejects a large PNG from its header before browser decode', async () => {
+    const header = new Uint8Array(24);
+    header.set([137, 80, 78, 71, 13, 10, 26, 10], 0);
+    header.set([73, 72, 68, 82], 12);
+    const view = new DataView(header.buffer);
+    view.setUint32(16, 101);
+    view.setUint32(20, 101);
+    const src = `data:image/png;base64,${btoa(String.fromCharCode(...header))}`;
+    await expect(preloadCanvasImages(
+      [{ type: 'image', src }],
+      new Map(),
+      { maxDecodedPixels: 10_000 }
+    )).rejects.toMatchObject({ code: 'resource.imageTooLarge' });
+  });
 });

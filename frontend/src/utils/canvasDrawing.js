@@ -7,6 +7,7 @@
 import rough from 'roughjs';
 import { sampleMathFunction } from './mathPlotSampling.js';
 import { drawStyledPen } from './penStyles';
+import { imageDimensions } from '../board/imageDimensions';
 
 // 1.2: Cache Rough.js instance per canvas (avoid recreating on every drawElement call)
 const roughCanvasCache = new WeakMap();
@@ -15,6 +16,19 @@ const imageSourcesIn = (elements) => [...new Set(
     .filter((element) => element?.type === 'image' && typeof element.src === 'string')
     .map((element) => element.src)
 )];
+
+const headerDimensionsFor = (src) => {
+  const match = /^data:([^;,]+);base64,(.*)$/s.exec(src);
+  if (!match) return null;
+  try {
+    const binary = atob(match[2]);
+    const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+    const dimensions = imageDimensions(bytes, match[1]);
+    return dimensions;
+  } catch {
+    return null;
+  }
+};
 
 export class CanvasImagePreloadError extends Error {
   constructor(code, message) {
@@ -69,6 +83,16 @@ export const preloadCanvasImages = async (elements, cache, options = {}) => {
     }
     if (typeof options.maxImageDataUrlChars === 'number' && src.length > options.maxImageDataUrlChars) {
       throw new CanvasImagePreloadError('resource.imageTooLarge', 'Image data exceeds the export budget.');
+    }
+    const header = headerDimensionsFor(src);
+    if (header) {
+      const headerPixels = header.width * header.height;
+      if (!Number.isFinite(headerPixels) || headerPixels > (options.maxDecodedPixels ?? Infinity)) {
+        throw new CanvasImagePreloadError('resource.imageTooLarge', 'Image header exceeds the decoded pixel budget.');
+      }
+      if (headerPixels + totalPixels > (options.maxTotalPixels ?? Infinity)) {
+        throw new CanvasImagePreloadError('resource.imageTooLarge', 'Image headers exceed the aggregate export budget.');
+      }
     }
     const image = await loadCanvasImage(src, cache, options.signal, options.timeoutMs ?? 12_000);
     const width = image.naturalWidth || image.width;

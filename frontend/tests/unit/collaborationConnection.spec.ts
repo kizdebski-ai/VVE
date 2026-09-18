@@ -150,7 +150,13 @@ describe('acknowledged collaboration client', () => {
     third.receive(serverFrame(collaborationMessage.synchronizationComplete));
     expect(connection.isEditable()).toBe(true);
 
-    vi.advanceTimersByTime(20_000);
+    // Keep the authenticated session alive while exercising the reconnect
+    // backoff; the client watchdog now correctly expires silent sessions.
+    for (let index = 0; index < 10; index += 1) {
+      vi.advanceTimersByTime(1_900);
+      third.receive(serverFrame(collaborationMessage.heartbeat));
+    }
+    vi.advanceTimersByTime(500);
     expect(FakeWebSocket.instances).toHaveLength(3);
     vi.useRealTimers();
   });
@@ -196,6 +202,26 @@ describe('acknowledged collaboration client', () => {
     socket.receive(serverFrame(collaborationMessage.heartbeat));
     expect(connection.isEditable()).toBe(true);
 
+    vi.advanceTimersByTime(1_999);
+    expect(connection.isEditable()).toBe(true);
+    vi.advanceTimersByTime(1);
+    expect(connection.isEditable()).toBe(false);
+    expect(statuses).toContain('disconnected');
+    vi.useRealTimers();
+  });
+
+  it('enters read-only when no heartbeat arrives after synchronization', () => {
+    vi.useFakeTimers();
+    const statuses: string[] = [];
+    const connection = connectToYjs('board-1', {
+      wsToken: 'managed-token',
+      onStatus: (status) => statuses.push(status)
+    });
+    const socket = FakeWebSocket.instances[0]!;
+    socket.open();
+    socket.receive(serverFrame(collaborationMessage.synchronizationComplete));
+
+    expect(connection.isEditable()).toBe(true);
     vi.advanceTimersByTime(1_999);
     expect(connection.isEditable()).toBe(true);
     vi.advanceTimersByTime(1);

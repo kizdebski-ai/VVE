@@ -462,6 +462,10 @@ export function connectToYjs(roomId: string, options?: ConnectOptions): YjsConne
         case collaborationMessage.synchronizationComplete:
           isDraining = false;
           editable = true;
+          // Synchronization is the authoritative point at which edits become
+          // possible. Start the watchdog here so a dead connection is caught
+          // even when its first heartbeat never reaches the client.
+          armHeartbeatWatchdog();
           setStatus('connected');
           sendAwareness();
           resendPending();

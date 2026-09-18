@@ -295,7 +295,11 @@ export const createRuntimeControl = (options: RuntimeControlOptions = {}): Runti
   // settles.  The readiness response has a deadline, but timing out that
   // response must not permit the next interval to start a second probe while
   // the first database/store operation is still running.
-  let probeWorkInFlight: Promise<{ database: boolean; persistence: boolean }> | null = null;
+  type ProbeWork = {
+    promise: Promise<{ database: boolean; persistence: boolean }>;
+    settled: boolean;
+  };
+  let probeWorkInFlight: ProbeWork | null = null;
   let probeAbortController: AbortController | null = null;
   let probeSequence = 0;
 
@@ -307,12 +311,22 @@ export const createRuntimeControl = (options: RuntimeControlOptions = {}): Runti
 
     const currentDb = activeDb;
     const currentStore = activeStore;
+    // Let an abort-aware probe publish its settled state before this request
+    // decides whether it may start the next generation. This yields only one
+    // microtask; a still-running adapter remains single-flight.
+    if (probeWorkInFlight) {
+      await Promise.resolve();
+      if (probeWorkInFlight?.settled) probeWorkInFlight = null;
+    }
     if (!probeWorkInFlight) {
       const sequence = ++probeSequence;
-      let work!: Promise<{ database: boolean; persistence: boolean }>;
       const controller = new AbortController();
       probeAbortController = controller;
-      work = (async (): Promise<{ database: boolean; persistence: boolean }> => {
+      const tracked: ProbeWork = {
+        promise: Promise.resolve({ database: false, persistence: false }),
+        settled: false
+      };
+      tracked.promise = (async (): Promise<{ database: boolean; persistence: boolean }> => {
         try {
           const probeFn = options.probe ?? defaultProbe;
           const res = await probeFn({ db: currentDb, store: currentStore, signal: controller.signal });
@@ -334,15 +348,16 @@ export const createRuntimeControl = (options: RuntimeControlOptions = {}): Runti
         }
         return checks;
       })().finally(() => {
-        if (probeWorkInFlight === work) {
+        tracked.settled = true;
+        if (probeWorkInFlight === tracked) {
           probeWorkInFlight = null;
           probeAbortController = null;
         }
       });
-      probeWorkInFlight = work;
+      probeWorkInFlight = tracked;
     }
 
-    const work = probeWorkInFlight;
+    const work = probeWorkInFlight.promise;
     const ms = 1_000;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const timeoutPromise = new Promise<never>((_, reject) => {

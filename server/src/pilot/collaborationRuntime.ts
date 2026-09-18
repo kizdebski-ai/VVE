@@ -441,8 +441,8 @@ export const createCollaborationRuntime = (
       throw new CollaborationFailure('internal', (error as Error).message);
     }
 
-    const close = async (reason: string) => {
-      if (live.closed) return;
+    const cleanupConnection = async (reason: string): Promise<boolean> => {
+      if (live.closed) return false;
       live.closed = true;
       room.connections.delete(live);
       releaseSlot();
@@ -456,19 +456,31 @@ export const createCollaborationRuntime = (
         removeAwarenessStates(room.awareness, removed, live);
         const removalUpdate = encodeAwarenessUpdate(room.awareness, removed);
         for (const peer of room.connections) {
-          if (!peer.closed) await peer.transport.send({ kind: 'awareness', update: removalUpdate });
+          if (!peer.closed) {
+            try {
+              await peer.transport.send({ kind: 'awareness', update: removalUpdate });
+            } catch {
+              // The peer may have disconnected while the removal was being relayed.
+            }
+          }
         }
         live.awarenessClientIds.clear();
       }
+      return room.connections.size === 0;
+    };
+
+    const compactIfLastConnection = async (): Promise<void> => {
       // The last participant leaving is a prompt durability boundary. The
       // idle timer only releases memory later; it is not responsible for
       // making the completed lesson restart-safe.
-      if (room.connections.size === 0) {
-        await serial(room, async () => {
-          await options.store.compact(input.boardId, room.document.encode(), room.lastSequence);
-          room.operationsSinceCompaction = 0;
-        });
-      }
+      await options.store.compact(input.boardId, room.document.encode(), room.lastSequence);
+      room.operationsSinceCompaction = 0;
+    };
+
+    const close = async (reason: string) => {
+      await serial(room, async () => {
+        if (await cleanupConnection(reason)) await compactIfLastConnection();
+      });
     };
 
     const receive = async (frame: ClientFrame): Promise<ReceiveResult> => {
@@ -545,11 +557,13 @@ export const createCollaborationRuntime = (
       return serial(room, async () => {
         if (live.closed) return { accepted: false, reason: 'unauthorized' };
         if (!(await input.revalidate())) {
-          live.closed = true;
-          room.connections.delete(live);
-          releaseSlot();
-          await transport.send({ kind: 'denial', reason: 'revoked' });
-          await transport.close(1008, 'Access revoked');
+          const becameLastConnection = await cleanupConnection('revoked');
+          try {
+            await transport.send({ kind: 'denial', reason: 'revoked' });
+            await transport.close(1008, 'Access revoked');
+          } finally {
+            if (becameLastConnection) await compactIfLastConnection();
+          }
           return { accepted: false, reason: 'revoked' };
         }
         const shadow = createBoardDocument({ initialState: room.document.encode() });

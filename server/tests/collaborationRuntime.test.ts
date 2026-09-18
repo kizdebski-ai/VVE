@@ -210,6 +210,55 @@ describe('CollaborationRuntime acknowledgement oracle', () => {
     expect((await store.inspect(BOARD_B)).operationCount).toBe(0);
   });
 
+  it('removes revoked awareness and compacts when revocation closes the last connection', async () => {
+    const store = new InMemoryBoardDocumentStore();
+    const revalidate = vi.fn()
+      .mockResolvedValueOnce(true) // connect
+      .mockResolvedValueOnce(true) // pre-queue mutation check
+      .mockResolvedValueOnce(false); // queued mutation check
+    const runtime = createCollaborationRuntime({ store });
+    const firstTransport = new MemoryTransport();
+    const first = await runtime.connect(connection(BOARD_A, 'student', revalidate), firstTransport);
+    const secondTransport = new MemoryTransport();
+    await runtime.connect(connection(BOARD_A, 'student'), secondTransport);
+
+    const awarenessDoc = new Y.Doc();
+    const awareness = new Awareness(awarenessDoc);
+    awareness.setLocalStateField('cursor', { x: 12, y: 24 });
+    await first.receive({
+      kind: 'awareness',
+      update: encodeAwarenessUpdate(awareness, [awareness.clientID])
+    });
+    secondTransport.frames.length = 0;
+
+    const result = await first.receive(mutation('revoked-awareness-op', 'blocked', 'write'));
+
+    expect(result).toEqual({ accepted: false, reason: 'revoked' });
+    expect(firstTransport.closed).toMatchObject({ code: 1008 });
+    expect(secondTransport.frames.some((frame) => frame.kind === 'awareness')).toBe(true);
+    expect((await runtime.inspect(BOARD_A)).connections).toBe(1);
+    awareness.destroy();
+    awarenessDoc.destroy();
+  });
+
+  it('compacts on a queued revocation after the last connection is removed', async () => {
+    const store = new InMemoryBoardDocumentStore();
+    const compact = vi.spyOn(store, 'compact');
+    const revalidate = vi.fn()
+      .mockResolvedValueOnce(true) // connect
+      .mockResolvedValueOnce(true) // pre-queue mutation check
+      .mockResolvedValueOnce(false); // queued mutation check
+    const runtime = createCollaborationRuntime({ store });
+    const transport = new MemoryTransport();
+    const handle = await runtime.connect(connection(BOARD_A, 'student', revalidate), transport);
+
+    const result = await handle.receive(mutation('revoked-last-op', 'blocked', 'write'));
+
+    expect(result).toEqual({ accepted: false, reason: 'revoked' });
+    expect(compact).toHaveBeenCalledTimes(1);
+    expect((await runtime.inspect(BOARD_A)).connections).toBe(0);
+  });
+
   it('rejects a mutation that was queued before board access was revoked', async () => {
     const inner = new InMemoryBoardDocumentStore();
     let releaseAppend!: () => void;

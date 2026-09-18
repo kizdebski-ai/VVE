@@ -400,6 +400,23 @@ export const createRealtimeListener = (deps: RealtimeListenerDeps): RealtimeList
         };
 
         let handle: ConnectionHandle | null = null;
+        let socketClosed = false;
+        const closeManagedConnection = (reason: string): void => {
+          if (socketClosed) return;
+          socketClosed = true;
+          releaseIp();
+          const closing = handle?.close(reason);
+          void closing?.catch(() => undefined);
+        };
+        // Attach lifecycle handlers before the asynchronous runtime connect:
+        // auth, hydration, and the initial sync can all outlive the browser
+        // socket. The handlers are idempotent and the post-connect check below
+        // closes a handle that settled after its transport disappeared.
+        socket.on('close', () => closeManagedConnection('socket closed'));
+        socket.on('error', (error) => {
+          logger.warn('Managed Board WebSocket error', { boardId: roomId, error: error.message });
+          closeManagedConnection('socket error');
+        });
         handle = await collaborationRuntime.connect(
           {
             boardId: roomId,
@@ -409,6 +426,10 @@ export const createRealtimeListener = (deps: RealtimeListenerDeps): RealtimeList
           },
           transport
         );
+        if (socketClosed) {
+          await handle.close('socket closed during connect').catch(() => undefined);
+          return;
+        }
 
         socket.on('message', (raw) => {
           const window = messageWindow();
@@ -436,15 +457,6 @@ export const createRealtimeListener = (deps: RealtimeListenerDeps): RealtimeList
                 socket.close(1011, 'Internal error');
               }
             });
-        });
-        socket.on('close', () => {
-          handle?.close('socket closed').catch(() => undefined);
-          releaseIp();
-        });
-        socket.on('error', (error) => {
-          logger.warn('Managed Board WebSocket error', { boardId: roomId, error: error.message });
-          handle?.close('socket error').catch(() => undefined);
-          releaseIp();
         });
         return;
       }

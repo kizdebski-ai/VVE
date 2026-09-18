@@ -8,7 +8,7 @@
  * mutations plus awareness; configured payload limits agree end to end; the
  * overloaded board receives a typed Polish denial instead of a generic 1011.
  */
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it, vi } from 'vitest';
 import http from 'http';
 import WebSocket from 'ws';
 import request from 'supertest';
@@ -18,7 +18,8 @@ import * as awarenessProtocol from 'y-protocols/awareness';
 import { createRealtimeListener } from '../src/pilot/realtimeListener';
 import {
   createCollaborationRuntime,
-  InMemoryBoardDocumentStore
+  InMemoryBoardDocumentStore,
+  type CollaborationRuntime
 } from '../src/pilot/collaborationRuntime';
 import { createOperationalSignals } from '../src/pilot/operationalSignals';
 import { createResourceGovernor } from '../src/pilot/resourceGovernor';
@@ -347,6 +348,80 @@ describe('Realtime composition through the shared ResourceGovernor (108-I1)', ()
 });
 
 describe('Composition honours environment-tuned governor limits (108-I1)', () => {
+  it('closes a managed handle that settles after its socket disconnects during connect', async () => {
+    let releaseConnect!: () => void;
+    let connectStarted!: () => void;
+    const connectGate = new Promise<void>((resolve) => { releaseConnect = resolve; });
+    const connectStartedPromise = new Promise<void>((resolve) => { connectStarted = resolve; });
+    let connectCount = 0;
+    let closeCount = 0;
+    const collaboration = {
+      connect: vi.fn(async () => {
+        connectCount += 1;
+        if (connectCount === 1) {
+          connectStarted();
+          await connectGate;
+        }
+        return {
+          receive: async () => ({ accepted: false as const, reason: 'unauthorized' as const }),
+          close: async () => { closeCount += 1; }
+        };
+      }),
+      inspect: async () => ({
+        boardId: boardId(0),
+        digest: '',
+        encodedState: new Uint8Array(),
+        connections: 0,
+        lastSequence: 0
+      }),
+      unloadIdle: async () => [],
+      closeBoard: async () => false,
+      drain: async () => ({ boards: 0, connections: 0, complete: true }),
+      stats: () => ({ boards: 0, connections: 0, draining: false })
+    } as unknown as CollaborationRuntime;
+    const limits = createResourceLimits({
+      maxConnectionsPerIp: 1,
+      maxProcessConnections: 1,
+      maxBoardConnections: 1
+    });
+    const governor = createResourceGovernor({ limits });
+    const signals = createOperationalSignals({ emitJson: false });
+    const listener = createRealtimeListener({
+      roomManager: stubRoomManager(),
+      aiSolver: stubSolver(),
+      capabilityAccess: grantedAccess(),
+      boardLifecycle: stubLifecycle(),
+      collaborationRuntime: collaboration,
+      signals,
+      health: {
+        live: () => true,
+        ready: () => true,
+        checks: () => ({ database: true, persistence: true }),
+        snapshot: () => signals.snapshot()
+      },
+      admitting: () => true,
+      environment: 'pilot',
+      devSurface: false,
+      resourceGovernor: governor
+    });
+    const port = await listener.listen('127.0.0.1', 0);
+    const target = boardId(6);
+    const first = new WebSocket(`ws://127.0.0.1:${port}/ws/whiteboard/${target}?wsToken=t`);
+    first.on('error', () => undefined);
+    await connectStartedPromise;
+    first.terminate();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    // The released IP slot admits a second socket even while the first
+    // runtime connect is still waiting on hydration/auth completion.
+    const second = new WebSocket(`ws://127.0.0.1:${port}/ws/whiteboard/${target}?wsToken=t`);
+    await vi.waitFor(() => expect(connectCount).toBe(2));
+    releaseConnect();
+    await vi.waitFor(() => expect(closeCount).toBe(1));
+    second.terminate();
+    await closeListener(listener);
+  });
+
   it('carries custom limits through the listener and collaboration admission', { timeout: 20_000 }, async () => {
     const customLimits: ResourceLimits = createResourceLimits({
       maxConnectionsPerIp: 96,

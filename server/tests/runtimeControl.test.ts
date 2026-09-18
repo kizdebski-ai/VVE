@@ -232,7 +232,7 @@ describe('RuntimeControl process lifecycle', () => {
     expect(ready.status).toBe(200);
     expect(ready.body.ready).toBe(true);
     expect(ready.body.checks).toEqual({ database: true, persistence: true });
-    expect(snapshotIsContentFree(ready.body.soak)).toBe(true);
+    expect(ready.body).not.toHaveProperty('soak');
 
     const health = await request(`http://127.0.0.1:${running.port}`).get('/health');
     expect(health.status).toBe(200);

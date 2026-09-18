@@ -83,11 +83,37 @@ export interface MeasurementAggregate {
   samples?: number[];
 }
 
+export interface EventLoopDelayWindow {
+  source: 'histogram' | 'samples';
+  count: number;
+  min: number | null;
+  mean: number | null;
+  p50: number | null;
+  p95: number | null;
+  max: number | null;
+  windowStartAt: string | null;
+  windowEndAt: string | null;
+  windowDurationMs: number | null;
+}
+
+export interface EventLoopDelayHistogramInput {
+  name: 'eventLoop.delayMs';
+  count: number;
+  min: number | null;
+  mean: number | null;
+  p50: number | null;
+  p95: number | null;
+  max: number | null;
+  windowStartAt: string;
+  windowEndAt: string;
+  windowDurationMs: number;
+}
+
 export interface OperationalSnapshot {
   at: string;
   sequence: number;
   eventsLost: number;
-  eventLoopDelayMs: { min: number; mean: number; p50: number; p95: number; max: number } | null;
+  eventLoopDelayMs: EventLoopDelayWindow | null;
   memory: { rssBytes: number; heapUsedBytes: number };
   connections: number;
   boards: number;
@@ -100,6 +126,7 @@ export interface OperationalSnapshot {
 export interface OperationalSignals {
   record(event: OperationalEventInput): void;
   measure(sample: OperationalMeasurementInput): void;
+  measureHistogram(sample: EventLoopDelayHistogramInput): void;
   snapshot(): OperationalSnapshot;
 }
 
@@ -186,6 +213,7 @@ export const createOperationalSignals = (
   let eventsLost = 0;
   const events: OperationalEvent[] = [];
   const measurements = new Map<OperationalMeasurementName, MeasurementAggregate>();
+  let latestEventLoopWindow: EventLoopDelayWindow | null = null;
   const lastDigests: Record<string, string> = {};
   const digestOrder: string[] = [];
   let persistenceErrors = 0;
@@ -294,6 +322,41 @@ export const createOperationalSignals = (
     }
   };
 
+  const measureHistogram: OperationalSignals['measureHistogram'] = (sample) => {
+    try {
+      if (
+        !Number.isSafeInteger(sample.count) ||
+        sample.count < 0 ||
+        sample.windowDurationMs < 0 ||
+        !Number.isFinite(sample.windowDurationMs) ||
+        [sample.min, sample.mean, sample.p50, sample.p95, sample.max].some(
+          (value) => value !== null && (!Number.isFinite(value) || value < 0)
+        )
+      ) {
+        eventsLost += 1;
+        bump('invalidMeasurement');
+        return;
+      }
+      // Keep only the latest structured window; the compatibility sample path
+      // remains bounded by the existing MeasurementAggregate retention cap.
+      latestEventLoopWindow = {
+        source: 'histogram',
+        count: sample.count,
+        min: sample.min,
+        mean: sample.mean,
+        p50: sample.p50,
+        p95: sample.p95,
+        max: sample.max,
+        windowStartAt: sample.windowStartAt,
+        windowEndAt: sample.windowEndAt,
+        windowDurationMs: sample.windowDurationMs
+      };
+    } catch {
+      eventsLost += 1;
+      bump('measureFailure');
+    }
+  };
+
   const computePercentile = (samples: number[] | undefined, p: number, fallback: number): number => {
     if (!samples || samples.length === 0) return fallback;
     const sorted = [...samples].sort((a, b) => a - b);
@@ -305,6 +368,20 @@ export const createOperationalSignals = (
   const snapshot = (): OperationalSnapshot => {
     const memory = process.memoryUsage();
     const eventLoop = measurements.get('eventLoop.delayMs');
+    const eventLoopDelayMs = latestEventLoopWindow ?? (eventLoop && typeof eventLoop.last === 'number'
+      ? {
+          source: 'samples' as const,
+          count: eventLoop.count,
+          min: eventLoop.min ?? (eventLoop.last as number),
+          mean: eventLoop.count ? eventLoop.sum / eventLoop.count : (eventLoop.last as number),
+          p50: computePercentile(eventLoop.samples, 50, eventLoop.last as number),
+          p95: computePercentile(eventLoop.samples, 95, eventLoop.last as number),
+          max: eventLoop.max ?? (eventLoop.last as number),
+          windowStartAt: null,
+          windowEndAt: null,
+          windowDurationMs: null
+        }
+      : null);
     const connections = measurements.get('connections.active');
     const boards = measurements.get('boards.active');
     const rss = measurements.get('memory.rssBytes');
@@ -313,15 +390,7 @@ export const createOperationalSignals = (
       at: new Date(now()).toISOString(),
       sequence,
       eventsLost,
-      eventLoopDelayMs: eventLoop && typeof eventLoop.last === 'number'
-        ? {
-            min: eventLoop.min ?? (eventLoop.last as number),
-            mean: eventLoop.count ? eventLoop.sum / eventLoop.count : (eventLoop.last as number),
-            p50: computePercentile(eventLoop.samples, 50, eventLoop.last as number),
-            p95: computePercentile(eventLoop.samples, 95, eventLoop.last as number),
-            max: eventLoop.max ?? (eventLoop.last as number)
-          }
-        : null,
+      eventLoopDelayMs,
       memory: {
         rssBytes: typeof rss?.last === 'number' ? rss.last : memory.rss,
         heapUsedBytes: typeof heap?.last === 'number' ? heap.last : memory.heapUsed
@@ -338,6 +407,7 @@ export const createOperationalSignals = (
   return {
     record,
     measure,
+    measureHistogram,
     snapshot,
     recorded: () => events.slice()
   };

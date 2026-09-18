@@ -229,6 +229,36 @@ const withDeadline = async <T>(
   }
 };
 
+export const recordEventLoopDelayWindow = (
+  signals: Pick<OperationalSignals, 'measureHistogram'>,
+  histogram: IntervalHistogram,
+  windowStartAt: string,
+  windowEndAt: string
+): void => {
+  const count = Number(histogram.count);
+  const valueMs = (value: number): number | null =>
+    count > 0 && Number.isFinite(value) ? value / 1e6 : null;
+  const percentileMs = (percentile: number): number | null =>
+    count > 0 ? valueMs(Number(histogram.percentile(percentile))) : null;
+  const startMs = Date.parse(windowStartAt);
+  const endMs = Date.parse(windowEndAt);
+  signals.measureHistogram({
+    name: 'eventLoop.delayMs',
+    count: Number.isSafeInteger(count) && count >= 0 ? count : 0,
+    min: valueMs(Number(histogram.min)),
+    mean: valueMs(Number(histogram.mean)),
+    p50: percentileMs(50),
+    p95: percentileMs(95),
+    max: valueMs(Number(histogram.max)),
+    windowStartAt,
+    windowEndAt,
+    windowDurationMs: Number.isFinite(startMs) && Number.isFinite(endMs)
+      ? Math.max(0, endMs - startMs)
+      : 0
+  });
+  histogram.reset();
+};
+
 export const createRuntimeControl = (options: RuntimeControlOptions = {}): RuntimeControl => {
   const signals = options.signals ?? createOperationalSignals();
   const governor = options.resourceGovernor ?? createResourceGovernor();
@@ -254,6 +284,7 @@ export const createRuntimeControl = (options: RuntimeControlOptions = {}): Runti
   let boardLifecycle: BoardLifecycle | null = null;
   let roomManager: RoomManager | null = null;
   let histogram: IntervalHistogram | null = null;
+  let eventLoopWindowStartedAt = new Date(now()).toISOString();
 
   const timers = new Map<string, ReturnType<typeof setInterval>>();
   let chain: Promise<unknown> = Promise.resolve();
@@ -394,10 +425,9 @@ export const createRuntimeControl = (options: RuntimeControlOptions = {}): Runti
       signals.measure({ name: 'memory.rssBytes', value: memory.rss });
       signals.measure({ name: 'memory.heapUsedBytes', value: memory.heapUsed });
       if (histogram) {
-        signals.measure({
-          name: 'eventLoop.delayMs',
-          value: Number(histogram.percentile(95)) / 1e6
-        });
+        const windowEndAt = new Date(now()).toISOString();
+        recordEventLoopDelayWindow(signals, histogram, eventLoopWindowStartedAt, windowEndAt);
+        eventLoopWindowStartedAt = windowEndAt;
       }
       if (collaboration) {
         const stats = collaboration.stats();
@@ -573,6 +603,7 @@ export const createRuntimeControl = (options: RuntimeControlOptions = {}): Runti
     }
 
     histogram = monitorEventLoopDelay({ resolution: 20 });
+    eventLoopWindowStartedAt = new Date(now()).toISOString();
     histogram.enable();
     trackInterval('ping', () => {
       listener?.pingClients();

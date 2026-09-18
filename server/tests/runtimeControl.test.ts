@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'fs';
 import path from 'path';
 import type { Knex } from 'knex';
+import type { IntervalHistogram } from 'perf_hooks';
 import pg from 'pg';
 import knex from 'knex';
 import request from 'supertest';
@@ -31,6 +32,7 @@ const { schemaName, adminPassphrase, databaseUrl } = vi.hoisted(() => {
 
 import {
   createRuntimeControl,
+  recordEventLoopDelayWindow,
   RuntimeControlFailure,
   snapshotIsContentFree,
   type RuntimeControlConfig
@@ -84,6 +86,44 @@ const adapters = () => ({
 });
 
 describe('RuntimeControl process lifecycle', () => {
+  it('passes actual asymmetric event-loop histogram quantiles through the snapshot seam', () => {
+    const signals = createOperationalSignals({ emitJson: false });
+    let resetCount = 0;
+    const histogram = {
+      count: 20,
+      min: 1_000_000,
+      mean: 5_950_000,
+      max: 100_000_000,
+      percentile: (percentile: number) => percentile === 50 || percentile === 95
+        ? 1_000_000
+        : 100_000_000,
+      reset: () => {
+        resetCount += 1;
+      }
+    } as unknown as IntervalHistogram;
+
+    recordEventLoopDelayWindow(
+      signals,
+      histogram,
+      '2026-09-19T00:00:00.000Z',
+      '2026-09-19T00:00:10.000Z'
+    );
+
+    expect(signals.snapshot().eventLoopDelayMs).toEqual({
+      source: 'histogram',
+      count: 20,
+      min: 1,
+      mean: 5.95,
+      p50: 1,
+      p95: 1,
+      max: 100,
+      windowStartAt: '2026-09-19T00:00:00.000Z',
+      windowEndAt: '2026-09-19T00:00:10.000Z',
+      windowDurationMs: 10_000
+    });
+    expect(resetCount).toBe(1);
+  });
+
   it('does not start or exit as a side effect of importing the process Adapter', () => {
     expect(isProcessEntrypoint()).toBe(false);
     const source = readFileSync(path.resolve(__dirname, '../src/server.ts'), 'utf8');

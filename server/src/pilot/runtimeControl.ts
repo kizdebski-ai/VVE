@@ -126,7 +126,7 @@ export interface RuntimeControlOptions {
   config?: Partial<RuntimeControlConfig>;
   createDatabase?: (url: string) => Knex;
   migrate?: (db: Knex) => Promise<void>;
-  probe?: (input: { db: Knex; store: BoardDocumentStore }) => Promise<{ database: boolean; persistence: boolean }>;
+  probe?: (input: { db: Knex; store: BoardDocumentStore; signal: AbortSignal }) => Promise<{ database: boolean; persistence: boolean }>;
   listen?: (server: Server, host: string, port: number) => Promise<number>;
   createStore?: (db: Knex) => BoardDocumentStore;
   createCollaboration?: (store: BoardDocumentStore) => CollaborationRuntime;
@@ -166,23 +166,34 @@ const missingSecrets = (cfg: RuntimeControlConfig): string[] => {
 
 const defaultProbe = async ({
   db,
-  store
+  store,
+  signal
 }: {
   db: Knex;
   store: BoardDocumentStore;
+  signal: AbortSignal;
 }): Promise<{ database: boolean; persistence: boolean }> => {
-  const result = await db.raw(
+  const throwIfAborted = (): void => {
+    if (signal.aborted) throw new Error('Readiness probe aborted.');
+  };
+  throwIfAborted();
+  const query = db.raw(
     "SELECT 1 as ok, (SELECT current_setting('transaction_read_only', true)) as ro, (SELECT pg_is_in_recovery()) as in_recovery"
-  ).catch(async () => {
-    return await db.raw('select 1 as ok');
+  );
+  const result = await query.catch(async (error) => {
+    throwIfAborted();
+    return await db.raw('select 1 as ok').catch(() => { throw error; });
   });
+  throwIfAborted();
   if (result && Array.isArray(result.rows) && result.rows.length > 0) {
     const row = result.rows[0];
     if (row.ro === 'on' || row.ro === true || row.in_recovery === true) {
       throw new Error('Database is in read-only mode.');
     }
   }
+  throwIfAborted();
   await store.hydrate('00000000-0000-4000-8000-000000000001');
+  throwIfAborted();
   return { database: true, persistence: true };
 };
 
@@ -249,52 +260,79 @@ export const createRuntimeControl = (options: RuntimeControlOptions = {}): Runti
   let running: RunningRuntime | null = null;
 
   let probeError: string | null = null;
-  let probeInFlight: Promise<{ database: boolean; persistence: boolean }> | null = null;
+  // Keep the underlying dependency check single-flight until it actually
+  // settles.  The readiness response has a deadline, but timing out that
+  // response must not permit the next interval to start a second probe while
+  // the first database/store operation is still running.
+  let probeWorkInFlight: Promise<{ database: boolean; persistence: boolean }> | null = null;
+  let probeAbortController: AbortController | null = null;
   let probeSequence = 0;
 
   const runProbe = async (): Promise<{ database: boolean; persistence: boolean }> => {
-    if (probeInFlight) return probeInFlight;
-    const sequence = ++probeSequence;
-    const task = (async (): Promise<{ database: boolean; persistence: boolean }> => {
-      if (!activeDb || !activeStore) {
-        checks = { database: false, persistence: false };
-        return checks;
-      }
-      const currentDb = activeDb;
-      const currentStore = activeStore;
-      try {
-        const probeFn = options.probe ?? defaultProbe;
-        const ms = 1_000;
-        let timer: ReturnType<typeof setTimeout>;
-        const probePromise = probeFn({ db: currentDb, store: currentStore });
-        const timeoutPromise = new Promise<never>((_, reject) => {
-          timer = setTimeout(() => reject(new Error(`Readiness probe timed out after ${ms}ms`)), ms);
-        });
-        const res = await Promise.race([probePromise, timeoutPromise]).finally(() => clearTimeout(timer));
-        if (sequence !== probeSequence || currentDb !== activeDb || currentStore !== activeStore) {
-          return checks;
-        }
-        checks = { database: Boolean(res.database), persistence: Boolean(res.persistence) };
-        probeError = null;
-      } catch (error) {
-        if (sequence !== probeSequence || currentDb !== activeDb || currentStore !== activeStore) {
-          return checks;
-        }
-        checks = { database: false, persistence: false };
-        probeError = (error as Error).message.slice(0, 160);
-        signals.record({
-          name: 'persistence.error',
-          dimensions: { stage: 'readiness-probe', error: probeError }
-        });
-      }
+    if (!activeDb || !activeStore) {
+      checks = { database: false, persistence: false };
       return checks;
-    })();
-    probeInFlight = task;
-    try {
-      return await task;
-    } finally {
-      if (probeInFlight === task) probeInFlight = null;
     }
+
+    const currentDb = activeDb;
+    const currentStore = activeStore;
+    if (!probeWorkInFlight) {
+      const sequence = ++probeSequence;
+      let work!: Promise<{ database: boolean; persistence: boolean }>;
+      const controller = new AbortController();
+      probeAbortController = controller;
+      work = (async (): Promise<{ database: boolean; persistence: boolean }> => {
+        try {
+          const probeFn = options.probe ?? defaultProbe;
+          const res = await probeFn({ db: currentDb, store: currentStore, signal: controller.signal });
+          if (sequence !== probeSequence || currentDb !== activeDb || currentStore !== activeStore) {
+            return checks;
+          }
+          checks = { database: Boolean(res.database), persistence: Boolean(res.persistence) };
+          probeError = null;
+        } catch (error) {
+          if (sequence !== probeSequence || currentDb !== activeDb || currentStore !== activeStore) {
+            return checks;
+          }
+          checks = { database: false, persistence: false };
+          probeError = (error as Error).message.slice(0, 160);
+          signals.record({
+            name: 'persistence.error',
+            dimensions: { stage: 'readiness-probe', error: probeError }
+          });
+        }
+        return checks;
+      })().finally(() => {
+        if (probeWorkInFlight === work) {
+          probeWorkInFlight = null;
+          probeAbortController = null;
+        }
+      });
+      probeWorkInFlight = work;
+    }
+
+    const work = probeWorkInFlight;
+    const ms = 1_000;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        // Give the underlying adapter a chance to cancel its active query.
+        // Adapters that cannot cancel still remain single-flight until their
+        // promise settles, so a timeout never creates overlapping probes.
+        probeAbortController?.abort();
+        reject(new Error(`Readiness probe timed out after ${ms}ms`));
+      }, ms);
+    });
+    try {
+      await Promise.race([work, timeoutPromise]);
+    } catch {
+      // The underlying probe remains in probeWorkInFlight until it settles;
+      // callers receive the last known failed readiness state at the bound.
+      checks = { database: false, persistence: false };
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+    return checks;
   };
 
   const health: RuntimeHealthGateway = {

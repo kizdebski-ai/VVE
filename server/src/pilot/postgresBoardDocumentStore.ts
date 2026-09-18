@@ -123,9 +123,16 @@ export const createPostgresBoardDocumentStore = (
     },
 
     compact: async (boardId, snapshot, cutoff, signal): Promise<void> => {
-      if (signal?.aborted) return;
+      const throwIfAborted = (): void => {
+        if (signal?.aborted) throw new Error('Compact aborted before commit.');
+      };
+
+      throwIfAborted();
       await db().transaction(async (trx) => {
-        if (signal?.aborted) return;
+        // A drain may abort while the first PostgreSQL statement is waiting
+        // on a row lock. Throwing at every transaction boundary is required:
+        // returning here would let Knex commit the partial compaction.
+        throwIfAborted();
         const updatedAt = new Date();
         await trx('board_yjs_state')
           .insert({
@@ -141,11 +148,18 @@ export const createPostgresBoardDocumentStore = (
             updated_at: updatedAt
           });
 
+        throwIfAborted();
         await trx('board_yjs_updates')
           .where({ board_id: boardId })
           .andWhere('id', '<=', cutoff)
           .del();
+
+        // Keep the abort check immediately before the transaction callback
+        // returns, so an abort observed during deletion rolls back both
+        // writes instead of reporting quiescence after a late commit.
+        throwIfAborted();
       });
+      throwIfAborted();
     }
   };
 };

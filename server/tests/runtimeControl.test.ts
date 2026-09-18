@@ -300,19 +300,18 @@ describe('RuntimeControl process lifecycle', () => {
 
   it('does not pass readiness while a dependency hangs, bounded by the probe deadline (108-R1)', async () => {
     let hang = false;
-    const switchableDb = {
-      raw: async () => {
-        if (hang) return new Promise<never>(() => {});
-        return { rows: [{ ok: 1, ro: 'off', in_recovery: false }] };
-      },
-      destroy: async () => undefined,
-      migrate: { latest: async () => undefined }
-    } as unknown as Knex;
     const runtime = createRuntimeControl({
       signals: createOperationalSignals({ emitJson: false }),
       config: testConfig(),
-      createDatabase: () => switchableDb,
+      createDatabase: () => fakeDb,
       migrate: async () => undefined,
+      probe: async ({ signal }) => {
+        if (!hang) return { database: true, persistence: true };
+        await new Promise<never>((_, reject) => {
+          signal.addEventListener('abort', () => reject(new Error('probe cancelled')), { once: true });
+        });
+        return { database: false, persistence: false };
+      },
       createStore: () => new InMemoryBoardDocumentStore()
     });
     const running = await runtime.start();
@@ -357,6 +356,43 @@ describe('RuntimeControl process lifecycle', () => {
     releaseSlowProbe();
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(runtime.status().ready).toBe(false);
+    await runtime.stop({ reason: 'test-stop', deadline: new Date(Date.now() + 5_000) });
+  });
+
+  it('keeps a timed-out readiness probe single-flight until its dependency work settles', async () => {
+    let calls = 0;
+    let releaseSlowProbe!: () => void;
+    const slowProbe = new Promise<void>((resolve) => { releaseSlowProbe = resolve; });
+    const runtime = createRuntimeControl({
+      signals: createOperationalSignals({ emitJson: false }),
+      config: testConfig(),
+      createDatabase: () => fakeDb,
+      migrate: async () => undefined,
+      probe: async () => {
+        calls += 1;
+        if (calls === 1) return { database: true, persistence: true };
+        await slowProbe;
+        return { database: true, persistence: true };
+      },
+      createStore: () => new InMemoryBoardDocumentStore()
+    });
+
+    const running = await runtime.start();
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    expect(calls).toBe(2);
+
+    // The one-second response deadline must not release the underlying probe.
+    await new Promise((resolve) => setTimeout(resolve, 1_100));
+    const [first, second] = await Promise.all([
+      request(`http://127.0.0.1:${running.port}`).get('/ready'),
+      request(`http://127.0.0.1:${running.port}`).get('/ready')
+    ]);
+    expect(first.status).toBe(503);
+    expect(second.status).toBe(503);
+    expect(calls).toBe(2);
+
+    releaseSlowProbe();
+    await new Promise((resolve) => setTimeout(resolve, 20));
     await runtime.stop({ reason: 'test-stop', deadline: new Date(Date.now() + 5_000) });
   });
 

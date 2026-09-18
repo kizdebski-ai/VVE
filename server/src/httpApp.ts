@@ -182,6 +182,14 @@ export const createHttpApp = ({ roomManager, aiSolver, environment, devSurface, 
   register('http.adminTeachers', () => {
     app.use('/api/admin', createAdminAuthRouter(access));
     app.use('/api/admin/teachers', requireAdminCapability(access), createAdminTeachersRouter(access, lifecycle));
+    app.get('/api/admin/runtime', requireAdminCapability(access), (_, res) => {
+      res.set('Cache-Control', 'no-store');
+      if (!health) {
+        res.status(503).json({ error: 'Diagnostyka procesu jest niedostępna.' });
+        return;
+      }
+      res.json({ soak: health.snapshot() });
+    });
   });
   register('http.teacherAuth', () => {
     app.use(createTeacherAuthRouter(access));
@@ -240,13 +248,11 @@ export const createHttpApp = ({ roomManager, aiSolver, environment, devSurface, 
     const live = health.live();
     const ready = health.ready();
     const checks = health.checks();
-    const soak = health.snapshot();
     res.status(ready ? 200 : 503).json({
       live,
       ready,
       status: ready ? 'ready' : 'not-ready',
-      checks,
-      soak
+      checks
     });
   });
 

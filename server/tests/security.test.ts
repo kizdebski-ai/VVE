@@ -42,6 +42,7 @@ vi.mock('../src/pilot/capabilityAccess', async (importOriginal) => {
 import { createHttpApp } from '../src/httpApp';
 import { RoomManager } from '../src/rooms';
 import type { EquationSolver } from '../src/services/aiSolver';
+import { createOperationalSignals } from '../src/pilot/operationalSignals';
 
 class StubSolver implements EquationSolver {
   async solveEquation(): Promise<string> { return '42'; }
@@ -55,6 +56,36 @@ const createTestApp = (options: { environment?: 'development' | 'pilot'; devSurf
   });
 
 describe('4.3: Administrator surface requires a session (ADR-0005)', () => {
+  it('keeps board activity private while allowing authenticated runtime diagnostics', async () => {
+    const signals = createOperationalSignals({ emitJson: false });
+    signals.measure({ name: 'board.digest', value: 'private-digest', dimensions: { boardId: 'private-board' } });
+    signals.measure({ name: 'connections.active', value: 57 });
+    const app = createHttpApp({
+      roomManager: new RoomManager(),
+      aiSolver: new StubSolver(),
+      environment: 'pilot',
+      health: {
+        live: () => true,
+        ready: () => true,
+        checks: () => ({ database: true, persistence: true }),
+        snapshot: () => signals.snapshot()
+      }
+    });
+    const ready = await request(app).get('/ready');
+    expect(ready.status).toBe(200);
+    expect(ready.body).toEqual({ live: true, ready: true, status: 'ready', checks: { database: true, persistence: true } });
+    expect((await request(app).get('/api/admin/runtime')).status).toBe(401);
+    expect((await request(app).get('/api/admin/runtime').set('Cookie', 'admin_session=invalid')).status).toBe(401);
+    const login = await request(app).post('/api/admin/session').send({ passphrase: 'test-admin-passphrase' });
+    expect(login.status).toBe(200);
+    const cookie = login.headers['set-cookie'][0].split(';')[0];
+    const diagnostics = await request(app).get('/api/admin/runtime').set('Cookie', cookie);
+    expect(diagnostics.status).toBe(200);
+    expect(diagnostics.headers['cache-control']).toBe('no-store');
+    expect(diagnostics.body.soak.connections).toBe(57);
+    expect(diagnostics.body.soak.lastDigests).toEqual({ 'private-board': 'private-digest' });
+  });
+
   it('rejects admin GET without any session (401, never 200)', async () => {
     const app = createTestApp();
     const res = await request(app).get('/api/admin/teachers');

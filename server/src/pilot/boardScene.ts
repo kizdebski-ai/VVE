@@ -1612,7 +1612,7 @@ export const collectUpdateEffects = (
       // Root collection types are not encoded in Yjs updates. Reject a peer
       // writing map fields into drawings or array items into boardMeta.
       const drawingChanges = transaction.changed.get(drawings);
-      const metaChanges = transaction.changed.get(meta);
+      const metaChanges = transaction.changed.get(meta as Y.AbstractType<any>);
       if (drawingChanges && [...drawingChanges].some((key) => key !== null)) incompatibleCollections = true;
       if (metaChanges?.has(null)) incompatibleCollections = true;
     };

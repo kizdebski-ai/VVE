@@ -373,15 +373,24 @@ describe('RuntimeControl process lifecycle', () => {
     const running = await runtime.start();
     hang = true;
     const t0 = Date.now();
-    const readiness = request(`http://127.0.0.1:${running.port}`).get('/ready');
+    const readiness = new Promise<request.Response>((resolve, reject) => {
+      // `.get()` is a lazy Supertest request; `.end()` starts the HTTP
+      // exchange before we wait for the controlled probe to begin.
+      request(`http://127.0.0.1:${running.port}`).get('/ready').end((error, response) => {
+        if (error) reject(error);
+        else resolve(response);
+      });
+    });
     await probeStarted;
     const res = await readiness;
     expect(res.status).toBe(503);
     expect(res.body.checks.database).toBe(false);
     // A never-settling dependency is bounded by the 1s probe deadline.
     expect(Date.now() - t0).toBeLessThan(1_300);
-    await probeSettled;
     hang = false;
+    // Release future interval probes immediately; the timed-out probe itself
+    // still settles through the abort path below.
+    await probeSettled;
     const recovered = await request(`http://127.0.0.1:${running.port}`).get('/ready');
     expect(recovered.status).toBe(200);
     await runtime.stop({ reason: 'test-stop', deadline: new Date(Date.now() + 5_000) });

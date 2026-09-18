@@ -54,7 +54,7 @@ defineEmits(['deliver', 'dismiss']);
 }
 
 .artifact-ready-actions button {
-  min-height: 40px;
+  min-height: 44px;
   padding: 8px 16px;
   border: 1px solid var(--border-subtle);
   border-radius: 999px;

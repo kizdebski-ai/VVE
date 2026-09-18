@@ -831,6 +831,8 @@ export default {
       getCurrentArrowStyle: () => props.currentArrowStyle,
       getActiveFeature: () => props.activeFeature,
       getHandwritingStylerOptions: () => props.handwritingStylerOptions,
+      getEraserMode: () => eraserMode.value,
+      getEraserRadius: () => Math.max(eraserSize.value / 2, 8),
       updateGlobalState,
       redrawCanvas: (...args) => redrawCanvas(...args),
       scheduleRedraw: (...args) => scheduleRedraw(...args),
@@ -1865,7 +1867,7 @@ export default {
               isDrawing.value = true;
               const hit = hitTestAt(intent.world);
               setEraserHover(hit?.id);
-              if (hit?.id) eraseElement(hit.id);
+              if (hit?.id) eraseElement(hit.id, intent.world);
               break;
             }
             if (currentTool.value === 'mathPlot') {
@@ -1903,7 +1905,7 @@ export default {
             if (currentTool.value === 'eraser') {
               const hit = hitTestAt(intent.world);
               setEraserHover(hit?.id);
-              if (isDrawing.value && hit?.id) eraseElement(hit.id);
+              if (isDrawing.value && hit?.id) eraseElement(hit.id, intent.world);
             } else if (isDrawing.value) {
               draw(
                 { ...intent.world, p: intent.pressure, tiltX: intent.tiltX, tiltY: intent.tiltY },

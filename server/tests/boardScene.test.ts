@@ -13,6 +13,7 @@ import {
   sceneClearEpoch,
   sceneDrawings,
   sceneObjectBounds,
+  splitPenStroke,
   validateBoardObject,
   SCENE_LIMITS,
   SHAPE_TYPES,
@@ -722,6 +723,56 @@ describe('board commands', () => {
       ).toEqual({ ok: true });
     }
     expect(sceneJson(doc)).toHaveLength(SHAPE_TYPES.length + 4);
+  });
+
+  it('splits a pen stroke at a circular hit while preserving pressure and style', () => {
+    const points = [
+      { x: 0, y: 0, t: 0, p: 0.2 },
+      { x: 50, y: 0, t: 50, p: 0.8 },
+      { x: 100, y: 0, t: 100, p: 0.4 }
+    ];
+    const pieces = splitPenStroke(points, { x: 50, y: 0 }, 10);
+    expect(pieces).toHaveLength(2);
+    expect(pieces[0][0]).toMatchObject({ x: 0, p: 0.2 });
+    expect(pieces[0].at(-1)?.x).toBeCloseTo(40);
+    expect(pieces[1][0].x).toBeCloseTo(60);
+    expect(pieces[1].at(-1)).toMatchObject({ x: 100, p: 0.4 });
+  });
+
+  it('splits a sparse two-point stroke and applies one canonical erase command', () => {
+    const doc = new Y.Doc();
+    const source: SceneObject = {
+      ...pen('sparse-pen'),
+      penStyle: 'gel',
+      points: [{ x: 0, y: 0, p: 0.1 }, { x: 100, y: 0, p: 0.9 }]
+    };
+    addAll(doc, [source]);
+    const pieces = splitPenStroke(source.points as Array<{ x: number; y: number; p?: number }>, { x: 50, y: 0 }, 10);
+    expect(pieces).toHaveLength(2);
+    expect(applyBoardCommand(doc, {
+      kind: 'erasePen',
+      id: 'sparse-pen',
+      segments: pieces.map((segment, index) => ({
+        id: index === 0 ? 'sparse-pen' : 'sparse-pen-right',
+        points: segment
+      }))
+    }, student)).toEqual({ ok: true });
+    expect(sceneJson(doc)).toEqual([
+      expect.objectContaining({ id: 'sparse-pen', type: 'pen', penStyle: 'gel' }),
+      expect.objectContaining({ id: 'sparse-pen-right', type: 'pen', penStyle: 'gel' })
+    ]);
+    expect((sceneJson(doc)[0] as { points: Array<{ p?: number }> }).points.map((point) => point.p))
+      .toEqual([0.1, expect.closeTo(0.42, 2)]);
+  });
+
+  it('deletes a whole stroke through erasePen when no surviving segments remain', () => {
+    const doc = new Y.Doc();
+    addAll(doc, [pen('covered-pen')]);
+    expect(applyBoardCommand(doc, { kind: 'erasePen', id: 'covered-pen', segments: [] }, student))
+      .toEqual({ ok: true });
+    expect(sceneJson(doc)).toEqual([]);
+    expect(applyBoardCommand(doc, { kind: 'erasePen', id: 'covered-pen', segments: [] }, student))
+      .toMatchObject({ ok: false, reason: 'missingObject' });
   });
 });
 

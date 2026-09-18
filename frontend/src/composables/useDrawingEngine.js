@@ -8,6 +8,7 @@ import { ref, computed, nextTick } from 'vue';
 import { createNewElement } from '../utils/canvasTools.js';
 import { computeGridSteps } from '../utils/canvasGrid.js';
 import { DEFAULT_PEN_PRESETS } from '../utils/penStyles.js';
+import { splitPenStroke } from '@pilot/boardScene';
 
 const PEN_COORD_PRECISION = 2;
 
@@ -44,6 +45,8 @@ export function useDrawingEngine({
   getCurrentArrowStyle = () => 'none',
   getActiveFeature = () => null,
   getHandwritingStylerOptions = () => ({}),
+  getEraserMode = () => 'delete',
+  getEraserRadius = () => 8,
   // Functions
   updateGlobalState = () => {},
   redrawCanvas = () => {},
@@ -603,7 +606,7 @@ export function useDrawingEngine({
 
   // --- Eraser ---
 
-  const eraseElement = (indexOrId) => {
+  const eraseElement = (indexOrId, point = null) => {
     if (!yDrawings.value || !session.value) return;
 
     let elementId = null;
@@ -614,8 +617,32 @@ export function useDrawingEngine({
     }
 
     if (elementId) {
-      debugLog?.(`[eraseElement] Removing element: ${elementId}`);
-      const result = session.value.execute({ kind: 'delete', ids: [elementId] });
+      const element = session.value.snapshot().find((candidate) => candidate.id === elementId);
+      if (!element) {
+        debugWarn?.(`[eraseElement] Element not found for index/ID: ${indexOrId}`);
+        return;
+      }
+      let command = { kind: 'delete', ids: [elementId] };
+      if (getEraserMode() === 'erase' && element.type === 'pen' && point) {
+        const segments = splitPenStroke(
+          Array.isArray(element.points) ? element.points : [],
+          point,
+          Math.max(Number(getEraserRadius()) || 8, 1)
+        );
+        const unchanged = segments.length === 1 &&
+          JSON.stringify(segments[0]) === JSON.stringify(element.points);
+        if (unchanged) return;
+        command = {
+          kind: 'erasePen',
+          id: elementId,
+          segments: segments.map((segment, index) => ({
+            id: index === 0 ? elementId : session.value.newObjectId(),
+            points: segment
+          }))
+        };
+      }
+      debugLog?.(`[eraseElement] Applying ${command.kind} to element: ${elementId}`);
+      const result = session.value.execute(command);
       if (result.ok) {
         refreshMovableElements();
         nextTick(() => updateGlobalState());

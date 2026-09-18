@@ -1,18 +1,22 @@
 <template>
   <div class="eraser-mode-controls">
-    <div class="eraser-mode-label">Eraser Mode:</div>
+    <div class="eraser-mode-label">Tryb gumki</div>
     <div class="eraser-mode-options">
-      <button 
+      <button
+        type="button"
         :class="['eraser-mode-btn', { active: mode === 'erase' }]" 
+        :aria-pressed="mode === 'erase'"
         @click="setMode('erase')"
-        title="Erase Mode - gradually erases parts of drawings">
-        Erase
+        title="Ścieranie — usuwa fragmenty obiektu">
+        Ścieraj
       </button>
-      <button 
+      <button
+        type="button"
         :class="['eraser-mode-btn', { active: mode === 'delete' }]" 
+        :aria-pressed="mode === 'delete'"
         @click="setMode('delete')"
-        title="Delete Mode - removes entire elements">
-        Delete
+        title="Usuń — usuwa cały obiekt">
+        Usuń
       </button>
     </div>
   </div>
@@ -38,8 +42,9 @@ export default {
 <style scoped>
 .eraser-mode-controls {
   position: absolute;
-  top: 20px;
-  right: 20px;
+  right: clamp(12px, 3vw, 24px);
+  bottom: clamp(88px, 12vh, 136px);
+  max-width: calc(100% - 24px);
   display: flex;
   flex-direction: column;
   background-color: white;
@@ -61,13 +66,16 @@ export default {
 }
 
 .eraser-mode-btn {
-  padding: 5px 10px;
+  min-width: 76px;
+  min-height: 44px;
+  padding: 8px 12px;
   border: 1px solid #ddd;
   border-radius: 4px;
   background-color: white;
   color: #333;
   cursor: pointer;
   font-size: 12px;
+  touch-action: manipulation;
 }
 
 .eraser-mode-btn.active {

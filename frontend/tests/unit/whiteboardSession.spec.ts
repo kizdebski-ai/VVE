@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import * as Y from 'yjs';
 
 import { createWhiteboardSession } from '@/board/whiteboardSession';
+import { splitPenStroke } from '@pilot/boardScene';
 
 const rectangle = (id: string, x = 0) => ({
   id,
@@ -229,6 +230,46 @@ describe('WhiteboardSession Interface', () => {
     expect(session.queryObjectsNear({ x: 50, y: 5 }, 8).map((object) => object.id))
       .toContain('pen-1');
 
+    session.dispose();
+  });
+
+  it('treats partial erasing as one undoable command and keeps delete mode whole-object', () => {
+    const ydoc = new Y.Doc();
+    const session = createWhiteboardSession({ ydoc, role: 'teacher' });
+    const stroke = {
+      id: 'eraser-stroke',
+      type: 'pen',
+      color: '#7c3aed',
+      lineWidth: 4,
+      penStyle: 'gel',
+      points: [
+        { x: 0, y: 0, t: 0, p: 0.2 },
+        { x: 50, y: 0, t: 50, p: 0.8 },
+        { x: 100, y: 0, t: 100, p: 0.4 }
+      ]
+    };
+    expect(session.execute({ kind: 'add', object: stroke })).toEqual({ ok: true });
+    const segments = splitPenStroke(stroke.points, { x: 50, y: 0 }, 10);
+    expect(segments).toHaveLength(2);
+    expect(session.execute({
+      kind: 'erasePen',
+      id: stroke.id,
+      segments: segments.map((points, index) => ({
+        id: index === 0 ? stroke.id : 'eraser-stroke-right',
+        points
+      }))
+    })).toEqual({ ok: true });
+    expect(session.snapshot()).toHaveLength(2);
+    expect(session.snapshot().every((object) => object.color === stroke.color)).toBe(true);
+    expect(session.undo()).toBe(true);
+    expect(session.snapshot()).toHaveLength(1);
+    expect(session.snapshot()[0].id).toBe(stroke.id);
+    expect(session.redo()).toBe(true);
+    expect(session.snapshot()).toHaveLength(2);
+
+    expect(session.execute({ kind: 'delete', ids: [stroke.id, 'eraser-stroke-right'] })).toEqual({ ok: true });
+    expect(session.snapshot()).toEqual([]);
+    expect(session.execute({ kind: 'delete', ids: [] })).toMatchObject({ ok: false });
     session.dispose();
   });
 

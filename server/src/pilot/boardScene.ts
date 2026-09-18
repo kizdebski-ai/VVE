@@ -175,6 +175,7 @@ export type BoardCommand =
   | { kind: 'updateStyle'; id: string; patch: StylePatch }
   | { kind: 'updateText'; id: string; text: string; width?: number; height?: number }
   | { kind: 'setPenPoints'; id: string; points: ScenePoint[] }
+  | { kind: 'erasePen'; id: string; segments: Array<{ id: string; points: ScenePoint[] }> }
   | { kind: 'move'; id: string; x: number; y: number }
   | { kind: 'resize'; id: string; x: number; y: number; width: number; height: number }
   | { kind: 'rotate'; id: string; rotation: number }
@@ -532,6 +533,99 @@ const boundsFromPoints = (points: ScenePoint[]) => {
     width: Math.max(0, maxX - minX),
     height: Math.max(0, maxY - minY)
   };
+};
+
+const interpolatePoint = (a: ScenePoint, b: ScenePoint, ratio: number): ScenePoint => {
+  const point: ScenePoint = {
+    x: a.x + (b.x - a.x) * ratio,
+    y: a.y + (b.y - a.y) * ratio
+  };
+  if (a.t !== undefined && b.t !== undefined) point.t = a.t + (b.t - a.t) * ratio;
+  if (a.p !== undefined && b.p !== undefined) point.p = a.p + (b.p - a.p) * ratio;
+  return point;
+};
+
+const pointDistanceSquared = (a: ScenePoint, b: ScenePoint): number =>
+  (a.x - b.x) ** 2 + (a.y - b.y) ** 2;
+
+/**
+ * Split a pen polyline around one circular eraser hit. The returned pieces
+ * retain the original pressure/time samples and only interpolate values at
+ * the two circle boundaries. No hit returns one cloned stroke; a fully
+ * covered stroke returns an empty list.
+ */
+export const splitPenStroke = (
+  points: ScenePoint[],
+  center: { x: number; y: number },
+  radius: number
+): ScenePoint[][] => {
+  if (
+    !Array.isArray(points) ||
+    points.length === 0 ||
+    !isCoordinate(center.x) ||
+    !isCoordinate(center.y) ||
+    !Number.isFinite(radius) ||
+    radius <= 0
+  ) {
+    return [points.map(plainPoint)];
+  }
+
+  const radiusSquared = radius * radius;
+  const pieces: ScenePoint[][] = [];
+  let current: ScenePoint[] = [];
+  const append = (point: ScenePoint) => {
+    const next = plainPoint(point);
+    if (!current.length || pointDistanceSquared(current[current.length - 1]!, next) > 1e-12) {
+      current.push(next);
+    }
+  };
+  const flush = () => {
+    if (current.length) pieces.push(current);
+    current = [];
+  };
+  const outside = (point: ScenePoint) =>
+    (point.x - center.x) ** 2 + (point.y - center.y) ** 2 > radiusSquared;
+
+  if (points.length === 1) return outside(points[0]!) ? [[plainPoint(points[0]!)]] : [];
+
+  for (let index = 0; index < points.length - 1; index += 1) {
+    const start = points[index]!;
+    const end = points[index + 1]!;
+    const dx = end.x - start.x;
+    const dy = end.y - start.y;
+    const fx = start.x - center.x;
+    const fy = start.y - center.y;
+    const a = dx * dx + dy * dy;
+    const cuts = [0, 1];
+    if (a > 0) {
+      const b = 2 * (fx * dx + fy * dy);
+      const c = fx * fx + fy * fy - radiusSquared;
+      const discriminant = b * b - 4 * a * c;
+      if (discriminant >= 0) {
+        const root = Math.sqrt(discriminant);
+        for (const ratio of [(-b - root) / (2 * a), (-b + root) / (2 * a)]) {
+          if (ratio > 0 && ratio < 1) cuts.push(ratio);
+        }
+      }
+    }
+    cuts.sort((left, right) => left - right);
+    const uniqueCuts = cuts.filter((ratio, cutIndex) => cutIndex === 0 || ratio - cuts[cutIndex - 1]! > 1e-9);
+    for (let cutIndex = 0; cutIndex < uniqueCuts.length - 1; cutIndex += 1) {
+      const from = uniqueCuts[cutIndex]!;
+      const to = uniqueCuts[cutIndex + 1]!;
+      const segmentStart = interpolatePoint(start, end, from);
+      const segmentEnd = interpolatePoint(start, end, to);
+      const midpoint = interpolatePoint(start, end, (from + to) / 2);
+      if (outside(midpoint)) {
+        append(segmentStart);
+        append(segmentEnd);
+      } else {
+        flush();
+      }
+    }
+  }
+  flush();
+  return pieces;
 };
 
 const plainPoint = (point: ScenePoint): ScenePoint => {
@@ -1407,6 +1501,55 @@ export const applyBoardCommand = (
         entry.map.set('y', bounds.y);
         entry.map.set('width', bounds.width);
         entry.map.set('height', bounds.height);
+      }, context.origin);
+      return { ok: true };
+    }
+
+    case 'erasePen': {
+      const entry = findObjectEntry(doc, command.id);
+      if (!entry) return commandFail('missingObject', `Object "${command.id}" does not exist.`);
+      if (entry.map.get('type') !== 'pen') {
+        return commandFail('invalidCommand', 'Only pen strokes support partial erasing.');
+      }
+      if (!Array.isArray(command.segments) || command.segments.length > SCENE_LIMITS.maxObjects) {
+        return commandFail('invalidCommand', 'The replacement stroke list is invalid.');
+      }
+      if (drawings.length - 1 + command.segments.length > SCENE_LIMITS.maxObjects) {
+        return commandFail('invalidObject', 'The board object limit was reached.');
+      }
+      const source = objectJson(entry.map);
+      const segmentIds = new Set<string>();
+      const replacements: SceneObject[] = [];
+      for (const [index, segment] of command.segments.entries()) {
+        if (
+          !segment ||
+          !isBoundedString(segment.id, SCENE_LIMITS.maxIdLength) ||
+          (index === 0 && segment.id !== command.id) ||
+          segmentIds.has(segment.id) ||
+          (segment.id !== command.id && findObjectEntry(doc, segment.id)) ||
+          !validatePointList(segment.points, 1)
+        ) {
+          return commandFail('invalidObject', 'A replacement pen stroke is invalid.');
+        }
+        segmentIds.add(segment.id);
+        const replacement = normalizeBoardObject({
+          ...source,
+          id: segment.id,
+          points: segment.points.map(plainPoint),
+          rawPoints: undefined
+        });
+        delete replacement.rawPoints;
+        const validation = validateBoardObject(replacement);
+        if (!validation.ok) return commandFail('invalidObject', validation.message);
+        replacements.push(replacement);
+      }
+      doc.transact(() => {
+        drawings.delete(entry.index, 1);
+        if (replacements.length) {
+          drawings.insert(entry.index, replacements.map(toSceneMap));
+        } else {
+          detachBindingsForDeleted(doc, new Set([command.id]));
+        }
       }, context.origin);
       return { ok: true };
     }

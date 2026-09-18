@@ -65,6 +65,38 @@ describe('browser artifact allocation and ownership', () => {
     expect(task.destroy).toHaveBeenCalledOnce();
   });
 
+  it('consumes late load and destroy rejections after cancellation', async () => {
+    let rejectLoad!: (reason: unknown) => void;
+    const task = {
+      promise: new Promise((_resolve, reject) => {
+        rejectLoad = reject;
+      }),
+      destroy: vi.fn(async () => {
+        throw new Error('late destroy failure');
+      })
+    };
+    mock.getDocument.mockReturnValue(task);
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => unhandled.push(reason);
+    process.on('unhandledRejection', onUnhandled);
+
+    try {
+      const abort = new AbortController();
+      const pending = createBrowserArtifactCodecs().inspectPdf(new Uint8Array([1]), abort.signal);
+      await vi.waitFor(() => expect(mock.getDocument).toHaveBeenCalled());
+      abort.abort();
+      await expect(pending).rejects.toMatchObject({ key: 'artifact.cancelled' });
+
+      // The loading task can reject after Promise.race has already settled.
+      rejectLoad(new Error('late loading failure'));
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(task.destroy).toHaveBeenCalledOnce();
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
+  });
+
   it('gives equal files in separate jobs independent loading and disposal', async () => {
     const taskA = pdfTask(), taskB = pdfTask();
     mock.getDocument.mockReturnValueOnce(taskA).mockReturnValueOnce(taskB);

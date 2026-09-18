@@ -849,7 +849,11 @@ class ProductionGateClient {
   async reorder(ids: readonly string[]): Promise<void> {
     if (!this.connection?.isEditable()) throw new Error(`Production client ${this.actorId} is not editable.`);
     const byId = new Map(this.connection.yDrawings.toArray().map((entry: any) => [entry?.get?.('id') ?? entry?.id, entry]));
-    const ordered = ids.map((id) => byId.get(id)).filter((entry) => entry !== undefined);
+    const ordered = ids.map((id) => byId.get(id)).filter((entry) => entry !== undefined).map((entry: any) => {
+      const clone = new entry.constructor();
+      for (const [key, value] of Object.entries(entry.toJSON ? entry.toJSON() : {})) clone.set(key, value);
+      return clone;
+    });
     this.connection.yDrawings.delete(0, this.connection.yDrawings.length);
     this.connection.yDrawings.insert(0, ordered);
     await this.waitForActualAcknowledgement();

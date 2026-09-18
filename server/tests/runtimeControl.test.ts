@@ -340,6 +340,17 @@ describe('RuntimeControl process lifecycle', () => {
 
   it('does not pass readiness while a dependency hangs, bounded by the probe deadline (108-R1)', async () => {
     let hang = false;
+    let resolveProbeStarted!: () => void;
+    const probeStarted = new Promise<void>((resolve) => {
+      resolveProbeStarted = resolve;
+    });
+    let resolveProbeSettled!: () => void;
+    const probeSettled = new Promise<void>((resolve) => {
+      // Let the runtime's tracked probe promise run its cleanup before the
+      // test starts the recovery request. Otherwise this test races the
+      // single-flight slot's finally block under combined load.
+      resolveProbeSettled = () => setImmediate(resolve);
+    });
     const runtime = createRuntimeControl({
       signals: createOperationalSignals({ emitJson: false }),
       config: testConfig(),
@@ -347,21 +358,29 @@ describe('RuntimeControl process lifecycle', () => {
       migrate: async () => undefined,
       probe: async ({ signal }) => {
         if (!hang) return { database: true, persistence: true };
-        await new Promise<never>((_, reject) => {
-          signal.addEventListener('abort', () => reject(new Error('probe cancelled')), { once: true });
-        });
-        return { database: false, persistence: false };
+        resolveProbeStarted();
+        try {
+          await new Promise<never>((_, reject) => {
+            signal.addEventListener('abort', () => reject(new Error('probe cancelled')), { once: true });
+          });
+          return { database: false, persistence: false };
+        } finally {
+          resolveProbeSettled();
+        }
       },
       createStore: () => new InMemoryBoardDocumentStore()
     });
     const running = await runtime.start();
     hang = true;
     const t0 = Date.now();
-    const res = await request(`http://127.0.0.1:${running.port}`).get('/ready');
+    const readiness = request(`http://127.0.0.1:${running.port}`).get('/ready');
+    await probeStarted;
+    const res = await readiness;
     expect(res.status).toBe(503);
     expect(res.body.checks.database).toBe(false);
     // A never-settling dependency is bounded by the 1s probe deadline.
     expect(Date.now() - t0).toBeLessThan(1_300);
+    await probeSettled;
     hang = false;
     const recovered = await request(`http://127.0.0.1:${running.port}`).get('/ready');
     expect(recovered.status).toBe(200);

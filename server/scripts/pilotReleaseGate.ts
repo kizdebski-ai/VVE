@@ -69,6 +69,7 @@ export type GateReport = {
   };
   coverage: 'complete' | 'smoke-only';
   fixtures: { pdfBytes: number; imageBytes: number } | null;
+  finalDigests?: string[];
   destructive?: {
     attemptedInvalidOperations: number;
     rejectedInvalidOperations: number;
@@ -913,6 +914,7 @@ const objectFor = (board: number, index: number, kind = 'rectangle'): SceneObjec
 
 const matureObjects = (board: number): SceneObject[] => [
   objectFor(board, 1, 'rectangle'),
+  { ...objectFor(board, 1, 'pen'), points: [{ x: 10, y: 10, t: 1, p: 0.2 }, { x: 80, y: 90, t: 2, p: 0.8 }] },
   { ...objectFor(board, 2, 'line'), start: { x: 0, y: 0 }, end: { x: 240, y: 120 }, arrowStyle: 'end', lineStyle: 'dashed' },
   { ...objectFor(board, 3, 'text'), text: 'VVE-109 mature lesson history', fontSize: 24 },
   { ...objectFor(board, 4, 'image'), src: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=' },
@@ -954,9 +956,10 @@ const waitForReady = async (base: string, adminCookie?: string): Promise<Record<
   return result.body;
 };
 
-const runChangeGate = async (base: string, boards: BoardAccess[], options: ReleaseGateOptions, restart: () => Promise<void>): Promise<{ clients: number; acknowledged: number; reconnects: number; restarts: number; digestMismatches: number; leaks: number }> => {
+const runChangeGate = async (base: string, boards: BoardAccess[], options: ReleaseGateOptions, restart: () => Promise<void>, adminCookie: string): Promise<{ clients: number; acknowledged: number; reconnects: number; restarts: number; digestMismatches: number; leaks: number; blockerEvents: number; maxRssBytes: number; maxEventLoopDelayMs: number; finalDigests: string[] }> => {
   const clients = await connectClients(base, [boards[0]!], [3]);
   let acknowledged = 0;
+  let reconnects = 0;
   const count = options.operations;
   const changeStarted = Date.now();
   const paceMs = options.smoke ? 0 : Math.max(1, Math.floor((options.durationMs * 0.9) / Math.max(count, 1)));
@@ -969,9 +972,26 @@ const runChangeGate = async (base: string, boards: BoardAccess[], options: Relea
     const ackDigest = await client.addObject(seededChangeObject(0, index));
     if (ackDigest !== client.digest()) throw new Error(`Acknowledgement digest mismatch at operation ${index}.`);
     acknowledged += 1;
+    if (index === Math.floor(count / 4) || index === Math.floor((count * 3) / 4)) {
+      const clientIndex = index % clients.length;
+      const before = clients[clientIndex]!.digest();
+      clients[clientIndex]!.close();
+      const board = boards[0]!;
+      const replacement = new ProductionGateClient(
+        board.boardId,
+        clientIndex === 0 ? board.teacherWsToken : board.studentWsToken,
+        clientIndex === 0 ? 'teacher' : 'student',
+        `change-reconnect-${clientIndex}-${index}`
+      );
+      await replacement.connect(base);
+      if (replacement.digest() !== before) throw new Error(`Mid-run reconnect changed client ${clientIndex} state at operation ${index}.`);
+      clients[clientIndex] = replacement;
+      reconnects += 1;
+    }
     if (!options.smoke && paceMs > 0) await sleep(paceMs);
   }
   const beforeRestart = clients[0]!.digest();
+  const beforeRestartDigests = clients.map((client) => client.digest());
   closeClients(clients);
   // Let the production listener observe close frames before SIGTERM. Runtime
   // drain also compacts, but this makes the client-side close boundary
@@ -979,13 +999,20 @@ const runChangeGate = async (base: string, boards: BoardAccess[], options: Relea
   await sleep(250);
   await restart();
   const reloaded = await connectClients(base, [boards[0]!], [3]);
-  const afterRestart = reloaded[0]!.digest();
-  if (afterRestart !== beforeRestart) throw new Error('Acknowledged state digest changed after backend restart.');
+  const finalDigests = reloaded.map((client) => client.digest());
+  if (finalDigests.some((digest) => digest !== beforeRestart)) throw new Error('A rehydrated client digest changed after backend restart.');
+  if (beforeRestartDigests.some((digest) => digest !== beforeRestart)) throw new Error('Live client digests diverged before backend restart.');
   const snapshot = reloaded[0]!.snapshot();
   const drawings = Array.isArray(snapshot.drawings) ? snapshot.drawings as Array<Record<string, unknown>> : [];
   if (drawings.length !== acknowledged) throw new Error(`Reloaded ${drawings.length} objects; expected ${acknowledged}.`);
+  const ready = await waitForReady(base, adminCookie);
+  const soak = (ready.soak ?? {}) as Record<string, unknown>;
+  const errors = (soak.errors ?? {}) as Record<string, unknown>;
+  const blockerEvents = Number(soak.eventsLost ?? 0) + Number(errors.persistence ?? 0) + Number(errors.unhandled ?? 0);
+  const memory = (soak.memory ?? {}) as Record<string, unknown>;
+  const loop = (soak.eventLoopDelayMs ?? {}) as Record<string, unknown>;
   closeClients(reloaded);
-  return { clients: 4, acknowledged, reconnects: 1, restarts: 1, digestMismatches: 0, leaks: 0 };
+  return { clients: 4, acknowledged, reconnects: reconnects + 1, restarts: 1, digestMismatches: 0, leaks: 0, blockerEvents, maxRssBytes: Number(memory.rssBytes ?? 0), maxEventLoopDelayMs: Number(loop.p95 ?? 0), finalDigests };
 };
 
 const runMatureGate = async (base: string, boards: BoardAccess[], options: ReleaseGateOptions, restart: () => Promise<void>): Promise<{ clients: number; acknowledged: number; fixtures: { pdfBytes: number; imageBytes: number } }> => {
@@ -1339,6 +1366,7 @@ export const main = async (argv = process.argv.slice(2)): Promise<GateReport> =>
     backendStarting = null;
     return launched;
   };
+  let finalDigests: string[] | undefined;
   let destructive: GateReport['destructive'] | undefined;
   try {
     await assertPortAvailable(options.backendPort);
@@ -1370,9 +1398,10 @@ export const main = async (argv = process.argv.slice(2)): Promise<GateReport> =>
     boardCount = boards.length;
 
     if (options.profile === 'change') {
-      const result = await runChangeGate(base, boards, options, restart);
+      const result = await runChangeGate(base, boards, options, restart, adminCookie);
       clientCount = result.clients; acknowledgedOperations = result.acknowledged; reconnects = result.reconnects;
-      digestMismatches = result.digestMismatches;
+      digestMismatches = result.digestMismatches; blockerEvents = result.blockerEvents;
+      maxRssBytes = result.maxRssBytes; maxEventLoopDelayMs = result.maxEventLoopDelayMs; finalDigests = result.finalDigests;
     } else if (options.profile === 'mature') {
       const result = await runMatureGate(base, boards, options, restart);
       clientCount = result.clients; acknowledgedOperations = result.acknowledged; fixtures = result.fixtures;
@@ -1406,6 +1435,7 @@ export const main = async (argv = process.argv.slice(2)): Promise<GateReport> =>
       fixtures,
       ...(soakDetails ? { soakDetails } : {}),
       coverage: 'complete',
+      ...(finalDigests ? { finalDigests } : {}),
       ...(destructive ? { destructive } : {}),
       passed: true
     };

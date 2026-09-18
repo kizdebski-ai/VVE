@@ -90,6 +90,8 @@ type DrawIntent = {
   kind: 'drawStart' | 'drawUpdate' | 'drawFinish';
   pointerId: number;
   world: WorldPoint;
+  /** The unfiltered pointer position is retained for the terminal sample. */
+  rawWorld?: WorldPoint;
   screen: ScreenPoint;
   pressure: number;
   tiltX?: number;
@@ -645,6 +647,7 @@ export const createInputPipeline = (
           kind: 'drawFinish',
           pointerId: sample.pointerId,
           world: cloneWorld(gesture.lastSmoothed),
+          rawWorld: cloneWorld(world),
           screen,
           pressure: sample.pressure,
           tiltX: sample.tiltX,

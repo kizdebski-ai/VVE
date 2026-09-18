@@ -1878,6 +1878,17 @@ export default {
             if (currentTool.value === 'eraser') {
               isDrawing.value = false;
             } else if (canMutateDocument()) {
+              // Keep the interior stroke smoothed, but feed the terminal raw
+              // pointer sample through the drawing engine before committing.
+              // Without this, Mysz/Pióro smoothing leaves the visible endpoint
+              // behind the user's actual pointer-up location.
+              if (paintedDrawing && intent.rawWorld) {
+                draw(
+                  { ...intent.rawWorld, p: intent.pressure, tiltX: intent.tiltX, tiltY: intent.tiltY },
+                  intent.shiftKey === true,
+                  intent.timeStamp
+                );
+              }
               finishDrawing();
             } else {
               isDrawing.value = false;

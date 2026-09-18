@@ -73,10 +73,22 @@ describe('InputPipeline Interface', () => {
     expect(last.world.x).toBeGreaterThan(40);
 
     const finish = pipeline.ingest(
-      batch('up', [sample({ pointerId: 1, timeStamp: 80, clientX: 80, clientY: 80, buttons: 0, button: 0 })])
+      batch('up', [sample({
+        pointerId: 1,
+        timeStamp: 80,
+        clientX: 80,
+        clientY: 80,
+        buttons: 0,
+        button: 0,
+        pressure: 0.91
+      })])
     );
     expect(kinds(finish)).toContain('drawFinish');
     expect(kinds(finish)).not.toContain('drawCancel');
+    const terminal = finish.intents.find((intent) => intent.kind === 'drawFinish');
+    expect(terminal?.rawWorld).toMatchObject({ x: 80, y: 80, p: 0.91 });
+    expect(terminal?.world.x).toBeLessThan(80);
+    expect(terminal?.world.y).toBeLessThan(80);
     pipeline.dispose();
   });
 

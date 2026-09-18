@@ -263,6 +263,49 @@ describe('WhiteboardCanvas.vue', () => {
       expect(pushedElement.get('id')).toEqual(expect.any(String));
     });
 
+    it('commits the raw pointer-up endpoint while preserving pen pressure', async () => {
+      wrapper.vm.setTool('pen');
+      await nextTick();
+
+      const canvas = wrapper.find('.whiteboard-canvas.draw-layer');
+      await canvas.trigger('pointerdown', {
+        clientX: 180,
+        clientY: 250,
+        button: 0,
+        pointerId: 11,
+        pointerType: 'pen',
+        isPrimary: true,
+        buttons: 1,
+        pressure: 0.22
+      });
+      await canvas.trigger('pointermove', {
+        clientX: 300,
+        clientY: 290,
+        pointerId: 11,
+        pointerType: 'pen',
+        isPrimary: true,
+        buttons: 1,
+        pressure: 0.48
+      });
+      await canvas.trigger('pointerup', {
+        clientX: 470,
+        clientY: 330,
+        button: 0,
+        pointerId: 11,
+        pointerType: 'pen',
+        isPrimary: true,
+        buttons: 0,
+        pressure: 0.87
+      });
+      await nextTick();
+
+      const elements = mockYDrawings.toArray();
+      const stroke = elements[elements.length - 1];
+      expect(stroke.get('type')).toBe('pen');
+      expect(stroke.get('points').at(-1)).toMatchObject({ x: 470, y: 330, p: 0.87 });
+      expect(stroke.get('rawPoints').at(-1)).toMatchObject({ x: 470, y: 330, p: 0.87 });
+    });
+
     it('adds a canonical mathematical graph at the viewport and deletes it through selection', async () => {
       expect(wrapper.vm.addElementFromPanel({
         type: 'mathFunctionPlot',

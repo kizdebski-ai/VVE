@@ -807,8 +807,12 @@ onBeforeUnmount(() => {
 
 .toolbar-container.vertical .toolbar {
   flex-direction: column;
+  justify-content: flex-start;
   min-width: 56px;
   padding: 12px 6px;
+  max-height: calc(100dvh - 120px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .toolbar-container.horizontal .toolbar {
@@ -818,6 +822,7 @@ onBeforeUnmount(() => {
 
 .tool-group {
   display: flex;
+  flex-shrink: 0;
   align-items: center;
   gap: 4px;
 }
@@ -827,6 +832,7 @@ onBeforeUnmount(() => {
 }
 
 .divider {
+  flex-shrink: 0;
   background-color: var(--glass-border);
   margin: 0 4px;
 }
@@ -847,8 +853,9 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 40px;
-  height: 40px;
+  width: 44px;
+  height: 44px;
+  flex-shrink: 0;
   border: 1px solid transparent;
   background: transparent;
   border-radius: var(--radius-sm);
@@ -1135,7 +1142,6 @@ onBeforeUnmount(() => {
   box-shadow: 0 0 0 1px var(--accent-primary);
 }
 </style>
-
 
 
 

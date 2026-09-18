@@ -1,5 +1,15 @@
+import { createServer as createHttpServer } from 'node:http';
+import { createServer } from 'node:net';
+import { spawn } from 'node:child_process';
 import { describe, expect, it } from 'vitest';
-import { assertGateReport, parseReleaseGateArgs, type GateReport } from '../scripts/pilotReleaseGate';
+import {
+  assertGateReport,
+  assertPortAvailable,
+  fetchJson,
+  parseReleaseGateArgs,
+  stopChildProcess,
+  type GateReport
+} from '../scripts/pilotReleaseGate';
 
 const passingReport = (overrides: Partial<GateReport> = {}): GateReport => ({
   profile: 'change',
@@ -63,5 +73,44 @@ describe('VVE-109 release gate harness contract', () => {
 
   it('does not let smoke-only mature coverage claim a release gate', () => {
     expect(() => assertGateReport(passingReport({ profile: 'mature', smoke: false, coverage: 'smoke-only' }))).toThrow(/smoke-only/);
+  });
+
+  it('fails port preflight while the port is occupied', async () => {
+    const listener = createServer();
+    await new Promise<void>((resolvePromise) => listener.listen(0, '127.0.0.1', resolvePromise));
+    const address = listener.address();
+    if (!address || typeof address === 'string') throw new Error('Test listener did not expose a port.');
+    try {
+      await expect(assertPortAvailable(address.port)).rejects.toThrow(/unavailable/);
+    } finally {
+      await new Promise<void>((resolvePromise) => listener.close(() => resolvePromise()));
+    }
+  });
+
+  it('bounds both fetch and response-body reads with one timeout signal', async () => {
+    const listener = createHttpServer((_request, response) => {
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.write('{"ready":');
+      setTimeout(() => response.end('true}'), 100);
+    });
+    await new Promise<void>((resolvePromise) => listener.listen(0, '127.0.0.1', resolvePromise));
+    const address = listener.address();
+    if (!address || typeof address === 'string') throw new Error('Test listener did not expose a port.');
+    try {
+      await expect(fetchJson(`http://127.0.0.1:${address.port}`, '/', undefined, 20)).rejects.toThrow();
+    } finally {
+      listener.close();
+    }
+  });
+
+  it('waits for the child exit after the SIGKILL fallback', async () => {
+    const child = spawn(process.execPath, ['-e', 'process.on("SIGTERM", () => {}); setInterval(() => {}, 1000);'], {
+      stdio: ['ignore', 'pipe', 'ignore']
+    });
+    child.stdout?.resume();
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 100));
+    await stopChildProcess(child, 50, 1_000);
+    expect(child.exitCode).toBeNull();
+    expect(child.signalCode).toBe('SIGKILL');
   });
 });

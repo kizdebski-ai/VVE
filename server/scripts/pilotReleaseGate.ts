@@ -16,6 +16,7 @@
 import { writeFileSync } from 'fs';
 import { join, resolve } from 'path';
 import { spawn, spawnSync, type ChildProcess } from 'child_process';
+import { createServer } from 'net';
 import * as Y from 'yjs';
 import WebSocket from 'ws';
 import { createBoardDocument, type BoardDocument } from '../src/pilot/boardDocument';
@@ -30,6 +31,7 @@ const DEFAULT_BACKEND_PORT = 8497;
 const SOAK_MS = 3 * 60 * 60 * 1000;
 const DEFAULT_SMOKE_MS = 15_000;
 const DEFAULT_GATE_MS = 5 * 60 * 1000;
+const FETCH_TIMEOUT_MS = 15_000;
 const TEST_PASS = 'vve-109-test-admin-passphrase';
 const TEST_TEACHER_SECRET = 'vve-109-test-teacher-secret';
 const TEST_ADMIN_SECRET = 'vve-109-test-admin-secret';
@@ -142,6 +144,23 @@ export const parseReleaseGateArgs = (argv: readonly string[]): ReleaseGateOption
 
 const sleep = (ms: number): Promise<void> => new Promise((resolvePromise) => setTimeout(resolvePromise, ms));
 
+export const assertPortAvailable = async (port: number, host = '127.0.0.1'): Promise<void> => {
+  await new Promise<void>((resolvePromise, rejectPromise) => {
+    const probe = createServer();
+    const fail = (error: NodeJS.ErrnoException): void => {
+      probe.close(() => undefined);
+      rejectPromise(new Error(`Port ${host}:${port} is unavailable (${error.code ?? error.message}).`));
+    };
+    probe.once('error', fail);
+    probe.listen({ host, port }, () => {
+      probe.close((error) => {
+        if (error) rejectPromise(error);
+        else resolvePromise();
+      });
+    });
+  });
+};
+
 const runCommand = (command: string, args: string[], cwd = ROOT): Promise<void> =>
   new Promise((resolvePromise, reject) => {
     const child = spawn(command, args, { cwd, stdio: ['ignore', 'ignore', 'ignore'] });
@@ -177,7 +196,49 @@ const startPostgres = async (port: number): Promise<() => Promise<void>> => {
 
 type RunningBackend = { process: ChildProcess; stop: () => Promise<void> };
 
+const hasExited = (child: ChildProcess): boolean => child.exitCode !== null || child.signalCode !== null;
+
+const waitForExit = (child: ChildProcess, timeoutMs: number): Promise<boolean> =>
+  new Promise((resolvePromise) => {
+    if (hasExited(child)) {
+      resolvePromise(true);
+      return;
+    }
+    const onExit = (): void => {
+      clearTimeout(timer);
+      resolvePromise(true);
+    };
+    const timer = setTimeout(() => {
+      child.removeListener('exit', onExit);
+      resolvePromise(false);
+    }, timeoutMs);
+    child.once('exit', onExit);
+  });
+
+export const stopChildProcess = async (
+  child: ChildProcess,
+  graceMs = 12_000,
+  killWaitMs = 5_000
+): Promise<void> => {
+  if (hasExited(child)) return;
+  try {
+    child.kill('SIGTERM');
+  } catch {
+    // The child can exit between the state check and kill().
+  }
+  if (await waitForExit(child, graceMs)) return;
+  try {
+    child.kill('SIGKILL');
+  } catch {
+    // The child can exit between the timeout and kill().
+  }
+  if (!(await waitForExit(child, killWaitMs))) {
+    throw new Error(`Backend process ${child.pid ?? 'unknown'} did not exit after SIGKILL.`);
+  }
+};
+
 const startBackend = async (port: number, pgPort: number): Promise<RunningBackend> => {
+  await assertPortAvailable(port);
   const child = spawn('node', ['dist/src/server.js'], {
     cwd: ROOT,
     env: {
@@ -204,6 +265,18 @@ const startBackend = async (port: number, pgPort: number): Promise<RunningBacken
   };
   child.stdout?.on('data', capture);
   child.stderr?.on('data', capture);
+  let resolveChildReady!: () => void;
+  const childReady = new Promise<void>((resolvePromise) => {
+    resolveChildReady = resolvePromise;
+  });
+  let readyOutput = '';
+  const detectChildReady = (chunk: Buffer): void => {
+    readyOutput += chunk.toString();
+    if (readyOutput.includes('"name":"process.phase"') && readyOutput.includes('"phase":"ready"')) {
+      resolveChildReady();
+    }
+  };
+  child.stdout?.on('data', detectChildReady);
   const earlyExit = new Promise<never>((_, reject) => {
     child.once('error', (error) => reject(error));
     child.once('exit', (code) => reject(new Error(`Backend exited before readiness (${code ?? 'signal'}).`)));
@@ -224,20 +297,31 @@ const startBackend = async (port: number, pgPort: number): Promise<RunningBacken
     }
     throw new Error(`Backend did not become ready within 20 seconds. ${output.join('').slice(-400)}`);
   })();
-  await Promise.race([waitReady, earlyExit]);
-  const stop = async (): Promise<void> => {
-    if (child.exitCode !== null) return;
-    child.kill('SIGTERM');
-    await Promise.race([
-      new Promise<void>((resolvePromise) => child.once('exit', () => resolvePromise())),
-      sleep(12_000).then(() => { child.kill('SIGKILL'); })
-    ]);
+  try {
+    // A stale listener can answer /ready before the spawned child reports its
+    // own ready phase. Requiring both signals ties readiness to this child.
+    await Promise.race([Promise.all([waitReady, childReady]), earlyExit]);
+  } catch (error) {
+    await stopChildProcess(child).catch(() => undefined);
+    throw error;
+  }
+  let stopPromise: Promise<void> | null = null;
+  const stop = (): Promise<void> => {
+    stopPromise ??= stopChildProcess(child);
+    return stopPromise;
   };
   return { process: child, stop };
 };
 
-const fetchJson = async <T>(base: string, path: string, init?: RequestInit): Promise<{ status: number; body: T; headers: Headers }> => {
-  const response = await fetch(`${base}${path}`, init);
+export const fetchJson = async <T>(
+  base: string,
+  path: string,
+  init?: RequestInit,
+  timeoutMs = FETCH_TIMEOUT_MS
+): Promise<{ status: number; body: T; headers: Headers }> => {
+  const timeoutSignal = AbortSignal.timeout(timeoutMs);
+  const signal = init?.signal ? AbortSignal.any([init.signal, timeoutSignal]) : timeoutSignal;
+  const response = await fetch(`${base}${path}`, { ...init, signal });
   const text = await response.text();
   let body: T;
   try { body = JSON.parse(text) as T; } catch { body = text as T; }
@@ -1033,11 +1117,34 @@ export const main = async (argv = process.argv.slice(2)): Promise<GateReport> =>
   let digestMismatches = 0;
   let crossBoardLeaks = 0;
   let soakDetails: SoakDetails | undefined;
+  let cleanup: (() => Promise<void>) | null = null;
+  let signalHandlers: Array<[NodeJS.Signals, () => void]> = [];
   try {
+    await assertPortAvailable(options.backendPort);
+    await assertPortAvailable(options.pgPort);
     await runCommand('npm', ['run', 'build']);
     stopPostgres = await startPostgres(options.pgPort);
     const base = `http://127.0.0.1:${options.backendPort}`;
     backend = await startBackend(options.backendPort, options.pgPort);
+    let cleanupPromise: Promise<void> | null = null;
+    cleanup = (): Promise<void> => {
+      cleanupPromise ??= (async () => {
+        await backend?.stop().catch(() => undefined);
+        await stopPostgres?.();
+        await productionVite?.close().catch(() => undefined);
+        productionVite = null;
+        productionClientModule = null;
+      })();
+      return cleanupPromise;
+    };
+    signalHandlers = (['SIGINT', 'SIGTERM'] as const).map((signal) => {
+      const handler = (): void => {
+        process.exitCode = signal === 'SIGINT' ? 130 : 143;
+        void cleanup?.();
+      };
+      process.once(signal, handler);
+      return [signal, handler];
+    });
     const restart = async (afterStop?: () => Promise<void>): Promise<void> => {
       await backend?.stop();
       await afterStop?.();
@@ -1098,11 +1205,15 @@ export const main = async (argv = process.argv.slice(2)): Promise<GateReport> =>
     if (options.reportPath) writeFileSync(options.reportPath, reportJson(report), 'utf8');
     return report;
   } finally {
-    await backend?.stop().catch(() => undefined);
-    await stopPostgres?.();
-    await productionVite?.close().catch(() => undefined);
-    productionVite = null;
-    productionClientModule = null;
+    signalHandlers.forEach(([signal, handler]) => process.removeListener(signal, handler));
+    if (cleanup) await cleanup();
+    else {
+      await backend?.stop().catch(() => undefined);
+      await stopPostgres?.();
+      await productionVite?.close().catch(() => undefined);
+      productionVite = null;
+      productionClientModule = null;
+    }
   }
 };
 

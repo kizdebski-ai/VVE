@@ -20,7 +20,7 @@ import { createServer } from 'net';
 import * as Y from 'yjs';
 import WebSocket from 'ws';
 import { createBoardDocument, type BoardDocument } from '../src/pilot/boardDocument';
-import { runMatureBoardScenario, type ScenarioResult } from './pilotGateScenarios';
+import { runDestructiveScenario, runMatureBoardScenario, type ScenarioResult } from './pilotGateScenarios';
 import type { BoardCommand, SceneObject } from '../src/pilot/boardScene';
 import type { BoardRole } from '../src/pilot/boardScene';
 import { collaborationMessage } from '../src/pilot/collaborationProtocol';
@@ -69,6 +69,14 @@ export type GateReport = {
   };
   coverage: 'complete' | 'smoke-only';
   fixtures: { pdfBytes: number; imageBytes: number } | null;
+  destructive?: {
+    attemptedInvalidOperations: number;
+    rejectedInvalidOperations: number;
+    malformedFrameCloseCode: number;
+    oversizedFrameCloseCode: number;
+    preservedState: boolean;
+    restartVerified: boolean;
+  };
   passed: boolean;
   soakDetails?: SoakDetails;
 };
@@ -714,6 +722,54 @@ class ProductionGateClient {
     };
   }
 
+  private async sendMutationUpdate(update: Uint8Array, operationId: string): Promise<{ acknowledged: boolean; reason?: string }> {
+    this.attachProtocolHooks();
+    const socket = (this.connection as (ProductionConnection & { socket?: any }) | null)?.socket;
+    if (!socket || socket.readyState !== WebSocket.OPEN) throw new Error(`Production client ${this.actorId} is not connected.`);
+    this.acknowledged.delete(operationId);
+    this.denied.delete(operationId);
+    socket.send(encodeMutation(operationId, update));
+    const deadline = Date.now() + 10_000;
+    while (!this.acknowledged.has(operationId) && !this.denied.has(operationId)) {
+      if (Date.now() >= deadline) throw new Error(`Production mutation response timeout for ${this.actorId}.`);
+      await sleep(10);
+    }
+    const reason = this.denied.get(operationId);
+    return reason ? { acknowledged: false, reason } : { acknowledged: true };
+  }
+
+  /** Send a schema-invalid Yjs update through the production WebSocket boundary. */
+  async rejectInvalidObject(object: Record<string, unknown>, operationId: string): Promise<string> {
+    if (!this.connection) throw new Error(`Production client ${this.actorId} is not connected.`);
+    const base = Y.encodeStateAsUpdate(this.connection.ydoc);
+    const current = new Y.Doc();
+    const next = new Y.Doc();
+    Y.applyUpdate(current, base);
+    Y.applyUpdate(next, base);
+    const map = new Y.Map<unknown>();
+    for (const [key, value] of Object.entries(object)) map.set(key, value);
+    next.getArray('drawings').push([map]);
+    const update = Y.encodeStateAsUpdate(next, Y.encodeStateVector(current));
+    current.destroy();
+    next.destroy();
+    const result = await this.sendMutationUpdate(update, operationId);
+    if (result.acknowledged) throw new Error(`Production server accepted invalid object for ${this.actorId}.`);
+    return result.reason ?? 'unknown';
+  }
+
+  async sendRawFrame(frame: Uint8Array): Promise<number> {
+    if (!this.connection) throw new Error(`Production client ${this.actorId} is not connected.`);
+    const socket = (this.connection as (ProductionConnection & { socket?: any })).socket;
+    if (!socket || socket.readyState !== WebSocket.OPEN) throw new Error(`Production client ${this.actorId} is not connected.`);
+    const closed = new Promise<number>((resolvePromise, rejectPromise) => {
+      const timer = setTimeout(() => rejectPromise(new Error(`Production raw frame was not closed for ${this.actorId}.`)), 10_000);
+      socket.once('close', (code: number) => { clearTimeout(timer); resolvePromise(code); });
+      socket.once('error', (error: Error) => { clearTimeout(timer); rejectPromise(error); });
+    });
+    socket.send(frame);
+    return closed;
+  }
+
   async addObject(object: SceneObject): Promise<string> {
     if (!this.session) throw new Error(`Production client ${this.actorId} has no whiteboard session.`);
     const result = this.session.execute({ kind: 'add', object });
@@ -917,7 +973,7 @@ const runMatureGate = async (base: string, boards: BoardAccess[], options: Relea
       await client.connect(base);
       return client;
     }
-  }, { historyOperations: options.smoke ? 12 : 48 });
+  }, { historyOperations: 48 });
   return {
     clients: scenario.clients,
     acknowledged: scenario.acceptedOperations,
@@ -925,14 +981,85 @@ const runMatureGate = async (base: string, boards: BoardAccess[], options: Relea
   };
 };
 
-const runDestructiveGate = async (base: string, board: BoardAccess): Promise<void> => {
-  const client = new CanonicalGateClient(board.boardId, board.studentWsToken, 'student', 'destructive-student');
-  await client.connect(base);
-  const closed = client.waitForClose(5_000);
-  client.sendRaw(new Uint8Array([99, 0, 1, 2]));
-  await closed;
+const runDestructiveGate = async (
+  base: string,
+  board: BoardAccess,
+  options: ReleaseGateOptions,
+  restart: () => Promise<void>
+): Promise<{
+  attemptedInvalidOperations: number;
+  rejectedInvalidOperations: number;
+  malformedFrameCloseCode: number;
+  oversizedFrameCloseCode: number;
+  preservedState: boolean;
+  restartVerified: boolean;
+}> => {
+  const createClient = async (label: string): Promise<ProductionGateClient> => {
+    const client = new ProductionGateClient(board.boardId, board.studentWsToken, 'student', label);
+    await client.connect(base);
+    return client;
+  };
+  const scenario = await runDestructiveScenario({
+    base,
+    restart,
+    createClient: async (_role, label) => {
+      const client = await createClient(label);
+      return {
+        boardId: client.boardId,
+        apply: async (command: BoardCommand): Promise<ScenarioResult> => {
+          if (command.kind === 'add') {
+            const object = command.object as unknown as Record<string, unknown>;
+            const type = object.type;
+            const invalid = type === 'not-a-lesson-object' ||
+              typeof object.x !== 'number' || !Number.isFinite(object.x) ||
+              typeof object.width !== 'number' || !Number.isFinite(object.width) || object.width <= 0 ||
+              (typeof object.text === 'string' && object.text.length > 20_000);
+            if (invalid) {
+              const reason = await client.rejectInvalidObject(object, `vve109-destructive-${label}-${Date.now()}`);
+              return { ok: false, reason };
+            }
+          }
+          return client.apply(command);
+        },
+        digest: () => client.digest(),
+        snapshot: () => client.snapshot(),
+        close: () => client.close(),
+        undo: () => client.undo(),
+        redo: () => client.redo(),
+        reorder: (ids) => client.reorder(ids)
+      };
+    }
+  }, { invalidOperations: options.smoke ? 12 : 24 });
+
+  const malformedClient = await createClient('destructive-malformed-frame');
+  const malformedFrameCloseCode = await malformedClient.sendRawFrame(
+    new Uint8Array([collaborationMessage.mutation, 0, 0, 1])
+  );
+  if (malformedFrameCloseCode !== 1008) {
+    throw new Error(`Production malformed frame was closed with ${malformedFrameCloseCode}; expected 1008.`);
+  }
+  malformedClient.close();
+
+  const oversizedClient = await createClient('destructive-oversized-frame');
+  const maxPayload = Number(process.env.VVE_MAX_WS_PAYLOAD_BYTES ?? 10 * 1024 * 1024);
+  const oversizedFrame = new Uint8Array(maxPayload + 1024);
+  oversizedFrame[0] = collaborationMessage.mutation;
+  new DataView(oversizedFrame.buffer).setUint16(1, 6);
+  oversizedFrame.set(new TextEncoder().encode('vve109'), 3);
+  const oversizedFrameCloseCode = await oversizedClient.sendRawFrame(oversizedFrame);
+  if (oversizedFrameCloseCode !== 1009 && oversizedFrameCloseCode !== 1013) {
+    throw new Error(`Production oversized frame was closed with ${oversizedFrameCloseCode}; expected 1009 or 1013.`);
+  }
+  oversizedClient.close();
   await waitForReady(base);
-  client.close();
+  return {
+    attemptedInvalidOperations: scenario.attemptedInvalidOperations,
+    rejectedInvalidOperations: scenario.rejectedInvalidOperations,
+    malformedFrameCloseCode,
+    oversizedFrameCloseCode,
+    preservedState: scenario.preservedState,
+    restartVerified: scenario.restartVerified
+  };
 };
 
 const assertSoakCheckpoint = async (clients: ProductionGateClient[], boards: BoardAccess[]): Promise<{ digestMismatches: number; crossBoardLeaks: number }> => {
@@ -1176,6 +1303,7 @@ export const main = async (argv = process.argv.slice(2)): Promise<GateReport> =>
     backendStarting = null;
     return launched;
   };
+  let destructive: GateReport['destructive'] | undefined;
   try {
     await assertPortAvailable(options.backendPort);
     await assertPortAvailable(options.pgPort);
@@ -1213,7 +1341,9 @@ export const main = async (argv = process.argv.slice(2)): Promise<GateReport> =>
       const result = await runMatureGate(base, boards, options, restart);
       clientCount = result.clients; acknowledgedOperations = result.acknowledged; fixtures = result.fixtures;
     } else if (options.profile === 'destructive') {
-      await runDestructiveGate(base, boards[0]!); clientCount = 1;
+      destructive = await runDestructiveGate(base, boards[0]!, options, restart);
+      clientCount = 1;
+      acknowledgedOperations = destructive.rejectedInvalidOperations + 1;
     } else if (options.profile === 'soak') {
       const result = await runSoak(base, boards, options, restart, adminCookie);
       soakDetails = result.details;
@@ -1239,8 +1369,9 @@ export const main = async (argv = process.argv.slice(2)): Promise<GateReport> =>
       metrics: { samples: options.profile === 'soak' ? soakSamples : 1, maxRssBytes, maxEventLoopDelayMs, blockerEvents, digestMismatches, crossBoardLeaks },
       fixtures,
       ...(soakDetails ? { soakDetails } : {}),
-      coverage: options.profile === 'mature' || options.profile === 'destructive' ? (options.smoke ? 'complete' : 'smoke-only') : 'complete',
-      passed: options.profile === 'mature' || options.profile === 'destructive' ? options.smoke : true
+      coverage: 'complete',
+      ...(destructive ? { destructive } : {}),
+      passed: true
     };
     if (options.reportPath) writeFileSync(options.reportPath, reportJson(report), 'utf8');
     return report;

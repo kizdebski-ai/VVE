@@ -1001,7 +1001,7 @@ const runMatureGate = async (base: string, boards: BoardAccess[], options: Relea
       await client.connect(base);
       return client;
     }
-  }, { historyOperations: 48 });
+  }, { historyOperations: 96 });
   return {
     clients: scenario.clients,
     acknowledged: scenario.acceptedOperations,

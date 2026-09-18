@@ -125,6 +125,12 @@
       :cancellable="artifactProgress.cancellable"
       @cancel="cancelArtifactWork"
     />
+    <ArtifactReady
+      :visible="Boolean(pendingPdfArtifact)"
+      :message="pendingPdfMessage"
+      @deliver="deliverPendingPdf"
+      @dismiss="dismissPendingPdf"
+    />
 
     <!-- Clipboard handler -->
     <input 
@@ -168,6 +174,7 @@ import Collaborators from './Collaborators.vue';
 import ZoomPanControls from './ZoomPanControls.vue';
 import EraserModeControls from './EraserModeControls.vue';
 import ArtifactProgress from './ArtifactProgress.vue';
+import ArtifactReady from './ArtifactReady.vue';
 import StatusMessage from './StatusMessage.vue';
 // Helper modules
 import GridAlignModule from '../modules/GridAlignModule.js';
@@ -196,7 +203,7 @@ import {
   viewportFromElement
 } from '../board/pointerEventAdapter';
 import { suggestProfile } from '../board/inputStyle';
-import { createArtifactPipeline, deliverPdfArtifact } from '../board/artifactPipeline';
+import { createArtifactPipeline, deliverPdfArtifact, isIosArtifactDevice } from '../board/artifactPipeline';
 import { ArtifactCodecError } from '../board/artifactCodecs';
 import { polishArtifactMessage } from '@pilot/artifactContract';
 import { createResourceGovernor } from '@pilot/resourceGovernor';
@@ -245,6 +252,7 @@ export default {
     EraserModeControls,
     StatusMessage,
     ArtifactProgress,
+    ArtifactReady,
     MovableObject, // Register MovableObject
   },
   props: {
@@ -544,9 +552,9 @@ export default {
     const buildArtifactPipeline = (governor) => createArtifactPipeline({
       governor,
       clientKey: 'whiteboard',
-      drawScene: (ctx, elements) => {
+      drawScene: (ctx, elements, exportImageCache) => {
         elements.forEach((element) => {
-          drawElement(ctx, element, false, smoothingFactor.value, imageCache.value);
+          drawElement(ctx, element, false, smoothingFactor.value, exportImageCache ?? imageCache.value);
         });
       }
     });
@@ -566,6 +574,8 @@ export default {
       total: 1,
       cancellable: false
     });
+    const pendingPdfArtifact = shallowRef(null);
+    const pendingPdfMessage = ref('PDF jest gotowy. Kliknij, aby go udostępnić.');
     let artifactAbort = null;
     let artifactProgressResetTimer = null;
     const cancelArtifactWork = () => artifactAbort?.abort();
@@ -582,6 +592,24 @@ export default {
       artifactProgress.current = 0;
       artifactProgress.total = 1;
       artifactProgress.cancellable = false;
+    };
+    const dismissPendingPdf = () => {
+      pendingPdfArtifact.value = null;
+    };
+    const deliverPendingPdf = async () => {
+      const artifact = pendingPdfArtifact.value;
+      if (!artifact) return;
+      try {
+        const delivery = await deliverPdfArtifact(artifact, { userActivated: true });
+        pendingPdfArtifact.value = null;
+        showToast(delivery === 'share' ? 'Wybrano sposób udostępnienia PDF.' : 'Wyeksportowano PDF.', 'success');
+      } catch (error) {
+        if (error?.name === 'AbortError') {
+          showToast('Udostępnianie PDF anulowano. Możesz spróbować ponownie.', 'warning');
+          return;
+        }
+        showToast(error instanceof ArtifactCodecError ? error.message : polishArtifactMessage('artifact.exportFailed'), 'error', 4000);
+      }
     };
     const applyArtifactProgress = (event, controller) => {
       clearArtifactProgressResetTimer();
@@ -657,6 +685,7 @@ export default {
     };
     const exportBoardWithPipeline = async (mode) => {
       const elements = session.value?.snapshot() ?? [];
+      pendingPdfArtifact.value = null;
       artifactAbort?.abort();
       clearArtifactProgressResetTimer();
       const controller = new AbortController();
@@ -672,6 +701,14 @@ export default {
           signal: controller.signal
         });
         if (controller.signal.aborted || artifactAbort !== controller) return;
+        if (isIosArtifactDevice()) {
+          pendingPdfArtifact.value = artifact;
+          pendingPdfMessage.value = mode === 'paged'
+            ? 'Notatki z lekcji są gotowe. Kliknij, aby udostępnić PDF.'
+            : 'Tablica jest gotowa. Kliknij, aby udostępnić PDF.';
+          resetArtifactProgress();
+          return;
+        }
         await deliverPdfArtifact(artifact);
         showToast(mode === 'paged' ? 'Wyeksportowano notatki do PDF.' : 'Wyeksportowano tablicę do PDF.', 'success');
       } catch (error) {
@@ -2720,6 +2757,8 @@ export default {
       notifications,
       statusMessage,
       artifactProgress,
+      pendingPdfArtifact,
+      pendingPdfMessage,
       yjsConnection,
       connectionStatus,
       collaborationReadOnly,
@@ -2768,6 +2807,8 @@ export default {
       addImageFromDataUrl,
       importArtifactFile,
       cancelArtifactWork,
+      deliverPendingPdf,
+      dismissPendingPdf,
       getViewportCenter,
       toggleDebug,
       redrawCanvas,

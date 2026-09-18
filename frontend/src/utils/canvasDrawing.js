@@ -10,19 +10,22 @@ import { drawStyledPen } from './penStyles';
 
 // 1.2: Cache Rough.js instance per canvas (avoid recreating on every drawElement call)
 const roughCanvasCache = new WeakMap();
-// PDF export renders synchronously after the scene painter returns. Keep a
-// renderer-owned cache that can be warmed by ArtifactPipeline before that
-// first paint; individual whiteboards may still provide their own Map.
-const sharedImageCache = new Map();
-
 const imageSourcesIn = (elements) => [...new Set(
   elements
     .filter((element) => element?.type === 'image' && typeof element.src === 'string')
     .map((element) => element.src)
 )];
 
-const loadCanvasImage = (src, signal, timeoutMs) => {
-  const cached = sharedImageCache.get(src);
+export class CanvasImagePreloadError extends Error {
+  constructor(code, message) {
+    super(message);
+    this.name = 'CanvasImagePreloadError';
+    this.code = code;
+  }
+}
+
+const loadCanvasImage = (src, cache, signal, timeoutMs) => {
+  const cached = cache.get(src);
   if (cached?.complete && cached.naturalWidth > 0) return Promise.resolve(cached);
   return new Promise((resolve, reject) => {
     const image = cached || new Image();
@@ -35,7 +38,7 @@ const loadCanvasImage = (src, signal, timeoutMs) => {
     };
     const fail = (error) => {
       cleanup();
-      sharedImageCache.delete(src);
+      cache.delete(src);
       if (!image.complete) image.src = '';
       reject(error);
     };
@@ -43,26 +46,51 @@ const loadCanvasImage = (src, signal, timeoutMs) => {
     timer = window.setTimeout(() => fail(new Error('Image preload timed out.')), timeoutMs);
     image.onload = () => {
       cleanup();
-      sharedImageCache.set(src, image);
+      cache.set(src, image);
       resolve(image);
     };
     image.onerror = () => fail(new Error('Image preload failed.'));
     signal?.addEventListener('abort', onAbort, { once: true });
     if (!cached) {
-      sharedImageCache.set(src, image);
+      cache.set(src, image);
       image.src = src;
     }
   });
 };
 
 /** Warm the same image cache used by drawElement before synchronous export. */
-export const preloadCanvasImages = async (elements, options = {}) => {
+export const preloadCanvasImages = async (elements, cache, options = {}) => {
+  if (!(cache instanceof Map)) throw new TypeError('Image preload requires an export-owned cache.');
   const sources = imageSourcesIn(elements);
-  await Promise.all(sources.map((src) => loadCanvasImage(
-    src,
-    options.signal,
-    options.timeoutMs ?? 12_000
-  )));
+  let totalPixels = 0;
+  for (const src of sources) {
+    if (options.signal?.aborted) {
+      throw new DOMException('Image preload cancelled.', 'AbortError');
+    }
+    if (typeof options.maxImageDataUrlChars === 'number' && src.length > options.maxImageDataUrlChars) {
+      throw new CanvasImagePreloadError('resource.imageTooLarge', 'Image data exceeds the export budget.');
+    }
+    const image = await loadCanvasImage(src, cache, options.signal, options.timeoutMs ?? 12_000);
+    const width = image.naturalWidth || image.width;
+    const height = image.naturalHeight || image.height;
+    const pixels = width * height;
+    if (!Number.isFinite(pixels) || width <= 0 || height <= 0 || pixels > (options.maxDecodedPixels ?? Infinity)) {
+      throw new CanvasImagePreloadError('resource.imageTooLarge', 'Decoded image exceeds the export budget.');
+    }
+    totalPixels += pixels;
+    if (totalPixels > (options.maxTotalPixels ?? Infinity)) {
+      throw new CanvasImagePreloadError('resource.imageTooLarge', 'Decoded images exceed the aggregate export budget.');
+    }
+  }
+};
+
+export const releaseCanvasImageCache = (cache) => {
+  for (const image of cache.values()) {
+    image.onload = null;
+    image.onerror = null;
+    image.src = '';
+  }
+  cache.clear();
 };
 
 // Throttle function to limit the rate of function calls
@@ -664,7 +692,7 @@ const drawImage = (context, element, imageCache, requestRedraw) => {
 
   if (!src || (posX === undefined || posY === undefined)) return;
 
-  let img = imageCache?.get(src) || sharedImageCache.get(src);
+  let img = imageCache?.get(src);
   if (img) {
     if (img.complete && img.naturalWidth > 0) {
       context.drawImage(img, posX, posY, width, height);
@@ -674,7 +702,6 @@ const drawImage = (context, element, imageCache, requestRedraw) => {
     img.onload = () => requestRedraw && requestRedraw();
     img.src = src;
     imageCache?.set(src, img);
-    sharedImageCache.set(src, img);
   }
 };
 

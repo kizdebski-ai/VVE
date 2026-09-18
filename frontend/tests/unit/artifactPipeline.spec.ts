@@ -232,8 +232,9 @@ describe('ArtifactPipeline Interface', () => {
 
   it('preloads renderer images before the first synchronous export paint', async () => {
     const order: string[] = [];
-    const preloadImages = vi.fn(async (elements, signal) => {
+    const preloadImages = vi.fn(async (elements, cache, signal) => {
       expect(elements).toHaveLength(1);
+      expect(cache).toBeInstanceOf(Map);
       expect(signal).toBeUndefined();
       order.push('preload');
     });
@@ -275,6 +276,25 @@ describe('ArtifactPipeline Interface', () => {
     expect(renderTile).not.toHaveBeenCalled();
   });
 
+  it('releases the export-owned image cache after serialization', async () => {
+    let exportCache: { size: number } | undefined;
+    const image = { src: 'data:image/png;base64,AA==', onload: () => {}, onerror: () => {} };
+    const pipeline = createArtifactPipeline({
+      codecs: fakeCodecs(),
+      drawScene: () => {},
+      preloadImages: async (_elements, cache) => {
+        exportCache = cache;
+        cache.set(image.src, image);
+      },
+      renderTile: () => 'data:image/jpeg;base64,AAA='
+    });
+    await pipeline.export([
+      { id: 'image', type: 'image', src: image.src, x: 0, y: 0, width: 20, height: 20 }
+    ], { mode: 'single' });
+    expect(exportCache?.size).toBe(0);
+    expect(image.src).toBe('');
+  });
+
   it('refuses mutation while the session is read-only and still exports', async () => {
     const pipeline = createArtifactPipeline({
       codecs: fakeCodecs(),
@@ -311,7 +331,9 @@ describe('ArtifactPipeline Interface', () => {
       configurable: true,
       get: () => 'Mozilla/5.0 (iPad; CPU OS 17_0 like Mac OS X)'
     });
-    await expect(deliverPdfArtifact(artifact)).resolves.toBe('share');
+    await expect(deliverPdfArtifact(artifact)).rejects.toMatchObject({ name: 'NotAllowedError' });
+    expect(share).not.toHaveBeenCalled();
+    await expect(deliverPdfArtifact(artifact, { userActivated: true })).resolves.toBe('share');
     expect(share).toHaveBeenCalled();
 
     const click = vi.fn();
@@ -324,8 +346,17 @@ describe('ArtifactPipeline Interface', () => {
     navigator.share = vi.fn(async () => {
       throw new DOMException('User activation expired', 'NotAllowedError');
     });
-    await expect(deliverPdfArtifact(artifact)).resolves.toBe('download');
+    await expect(deliverPdfArtifact(artifact, { userActivated: true })).resolves.toBe('download');
     expect(click).toHaveBeenCalled();
+
+    Object.defineProperty(navigator, 'userAgent', {
+      configurable: true,
+      get: () => 'Mozilla/5.0 (iPad; CPU OS 17_0 like Mac OS X)'
+    });
+    navigator.canShare = () => false;
+    const popup = vi.spyOn(window, 'open').mockReturnValue(null);
+    await expect(deliverPdfArtifact(artifact, { userActivated: true })).resolves.toBe('download');
+    expect(popup).toHaveBeenCalled();
 
     Object.defineProperty(navigator, 'userAgent', {
       configurable: true,

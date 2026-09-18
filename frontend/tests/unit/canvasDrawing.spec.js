@@ -30,7 +30,8 @@ describe('canvas image preload used by artifact export', () => {
 
   it('warms the same cache drawElement reads synchronously', async () => {
     const src = 'data:image/png;base64,AA==';
-    await preloadCanvasImages([{ type: 'image', src }]);
+    const imageCache = new Map();
+    await preloadCanvasImages([{ type: 'image', src }], imageCache);
 
     const context = {
       canvas: {},
@@ -43,7 +44,7 @@ describe('canvas image preload used by artifact export', () => {
       { type: 'image', src, x: 10, y: 20, width: 30, height: 40 },
       false,
       0.65,
-      new Map(),
+      imageCache,
       undefined,
       {},
       {}
@@ -51,5 +52,14 @@ describe('canvas image preload used by artifact export', () => {
 
     expect(context.drawImage).toHaveBeenCalledTimes(1);
     expect(context.drawImage.mock.calls[0][0]).toMatchObject({ naturalWidth: 1 });
+  });
+
+  it('loads sequentially under an aggregate decoded-pixel budget', async () => {
+    const cache = new Map();
+    await expect(preloadCanvasImages([
+      { type: 'image', src: 'data:image/png;base64,AA==' },
+      { type: 'image', src: 'data:image/png;base64,BB==' }
+    ], cache, { maxTotalPixels: 1 })).rejects.toMatchObject({ code: 'resource.imageTooLarge' });
+    expect(cache.size).toBe(2);
   });
 });

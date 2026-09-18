@@ -30,7 +30,7 @@ import {
   type ArtifactCodecs,
   type RasterPage
 } from './artifactCodecs';
-import { preloadCanvasImages } from '../utils/canvasDrawing';
+import { preloadCanvasImages, releaseCanvasImageCache } from '../utils/canvasDrawing';
 
 const PAGE_GAP = 40;
 const DEFAULT_PDF_SCALE = 1.5;
@@ -51,10 +51,12 @@ export interface CreateArtifactPipelineOptions {
   clientKey?: string;
   drawScene?: (
     ctx: CanvasRenderingContext2D,
-    elements: readonly Record<string, unknown>[]
+    elements: readonly Record<string, unknown>[],
+    imageCache?: Map<string, HTMLImageElement>
   ) => void;
   preloadImages?: (
     elements: readonly Record<string, unknown>[],
+    imageCache: Map<string, HTMLImageElement>,
     signal?: AbortSignal
   ) => Promise<void>;
   renderTile?: (input: {
@@ -286,7 +288,8 @@ const intersects = (a: SceneBounds, b: SceneBounds): boolean =>
 const renderTileDataUrl = (
   tile: SceneBounds,
   elements: readonly Record<string, unknown>[],
-  drawScene: CreateArtifactPipelineOptions['drawScene']
+  drawScene: CreateArtifactPipelineOptions['drawScene'],
+  imageCache?: Map<string, HTMLImageElement>
 ): string => {
   const marginPx = Math.round(0.2 * EXPORT_DPI);
   const worldW = Math.max(1, tile.x2 - tile.x1);
@@ -306,7 +309,7 @@ const renderTileDataUrl = (
   ctx.save();
   ctx.translate(marginPx - tile.x1 * scale, marginPx - tile.y1 * scale);
   ctx.scale(scale, scale);
-  drawScene?.(ctx, elements);
+  drawScene?.(ctx, elements, imageCache);
   ctx.restore();
   const dataUrl = canvas.toDataURL('image/jpeg', 0.84);
   canvas.width = 0;
@@ -619,6 +622,7 @@ export const createArtifactPipeline = (
       if (job.decision !== 'allow' && job.decision !== 'allowWithBudget') {
         throw new ArtifactCodecError(decisionKey(job), polishArtifactMessage(decisionKey(job)));
       }
+      const exportImageCache = new Map<string, HTMLImageElement>();
       try {
         if (exportOptions.signal?.aborted) {
           throw new ArtifactCodecError('artifact.cancelled', polishArtifactMessage('artifact.cancelled'));
@@ -632,14 +636,22 @@ export const createArtifactPipeline = (
             }
           }
           try {
-            const preload = options.preloadImages ?? ((elements, signal) =>
-              preloadCanvasImages(elements, { signal }));
-            await preload(imageElements, exportOptions.signal);
+            const preload = options.preloadImages ?? ((elements, cache, signal) =>
+              preloadCanvasImages(elements, cache, {
+                signal,
+                maxImageDataUrlChars: limits.maxImageDataUrlChars,
+                maxDecodedPixels: limits.maxDecodedPixelsPerImage,
+                maxTotalPixels: limits.maxPdfTotalPixels
+              }));
+            await preload(imageElements, exportImageCache, exportOptions.signal);
           } catch (error) {
             if (exportOptions.signal?.aborted || (error as DOMException)?.name === 'AbortError') {
               throw new ArtifactCodecError('artifact.cancelled', polishArtifactMessage('artifact.cancelled'));
             }
             if (error instanceof ArtifactCodecError) throw error;
+            if ((error as { code?: unknown })?.code === 'resource.imageTooLarge') {
+              throw new ArtifactCodecError('resource.imageTooLarge', polishArtifactMessage('resource.imageTooLarge'));
+            }
             throw new ArtifactCodecError('artifact.decodeFailed', (error as Error).message || polishArtifactMessage('artifact.decodeFailed'));
           }
         }
@@ -659,7 +671,8 @@ export const createArtifactPipeline = (
             : renderTileDataUrl(
                 tile,
                 exportOptions.mode === 'paged' ? inTile : scene,
-                options.drawScene
+                options.drawScene,
+                exportImageCache
               );
           pages.push({ dataUrl });
           if (exportOptions.signal?.aborted) {
@@ -684,20 +697,29 @@ export const createArtifactPipeline = (
           pageCount: pages.length
         };
       } finally {
+        releaseCanvasImageCache(exportImageCache);
         governor.observe({ kind: 'artifactFinished', clientKey });
       }
     }
   };
 };
 
-export const deliverPdfArtifact = async (artifact: ExportArtifact): Promise<'share' | 'tab' | 'download'> => {
+export const isIosArtifactDevice = (): boolean =>
+  /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+  (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
+export const deliverPdfArtifact = async (
+  artifact: ExportArtifact,
+  options: { userActivated?: boolean } = {}
+): Promise<'share' | 'tab' | 'download'> => {
   const blob = new Blob([artifact.bytes], { type: 'application/pdf' });
   const file = new File([blob], artifact.filename, { type: 'application/pdf' });
-  const isIOS =
-    /iPad|iPhone|iPod/.test(navigator.userAgent) ||
-    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const isIOS = isIosArtifactDevice();
   let shareDenied = false;
   if (isIOS && typeof navigator.canShare === 'function' && navigator.canShare({ files: [file] })) {
+    if (!options.userActivated) {
+      throw new DOMException('User activation required for PDF sharing.', 'NotAllowedError');
+    }
     try {
       await navigator.share({ files: [file], title: artifact.filename });
       return 'share';
@@ -712,8 +734,8 @@ export const deliverPdfArtifact = async (artifact: ExportArtifact): Promise<'sha
   const url = URL.createObjectURL(blob);
   try {
     if (isIOS && !shareDenied) {
-      window.open(url, '_blank');
-      return 'tab';
+      const popup = window.open(url, '_blank');
+      if (popup && !popup.closed) return 'tab';
     }
     const anchor = document.createElement('a');
     anchor.href = url;

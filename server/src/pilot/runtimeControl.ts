@@ -190,15 +190,20 @@ const withDeadline = async <T>(
   promise: Promise<T>,
   deadline: Date,
   phaseName: string,
-  nowFn: () => number = Date.now
+  nowFn: () => number = Date.now,
+  onTimeout?: () => void
 ): Promise<{ completed: true; value: T } | { completed: false }> => {
   const ms = deadline.getTime() - nowFn();
   if (ms <= 0) {
+    onTimeout?.();
     return { completed: false };
   }
   let timer: ReturnType<typeof setTimeout>;
   const timeoutPromise = new Promise<{ completed: false }>((resolve) => {
-    timer = setTimeout(() => resolve({ completed: false }), ms);
+    timer = setTimeout(() => {
+      onTimeout?.();
+      resolve({ completed: false });
+    }, ms);
   });
   try {
     const result = await Promise.race([
@@ -244,38 +249,52 @@ export const createRuntimeControl = (options: RuntimeControlOptions = {}): Runti
   let running: RunningRuntime | null = null;
 
   let probeError: string | null = null;
+  let probeInFlight: Promise<{ database: boolean; persistence: boolean }> | null = null;
+  let probeSequence = 0;
 
   const runProbe = async (): Promise<{ database: boolean; persistence: boolean }> => {
-    if (!activeDb || !activeStore) {
-      checks = { database: false, persistence: false };
-      return checks;
-    }
-    const currentDb = activeDb;
-    const currentStore = activeStore;
-    try {
-      const probeFn = options.probe ?? defaultProbe;
-      const ms = 1_000;
-      let timer: ReturnType<typeof setTimeout>;
-      const probePromise = probeFn({ db: currentDb, store: currentStore });
-      const timeoutPromise = new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error(`Readiness probe timed out after ${ms}ms`)), ms);
-      });
-      const res = await Promise.race([probePromise, timeoutPromise]).finally(() => clearTimeout(timer));
-      if (!res.database || !res.persistence) {
-        checks = { database: Boolean(res.database), persistence: Boolean(res.persistence) };
-      } else {
-        checks = { database: true, persistence: true };
+    if (probeInFlight) return probeInFlight;
+    const sequence = ++probeSequence;
+    const task = (async (): Promise<{ database: boolean; persistence: boolean }> => {
+      if (!activeDb || !activeStore) {
+        checks = { database: false, persistence: false };
+        return checks;
       }
-      probeError = null;
-    } catch (error) {
-      checks = { database: false, persistence: false };
-      probeError = (error as Error).message.slice(0, 160);
-      signals.record({
-        name: 'persistence.error',
-        dimensions: { stage: 'readiness-probe', error: probeError }
-      });
+      const currentDb = activeDb;
+      const currentStore = activeStore;
+      try {
+        const probeFn = options.probe ?? defaultProbe;
+        const ms = 1_000;
+        let timer: ReturnType<typeof setTimeout>;
+        const probePromise = probeFn({ db: currentDb, store: currentStore });
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error(`Readiness probe timed out after ${ms}ms`)), ms);
+        });
+        const res = await Promise.race([probePromise, timeoutPromise]).finally(() => clearTimeout(timer));
+        if (sequence !== probeSequence || currentDb !== activeDb || currentStore !== activeStore) {
+          return checks;
+        }
+        checks = { database: Boolean(res.database), persistence: Boolean(res.persistence) };
+        probeError = null;
+      } catch (error) {
+        if (sequence !== probeSequence || currentDb !== activeDb || currentStore !== activeStore) {
+          return checks;
+        }
+        checks = { database: false, persistence: false };
+        probeError = (error as Error).message.slice(0, 160);
+        signals.record({
+          name: 'persistence.error',
+          dimensions: { stage: 'readiness-probe', error: probeError }
+        });
+      }
+      return checks;
+    })();
+    probeInFlight = task;
+    try {
+      return await task;
+    } finally {
+      if (probeInFlight === task) probeInFlight = null;
     }
-    return checks;
   };
 
   const health: RuntimeHealthGateway = {
@@ -567,18 +586,22 @@ export const createRuntimeControl = (options: RuntimeControlOptions = {}): Runti
 
     let drain: ShutdownReport['drain'] = null;
     let flushed = false;
+    let drainTimedOut = false;
     if (collaboration) {
+      const drainAbort = new AbortController();
       const drainResult = await withDeadline(
-        collaboration.drain({ deadline: input.deadline, reason: input.reason }),
+        collaboration.drain({ deadline: input.deadline, reason: input.reason, signal: drainAbort.signal }),
         input.deadline,
         'collaboration-drain',
-        now
+        now,
+        () => drainAbort.abort()
       );
       if (drainResult.completed) {
         drain = drainResult.value;
         flushed = drain.complete;
         if (!drain.complete) remaining.push('collaboration-drain');
       } else {
+        drainTimedOut = true;
         remaining.push('collaboration-drain');
         signals.record({
           name: 'persistence.error',
@@ -619,7 +642,7 @@ export const createRuntimeControl = (options: RuntimeControlOptions = {}): Runti
     }
 
     let databaseClosed = true;
-    if (boundDb) {
+    if (boundDb && !drainTimedOut) {
       const destroyPromise = (async () => {
         await destroyDb();
         boundDb = false;
@@ -633,6 +656,12 @@ export const createRuntimeControl = (options: RuntimeControlOptions = {}): Runti
           dimensions: { stage: 'database-close', error: 'deadline exceeded during database destroy' }
         });
       }
+    } else if (boundDb) {
+      // A timed-out drain may still be unwinding a store operation. Keep its
+      // pool alive rather than destroying the dependency underneath late
+      // work; the process adapter's bounded exit is the final fallback.
+      databaseClosed = false;
+      if (!remaining.includes('postgres-pool')) remaining.push('postgres-pool');
     }
     db = null;
 

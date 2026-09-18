@@ -92,7 +92,7 @@ export interface AppendResult {
 export interface BoardDocumentStore {
   hydrate(boardId: string): Promise<HydratedBoardState>;
   append(boardId: string, operationId: string, update: Uint8Array): Promise<AppendResult>;
-  compact(boardId: string, snapshot: Uint8Array, cutoff: number): Promise<void>;
+  compact(boardId: string, snapshot: Uint8Array, cutoff: number, signal?: AbortSignal): Promise<void>;
 }
 
 export class CollaborationFailure extends Error {
@@ -184,8 +184,10 @@ export class InMemoryBoardDocumentStore implements BoardDocumentStore {
     return { sequence: row.sequence, duplicate: false };
   }
 
-  async compact(boardId: string, snapshot: Uint8Array, cutoff: number): Promise<void> {
+  async compact(boardId: string, snapshot: Uint8Array, cutoff: number, signal?: AbortSignal): Promise<void> {
+    if (signal?.aborted) return;
     const board = this.board(boardId);
+    if (signal?.aborted) return;
     if (cutoff < board.cutoff) return;
     board.snapshot = snapshot.slice();
     board.cutoff = cutoff;
@@ -253,7 +255,11 @@ export interface CollaborationRuntime {
   inspect(boardId: string): Promise<CollaborationSnapshot>;
   unloadIdle(): Promise<string[]>;
   closeBoard(boardId: string, reason: string): Promise<boolean>;
-  drain(input: { deadline: Date; reason: string }): Promise<{ boards: number; connections: number; complete: boolean }>;
+  drain(input: {
+    deadline: Date;
+    reason: string;
+    signal?: AbortSignal;
+  }): Promise<{ boards: number; connections: number; complete: boolean }>;
   stats(): CollaborationRuntimeStats;
 }
 
@@ -537,6 +543,15 @@ export const createCollaborationRuntime = (
       }
 
       return serial(room, async () => {
+        if (live.closed) return { accepted: false, reason: 'unauthorized' };
+        if (!(await input.revalidate())) {
+          live.closed = true;
+          room.connections.delete(live);
+          releaseSlot();
+          await transport.send({ kind: 'denial', reason: 'revoked' });
+          await transport.close(1008, 'Access revoked');
+          return { accepted: false, reason: 'revoked' };
+        }
         const shadow = createBoardDocument({ initialState: room.document.encode() });
         const validation = shadow.apply(frame.update, {
           kind: 'remote',
@@ -609,6 +624,17 @@ export const createCollaborationRuntime = (
           if (slow.decision === 'reject' || slow.decision === 'retryAfter' || slow.decision === 'readOnly') {
             peer.closed = true;
             room.connections.delete(peer);
+            if (peer.awarenessClientIds.size) {
+              const removed = Array.from(peer.awarenessClientIds);
+              removeAwarenessStates(room.awareness, removed, peer);
+              const removalUpdate = encodeAwarenessUpdate(room.awareness, removed);
+              for (const remainingPeer of room.connections) {
+                if (!remainingPeer.closed) {
+                  await remainingPeer.transport.send({ kind: 'awareness', update: removalUpdate });
+                }
+              }
+              peer.awarenessClientIds.clear();
+            }
             governor.observe({
               kind: 'connectionClosed',
               clientKey: peer.clientKey,
@@ -693,33 +719,43 @@ export const createCollaborationRuntime = (
     const room = rooms.get(boardId);
     if (!room) return false;
     const connections = Array.from(room.connections);
-    room.connections.clear();
-    const awarenessClientIds = connections.flatMap((connection) =>
-      Array.from(connection.awarenessClientIds)
-    );
-    if (awarenessClientIds.length) {
-      removeAwarenessStates(room.awareness, awarenessClientIds, 'board-closed');
-    }
-    for (const connection of connections) {
-      connection.closed = true;
-      governor.observe({
-        kind: 'connectionClosed',
-        clientKey: connection.clientKey,
-        boardId
-      });
-      await connection.transport.send({ kind: 'denial', reason: 'revoked' });
-      await connection.transport.close(1008, reason);
-    }
+    // Mark first, then serialize the actual teardown behind any mutation
+    // already in flight. Queued mutations see `closed` inside the same queue
+    // before they can append to durable storage.
+    for (const connection of connections) connection.closed = true;
+    await serial(room, async () => {
+      room.connections.clear();
+      const awarenessClientIds = connections.flatMap((connection) =>
+        Array.from(connection.awarenessClientIds)
+      );
+      if (awarenessClientIds.length) {
+        removeAwarenessStates(room.awareness, awarenessClientIds, 'board-closed');
+      }
+      for (const connection of connections) {
+        governor.observe({
+          kind: 'connectionClosed',
+          clientKey: connection.clientKey,
+          boardId
+        });
+        await connection.transport.send({ kind: 'denial', reason: 'revoked' });
+        await connection.transport.close(1008, reason);
+        connection.awarenessClientIds.clear();
+      }
+    });
     room.lastActive = now();
     return true;
   };
 
-  const drain: CollaborationRuntime['drain'] = async ({ deadline, reason }) => {
+  const drain: CollaborationRuntime['drain'] = async ({ deadline, reason, signal }) => {
     draining = true;
     signals?.record({ name: 'process.phase', dimensions: { phase: 'collaborationDrain', reason } });
     let connectionCount = 0;
     let complete = true;
     for (const [boardId, room] of rooms) {
+      if (signal?.aborted) {
+        complete = false;
+        break;
+      }
       if (now() > deadline.getTime()) {
         complete = false;
         break;
@@ -739,7 +775,8 @@ export const createCollaborationRuntime = (
       }
       try {
         const compactPromise = serial(room, async () => {
-          await options.store.compact(boardId, room.document.encode(), room.lastSequence);
+          if (signal?.aborted) throw new Error('Compact aborted');
+          await options.store.compact(boardId, room.document.encode(), room.lastSequence, signal);
         });
         const timeoutPromise = new Promise<never>((_, reject) =>
           setTimeout(() => reject(new Error('Compact timed out')), remainingMs)

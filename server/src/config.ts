@@ -39,7 +39,9 @@ export const config = {
   exposeMagicLinks: true,
   cleanupIntervalMs: 60_000,
   roomTtlMs: 24 * 60 * 60 * 1000, // 24 hours (increased for persistence)
-  pingIntervalMs: 30_000,
+  // A missed ping is closed on the next tick, so a one-second interval
+  // bounds silent TCP blackholes to the two-second Pilot gate.
+  pingIntervalMs: 1_000,
   dataDir: process.env.DATA_DIR || path.join(process.cwd(), 'data'),
   openRouterApiKey: process.env.OPENROUTER_API_KEY,
   ocrModel: process.env.OCR_MODEL || 'nvidia/nemotron-nano-12b-v2-vl:free',

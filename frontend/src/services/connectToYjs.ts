@@ -15,7 +15,8 @@ export const collaborationMessage = {
   synchronizationComplete: 14,
   denial: 15,
   serverDraining: 16,
-  update: 17
+  update: 17,
+  heartbeat: 18
 } as const;
 
 const legacyMessage = { sync: 0, awareness: 1 } as const;
@@ -128,6 +129,7 @@ export function connectToYjs(roomId: string, options?: ConnectOptions): YjsConne
   // a 3s cap keeps the worst-case wait (3s) plus connect time inside 5s.
   const reconnectTimeoutMax = 3_000;
   let reconnectTimer: number | null = null;
+  let heartbeatTimer: number | null = null;
   let explicitlyDisconnected = false;
   const pending = new Map<string, Uint8Array>();
   const pendingUpdates = new Map<string, Uint8Array>();
@@ -144,12 +146,12 @@ export function connectToYjs(roomId: string, options?: ConnectOptions): YjsConne
     drawingsArray: Y.Array<any>,
     targetList: Array<Record<string, unknown>>
   ) => {
-    const targetIds = targetList.map((t) => t.id as string);
+    const targetIds = new Set(targetList.map((t) => t.id as string));
 
     for (let i = drawingsArray.length - 1; i >= 0; i--) {
       const item = drawingsArray.get(i);
       const id = item instanceof Y.Map ? (item.get('id') as string) : (item as any)?.id;
-      if (!targetIds.includes(id)) {
+      if (!targetIds.has(id)) {
         drawingsArray.delete(i, 1);
       }
     }
@@ -190,28 +192,16 @@ export function connectToYjs(roomId: string, options?: ConnectOptions): YjsConne
           }
         }
         if (foundIndex !== -1) {
-          const item = drawingsArray.get(foundIndex);
+          // A Y.Map that has been integrated into an array cannot be deleted
+          // and reinserted. Reusing it makes Yjs dereference its old parent
+          // and throws while integrating the next transaction. Rebuild the
+          // authoritative value as a fresh type instead.
           drawingsArray.delete(foundIndex, 1);
-          drawingsArray.insert(i, [item]);
-          if (item instanceof Y.Map) {
-            for (const key of Array.from(item.keys())) {
-              if (!(key in target)) item.delete(key);
-            }
-            for (const [key, value] of Object.entries(target)) {
-              if (value === undefined) {
-                item.delete(key);
-              } else {
-                const existingVal = item.get(key);
-                if (typeof value === 'object' && value !== null) {
-                  if (JSON.stringify(existingVal) !== JSON.stringify(value)) {
-                    item.set(key, value);
-                  }
-                } else if (existingVal !== value) {
-                  item.set(key, value);
-                }
-              }
-            }
+          const replacement = new Y.Map();
+          for (const [key, value] of Object.entries(target)) {
+            if (value !== undefined) replacement.set(key, value);
           }
+          drawingsArray.insert(i, [replacement]);
         } else {
           const map = new Y.Map();
           for (const [k, v] of Object.entries(target)) {
@@ -313,6 +303,25 @@ export function connectToYjs(roomId: string, options?: ConnectOptions): YjsConne
     if (remote.length) removeAwarenessStates(awareness, remote, origin);
   };
 
+  const clearHeartbeatTimer = () => {
+    if (heartbeatTimer !== null) {
+      window.clearTimeout(heartbeatTimer);
+      heartbeatTimer = null;
+    }
+  };
+
+  const armHeartbeatWatchdog = () => {
+    clearHeartbeatTimer();
+    heartbeatTimer = window.setTimeout(() => {
+      heartbeatTimer = null;
+      if (editable && socket?.readyState === WebSocket.OPEN) {
+        editable = false;
+        setStatus('disconnected');
+        socket.close(4002, 'Heartbeat timeout');
+      }
+    }, 2_000);
+  };
+
   const sendAwareness = () => {
     if (socket?.readyState !== WebSocket.OPEN) return;
     const update = encodeAwarenessUpdate(awareness, [awareness.clientID]);
@@ -342,6 +351,7 @@ export function connectToYjs(roomId: string, options?: ConnectOptions): YjsConne
     const frame = encodeOperationFrame(collaborationMessage.mutation, id, outgoingUpdate);
     const maxPayload = options?.maxPayloadBytes ?? 10_485_760;
     if (frame.byteLength > maxPayload) {
+      sendFullStateNextMutation = true;
       reconcileWithAuthoritative();
       options?.onMutationDenied?.({
         reason: 'resource',
@@ -446,6 +456,9 @@ export function connectToYjs(roomId: string, options?: ConnectOptions): YjsConne
         case collaborationMessage.awareness:
           applyAwarenessUpdate(awareness, data.slice(1), 'collaborationRemote');
           break;
+        case collaborationMessage.heartbeat:
+          armHeartbeatWatchdog();
+          break;
         case collaborationMessage.synchronizationComplete:
           isDraining = false;
           editable = true;
@@ -502,6 +515,7 @@ export function connectToYjs(roomId: string, options?: ConnectOptions): YjsConne
 
     socket.onclose = (event?: CloseEvent) => {
       socket = null;
+      clearHeartbeatTimer();
       editable = false;
       clearRemoteAwareness('collaborationRemote');
       if (event?.code === 1012 || event?.code === 4012 || (event?.code === 1013 && isDraining)) {
@@ -549,6 +563,7 @@ export function connectToYjs(roomId: string, options?: ConnectOptions): YjsConne
     window.removeEventListener('offline', handleBrowserOffline);
     window.removeEventListener('online', handleBrowserOnline);
     clearRemoteAwareness('disconnect');
+    clearHeartbeatTimer();
     socket?.close();
     authoritativeDoc.destroy();
   };

@@ -122,8 +122,10 @@ export const createPostgresBoardDocumentStore = (
       }
     },
 
-    compact: async (boardId, snapshot, cutoff): Promise<void> => {
+    compact: async (boardId, snapshot, cutoff, signal): Promise<void> => {
+      if (signal?.aborted) return;
       await db().transaction(async (trx) => {
+        if (signal?.aborted) return;
         const updatedAt = new Date();
         await trx('board_yjs_state')
           .insert({

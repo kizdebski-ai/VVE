@@ -36,6 +36,7 @@ import { resourceLimitsFromEnv } from './resourceLimits';
 
 const messageSync = 0;
 const messageAwareness = 1;
+const messageHeartbeat = 18;
 
 type ManagedSocket = WebSocket & {
   isAlive?: boolean;
@@ -386,7 +387,9 @@ export const createRealtimeListener = (deps: RealtimeListenerDeps): RealtimeList
             }
             if (socket.bufferedAmount > governor.limits().maxSlowClientBufferedBytes) {
               governor.observe({ kind: 'slowClientBuffer', bytes: socket.bufferedAmount, clientKey: clientIp, boardId: roomId });
-              socket.close(1009, polishResourceMessage('resource.slowClient'));
+              // 1009 is reserved for an oversized message. A slow consumer
+              // is a policy close, matching mapGovernorDenialToSocketClose.
+              socket.close(1008, polishResourceMessage('resource.slowClient'));
               throw new CollaborationFailure('resource', polishResourceMessage('resource.slowClient'));
             }
             socket.send(encodeServerFrame(frame), { binary: true });
@@ -574,6 +577,10 @@ export const createRealtimeListener = (deps: RealtimeListenerDeps): RealtimeList
       }
       socket.isAlive = false;
       socket.ping();
+      // Browser WebSockets cannot send control pings. This tiny application
+      // heartbeat gives the client a two-second read-only watchdog even when
+      // the TCP close event itself is delayed by a silent blackhole.
+      send(socket, new Uint8Array([messageHeartbeat]));
     });
   };
 

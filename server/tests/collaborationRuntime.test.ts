@@ -7,6 +7,7 @@ import {
   InMemoryBoardDocumentStore,
   createCollaborationRuntime,
   type AuthenticatedConnection,
+  type BoardDocumentStore,
   type CollaborationTransport,
   type ServerFrame
 } from '../src/pilot/collaborationRuntime';
@@ -207,6 +208,41 @@ describe('CollaborationRuntime acknowledgement oracle', () => {
     expect(transport.closed).toMatchObject({ code: 1008 });
     expect((await store.inspect(BOARD_A)).operationCount).toBe(0);
     expect((await store.inspect(BOARD_B)).operationCount).toBe(0);
+  });
+
+  it('rejects a mutation that was queued before board access was revoked', async () => {
+    const inner = new InMemoryBoardDocumentStore();
+    let releaseAppend!: () => void;
+    let appendStarted!: () => void;
+    const appendGate = new Promise<void>((resolve) => { releaseAppend = resolve; });
+    const appendStartedPromise = new Promise<void>((resolve) => { appendStarted = resolve; });
+    let appendCount = 0;
+    const store: BoardDocumentStore & Pick<InMemoryBoardDocumentStore, 'inspect'> = {
+      hydrate: inner.hydrate.bind(inner),
+      append: async (boardId, operationId, update) => {
+        appendCount += 1;
+        if (appendCount === 1) {
+          appendStarted();
+          await appendGate;
+        }
+        return inner.append(boardId, operationId, update);
+      },
+      compact: inner.compact.bind(inner),
+      inspect: inner.inspect.bind(inner)
+    };
+    const runtime = createCollaborationRuntime({ store });
+    const transport = new MemoryTransport();
+    const handle = await runtime.connect(connection(), transport);
+
+    const first = handle.receive(mutation('revocation-first', 'first', 'kept'));
+    await appendStartedPromise;
+    const queued = handle.receive(mutation('revocation-queued', 'queued', 'rejected'));
+    const closing = runtime.closeBoard(BOARD_A, 'access ended');
+    releaseAppend();
+
+    await Promise.all([first, queued, closing]);
+    expect((await store.inspect(BOARD_A)).operationIds).toEqual(['revocation-first']);
+    expect(await queued).toEqual({ accepted: false, reason: 'unauthorized' });
   });
 
   it('unloads an idle board and restores the same digest on the next connection', async () => {
@@ -500,7 +536,14 @@ describe('CollaborationRuntime document authority (S4)', () => {
     const slow = new MemoryTransport();
     slow.buffer = 10_000;
     const teacherHandle = await runtime.connect(connection(), teacher);
-    await runtime.connect(connection(BOARD_A, 'student'), slow);
+    const slowHandle = await runtime.connect(connection(BOARD_A, 'student'), slow);
+    const awarenessDoc = new Y.Doc();
+    const awareness = new Awareness(awarenessDoc);
+    awareness.setLocalStateField('cursor', { x: 4, y: 8 });
+    await slowHandle.receive({
+      kind: 'awareness',
+      update: encodeAwarenessUpdate(awareness, [awareness.clientID])
+    });
 
     const result = await teacherHandle.receive(mutation('op-keep', 'title', 'Lesson continues'));
     expect(result).toMatchObject({ accepted: true, operationId: 'op-keep' });
@@ -509,5 +552,11 @@ describe('CollaborationRuntime document authority (S4)', () => {
       true
     );
     expect(teacher.frames.at(-1)).toMatchObject({ kind: 'acknowledgement', operationId: 'op-keep' });
+
+    const later = new MemoryTransport();
+    await runtime.connect(connection(BOARD_A, 'student'), later);
+    expect(later.frames.some((frame) => frame.kind === 'awareness')).toBe(false);
+    awareness.destroy();
+    awarenessDoc.destroy();
   });
 });

@@ -63,6 +63,7 @@ type CompositionClient = {
   acks: Array<{ operationId: string; digest: string }>;
   updates: Array<{ operationId: string }>;
   awarenessFrames: number;
+  heartbeatFrames: number;
   initialDrawings: Array<Record<string, unknown>>;
   syncDigest: string | null;
 };
@@ -161,6 +162,7 @@ describe('Realtime composition through the shared ResourceGovernor (108-I1)', ()
         acks: [],
         updates: [],
         awarenessFrames: 0,
+        heartbeatFrames: 0,
         initialDrawings: [],
         syncDigest: null
       };
@@ -185,6 +187,8 @@ describe('Realtime composition through the shared ResourceGovernor (108-I1)', ()
           client.updates.push({ operationId: bytes.subarray(3, 3 + idLength).toString() });
         } else if (type === 11) {
           client.awarenessFrames += 1;
+        } else if (type === 18) {
+          client.heartbeatFrames += 1;
         } else if (type === 15) {
           client.closeInfo = { code: 15, reason: bytes.subarray(1).toString() };
         }
@@ -219,6 +223,9 @@ describe('Realtime composition through the shared ResourceGovernor (108-I1)', ()
     // hardcoded 20-per-IP transport cap would have dropped 37 of them.
     expect(clients.filter((c) => c.syncDigest !== null)).toHaveLength(CLIENTS);
     expect(clients.every((c) => c.closeInfo === null)).toBe(true);
+    listener.pingClients();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(clients.every((c) => c.heartbeatFrames > 0)).toBe(true);
 
     // Representative traffic: the first client on every board sends a canonical
     // rectangle mutation; every peer on that board acknowledges fan-out.
@@ -293,6 +300,7 @@ describe('Realtime composition through the shared ResourceGovernor (108-I1)', ()
           acks: [],
           updates: [],
           awarenessFrames: 0,
+          heartbeatFrames: 0,
           initialDrawings: [],
           syncDigest: null
         };

@@ -183,6 +183,27 @@ describe('acknowledged collaboration client', () => {
     vi.useRealTimers();
   });
 
+  it('enters read-only when the application heartbeat stops without offline/close events', () => {
+    vi.useFakeTimers();
+    const statuses: string[] = [];
+    const connection = connectToYjs('board-1', {
+      wsToken: 'managed-token',
+      onStatus: (status) => statuses.push(status)
+    });
+    const socket = FakeWebSocket.instances[0]!;
+    socket.open();
+    socket.receive(serverFrame(collaborationMessage.synchronizationComplete));
+    socket.receive(serverFrame(collaborationMessage.heartbeat));
+    expect(connection.isEditable()).toBe(true);
+
+    vi.advanceTimersByTime(1_999);
+    expect(connection.isEditable()).toBe(true);
+    vi.advanceTimersByTime(1);
+    expect(connection.isEditable()).toBe(false);
+    expect(statuses).toContain('disconnected');
+    vi.useRealTimers();
+  });
+
   it('applies a versioned remote update without re-sending it', () => {
     const connection = connectToYjs('board-1', { wsToken: 'managed-token' });
     const socket = FakeWebSocket.instances[0]!;
@@ -278,6 +299,71 @@ describe('acknowledged collaboration client', () => {
     expect(deniedEvents[0].reason).toBe('resource');
 
     vi.useRealTimers();
+  });
+
+  it('reconciles an authoritative reorder using fresh Yjs maps', () => {
+    const connection = connectToYjs('board-1', { wsToken: 'managed-token' });
+    const socket = FakeWebSocket.instances[0]!;
+    socket.open();
+
+    const initial = new Y.Doc();
+    const first = new Y.Map<unknown>();
+    first.set('id', 'first');
+    const second = new Y.Map<unknown>();
+    second.set('id', 'second');
+    initial.getArray('drawings').push([first, second]);
+    socket.receive(serverFrame(collaborationMessage.sync, Y.encodeStateAsUpdate(initial)));
+    socket.receive(serverFrame(collaborationMessage.synchronizationComplete));
+
+    const reordered = new Y.Doc();
+    const reorderedSecond = new Y.Map<unknown>();
+    reorderedSecond.set('id', 'second');
+    const reorderedFirst = new Y.Map<unknown>();
+    reorderedFirst.set('id', 'first');
+    reordered.getArray('drawings').push([reorderedSecond, reorderedFirst]);
+
+    expect(() => socket.receive(serverFrame(
+      collaborationMessage.sync,
+      Y.encodeStateAsUpdate(reordered)
+    ))).not.toThrow();
+    expect(connection.ydoc.getArray('drawings').toJSON()).toEqual([
+      { id: 'second' },
+      { id: 'first' }
+    ]);
+  });
+
+  it('marks every oversized local update for a later full-state mutation', () => {
+    const deniedEvents: string[] = [];
+    const connection = connectToYjs('board-1', {
+      wsToken: 'managed-token',
+      maxPayloadBytes: 150,
+      onMutationDenied: () => deniedEvents.push('denied')
+    });
+    const socket = FakeWebSocket.instances[0]!;
+    socket.open();
+
+    const initial = new Y.Doc();
+    initial.getMap('lesson').set('stable', 'value');
+    socket.receive(serverFrame(collaborationMessage.sync, Y.encodeStateAsUpdate(initial)));
+    socket.receive(serverFrame(collaborationMessage.synchronizationComplete));
+    socket.sent.length = 0;
+
+    connection.ydoc.getMap('lesson').set('large', 'x'.repeat(10_000));
+    expect(deniedEvents).toHaveLength(1);
+    expect(connection.pendingOperationCount()).toBe(0);
+
+    // Keep the rejected value out of the next deliberately small edit while
+    // preserving the full-state gate under test.
+    connection.ydoc.transact(() => {
+      connection.ydoc.getMap('lesson').delete('large');
+    }, 'collaborationReconciliation');
+
+    connection.ydoc.getMap('lesson').set('after', 'small');
+    const mutation = socket.sent.find((frame) => frame[0] === collaborationMessage.mutation);
+    expect(mutation).toBeDefined();
+    const received = new Y.Doc();
+    Y.applyUpdate(received, decodeOperationUpdate(mutation!));
+    expect(received.getMap('lesson').toJSON()).toMatchObject({ stable: 'value', after: 'small' });
   });
 });
 

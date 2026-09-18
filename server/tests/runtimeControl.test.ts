@@ -329,6 +329,37 @@ describe('RuntimeControl process lifecycle', () => {
     await runtime.stop({ reason: 'test-stop', deadline: new Date(Date.now() + 5_000) });
   });
 
+  it('serializes probes and prevents an older result from overwriting a newer state', async () => {
+    let calls = 0;
+    let releaseSlowProbe!: () => void;
+    const slowProbe = new Promise<void>((resolve) => { releaseSlowProbe = resolve; });
+    const runtime = createRuntimeControl({
+      signals: createOperationalSignals({ emitJson: false }),
+      config: testConfig(),
+      createDatabase: () => fakeDb,
+      migrate: async () => undefined,
+      probe: async () => {
+        calls += 1;
+        if (calls === 1) return { database: true, persistence: true };
+        if (calls === 2) {
+          await slowProbe;
+          return { database: false, persistence: false };
+        }
+        return { database: true, persistence: true };
+      },
+      createStore: () => new InMemoryBoardDocumentStore()
+    });
+    const running = await runtime.start();
+    await new Promise((resolve) => setTimeout(resolve, 460));
+    expect(calls).toBe(2);
+    expect(runtime.status().ready).toBe(true);
+
+    releaseSlowProbe();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(runtime.status().ready).toBe(false);
+    await runtime.stop({ reason: 'test-stop', deadline: new Date(Date.now() + 5_000) });
+  });
+
   it('does not pass initial readiness when the database is read-only (108-R1)', async () => {
     const readOnlyDb = {
       raw: async () => ({ rows: [{ ok: 1, ro: 'on', in_recovery: false }] }),
@@ -448,6 +479,44 @@ describe('RuntimeControl process lifecycle', () => {
     expect(report.durationMs).toBeLessThan(380);
     expect(report.clean).toBe(false);
     expect(report.remaining).toContain('collaboration-drain');
+  });
+
+  it('cancels drain work at the deadline so no late operation runs after shutdown', async () => {
+    let lateWork = false;
+    let aborted = false;
+    const runtime = createRuntimeControl({
+      signals: createOperationalSignals({ emitJson: false }),
+      config: testConfig(),
+      ...adapters(),
+      createCollaboration: (store) => {
+        const inner = createCollaborationRuntime({ store });
+        return {
+          ...inner,
+          drain: async ({ signal }) => {
+            await new Promise<void>((resolve) => {
+              const timer = setTimeout(resolve, 250);
+              signal?.addEventListener('abort', () => {
+                aborted = true;
+                clearTimeout(timer);
+                resolve();
+              }, { once: true });
+            });
+            if (!signal?.aborted) lateWork = true;
+            return { boards: 0, connections: 0, complete: false };
+          }
+        };
+      }
+    });
+    const running = await runtime.start();
+    const report = await runtime.stop({
+      reason: 'deadline safety',
+      deadline: new Date(Date.now() + 80)
+    });
+    expect(report.clean).toBe(false);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(aborted).toBe(true);
+    expect(lateWork).toBe(false);
+    expect(running.status().phase).toBe('stopped');
   });
 
   it('reports deadline failures without claiming a clean shutdown', async () => {

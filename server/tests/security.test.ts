@@ -162,6 +162,21 @@ describe('4.3: Administrator surface requires a session (ADR-0005)', () => {
     expect(rateLimited).toBeGreaterThanOrEqual(0);
   });
 
+  it('keeps the administrator limiter keyed to the peer despite spoofed X-Forwarded-For', async () => {
+    const app = createTestApp();
+    const statuses: number[] = [];
+    for (let i = 0; i < 6; i += 1) {
+      const res = await request(app)
+        .post('/api/admin/session')
+        .set('X-Forwarded-For', `198.51.100.${i + 1}`)
+        .send({ passphrase: 'not-it' });
+      statuses.push(res.status);
+    }
+
+    expect(statuses.slice(0, 5)).toEqual([401, 401, 401, 401, 401]);
+    expect(statuses[5]).toBe(429);
+  });
+
   it('logs out by clearing the session cookie', async () => {
     const app = createTestApp();
     const login = await request(app).post('/api/admin/session').send({ passphrase: 'test-admin-passphrase' });

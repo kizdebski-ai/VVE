@@ -152,10 +152,10 @@ const checkRateLimit = (ws: ManagedSocket, max: number, windowMs: number): boole
 };
 
 const getClientIp = (request: http.IncomingMessage): string => {
-  const forwarded = request.headers['x-forwarded-for'];
-  if (typeof forwarded === 'string') {
-    return forwarded.split(',')[0]?.trim() || request.socket.remoteAddress || 'unknown';
-  }
+  // The application has no configured trust-proxy policy. A raw forwarded
+  // header is therefore caller-controlled and must not affect per-IP limits.
+  // Deployments that need proxy-aware identity must configure that policy at
+  // the edge and pass a verified peer address to the process.
   return request.socket.remoteAddress || 'unknown';
 };
 

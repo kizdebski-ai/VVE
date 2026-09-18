@@ -30,6 +30,7 @@ import {
   type ArtifactCodecs,
   type RasterPage
 } from './artifactCodecs';
+import { preloadCanvasImages } from '../utils/canvasDrawing';
 
 const PAGE_GAP = 40;
 const DEFAULT_PDF_SCALE = 1.5;
@@ -52,6 +53,10 @@ export interface CreateArtifactPipelineOptions {
     ctx: CanvasRenderingContext2D,
     elements: readonly Record<string, unknown>[]
   ) => void;
+  preloadImages?: (
+    elements: readonly Record<string, unknown>[],
+    signal?: AbortSignal
+  ) => Promise<void>;
   renderTile?: (input: {
     tile: SceneBounds;
     elements: readonly Record<string, unknown>[];
@@ -619,6 +624,25 @@ export const createArtifactPipeline = (
           throw new ArtifactCodecError('artifact.cancelled', polishArtifactMessage('artifact.cancelled'));
         }
         const tiles = tilesFor(scene, bounds, exportOptions.mode, limits.maxPdfPages);
+        if (options.drawScene && (!options.renderTile || options.preloadImages)) {
+          const imageElements = scene.filter((element) => element.type === 'image');
+          for (const element of imageElements) {
+            if (typeof element.src === 'string' && element.src.length > limits.maxImageDataUrlChars) {
+              throw new ArtifactCodecError('resource.imageTooLarge', polishArtifactMessage('resource.imageTooLarge'));
+            }
+          }
+          try {
+            const preload = options.preloadImages ?? ((elements, signal) =>
+              preloadCanvasImages(elements, { signal }));
+            await preload(imageElements, exportOptions.signal);
+          } catch (error) {
+            if (exportOptions.signal?.aborted || (error as DOMException)?.name === 'AbortError') {
+              throw new ArtifactCodecError('artifact.cancelled', polishArtifactMessage('artifact.cancelled'));
+            }
+            if (error instanceof ArtifactCodecError) throw error;
+            throw new ArtifactCodecError('artifact.decodeFailed', (error as Error).message || polishArtifactMessage('artifact.decodeFailed'));
+          }
+        }
         const pages: { dataUrl: string }[] = [];
         for (const tile of tiles) {
           if (exportOptions.signal?.aborted) break;
@@ -672,13 +696,22 @@ export const deliverPdfArtifact = async (artifact: ExportArtifact): Promise<'sha
   const isIOS =
     /iPad|iPhone|iPod/.test(navigator.userAgent) ||
     (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  let shareDenied = false;
   if (isIOS && typeof navigator.canShare === 'function' && navigator.canShare({ files: [file] })) {
-    await navigator.share({ files: [file], title: artifact.filename });
-    return 'share';
+    try {
+      await navigator.share({ files: [file], title: artifact.filename });
+      return 'share';
+    } catch (error) {
+      // PDF generation is asynchronous, so iOS may reject a later share call
+      // because the original click activation has expired. Fall back to a
+      // normal delivery path instead of leaving the user with no artifact.
+      if ((error as DOMException)?.name !== 'NotAllowedError') throw error;
+      shareDenied = true;
+    }
   }
   const url = URL.createObjectURL(blob);
   try {
-    if (isIOS) {
+    if (isIOS && !shareDenied) {
       window.open(url, '_blank');
       return 'tab';
     }

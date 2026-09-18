@@ -10,6 +10,60 @@ import { drawStyledPen } from './penStyles';
 
 // 1.2: Cache Rough.js instance per canvas (avoid recreating on every drawElement call)
 const roughCanvasCache = new WeakMap();
+// PDF export renders synchronously after the scene painter returns. Keep a
+// renderer-owned cache that can be warmed by ArtifactPipeline before that
+// first paint; individual whiteboards may still provide their own Map.
+const sharedImageCache = new Map();
+
+const imageSourcesIn = (elements) => [...new Set(
+  elements
+    .filter((element) => element?.type === 'image' && typeof element.src === 'string')
+    .map((element) => element.src)
+)];
+
+const loadCanvasImage = (src, signal, timeoutMs) => {
+  const cached = sharedImageCache.get(src);
+  if (cached?.complete && cached.naturalWidth > 0) return Promise.resolve(cached);
+  return new Promise((resolve, reject) => {
+    const image = cached || new Image();
+    let timer;
+    const cleanup = () => {
+      window.clearTimeout(timer);
+      signal?.removeEventListener('abort', onAbort);
+      image.onload = null;
+      image.onerror = null;
+    };
+    const fail = (error) => {
+      cleanup();
+      sharedImageCache.delete(src);
+      if (!image.complete) image.src = '';
+      reject(error);
+    };
+    const onAbort = () => fail(new DOMException('Image preload cancelled.', 'AbortError'));
+    timer = window.setTimeout(() => fail(new Error('Image preload timed out.')), timeoutMs);
+    image.onload = () => {
+      cleanup();
+      sharedImageCache.set(src, image);
+      resolve(image);
+    };
+    image.onerror = () => fail(new Error('Image preload failed.'));
+    signal?.addEventListener('abort', onAbort, { once: true });
+    if (!cached) {
+      sharedImageCache.set(src, image);
+      image.src = src;
+    }
+  });
+};
+
+/** Warm the same image cache used by drawElement before synchronous export. */
+export const preloadCanvasImages = async (elements, options = {}) => {
+  const sources = imageSourcesIn(elements);
+  await Promise.all(sources.map((src) => loadCanvasImage(
+    src,
+    options.signal,
+    options.timeoutMs ?? 12_000
+  )));
+};
 
 // Throttle function to limit the rate of function calls
 export const throttle = (fn, delay) => {
@@ -610,7 +664,7 @@ const drawImage = (context, element, imageCache, requestRedraw) => {
 
   if (!src || (posX === undefined || posY === undefined)) return;
 
-  let img = imageCache.get(src);
+  let img = imageCache?.get(src) || sharedImageCache.get(src);
   if (img) {
     if (img.complete && img.naturalWidth > 0) {
       context.drawImage(img, posX, posY, width, height);
@@ -619,7 +673,8 @@ const drawImage = (context, element, imageCache, requestRedraw) => {
     img = new Image();
     img.onload = () => requestRedraw && requestRedraw();
     img.src = src;
-    imageCache.set(src, img);
+    imageCache?.set(src, img);
+    sharedImageCache.set(src, img);
   }
 };
 

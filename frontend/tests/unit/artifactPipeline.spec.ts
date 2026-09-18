@@ -230,6 +230,51 @@ describe('ArtifactPipeline Interface', () => {
     });
   });
 
+  it('preloads renderer images before the first synchronous export paint', async () => {
+    const order: string[] = [];
+    const preloadImages = vi.fn(async (elements, signal) => {
+      expect(elements).toHaveLength(1);
+      expect(signal).toBeUndefined();
+      order.push('preload');
+    });
+    const pipeline = createArtifactPipeline({
+      codecs: fakeCodecs(),
+      drawScene: () => {
+        order.push('draw');
+      },
+      preloadImages,
+      renderTile: () => {
+        order.push('tile');
+        return 'data:image/jpeg;base64,AAA=';
+      }
+    });
+    await pipeline.export([
+      { id: 'image', type: 'image', src: 'data:image/png;base64,AA==', x: 0, y: 0, width: 20, height: 20 }
+    ], { mode: 'single' });
+    expect(preloadImages).toHaveBeenCalledTimes(1);
+    expect(order[0]).toBe('preload');
+    expect(order.indexOf('tile')).toBeGreaterThan(order.indexOf('preload'));
+  });
+
+  it('rejects an oversized renderer image before preload or paint', async () => {
+    const preloadImages = vi.fn(async () => {});
+    const renderTile = vi.fn(() => 'data:image/jpeg;base64,AAA=');
+    const pipeline = createArtifactPipeline({
+      codecs: fakeCodecs(),
+      drawScene: () => {},
+      preloadImages,
+      renderTile,
+      governor: createResourceGovernor({
+        limits: createResourceLimits({ maxImageDataUrlChars: 8 })
+      })
+    });
+    await expect(pipeline.export([
+      { id: 'image', type: 'image', src: 'data:image/png;base64,AA==', x: 0, y: 0, width: 20, height: 20 }
+    ], { mode: 'single' })).rejects.toMatchObject({ key: 'resource.imageTooLarge' });
+    expect(preloadImages).not.toHaveBeenCalled();
+    expect(renderTile).not.toHaveBeenCalled();
+  });
+
   it('refuses mutation while the session is read-only and still exports', async () => {
     const pipeline = createArtifactPipeline({
       codecs: fakeCodecs(),
@@ -276,6 +321,12 @@ describe('ArtifactPipeline Interface', () => {
       if (tag === 'a') Object.defineProperty(el, 'click', { value: click });
       return el;
     });
+    navigator.share = vi.fn(async () => {
+      throw new DOMException('User activation expired', 'NotAllowedError');
+    });
+    await expect(deliverPdfArtifact(artifact)).resolves.toBe('download');
+    expect(click).toHaveBeenCalled();
+
     Object.defineProperty(navigator, 'userAgent', {
       configurable: true,
       get: () => 'Mozilla/5.0 (Windows NT 10.0)'

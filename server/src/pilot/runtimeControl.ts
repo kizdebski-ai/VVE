@@ -483,6 +483,17 @@ export const createRuntimeControl = (options: RuntimeControlOptions = {}): Runti
     if (phase === 'draining') {
       throw new RuntimeControlFailure('invalid-configuration', 'Cannot start while draining.');
     }
+    // A bounded stop may return while a prior generation still owns a pool,
+    // listener, or persistence operation. Starting a replacement generation
+    // would overwrite the global DB binding and can mix late work with the new
+    // runtime. The process adapter exits after such a report; callers must
+    // create a fresh RuntimeControl instance instead of restarting in place.
+    if (phase === 'stopped' && lastShutdown && !lastShutdown.clean) {
+      throw new RuntimeControlFailure(
+        'drain-timeout',
+        'Cannot restart after an incomplete shutdown; the process must exit.'
+      );
+    }
 
     phase = 'starting';
     ready = false;

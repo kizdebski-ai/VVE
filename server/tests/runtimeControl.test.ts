@@ -526,6 +526,37 @@ describe('RuntimeControl process lifecycle', () => {
     expect(report.flushed).toBe(false);
   });
 
+  it('refuses an in-place restart after an incomplete stop', async () => {
+    let databaseCreations = 0;
+    const runtime = createRuntimeControl({
+      signals: createOperationalSignals({ emitJson: false }),
+      config: testConfig(),
+      createDatabase: () => {
+        databaseCreations += 1;
+        return fakeDb;
+      },
+      migrate: async () => undefined,
+      probe: async () => ({ database: true, persistence: true }),
+      createStore: () => new InMemoryBoardDocumentStore(),
+      createCollaboration: (store) => {
+        const inner = createCollaborationRuntime({ store });
+        return {
+          ...inner,
+          drain: () => new Promise<never>(() => {})
+        };
+      }
+    });
+
+    await runtime.start();
+    const report = await runtime.stop({
+      reason: 'restart safety',
+      deadline: new Date(Date.now() + 80)
+    });
+    expect(report.clean).toBe(false);
+    await expect(runtime.start()).rejects.toMatchObject({ kind: 'drain-timeout' });
+    expect(databaseCreations).toBe(1);
+  });
+
   it('aborts a slow drain at the shared deadline instead of waiting it out (108-R2)', async () => {
     const runtime = createRuntimeControl({
       signals: createOperationalSignals({ emitJson: false }),

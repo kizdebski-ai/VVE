@@ -2064,13 +2064,29 @@ body {
 
 }
 
-@media (max-width: 720px) {
+@media (max-width: 1100px) {
   .floating-user-info {
     top: max(12px, env(safe-area-inset-top, 0px));
     right: 12px;
-    max-width: calc(100vw - 24px);
+    max-width: calc(50vw - 48px);
     gap: 8px;
     padding: 7px 9px 7px 12px;
+  }
+
+  .username-container {
+    min-width: 0;
+  }
+
+  .username-static {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .user-count {
+    flex-shrink: 0;
+    margin-left: 0;
   }
 
   .username-input {

@@ -1,0 +1,29 @@
+{
+  "date": "2026-09-19",
+  "candidate": "caf4519 plus TopMenu/App layout corrections",
+  "environment": "Codex in-app Browser, local PostgreSQL-backed production runtime, synthetic fixture",
+  "viewports": [{"width":1440,"height":900},{"width":768,"height":1024}],
+  "verified": [
+    "Keyboard utility menu via Tab/Enter and End",
+    "PDF import rendered both fixture pages",
+    "PDF export invoked from explicit paged option and displayed success; IAB download event unavailable, output-file verification pending",
+    "Student link resolves Student after removing only local teacher test cookie",
+    "Student has no clear-board control",
+    "Student stroke appears on Teacher",
+    "Student undo removes own stroke and redo restores it",
+    "Teacher undo leaves Student stroke intact"
+  ],
+  "inputSample": {
+    "mode": "mouse emulation",
+    "samples": 69,
+    "eventToRenderP95Ms": 13.444444457691134,
+    "eventToDispatchP95Ms": 13.066666659382463,
+    "note": "Frame-correlated software measurement, not physical display presentation or Apple Pencil certification."
+  },
+  "remaining": [
+    "Complete lesson-tool workflow matrix",
+    "Download bytes verification",
+    "Reduced motion/transparency and enlarged layout",
+    "Physical Apple Pencil and graphics-tablet flow"
+  ]
+}

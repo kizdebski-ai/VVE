@@ -1,5 +1,5 @@
 <template>
-  <div class="top-menu-container" @mouseenter="handleMouseEnter" @mouseleave="handleMouseLeave">
+  <div class="top-menu-container">
 
     <transition name="fade">
       <button
@@ -106,7 +106,7 @@
     />
 
      <!-- Keyboard shortcuts info dialog -->
-    <div v-if="showShortcutsInfo" class="shortcuts-dialog glass-panel">
+    <div v-if="showShortcutsInfo" ref="shortcutsRef" class="shortcuts-dialog glass-panel" role="dialog" aria-label="Skróty klawiszowe">
        <div class="shortcuts-dialog-header">
         <h3>Skróty klawiszowe</h3>
          <button class="close-btn" aria-label="Zamknij skróty" @click="toggleShortcuts">
@@ -211,14 +211,13 @@ const can = (featureId) => featureAvailable(featureId, props.role);
 // Define emits
 const emit = defineEmits(['clear-canvas', 'toggle-feature', 'open-room-manager', 'export-whiteboard', 'export-pdf-single', 'export-pdf-paged', 'import-whiteboard', 'import-pdf', 'cycle-input-style']);
 
-// P0-FIX: Detect touch device and keep gear always visible on touch
-const showGear = ref(true);
 const showMenu = ref(false); // Controls menu visibility
 const showShortcutsInfo = ref(false);
 const showPdfMenu = ref(false);
 const isFullscreen = ref(false);
 const menuRef = ref(null);
 const gearRef = ref(null);
+const shortcutsRef = ref(null);
 
 const emitPdfExport = (mode) => {
   if (mode === 'single') {
@@ -226,7 +225,7 @@ const emitPdfExport = (mode) => {
   } else if (mode === 'paged') {
     emit('export-pdf-paged');
   }
-  showPdfMenu.value = false;
+  closeMenu();
 };
 
 const togglePdfMenu = () => {
@@ -264,20 +263,6 @@ onBeforeUnmount(() => {
   document.removeEventListener('keydown', handleDocumentKeydown);
 });
 
-// Hover can provide a small affordance cue, but it never owns reachability.
-const handleMouseEnter = () => {
-  showGear.value = true;
-};
-
-// Keep the explicit trigger visible. Touch and keyboard users must not depend on hover.
-const handleMouseLeave = () => {
-  showGear.value = true;
-};
-
-const cancelHide = () => {
-  showGear.value = true;
-};
-
 const toggleMenu = () => {
   showMenu.value = !showMenu.value;
   showPdfMenu.value = false;
@@ -301,6 +286,10 @@ const handleDocumentPointerdown = (event) => {
 
 const handleDocumentKeydown = (event) => {
   if (event.key !== 'Escape' || !showMenu.value) return;
+  if (showShortcutsInfo.value) {
+    toggleShortcuts();
+    return;
+  }
   if (showPdfMenu.value) {
     showPdfMenu.value = false;
     nextTick(() => menuRef.value?.querySelector('[aria-haspopup="menu"]')?.focus());
@@ -348,11 +337,10 @@ const toggleShortcuts = () => {
   showShortcutsInfo.value = !showShortcutsInfo.value;
   // Keep menu/gear visible when shortcuts dialog is open
   if (showShortcutsInfo.value) {
-      cancelHide();
-      showMenu.value = true; // Ensure menu stays open
-      showGear.value = true; // Ensure gear stays visible
+      showMenu.value = true;
+      nextTick(() => shortcutsRef.value?.querySelector('button')?.focus());
   } else {
-      nextTick(() => menuRef.value?.querySelector('button')?.focus());
+      nextTick(() => menuRef.value?.querySelector('[title="Skróty klawiszowe"]')?.focus());
   }
 };
 
@@ -393,8 +381,8 @@ const openRoomManager = () => {
 .gear-btn {
   /* Uses global glass-panel class for bg/blur */
   border-radius: 50%;
-  width: 40px;
-  height: 40px;
+  width: 44px;
+  height: 44px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -416,7 +404,7 @@ const openRoomManager = () => {
 }
 
 .top-menu {
-  margin-top: 8px;
+  margin-top: 24px;
   padding: 8px;
   display: flex;
   flex-wrap: wrap;
@@ -444,6 +432,7 @@ const openRoomManager = () => {
   border: 1px solid transparent;
   font-size: 13px;
   font-weight: 500;
+  min-height: 44px;
 }
 
 .menu-btn:hover {
@@ -473,16 +462,15 @@ const openRoomManager = () => {
 }
 
 .pdf-menu-wrapper {
-  position: relative;
+  display: contents;
 }
 
 .pdf-dropdown {
-  position: absolute;
-  top: 110%;
-  left: 0;
-  min-width: 200px;
+  flex: 1 0 100%;
+  min-width: 0;
   display: flex;
-  flex-direction: column;
+  flex-wrap: wrap;
+  justify-content: center;
   gap: 6px;
   padding: 8px;
   z-index: 5;
@@ -490,6 +478,8 @@ const openRoomManager = () => {
 }
 
 .pdf-option {
+  flex: 1 1 220px;
+  min-height: 44px;
   text-align: left;
   padding: 8px 10px;
   border-radius: var(--radius-sm);
@@ -626,18 +616,8 @@ const openRoomManager = () => {
     display: none;
   }
 
-  .pdf-menu-wrapper {
-    flex: 1 1 132px;
-  }
-
   .pdf-menu-wrapper > .menu-btn {
-    width: 100%;
-  }
-
-  .pdf-dropdown {
-    left: auto;
-    right: 0;
-    min-width: min(280px, calc(100vw - 24px));
+    flex: 1 1 132px;
   }
 }
 

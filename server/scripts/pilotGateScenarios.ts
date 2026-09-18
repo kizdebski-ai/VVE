@@ -208,7 +208,7 @@ export const MATURE_PRETELEMETRY_PRESET = Object.freeze({
 
 const boundedCanonicalObjects = (imageDataUrl: string, count: number): SceneObject[] => {
   const base = canonicalObjects(imageDataUrl);
-  const shapeTypes = ['rectangle', 'ellipse', 'triangle', 'diamond', 'trapezoid'] as const;
+    const shapeTypes = ['rectangle', 'circle', 'triangle', 'diamond', 'trapezoid'] as const;
   for (let index = base.length; index < count; index += 1) {
     const type = shapeTypes[index % shapeTypes.length]!;
     base.push(objectFor(`mature-shape-${index}`, index + 1, type));
@@ -274,7 +274,7 @@ export const runMatureBoardScenario = async (
         activeIds.delete(deleted);
         coverage.deletes += 1;
         acceptedOperations += 1;
-        const replacement = objectFor(`mature-replacement-${index}`, index + 100, index % 2 ? 'rectangle' : 'ellipse');
+        const replacement = objectFor(`mature-replacement-${index}`, index + 100, index % 2 ? 'rectangle' : 'circle');
         await requireApplied(client, { kind: 'add', object: replacement });
         activeIds.add(replacement.id);
         acceptedOperations += 1;

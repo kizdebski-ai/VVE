@@ -94,7 +94,7 @@ const scaleForPixels = (width: number, height: number, maxPixels: number, prefer
   const area = Math.max(1, width * height);
   const atPreferred = area * preferred * preferred;
   if (atPreferred <= maxPixels) return preferred;
-  return Math.max(0.25, Math.sqrt(maxPixels / area));
+  return Math.sqrt(maxPixels / area);
 };
 
 const fitDisplay = (width: number, height: number): { width: number; height: number } => {
@@ -313,11 +313,15 @@ export const createArtifactPipeline = (
   options: CreateArtifactPipelineOptions = {}
 ): ArtifactPipeline => {
   const governor = options.governor ?? createResourceGovernor();
-  const codecs = options.codecs ?? createBrowserArtifactCodecs();
+  const codecs = options.codecs ?? createBrowserArtifactCodecs({
+    maxDecodedPixels: governor.limits().maxDecodedPixelsPerImage,
+    maxPdfPages: governor.limits().maxPdfPages
+  });
   const clientKey = options.clientKey ?? 'local';
   const limits = governor.limits();
 
-  const planImport = async (source: ImportSource): Promise<ImportPlan> => {
+  const planImport = async (source: ImportSource, signal?: AbortSignal): Promise<ImportPlan> => {
+    if (signal?.aborted) throw new ArtifactCodecError('artifact.cancelled', polishArtifactMessage('artifact.cancelled'));
     const detected = detectArtifactFormat(source.bytes, source.declaredMime);
     if (!detected.ok) {
       throw new ArtifactCodecError(detected.key, polishArtifactMessage(detected.key));
@@ -329,7 +333,7 @@ export const createArtifactPipeline = (
       }
       let pages: { width: number; height: number }[];
       try {
-        pages = (await codecs.inspectPdf(source.bytes)).pages;
+        pages = (await codecs.inspectPdf(source.bytes, signal)).pages;
       } catch (error) {
         if (error instanceof ArtifactCodecError) throw error;
         throw new ArtifactCodecError('artifact.malformed', polishArtifactMessage('artifact.malformed'));
@@ -337,7 +341,7 @@ export const createArtifactPipeline = (
       if (pages.length > limits.maxPdfPages) {
         throw new ArtifactCodecError('resource.pdfTooManyPages', polishArtifactMessage('resource.pdfTooManyPages'));
       }
-      if (!pages.length) {
+      if (!pages.length || pages.some((page) => !Number.isFinite(page.width) || !Number.isFinite(page.height) || page.width <= 0 || page.height <= 0)) {
         throw new ArtifactCodecError('artifact.malformed', polishArtifactMessage('artifact.malformed'));
       }
       return {
@@ -348,7 +352,7 @@ export const createArtifactPipeline = (
         pageCount: pages.length,
         pages: pages.map((page, index) => ({ index, width: page.width, height: page.height })),
         bestEffort: false,
-        bytes: source.bytes
+        bytes: source.bytes.slice()
       };
     }
     if (source.bytes.byteLength > limits.maxEncodedImageBytes) {
@@ -362,7 +366,7 @@ export const createArtifactPipeline = (
       pageCount: 1,
       pages: [{ index: 0, width: 0, height: 0 }],
       bestEffort: detected.bestEffort,
-      bytes: source.bytes
+      bytes: source.bytes.slice()
     };
   };
 
@@ -371,6 +375,8 @@ export const createArtifactPipeline = (
     target: ImportTarget,
     signal?: AbortSignal
   ): AsyncGenerator<ArtifactProgress> {
+    // Each running import owns its decoder identity; identical inputs never share disposal.
+    const bytes = plan.bytes.slice();
     const total = plan.pageCount;
     const objectIds: string[] = [];
     let committed = 0;
@@ -440,12 +446,12 @@ export const createArtifactPipeline = (
             const scale = scaleForPixels(
               page?.width || 1,
               page?.height || 1,
-              limits.maxDecodedPixelsPerImage
+              Math.min(limits.maxDecodedPixelsPerImage, Math.floor(limits.maxPdfTotalPixels / total))
             );
-            raster = await codecs.renderPdfPage(plan.bytes, index, scale, signal);
+            raster = await codecs.renderPdfPage(bytes, index, scale, signal);
           } else {
             raster = await codecs.decodeImage(
-              plan.bytes,
+              bytes,
               plan.mime,
               signal,
               limits.maxDecodedPixelsPerImage
@@ -545,7 +551,7 @@ export const createArtifactPipeline = (
       finishJob();
       if (plan.kind === 'pdf') {
         try {
-          await codecs.releasePdf?.(plan.bytes);
+          await codecs.releasePdf?.(bytes);
         } catch {
           // ignore
         }
@@ -563,6 +569,9 @@ export const createArtifactPipeline = (
       const bounds = boundsForScene(scene);
       if (!bounds) {
         throw new ArtifactCodecError('artifact.emptyExport', polishArtifactMessage('artifact.emptyExport'));
+      }
+      if (PAGE_PX.w * PAGE_PX.h > limits.maxExportTilePixels) {
+        throw new ArtifactCodecError('resource.exportTooLarge', polishArtifactMessage('resource.exportTooLarge'));
       }
       const job = governor.admit(
         {
@@ -610,7 +619,10 @@ export const createArtifactPipeline = (
         if (!pages.length) {
           throw new ArtifactCodecError('artifact.emptyExport', polishArtifactMessage('artifact.emptyExport'));
         }
-        const bytes = await codecs.writePdf(pages, { labels: exportOptions.mode === 'paged' });
+        const bytes = await codecs.writePdf(pages, { labels: exportOptions.mode === 'paged', signal: exportOptions.signal });
+        if (exportOptions.signal?.aborted) {
+          throw new ArtifactCodecError('artifact.cancelled', polishArtifactMessage('artifact.cancelled'));
+        }
         return {
           bytes,
           mime: 'application/pdf',

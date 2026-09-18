@@ -601,21 +601,31 @@ export default {
     const runArtifactImport = async (bytes, fileName, declaredMime, origin) => {
       if (!canMutateDocument()) return denyReadOnlyMutation();
       artifactAbort?.abort();
-      artifactAbort = new AbortController();
+      const controller = new AbortController();
+      artifactAbort = controller;
+      artifactProgress.visible = true;
+      artifactProgress.message = 'Odczytywanie materiału…';
+      artifactProgress.current = 0;
+      artifactProgress.total = 1;
+      artifactProgress.cancellable = true;
       try {
-        const plan = await artifactPipeline.planImport({ bytes, fileName, declaredMime });
+        const plan = await artifactPipeline.planImport({ bytes, fileName, declaredMime }, controller.signal);
+        if (controller.signal.aborted) return null;
         let last = null;
-        for await (const event of artifactPipeline.import(plan, artifactTarget(origin), artifactAbort.signal)) {
+        for await (const event of artifactPipeline.import(plan, artifactTarget(origin), controller.signal)) {
           last = event;
-          applyArtifactProgress(event);
+          if (artifactAbort === controller) applyArtifactProgress(event);
         }
         return last;
       } catch (error) {
+        if (artifactAbort !== controller) return null;
         const key = error instanceof ArtifactCodecError ? error.key : 'artifact.importFailed';
         const message = error instanceof ArtifactCodecError ? error.message : polishArtifactMessage(key);
         showToast(message, 'error', 4000);
         resetArtifactProgress();
         return null;
+      } finally {
+        if (artifactAbort === controller && controller.signal.aborted) resetArtifactProgress();
       }
     };
     const importArtifactFile = async (file) => {
@@ -630,7 +640,8 @@ export default {
     const exportBoardWithPipeline = async (mode) => {
       const elements = session.value?.snapshot() ?? [];
       artifactAbort?.abort();
-      artifactAbort = new AbortController();
+      const controller = new AbortController();
+      artifactAbort = controller;
       artifactProgress.visible = true;
       artifactProgress.message = 'Przygotowywanie PDF…';
       artifactProgress.current = 0;
@@ -639,18 +650,20 @@ export default {
       try {
         const artifact = await artifactPipeline.export(elements, {
           mode,
-          signal: artifactAbort.signal
+          signal: controller.signal
         });
+        if (controller.signal.aborted || artifactAbort !== controller) return;
         await deliverPdfArtifact(artifact);
         showToast(mode === 'paged' ? 'Wyeksportowano notatki do PDF.' : 'Wyeksportowano tablicę do PDF.', 'success');
       } catch (error) {
+        if (artifactAbort !== controller) return;
         const message =
           error instanceof ArtifactCodecError
             ? error.message
             : polishArtifactMessage('artifact.exportFailed');
         showToast(message, 'error', 4000);
       } finally {
-        resetArtifactProgress();
+        if (artifactAbort === controller) resetArtifactProgress();
       }
     };
     const exportBoardAsPdf = () => exportBoardWithPipeline('single');
@@ -1208,7 +1221,6 @@ export default {
         rafId = requestAnimationFrame(renderLoop);
         
         if (!redrawStaticNeeded && !redrawDynamicNeeded) {
-            flushInputPaintSamples();
             return;
         }
 
@@ -1773,7 +1785,6 @@ export default {
             lastMouseCoords.value = intent.world;
             updateLocalAwarenessCursor(intent.world);
             recordInputDispatch(intent.timeStamp);
-            queueInputPaintSample(intent.timeStamp);
             if (activeConfigPanel.value) break;
             if (!canMutateDocument()) {
               denyReadOnlyMutation();
@@ -1822,30 +1833,34 @@ export default {
               tiltX: intent.tiltX,
               tiltY: intent.tiltY
             });
+            if (isDrawing.value && currentElementPreview.value) {
+              queueInputPaintSample(intent.timeStamp);
+              redrawCanvas(false);
+            }
             break;
           }
           case 'drawUpdate': {
             lastMouseCoords.value = intent.world;
             updateLocalAwarenessCursor(intent.world);
             recordInputDispatch(intent.timeStamp);
-            queueInputPaintSample(intent.timeStamp);
             if (activeConfigPanel.value || !canMutateDocument()) break;
             if (currentTool.value === 'eraser') {
               const hit = hitTestAt(intent.world);
               setEraserHover(hit?.id);
               if (isDrawing.value && hit?.id) eraseElement(hit.id);
-            } else {
+            } else if (isDrawing.value) {
               draw(
                 { ...intent.world, p: intent.pressure, tiltX: intent.tiltX, tiltY: intent.tiltY },
                 intent.shiftKey === true,
                 intent.timeStamp
               );
+              if (currentElementPreview.value) queueInputPaintSample(intent.timeStamp);
             }
             break;
           }
           case 'drawFinish': {
             recordInputDispatch(intent.timeStamp);
-            queueInputPaintSample(intent.timeStamp);
+            const paintedDrawing = canMutateDocument() && isDrawing.value && currentElementPreview.value;
             if (currentTool.value === 'eraser') {
               isDrawing.value = false;
             } else if (canMutateDocument()) {
@@ -1855,10 +1870,12 @@ export default {
               currentElementPreview.value = null;
             }
             snapIndicator.value = null;
+            if (paintedDrawing) queueInputPaintSample(intent.timeStamp);
             redrawCanvas(true);
             break;
           }
           case 'drawCancel': {
+            pendingFramePaintTimestamps.length = 0;
             cancelActiveDrawing();
             isDrawing.value = false;
             snapIndicator.value = null;

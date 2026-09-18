@@ -4,6 +4,7 @@
  * Injected so Module tests can substitute deterministic rasters.
  */
 import { polishArtifactMessage, type ArtifactMessageKey } from '@pilot/artifactContract';
+import { imageDimensions } from './imageDimensions';
 
 export class ArtifactCodecError extends Error {
   constructor(readonly key: ArtifactMessageKey, message: string) {
@@ -49,7 +50,7 @@ export interface ArtifactCodecs {
     signal?: AbortSignal,
     maxPixels?: number
   ): Promise<RasterPage>;
-  writePdf(pages: { dataUrl: string }[], options?: { labels?: boolean }): Promise<Uint8Array>;
+  writePdf(pages: { dataUrl: string }[], options?: { labels?: boolean; signal?: AbortSignal }): Promise<Uint8Array>;
   releasePdf?(bytes: Uint8Array): Promise<void>;
 }
 
@@ -120,89 +121,80 @@ const rasterFromCanvas = (
   };
 };
 
-const computePdfHash = async (bytes: Uint8Array): Promise<string> => {
-  if (typeof crypto !== 'undefined' && crypto?.subtle?.digest) {
-    try {
-      const digest = await crypto.subtle.digest('SHA-256', bytes);
-      return Array.from(new Uint8Array(digest))
-        .map((b) => b.toString(16).padStart(2, '0'))
-        .join('');
-    } catch {
-      // fallback
-    }
-  }
-  let h1 = 0x811c9dc5;
-  let h2 = 0xcbf29ce4;
-  const step = Math.max(1, Math.floor(bytes.length / 64));
-  for (let i = 0; i < bytes.length; i += step) {
-    h1 = Math.imul(h1 ^ bytes[i], 0x01000193);
-    h2 = Math.imul(h2 ^ bytes[i], 0x01000193);
-  }
-  return `${bytes.byteLength}:${(h1 >>> 0).toString(16)}:${(h2 >>> 0).toString(16)}`;
-};
-
 export const createBrowserArtifactCodecs = (
-  options?: { maxDecodedPixels?: number }
+  options?: { maxDecodedPixels?: number; maxPdfPages?: number }
 ): ArtifactCodecs => {
-  const pdfDocuments = new Map<string, Promise<any>>();
+  // The pipeline supplies a private byte array for each import. Ownership is
+  // by job identity, never content hash: equal files can be imported concurrently.
+  const pdfDocuments = new Map<Uint8Array, {
+    promise: Promise<import('pdfjs-dist').PDFDocumentProxy>;
+    dispose: () => Promise<void>;
+  }>();
   const defaultMaxPixels = options?.maxDecodedPixels ?? 16_000_000;
+
+  const releasePdf = async (bytes: Uint8Array) => {
+    const record = pdfDocuments.get(bytes);
+    if (!record) return;
+    pdfDocuments.delete(bytes);
+    await record.dispose();
+  };
 
   const loadPdf = async (bytes: Uint8Array, signal?: AbortSignal) => {
     throwIfAborted(signal);
-    const key = await computePdfHash(bytes);
-    throwIfAborted(signal);
-    let pending = pdfDocuments.get(key);
-    if (!pending) {
-      pending = (async () => {
-        const pdfjsLib = await loadPdfjs();
-        try {
-          return await pdfjsLib.getDocument({ data: bytesToBuffer(bytes) }).promise;
-        } catch (error) {
-          const message = (error as Error).message || '';
-          if (/password|encrypt/i.test(message)) {
-            throw new ArtifactCodecError('artifact.encrypted', message);
-          }
-          throw new ArtifactCodecError('artifact.malformed', message || 'Malformed PDF.');
+    let record = pdfDocuments.get(bytes);
+    if (!record) {
+      const loading = loadPdfjs().then((pdfjs) => {
+        throwIfAborted(signal);
+        return pdfjs.getDocument({ data: bytesToBuffer(bytes) });
+      });
+      let onAbort = () => {};
+      const cancelled = new Promise<never>((_resolve, reject) => {
+        onAbort = () => {
+          reject(new ArtifactCodecError('artifact.cancelled', 'PDF loading cancelled.'));
+          void releasePdf(bytes).catch(() => {});
+        };
+        signal?.addEventListener('abort', onAbort, { once: true });
+      });
+      record = {
+        promise: Promise.race([loading.then((task) => task.promise), cancelled]),
+        dispose: async () => {
+          signal?.removeEventListener('abort', onAbort);
+          await (await loading).destroy();
         }
-      })();
-      pdfDocuments.set(key, pending);
+      };
+      pdfDocuments.set(bytes, record);
     }
     try {
-      return await pending;
+      return await record.promise;
     } catch (error) {
-      pdfDocuments.delete(key);
-      throw error;
-    }
-  };
-
-  const releasePdf = async (bytes: Uint8Array) => {
-    try {
-      const key = await computePdfHash(bytes);
-      const pending = pdfDocuments.get(key);
-      if (pending) {
-        pdfDocuments.delete(key);
-        const pdf = await pending;
-        if (typeof pdf?.destroy === 'function') {
-          await pdf.destroy();
-        }
-      }
-    } catch {
-      // ignore
+      await releasePdf(bytes).catch(() => {});
+      if (signal?.aborted) throw new ArtifactCodecError('artifact.cancelled', 'PDF loading cancelled.');
+      if (error instanceof ArtifactCodecError) throw error;
+      const message = (error as Error).message || '';
+      throw new ArtifactCodecError(/password|encrypt/i.test(message) ? 'artifact.encrypted' : 'artifact.malformed', message || 'Malformed PDF.');
     }
   };
 
   return {
     inspectPdf: async (bytes, signal) => {
-      const pdf = await loadPdf(bytes, signal);
-      throwIfAborted(signal);
-      const pages: { width: number; height: number }[] = [];
-      for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+      try {
+        const pdf = await loadPdf(bytes, signal);
         throwIfAborted(signal);
-        const page = await pdf.getPage(pageNumber);
-        const viewport = page.getViewport({ scale: 1 });
-        pages.push({ width: viewport.width, height: viewport.height });
+        if (pdf.numPages > (options?.maxPdfPages ?? 40)) {
+          throw new ArtifactCodecError('resource.pdfTooManyPages', polishArtifactMessage('resource.pdfTooManyPages'));
+        }
+        const pages: { width: number; height: number }[] = [];
+        for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+          throwIfAborted(signal);
+          const page = await pdf.getPage(pageNumber);
+          const viewport = page.getViewport({ scale: 1 });
+          pages.push({ width: viewport.width, height: viewport.height });
+          page.cleanup();
+        }
+        return { pages };
+      } finally {
+        await releasePdf(bytes).catch(() => {});
       }
-      return { pages };
     },
 
     renderPdfPage: async (bytes, pageIndex, scale, signal) => {
@@ -211,9 +203,16 @@ export const createBrowserArtifactCodecs = (
       const page = await pdf.getPage(pageIndex + 1);
       const base = page.getViewport({ scale: 1 });
       const viewport = page.getViewport({ scale });
+      // Validate the real viewport before any canvas backing store is allocated.
+      const width = Math.max(1, Math.floor(viewport.width));
+      const height = Math.max(1, Math.floor(viewport.height));
+      if (!Number.isFinite(width) || !Number.isFinite(height) || viewport.width <= 0 || viewport.height <= 0 || width * height > defaultMaxPixels) {
+        throw new ArtifactCodecError('resource.imageTooLarge', polishArtifactMessage('resource.imageTooLarge'));
+      }
+      throwIfAborted(signal);
       const canvas = document.createElement('canvas');
-      canvas.width = Math.max(1, Math.round(viewport.width));
-      canvas.height = Math.max(1, Math.round(viewport.height));
+      canvas.width = width;
+      canvas.height = height;
       const ctx = canvas.getContext('2d', { alpha: false });
       if (!ctx) {
         releaseCanvas(canvas);
@@ -259,23 +258,37 @@ export const createBrowserArtifactCodecs = (
 
     decodeImage: async (bytes, mime, signal, maxPixels) => {
       throwIfAborted(signal);
+      const dimensions = imageDimensions(bytes, mime);
+      const limitPixels = maxPixels ?? defaultMaxPixels;
+      if (dimensions && (!dimensions.width || !dimensions.height || dimensions.width * dimensions.height > limitPixels)) {
+        throw new ArtifactCodecError('resource.imageTooLarge', polishArtifactMessage('resource.imageTooLarge'));
+      }
       const blob = new Blob([bytesToBuffer(bytes)], { type: mime });
       const objectUrl = URL.createObjectURL(blob);
       try {
         const img = await new Promise<HTMLImageElement>((resolve, reject) => {
           const image = new Image();
-          const timer = window.setTimeout(() => {
+          const cleanup = () => {
+            window.clearTimeout(timer);
+            signal?.removeEventListener('abort', onAbort);
+            image.onload = null;
+            image.onerror = null;
+          };
+          const fail = (error: ArtifactCodecError) => {
+            cleanup();
             image.src = '';
-            reject(new ArtifactCodecError('artifact.decodeFailed', 'Image decode timed out.'));
+            reject(error);
+          };
+          const onAbort = () => fail(new ArtifactCodecError('artifact.cancelled', 'Image decoding cancelled.'));
+          const timer = window.setTimeout(() => {
+            fail(new ArtifactCodecError('artifact.decodeFailed', 'Image decode timed out.'));
           }, 12_000);
           image.onload = () => {
-            window.clearTimeout(timer);
+            cleanup();
             resolve(image);
           };
-          image.onerror = () => {
-            window.clearTimeout(timer);
-            reject(new ArtifactCodecError('artifact.decodeFailed', 'Image decode failed.'));
-          };
+          image.onerror = () => fail(new ArtifactCodecError('artifact.decodeFailed', 'Image decode failed.'));
+          signal?.addEventListener('abort', onAbort, { once: true });
           image.src = objectUrl;
         });
         throwIfAborted(signal);
@@ -285,7 +298,6 @@ export const createBrowserArtifactCodecs = (
           throw new ArtifactCodecError('artifact.decodeFailed', 'Image has no dimensions.');
         }
         const pixels = width * height;
-        const limitPixels = maxPixels ?? defaultMaxPixels;
         if (pixels > limitPixels) {
           img.src = '';
           throw new ArtifactCodecError(
@@ -311,18 +323,23 @@ export const createBrowserArtifactCodecs = (
     },
 
     writePdf: async (pages, options) => {
+      throwIfAborted(options?.signal);
       const { jsPDF } = await import('jspdf');
+      throwIfAborted(options?.signal);
       const pdf = new jsPDF('portrait', 'pt', 'a4');
       const pageW = pdf.internal.pageSize.getWidth();
       const pageH = pdf.internal.pageSize.getHeight();
-      pages.forEach((page, index) => {
+      for (const [index, page] of pages.entries()) {
+        throwIfAborted(options?.signal);
         if (index > 0) pdf.addPage();
         pdf.addImage(page.dataUrl, 'JPEG', 0, 0, pageW, pageH, undefined, 'FAST');
         if (options?.labels) {
           pdf.setFontSize(10);
           pdf.text(`Strona ${index + 1}`, pageW - 72, pageH - 18);
         }
-      });
+        await yieldToEventLoop();
+      }
+      throwIfAborted(options?.signal);
       const output = pdf.output('arraybuffer');
       return new Uint8Array(output);
     },

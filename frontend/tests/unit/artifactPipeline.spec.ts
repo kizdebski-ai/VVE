@@ -353,4 +353,79 @@ describe('ArtifactPipeline Interface', () => {
       key: 'resource.pdfTooManyPages'
     });
   });
+  it('bounds a huge PDF page before allocating its raster', async () => {
+    const pages = [{ width: 1_000_000, height: 1_000_000 }];
+    const codecs = fakeCodecs(pages);
+    let allocatedPixels = 0;
+    codecs.renderPdfPage = async (_bytes, _index, scale) => {
+      const edge = Math.max(1, Math.floor(pages[0].width * scale));
+      allocatedPixels = edge * edge;
+      return raster('small', edge, edge);
+    };
+    const pipeline = createArtifactPipeline({ codecs });
+    const plan = await pipeline.planImport({ bytes: new TextEncoder().encode('%PDF-1.4') });
+    for await (const _ of pipeline.import(plan, {
+      origin: { x: 0, y: 0 }, newObjectId: () => 'page',
+      isEditable: () => true, addImage: () => ({ ok: true })
+    })) { /* consume */ }
+    expect(allocatedPixels).toBeLessThanOrEqual(16_000_000);
+  });
+
+  it('keeps the complete PDF within the aggregate raster budget', async () => {
+    const pages = Array.from({ length: 4 }, () => ({ width: 10_000, height: 10_000 }));
+    const codecs = fakeCodecs(pages);
+    let totalPixels = 0;
+    codecs.renderPdfPage = async (_bytes, _index, scale) => {
+      const edge = Math.floor(10_000 * scale);
+      totalPixels += edge * edge;
+      return raster('page', edge, edge);
+    };
+    const pipeline = createArtifactPipeline({ codecs, governor: createResourceGovernor({
+      limits: createResourceLimits({ maxPdfTotalPixels: 4_000_000 })
+    }) });
+    const plan = await pipeline.planImport({ bytes: new TextEncoder().encode('%PDF-1.4') });
+    for await (const _ of pipeline.import(plan, {
+      origin: { x: 0, y: 0 }, newObjectId: () => 'page',
+      isEditable: () => true, addImage: () => ({ ok: true })
+    })) { /* consume */ }
+    expect(totalPixels).toBeLessThanOrEqual(4_000_000);
+  });
+
+  it('rejects an export tile above its configured pixel budget before rendering', async () => {
+    const renderTile = vi.fn(() => 'data:image/jpeg;base64,AAA=');
+    const pipeline = createArtifactPipeline({
+      codecs: fakeCodecs(), renderTile,
+      governor: createResourceGovernor({ limits: createResourceLimits({ maxExportTilePixels: 100_000 }) })
+    });
+    await expect(pipeline.export([
+      { type: 'rectangle', x: 0, y: 0, width: 10, height: 10 }
+    ], { mode: 'single' })).rejects.toMatchObject({ key: 'resource.exportTooLarge' });
+    expect(renderTile).not.toHaveBeenCalled();
+  });
+
+  it('does not deliver bytes when cancellation arrives during PDF serialization', async () => {
+    const abort = new AbortController();
+    const codecs = fakeCodecs();
+    codecs.writePdf = async () => {
+      abort.abort();
+      return new Uint8Array([1]);
+    };
+    const pipeline = createArtifactPipeline({ codecs, renderTile: () => 'data:image/jpeg;base64,AAA=' });
+    await expect(pipeline.export([
+      { type: 'rectangle', x: 0, y: 0, width: 10, height: 10 }
+    ], { mode: 'single', signal: abort.signal })).rejects.toMatchObject({ key: 'artifact.cancelled' });
+  });
+
+  it('passes planning cancellation into the PDF decoder', async () => {
+    const abort = new AbortController();
+    const codecs = fakeCodecs();
+    codecs.inspectPdf = vi.fn(async (_bytes, signal) => {
+      expect(signal).toBe(abort.signal);
+      throw new ArtifactCodecError('artifact.cancelled', 'cancelled');
+    });
+    const pipeline = createArtifactPipeline({ codecs });
+    await expect(pipeline.planImport({ bytes: new TextEncoder().encode('%PDF-1.4') }, abort.signal))
+      .rejects.toMatchObject({ key: 'artifact.cancelled' });
+  });
+
 });

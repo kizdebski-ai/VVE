@@ -207,7 +207,7 @@ export const detectArtifactFormat = (bytes: Uint8Array, declaredMime?: string): 
 };
 
 export interface ArtifactPipeline {
-  planImport(source: ImportSource): Promise<ImportPlan>;
+  planImport(source: ImportSource, signal?: AbortSignal): Promise<ImportPlan>;
   import(plan: ImportPlan, target: ImportTarget, signal?: AbortSignal): AsyncIterable<ArtifactProgress>;
   export(
     scene: readonly Record<string, unknown>[],

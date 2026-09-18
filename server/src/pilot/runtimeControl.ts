@@ -486,8 +486,9 @@ export const createRuntimeControl = (options: RuntimeControlOptions = {}): Runti
     // A bounded stop may return while a prior generation still owns a pool,
     // listener, or persistence operation. Starting a replacement generation
     // would overwrite the global DB binding and can mix late work with the new
-    // runtime. The process adapter exits after such a report; callers must
-    // create a fresh RuntimeControl instance instead of restarting in place.
+    // runtime. The process adapter exits after such a report; the next
+    // generation must be created by a fresh process instead of restarting in
+    // place.
     if (phase === 'stopped' && lastShutdown && !lastShutdown.clean) {
       throw new RuntimeControlFailure(
         'drain-timeout',

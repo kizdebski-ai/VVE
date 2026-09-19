@@ -12,6 +12,12 @@ vi.mock('@/utils/canvasDrawing', () => ({
 
 import MovableObject from '@/components/MovableObject.vue';
 
+const dispatchPointer = (target, type, coords) => {
+  const event = new PointerEvent(type, { bubbles: true, cancelable: true, ...coords });
+  target.dispatchEvent(event);
+  return event;
+};
+
 const buildLineObject = () => {
   const doc = new Y.Doc();
   const drawings = doc.getArray('drawings');
@@ -83,6 +89,34 @@ describe('MovableObject line rendering regression (VVE-106)', () => {
     expect(painted.lineStyle).toBe('dotted');
     expect(painted.arrowStyle).toBe('end');
     expect(painted.roughness).toBe(1);
+
+    wrapper.unmount();
+  });
+
+  it('routes a pointer from the expanded endpoint hit area to line resizing', async () => {
+    const object = buildLineObject();
+    const wrapper = mount(MovableObject, {
+      props: {
+        object,
+        isSelected: true,
+        zoomLevel: 1,
+        panOffset: { x: 0, y: 0 },
+      },
+    });
+    await flushPromises();
+
+    const hitArea = wrapper.get('.line-start-handle .line-end-hit-area');
+    await hitArea.trigger('pointerdown', { clientX: 100, clientY: 200, button: 0 });
+    dispatchPointer(document, 'pointermove', { clientX: 112, clientY: 216, buttons: 1 });
+    dispatchPointer(document, 'pointerup', { button: 0 });
+    await flushPromises();
+
+    expect(wrapper.emitted('commit-transform')).toEqual([[expect.objectContaining({
+      kind: 'line-endpoints',
+      id: 'line-1',
+      start: { x: 112, y: 216 },
+      end: { x: 400, y: 350 },
+    })]]);
 
     wrapper.unmount();
   });

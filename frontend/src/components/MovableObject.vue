@@ -14,7 +14,9 @@
       v-if="isSelected && !isLineType"
       class="rotation-handle"
       @pointerdown.stop="startRotate"
-    ></div>
+    >
+      <span class="rotation-hit-area" aria-hidden="true"></span>
+    </div>
 
     <!-- Line Endpoint Handles -->
     <div v-if="isSelected && isLineType" class="line-handles">
@@ -22,24 +24,68 @@
         class="line-end-handle line-start-handle"
         :style="lineHandlePositions.start"
         @pointerdown.stop="startLineEndpointDrag($event, 'start')"
-      ></div>
+      >
+        <span class="line-end-hit-area" aria-hidden="true"></span>
+      </div>
       <div
         class="line-end-handle line-terminal-handle"
         :style="lineHandlePositions.end"
         @pointerdown.stop="startLineEndpointDrag($event, 'end')"
-      ></div>
+      >
+        <span class="line-end-hit-area" aria-hidden="true"></span>
+      </div>
     </div>
 
     <!-- Resize Handles -->
     <div v-else-if="isSelected" class="resize-handles">
-      <div class="resize-handle nw-handle" @pointerdown.stop="startResize($event, 'nw')"></div>
-      <div class="resize-handle n-handle" @pointerdown.stop="startResize($event, 'n')"></div>
-      <div class="resize-handle ne-handle" @pointerdown.stop="startResize($event, 'ne')"></div>
-      <div class="resize-handle w-handle" @pointerdown.stop="startResize($event, 'w')"></div>
-      <div class="resize-handle e-handle" @pointerdown.stop="startResize($event, 'e')"></div>
-      <div class="resize-handle sw-handle" @pointerdown.stop="startResize($event, 'sw')"></div>
-      <div class="resize-handle s-handle" @pointerdown.stop="startResize($event, 's')"></div>
-      <div class="resize-handle se-handle" @pointerdown.stop="startResize($event, 'se')"></div>
+      <div
+        class="resize-handle nw-handle"
+        @pointerdown.stop="startResize($event, 'nw')"
+      >
+        <span class="resize-hit-area" aria-hidden="true"></span>
+      </div>
+      <div
+        class="resize-handle n-handle"
+        @pointerdown.stop="startResize($event, 'n')"
+      >
+        <span class="resize-hit-area" aria-hidden="true"></span>
+      </div>
+      <div
+        class="resize-handle ne-handle"
+        @pointerdown.stop="startResize($event, 'ne')"
+      >
+        <span class="resize-hit-area" aria-hidden="true"></span>
+      </div>
+      <div
+        class="resize-handle w-handle"
+        @pointerdown.stop="startResize($event, 'w')"
+      >
+        <span class="resize-hit-area" aria-hidden="true"></span>
+      </div>
+      <div
+        class="resize-handle e-handle"
+        @pointerdown.stop="startResize($event, 'e')"
+      >
+        <span class="resize-hit-area" aria-hidden="true"></span>
+      </div>
+      <div
+        class="resize-handle sw-handle"
+        @pointerdown.stop="startResize($event, 'sw')"
+      >
+        <span class="resize-hit-area" aria-hidden="true"></span>
+      </div>
+      <div
+        class="resize-handle s-handle"
+        @pointerdown.stop="startResize($event, 's')"
+      >
+        <span class="resize-hit-area" aria-hidden="true"></span>
+      </div>
+      <div
+        class="resize-handle se-handle"
+        @pointerdown.stop="startResize($event, 'se')"
+      >
+        <span class="resize-hit-area" aria-hidden="true"></span>
+      </div>
     </div>
 
     <!-- Object Content -->
@@ -1356,6 +1402,8 @@ onUnmounted(() => {
 .movable-object {
   position: absolute;
   box-sizing: border-box;
+  /* Container units let compact objects shrink hit areas to avoid overlap. */
+  container-type: size;
   touch-action: none;
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
@@ -1435,6 +1483,19 @@ onUnmounted(() => {
   pointer-events: none;
 }
 
+
+/* The visible dot stays at the same position; the transparent target extends
+   upward so it does not compete with the top resize handle. */
+.rotation-hit-area {
+  position: absolute;
+  top: -44px;
+  left: 50%;
+  width: 44px;
+  height: 44px;
+  transform: translateX(-50%);
+  pointer-events: all;
+}
+
 .resize-handles {
   position: absolute;
   top: 0; left: 0;
@@ -1470,6 +1531,23 @@ onUnmounted(() => {
   box-shadow: 0 2px 8px rgba(37, 99, 235, 0.4);
 }
 
+.line-end-hit-area {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 44px;
+  height: 44px;
+  transform: translate(-50%, -50%);
+  pointer-events: all;
+}
+
+@supports (width: 1cqw) {
+  .line-end-hit-area {
+    width: min(44px, 50cqw);
+    height: min(44px, 50cqh);
+  }
+}
+
 /* Circular Handles */
 .resize-handle {
   position: absolute;
@@ -1499,6 +1577,23 @@ onUnmounted(() => {
   overflow-wrap: break-word;
   line-height: 1.2;
   user-select: none;
+}
+
+.resize-hit-area {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 44px;
+  height: 44px;
+  transform: translate(-50%, -50%);
+  pointer-events: all;
+}
+
+@supports (width: 1cqw) {
+  .resize-hit-area {
+    width: min(44px, 50cqw);
+    height: min(44px, 50cqh);
+  }
 }
 
 .resize-handle:hover {

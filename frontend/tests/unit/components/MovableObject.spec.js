@@ -172,8 +172,8 @@ describe('MovableObject.vue', () => {
   describe('Resize Functionality (south-east handle)', () => {
     it('updates object dimensions on resize (se handle) and commits on pointerup', async () => {
       wrapper = createComponent({ ...defaultProps, isSelected: true });
-      const targetHandle = wrapper.find('.resize-handle.se-handle');
-      if (!targetHandle.exists()) throw new Error('SE resize handle (.resize-handle.se-handle) not found');
+      const targetHandle = wrapper.find('.resize-handle.se-handle .resize-hit-area');
+      if (!targetHandle.exists()) throw new Error('SE resize hit area (.resize-hit-area) not found');
 
       const startX = 300;
       const startY = 250;
@@ -200,8 +200,8 @@ describe('MovableObject.vue', () => {
     it('updates object dimensions correctly with zoom (se handle)', async () => {
       const zoomLevel = 2;
       wrapper = createComponent({ ...defaultProps, isSelected: true, zoomLevel });
-      const targetHandle = wrapper.find('.resize-handle.se-handle');
-      if (!targetHandle.exists()) throw new Error('SE resize handle (.resize-handle.se-handle) not found for zoom test');
+      const targetHandle = wrapper.find('.resize-handle.se-handle .resize-hit-area');
+      if (!targetHandle.exists()) throw new Error('SE resize hit area (.resize-hit-area) not found for zoom test');
 
       const startScreenX = 300;
       const startScreenY = 250;

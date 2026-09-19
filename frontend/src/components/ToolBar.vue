@@ -75,8 +75,10 @@
                   <button
                     v-for="style in lineStyleOptions"
                     :key="style.value"
+                    type="button"
                     class="option-pill"
                     :class="{ active: currentLineStyle === style.value }"
+                    :aria-pressed="currentLineStyle === style.value"
                     @click="selectLineStyle(style.value)"
                   >
                     {{ style.label }}
@@ -90,8 +92,10 @@
                   <button
                     v-for="option in roughnessOptions"
                     :key="option.value"
+                    type="button"
                     class="option-pill"
                     :class="{ active: currentRoughness === option.value }"
+                    :aria-pressed="currentRoughness === option.value"
                     @click="selectRoughness(option.value)"
                   >
                     {{ option.label }}
@@ -105,8 +109,10 @@
                   <button
                     v-for="style in arrowStyleOptions"
                     :key="style.value"
+                    type="button"
                     class="option-pill"
                     :class="{ active: currentArrowStyle === style.value }"
+                    :aria-pressed="currentArrowStyle === style.value"
                     @click="selectArrowStyle(style.value)"
                   >
                     {{ style.label }}
@@ -120,11 +126,15 @@
                   <button
                     v-for="swatch in colorSwatches"
                     :key="swatch"
+                    type="button"
                     class="color-swatch"
-                    :style="{ backgroundColor: swatch }"
                     :class="{ active: currentColor === swatch }"
+                    :aria-label="`Kolor linii ${swatch}`"
+                    :aria-pressed="currentColor === swatch"
                     @click="selectColorSwatch(swatch)"
-                  ></button>
+                  >
+                    <span class="color-swatch-dot" :style="{ backgroundColor: swatch }" aria-hidden="true"></span>
+                  </button>
                 </div>
               </div>
 
@@ -132,22 +142,28 @@
                 <div class="section-title">Kolor wypełnienia</div>
                 <div class="color-row">
                   <button
+                    type="button"
                     class="color-swatch fill-none"
                     :class="{ active: currentFillColor === null }"
+                    :aria-pressed="currentFillColor === null"
                     @click="selectFillColor(null)"
                     title="Brak wypełnienia"
                     aria-label="Brak wypełnienia"
                   >
-                    <span class="no-fill-x">✕</span>
+                    <span class="color-swatch-dot fill-none-dot" aria-hidden="true"><span class="no-fill-x">✕</span></span>
                   </button>
                   <button
                     v-for="swatch in fillColorSwatches"
                     :key="swatch"
+                    type="button"
                     class="color-swatch"
-                    :style="{ backgroundColor: swatch }"
                     :class="{ active: currentFillColor === swatch }"
+                    :aria-label="`Kolor wypełnienia ${swatch}`"
+                    :aria-pressed="currentFillColor === swatch"
                     @click="selectFillColor(swatch)"
-                  ></button>
+                  >
+                    <span class="color-swatch-dot" :style="{ backgroundColor: swatch }" aria-hidden="true"></span>
+                  </button>
                 </div>
               </div>
             </div>
@@ -289,27 +305,36 @@
     >
       <!-- Color Picker + Quick Swatches -->
       <div class="property-group color-group">
-        <div
+        <button
+          type="button"
           class="color-preview"
-          :style="{ backgroundColor: currentColor }"
+          :aria-label="`Wybierz kolor linii ${currentColor}`"
+          title="Wybierz kolor linii"
           @click="toggleColorPicker"
-        ></div>
+        >
+          <span class="color-preview-dot" :style="{ backgroundColor: currentColor }" aria-hidden="true"></span>
+        </button>
         <input
           type="color"
           ref="colorInput"
           v-model="currentColor"
           @input="updateColor"
+          aria-label="Kolor linii"
           class="hidden-color-input"
         >
         <div class="quick-swatches">
           <button
             v-for="swatch in quickSwatches"
             :key="swatch"
+            type="button"
             class="quick-swatch"
-            :style="{ backgroundColor: swatch }"
             :class="{ active: currentColor === swatch }"
+            :aria-label="`Szybki kolor linii ${swatch}`"
+            :aria-pressed="currentColor === swatch"
             @click="selectColorSwatch(swatch)"
-          ></button>
+          >
+            <span class="quick-swatch-dot" :style="{ backgroundColor: swatch }" aria-hidden="true"></span>
+          </button>
         </div>
       </div>
 
@@ -322,6 +347,7 @@
           max="20" 
           v-model.number="currentLineWidth" 
           @input="updateLineWidth"
+          aria-label="Grubość linii"
           class="width-slider"
         >
         <Circle :size="20" :fill="currentColor" :stroke-width="0" />
@@ -336,6 +362,7 @@
             max="100" 
             v-model.number="currentEraserSize" 
             @input="updateEraserSize"
+            aria-label="Rozmiar gumki"
             class="width-slider"
           >
        </div>
@@ -940,10 +967,12 @@ onBeforeUnmount(() => {
 }
 
 .option-pill {
+  min-width: 44px;
+  min-height: 44px;
   border: 1px solid var(--glass-border);
   background: rgba(255, 255, 255, 0.05);
   border-radius: 9999px;
-  padding: 6px 12px;
+  padding: 10px 12px;
   font-size: 12px;
   color: var(--text-secondary);
   cursor: pointer;
@@ -970,15 +999,30 @@ onBeforeUnmount(() => {
 }
 
 .color-swatch {
+  box-sizing: border-box;
+  width: 44px;
+  height: 44px;
+  padding: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  background: transparent;
+  cursor: pointer;
+  transition: box-shadow 0.2s ease;
+}
+
+.color-swatch-dot {
+  display: block;
   width: 24px;
   height: 24px;
   border-radius: 50%;
   border: 2px solid transparent;
-  cursor: pointer;
-  transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+  transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1), border-color 0.2s ease;
 }
 
-.color-swatch:hover {
+.color-swatch:hover .color-swatch-dot {
   transform: scale(1.2);
   border-color: white;
 }
@@ -986,15 +1030,14 @@ onBeforeUnmount(() => {
 .color-swatch.active {
   border-color: white;
   box-shadow: 0 0 0 2px var(--accent-primary);
-  transform: scale(1.1);
 }
 
-.color-swatch.fill-none {
+.color-swatch-dot.fill-none-dot {
   background: linear-gradient(135deg, #fff 45%, #ef4444 45%, #ef4444 55%, #fff 55%);
   border: 2px solid var(--glass-border);
 }
 
-.color-swatch.fill-none .no-fill-x {
+.color-swatch-dot.fill-none-dot .no-fill-x {
   display: none;
 }
 
@@ -1045,6 +1088,18 @@ onBeforeUnmount(() => {
   pointer-events: auto; /* allow interaction inside while container is non-interactive */
 }
 
+.properties-bar.vertical {
+  max-width: min(360px, calc(100vw - 88px));
+  flex-wrap: wrap;
+  overflow-x: hidden;
+}
+
+.properties-bar.vertical .property-group,
+.properties-bar.vertical .quick-swatches {
+  min-width: 0;
+  max-width: 100%;
+}
+
 .property-group {
   display: flex;
   align-items: center;
@@ -1053,15 +1108,31 @@ onBeforeUnmount(() => {
 }
 
 .color-preview {
+  box-sizing: border-box;
+  width: 44px;
+  height: 44px;
+  padding: 8px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  background: transparent;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: box-shadow 0.2s ease;
+}
+
+.color-preview-dot {
+  display: block;
   width: 24px;
   height: 24px;
   border-radius: 50%;
   border: 2px solid rgba(255, 255, 255, 0.2);
-  cursor: pointer;
   box-shadow: 0 2px 4px rgba(0,0,0,0.2);
-  transition: transform 0.2s;
+  transition: transform 0.2s ease;
 }
-.color-preview:hover {
+
+.color-preview:hover .color-preview-dot {
   transform: scale(1.1);
 }
 
@@ -1069,8 +1140,8 @@ onBeforeUnmount(() => {
   position: absolute;
   top: 0;
   left: 0;
-  width: 100%;
-  height: 100%;
+  width: 44px;
+  height: 44px;
   opacity: 0;
   cursor: pointer;
   /* pointer-events enabled so iOS Safari can open the native picker on tap */
@@ -1082,11 +1153,23 @@ onBeforeUnmount(() => {
 
 .width-slider {
   width: 100px;
-  height: 4px;
-  background: rgba(255, 255, 255, 0.1);
+  height: 44px;
+  background: transparent;
   border-radius: 2px;
   appearance: none;
   outline: none;
+}
+
+.width-slider::-webkit-slider-runnable-track {
+  height: 4px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 2px;
+}
+
+.width-slider::-moz-range-track {
+  height: 4px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 2px;
 }
 
 .width-slider::-webkit-slider-thumb {
@@ -1123,16 +1206,28 @@ onBeforeUnmount(() => {
 }
 
 .quick-swatch {
+  box-sizing: border-box;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  background: transparent;
+  cursor: pointer;
+  transition: box-shadow 0.15s;
+  padding: 11px;
+}
+
+.quick-swatch-dot {
+  box-sizing: border-box;
+  display: block;
   width: 18px;
   height: 18px;
   border-radius: 50%;
   border: 2px solid transparent;
-  cursor: pointer;
   transition: transform 0.15s;
-  padding: 0;
 }
 
-.quick-swatch:hover {
+.quick-swatch:hover .quick-swatch-dot {
   transform: scale(1.2);
   border-color: rgba(255, 255, 255, 0.5);
 }
@@ -1142,9 +1237,3 @@ onBeforeUnmount(() => {
   box-shadow: 0 0 0 1px var(--accent-primary);
 }
 </style>
-
-
-
-
-
-

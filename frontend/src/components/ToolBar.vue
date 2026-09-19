@@ -936,7 +936,10 @@ onBeforeUnmount(() => {
 }
 
 .shapes-popover {
-  min-width: 280px;
+  box-sizing: border-box;
+  width: 320px;
+  min-width: min(280px, calc(100vw - 24px));
+  max-width: calc(100vw - 24px);
   max-height: calc(100vh - 40px);
   overflow-y: auto;
 }
@@ -1052,6 +1055,7 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: center;
   width: 100%;
+  min-height: 44px;
   aspect-ratio: 1;
   border: 1px solid transparent;
   background: rgba(255, 255, 255, 0.03);

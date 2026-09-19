@@ -1,7 +1,10 @@
 <template>
   <div
+    ref="toolbarContainerRef"
     class="toolbar-container"
     :class="orientation"
+    @focusin="handleHoverEnter"
+    @focusout="handleHoverLeave"
   >
     <!-- Main Toolbar -->
     <div
@@ -320,6 +323,7 @@
           v-model="currentColor"
           @input="updateColor"
           aria-label="Kolor linii"
+          tabindex="-1"
           class="hidden-color-input"
         >
         <div class="quick-swatches">
@@ -554,6 +558,7 @@ const shapesMenuStyle = ref({});
 const coordinateMenuStyle = ref({});
 
 const dropdownTriggerRef = ref(null);
+const toolbarContainerRef = ref(null);
 const shapesTriggerRef = ref(null);
 const shapesMenuRef = ref(null);
 const coordinateTriggerRef = ref(null);
@@ -581,6 +586,7 @@ const startHideTimer = () => {
   if (isTouchDevice.value) return; // P0-FIX: Never auto-hide properties on touch devices
   clearTimeout(hideTimer);
   hideTimer = setTimeout(() => {
+    if (toolbarContainerRef.value?.contains(document.activeElement)) return;
     propertiesVisible.value = false;
   }, 2000);
 };
@@ -610,6 +616,10 @@ const selectTool = (tool) => {
   currentTool.value = tool;
   emit('update:activeTool', tool);
   showShapesMenu.value = false;
+  if (showProperties.value) {
+    showPropertiesBar();
+    startHideTimer();
+  }
 };
 
 const isShapeTool = (tool) => tool === 'shapes' || tool === 'lines';
@@ -798,6 +808,7 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  clearTimeout(hideTimer);
   document.removeEventListener('click', handleClickOutside);
   document.removeEventListener('keydown', handleEscape);
   window.removeEventListener('resize', handleResize);

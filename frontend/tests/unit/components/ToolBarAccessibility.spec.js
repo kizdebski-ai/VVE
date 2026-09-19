@@ -1,11 +1,37 @@
 import { nextTick } from 'vue';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { mount } from '@vue/test-utils';
 
 import ToolBar from '@/components/ToolBar.vue';
 import ZoomPanControls from '@/components/ZoomPanControls.vue';
 
 describe('Pilot drawing controls accessibility', () => {
+  it('keeps focused properties available and reopens them by selecting the same tool', async () => {
+    vi.useFakeTimers();
+    const wrapper = mount(ToolBar, {
+      props: { activeTool: 'pen', role: 'developer', orientation: 'vertical' },
+      attachTo: document.body
+    });
+    const outside = document.createElement('button');
+    document.body.append(outside);
+    try {
+      await wrapper.get('[data-tool-id="tool.pen"]').trigger('click');
+      wrapper.get('input[aria-label="Grubość linii"]').element.focus();
+      await wrapper.get('.properties-bar').trigger('pointerleave');
+      await vi.advanceTimersByTimeAsync(2_100);
+      expect(wrapper.find('.properties-bar').exists()).toBe(true);
+      outside.focus();
+      await vi.advanceTimersByTimeAsync(2_100);
+      expect(wrapper.find('.properties-bar').exists()).toBe(false);
+      await wrapper.get('[data-tool-id="tool.pen"]').trigger('click');
+      expect(wrapper.find('.properties-bar').exists()).toBe(true);
+    } finally {
+      wrapper.unmount();
+      outside.remove();
+      vi.useRealTimers();
+    }
+  });
+
   it('keeps shape style and palette choices labelled and touch-sized', async () => {
     const wrapper = mount(ToolBar, {
       props: {

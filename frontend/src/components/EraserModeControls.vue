@@ -43,7 +43,7 @@ export default {
 .eraser-mode-controls {
   position: absolute;
   right: clamp(12px, 3vw, 24px);
-  bottom: clamp(88px, 12vh, 136px);
+  bottom: 88px;
   max-width: calc(100% - 24px);
   display: flex;
   flex-direction: column;
@@ -98,6 +98,13 @@ export default {
 .eraser-mode-btn:focus-visible {
   outline: 2px solid var(--accent-primary, #2563eb);
   outline-offset: 2px;
+}
+
+@media (max-width: 768px), (hover: none) {
+  .eraser-mode-controls {
+    bottom: calc(var(--zoom-controls-bottom, 80px) + 66px);
+    right: 10px;
+  }
 }
 
 @media (prefers-reduced-transparency: reduce) {

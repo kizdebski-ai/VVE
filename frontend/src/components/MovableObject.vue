@@ -1543,8 +1543,8 @@ onUnmounted(() => {
 
 @supports (width: 1cqw) {
   .line-end-hit-area {
-    width: min(44px, 50cqw);
-    height: min(44px, 50cqh);
+    width: min(44px, max(50cqw, 50cqh));
+    height: min(44px, max(50cqw, 50cqh));
   }
 }
 

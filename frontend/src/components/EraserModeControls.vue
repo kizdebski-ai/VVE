@@ -63,11 +63,10 @@ export default {
   letter-spacing: 0.04em;
   margin-bottom: 5px;
   text-align: center;
-  color: var(--color-text, #64748b);
+  color: var(--text-tertiary, #64748b);
 }
 
 .eraser-mode-options {
-  display: flex;
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 4px;
@@ -84,7 +83,7 @@ export default {
   border: 0;
   border-radius: 11px;
   background: transparent;
-  color: var(--color-text, #64748b);
+  color: var(--text-tertiary, #64748b);
   cursor: pointer;
   font-size: 12px;
   touch-action: manipulation;
@@ -92,7 +91,7 @@ export default {
 
 .eraser-mode-btn.active {
   background: var(--glass-highlight, #f4f7fb);
-  color: var(--color-heading, #1e293b);
+  color: var(--text-primary, #1e293b);
   box-shadow: 3px 3px 8px rgba(163, 177, 198, 0.5), -2px -2px 6px rgba(255, 255, 255, 0.95);
 }
 

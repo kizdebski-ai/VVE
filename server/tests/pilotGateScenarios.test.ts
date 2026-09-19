@@ -23,7 +23,9 @@ class ScenarioClientDouble implements ScenarioClient {
     if (command.kind === 'add') {
       if (command.object.type === 'not-a-lesson-object' ||
           typeof command.object.x === 'number' && !Number.isFinite(command.object.x) ||
-          typeof command.object.width === 'number' && (!Number.isFinite(command.object.width) || command.object.width < 0) ||
+          typeof command.object.y === 'number' && !Number.isFinite(command.object.y) ||
+          typeof command.object.width === 'number' && (!Number.isFinite(command.object.width) || command.object.width <= 0) ||
+          typeof command.object.height === 'number' && (!Number.isFinite(command.object.height) || command.object.height <= 0 || command.object.height > 100_000) ||
           command.object.type === 'text' && typeof command.object.text === 'string' && command.object.text.length > 20_000) {
         return { ok: false, reason: 'invalidObject' };
       }
@@ -99,7 +101,7 @@ describe('VVE-109 mature and destructive scenario contracts', () => {
     const report = await runDestructiveScenario(contextFor(), { seed: 404, invalidOperations: 24 });
     expect(report.rejectedInvalidOperations).toBe(report.attemptedInvalidOperations);
     expect(report.digestAfterInvalid).toBe(report.digestBeforeInvalid);
-    expect(report.validOperations).toBe(1);
+    expect(report.validOperations).toBeGreaterThan(1);
     expect(report.reloadDigest).not.toBe(report.digestBeforeInvalid);
     expect(report.preservedState).toBe(true);
     expect(report.restartVerified).toBe(true);

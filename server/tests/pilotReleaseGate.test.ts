@@ -2,7 +2,9 @@ import { createServer as createHttpServer } from 'node:http';
 import { createServer } from 'node:net';
 import { spawn } from 'node:child_process';
 import { describe, expect, it } from 'vitest';
+import * as Y from 'yjs';
 import {
+  applyAtomicReorder,
   assertGateReport,
   assertPortAvailable,
   fetchJson,
@@ -27,11 +29,12 @@ const passingReport = (overrides: Partial<GateReport> = {}): GateReport => ({
     maxRssBytes: 1,
     maxEventLoopDelayMs: 1,
     blockerEvents: 0,
+    clientErrors: 0,
     digestMismatches: 0,
     crossBoardLeaks: 0
   },
   fixtures: null,
-  coverage: 'complete',
+  coverage: 'protocol-complete',
   passed: true,
   ...overrides
 });
@@ -64,7 +67,24 @@ describe('VVE-109 release gate harness contract', () => {
 
   it('fails reports with blockers or digest divergence', () => {
     expect(() => assertGateReport(passingReport({ metrics: { ...passingReport().metrics, digestMismatches: 1 } }))).toThrow(/blocker|digest/);
+    expect(() => assertGateReport(passingReport({ metrics: { ...passingReport().metrics, clientErrors: 1 } }))).toThrow(/client/);
     expect(() => assertGateReport(passingReport({ passed: false }))).toThrow(/not passing/);
+  });
+
+  it('applies a reorder as one Yjs transaction', () => {
+    const doc = new Y.Doc();
+    const drawings = doc.getArray<Y.Map<unknown>>('drawings');
+    const first = new Y.Map<unknown>();
+    first.set('id', 'a');
+    const second = new Y.Map<unknown>();
+    second.set('id', 'b');
+    drawings.push([first, second]);
+    let transactions = 0;
+    doc.on('afterTransaction', () => { transactions += 1; });
+    applyAtomicReorder(doc, drawings, ['b', 'a']);
+    expect(transactions).toBe(1);
+    expect(drawings.toArray().map((entry) => entry.get('id'))).toEqual(['b', 'a']);
+    doc.destroy();
   });
 
   it('does not let a short report claim the full soak', () => {

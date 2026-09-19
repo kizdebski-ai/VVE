@@ -345,19 +345,21 @@ export const runMatureBoardScenario = async (
 const invalidObjects = (seed: number): SceneObject[] => {
   const random = seededRandom(seed);
   const result: SceneObject[] = [];
-  for (let index = 0; index < 12; index += 1) {
+  for (let index = 0; index < 24; index += 1) {
     const object = objectFor(`invalid-${seed}-${index}`, index);
-    if (index % 4 === 0) result.push({ ...object, type: 'not-a-lesson-object' });
-    else if (index % 4 === 1) result.push({ ...object, x: Number.NaN });
-    else if (index % 4 === 2) result.push({ ...object, type: 'text', text: 'x'.repeat(20_001) });
-    else result.push({ ...object, width: random() > 0.5 ? -1 : Number.POSITIVE_INFINITY });
+    if (index % 6 === 0) result.push({ ...object, type: 'not-a-lesson-object' });
+    else if (index % 6 === 1) result.push({ ...object, x: Number.NaN });
+    else if (index % 6 === 2) result.push({ ...object, y: Number.POSITIVE_INFINITY });
+    else if (index % 6 === 3) result.push({ ...object, type: 'text', text: 'x'.repeat(20_001) });
+    else if (index % 6 === 4) result.push({ ...object, width: random() > 0.5 ? -1 : Number.POSITIVE_INFINITY });
+    else result.push({ ...object, height: 100_001 });
   }
   return result;
 };
 
 export const runDestructiveScenario = async (
   context: ScenarioContext,
-  options: { seed?: number; invalidOperations?: number } = {}
+  options: { seed?: number; invalidOperations?: number; validOperations?: number } = {}
 ): Promise<DestructiveScenarioReport> => {
   const seed = options.seed ?? 109_404;
   const clients = new Set<ScenarioClient>();
@@ -365,6 +367,10 @@ export const runDestructiveScenario = async (
   clients.add(client);
   const attemptedInvalidOperations = options.invalidOperations ?? 24;
   if (attemptedInvalidOperations < 12) throw new Error('Destructive scenario requires at least 12 invalid operations.');
+  const requestedValidOperations = options.validOperations ?? 8;
+  if (requestedValidOperations < 4 || requestedValidOperations > 32) {
+    throw new Error('Destructive scenario valid operation count must be between 4 and 32.');
+  }
   try {
     const digestBeforeInvalid = await digestOf(client);
     const candidates = invalidObjects(seed);
@@ -376,8 +382,25 @@ export const runDestructiveScenario = async (
     }
     const digestAfterInvalid = await digestOf(client);
     if (digestAfterInvalid !== digestBeforeInvalid) throw new Error('Destructive invalid operations changed acknowledged board state.');
-    const validId = `destructive-valid-${seed}`;
-    await requireApplied(client, { kind: 'add', object: objectFor(validId, 900) });
+    const validTypes = ['rectangle', 'circle', 'triangle', 'diamond', 'trapezoid'] as const;
+    const validIds: string[] = [];
+    let validOperations = 0;
+    for (let index = 0; index < requestedValidOperations; index += 1) {
+      const validId = `destructive-valid-${seed}-${index}`;
+      validIds.push(validId);
+      await requireApplied(client, { kind: 'add', object: objectFor(validId, 900 + index, validTypes[index % validTypes.length]) });
+      validOperations += 1;
+      await requireApplied(client, { kind: 'move', id: validId, x: 900 + index * 11, y: 700 + index * 7 });
+      validOperations += 1;
+      if (index % 2 === 0) {
+        await requireApplied(client, { kind: 'updateStyle', id: validId, patch: { color: index % 4 === 0 ? '#dc2626' : '#16a34a' } });
+        validOperations += 1;
+      }
+    }
+    if (validIds.length > 2) {
+      await requireApplied(client, { kind: 'delete', ids: [validIds[validIds.length - 1]!] });
+      validOperations += 1;
+    }
     const afterValid = await digestOf(client);
     if (afterValid === digestBeforeInvalid) throw new Error('Destructive scenario valid write did not change the board.');
     await awaitValue(client.close());
@@ -398,7 +421,7 @@ export const runDestructiveScenario = async (
       seed,
       attemptedInvalidOperations,
       rejectedInvalidOperations,
-      validOperations: 1,
+      validOperations,
       digestBeforeInvalid,
       digestAfterInvalid,
       reloadDigest,

@@ -1,54 +1,49 @@
-# VVE-109 release-gate harness
+# VVE-109 production release-gate evidence
 
-`server/scripts/pilotReleaseGate.ts` is the executable S9 harness. It starts a
-dedicated PostgreSQL 15 container on port `5497`, lets the production process
-adapter run migrations and readiness probes, creates real capability links
-through the HTTP API, and connects Node WebSocket clients to the managed-board
-endpoint. Clients maintain a Yjs document behind the canonical server
-`BoardDocument` interface and compare acknowledgement, peer, reload, and
-post-restart digests. Change, soak, and stress use the shipped frontend
-`connectToYjs` module through a Vite SSR loader with injected browser globals;
-destructive keeps a raw protocol client for malformed-frame testing. The
-harness never uses the in-memory store or a
-`getMap('lesson')` test document.
+These artifacts are the reports from the completed non-smoke gates. They were
+run from source commit `6ecef10` (including the production collection-schema
+fixes `9db962d` and `5c24c9f`) in the isolated release-gate checkout. The gate
+starts a real PostgreSQL 15 process, applies the production migrations, starts
+the production backend, obtains access through the production HTTP routes, and
+uses the production `connectToYjs` and `whiteboardSession` adapter.
 
-## Commands
+No credentials, session cookies, access URLs, or local absolute paths are
+stored in these reports.
 
-Run from `server/`:
+## Completed gates
 
-```sh
-npm run gate:smoke
-npm run gate:change
-npm run gate:mature
-npm run gate:destructive
-npm run gate:soak
-npm run gate:stress
+| Profile | Command | Run interval (UTC) | Result |
+| --- | --- | --- | --- |
+| Mature | `npm run gate:mature -- --pg-port 5517 --backend-port 8517 --report tmp/vve-109-mature-full.json` | `2026-09-18T23:55:42.964Z` – `23:56:03.153Z` | PASS |
+| Destructive | `npm run gate:destructive -- --pg-port 5518 --backend-port 8518 --report tmp/vve-109-destructive-full.json` | `2026-09-18T23:56:20.778Z` – `23:56:26.879Z` | PASS |
+| Change | `npm run gate:change -- --pg-port 5496 --backend-port 8496 --report tmp/vve-109-change-final.json` | `2026-09-18T23:56:48.311Z` – `2026-09-19T00:05:25.560Z` | PASS |
+
+Mature exercised 120 canonical objects, 96 history iterations, four live
+clients, PDF and image fixtures, reload, and backend restart. It acknowledged
+472 operations and preserved the digest through reload and restart.
+
+Destructive exercised 24 invalid canonical operations through the production
+WebSocket boundary. All 24 were rejected; a non-`Y.Map` drawings entry was
+rejected as `malformed`; malformed and oversized raw frames closed with `1008`
+and `1009`; the valid write survived reload and restart.
+
+Change acknowledged 2,000 seeded operations with four clients, three
+deterministic mid-run disconnect/reconnect cycles, one backend restart, and
+four equal final client digests. Blocker events, digest mismatches, and
+cross-board leaks were zero. The report recorded 173,785,088 bytes maximum RSS.
+
+The mature scenario's reorder step is a low-level valid-Yjs protocol exercise:
+the current product UI exposes no reorder command. The harness clones canonical
+Y.Map entries before the reorder transaction and verifies ACK/digest/reload;
+this evidence must not be read as UI reorder coverage.
+
+The three-hour 57-client soak is still running separately and is deliberately
+not represented as passed evidence here.
+
+## Artifact checksums
+
+```text
+823a605a924076b66f6f145a7e7a246eb9a9682a4de8230af1e1e604f84ae1e6  mature-full.json
+df26fbc95e7c3f7f1114c56c25da436ff0a15992ba93478a3d30793dc5dd3a76  destructive-full.json
+7e59baded23375f4f7a6c463da2e2ecc55e8c99329dfd3440309272762e10b6d  change-full.json
 ```
-
-The smoke command is bounded and is the fast wiring check. `gate:soak` is the
-release gate: it runs 22 Managed Boards with 22 Teachers and 35 Students for
-three hours, sends seeded operations through the production client adapter,
-samples `/ready`, performs a controlled backend restart while keeping clients
-alive for the adapter's draining/reconnect path, and fails on digest
-divergence, cross-board content, readiness errors, or an unready backend. The
-backend's production heartbeat path remains active during the run. It does not
-silently shorten the three-hour duration. Use `--smoke` explicitly for a short
-capacity smoke run.
-
-`gate:change` is also a non-smoke gate: it runs for at least five minutes and
-performs at least 1,000 canonical operations. The mature and destructive
-profiles currently provide bounded smoke coverage only; their non-smoke
-reports are labelled `smoke-only` and fail the release assertion until their
-full artifact import and destructive matrix is implemented.
-
-The mature smoke profile reads the checked-in PDF and PNG fixtures and adds
-canonical lesson objects, images, graph objects, and history. The destructive
-smoke profile exercises malformed input while asserting that readiness and
-existing state remain available. The optional stress profile connects 88 clients (one Teacher
-and three Students on each board) and records safe-overload behavior.
-
-Every profile fails loudly when Docker/PostgreSQL, migrations, the production
-backend, capability flow, or fixture files are unavailable. Reports are JSON
-artifacts under `server/tmp/` when invoked through the package scripts. The
-three-hour soak, built-in Browser matrix, and hardware checks remain separate
-observations and must not be marked complete from a smoke result.

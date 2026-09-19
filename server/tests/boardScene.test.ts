@@ -801,35 +801,72 @@ describe('board commands', () => {
     expect(splitPenStroke(rotated.points, { x: 50, y: 0 }, 10)).toHaveLength(2);
   });
 
+  it('rejects malformed raw pen geometry before rotating any map fields', () => {
+    const doc = new Y.Doc();
+    addAll(doc, [{
+      ...pen('invalid-raw-pen'),
+      points: [{ x: 0, y: 0 }, { x: 100, y: 0 }]
+    }]);
+    const map = sceneDrawings(doc).get(0)!;
+    doc.transact(() => {
+      map.set('rawPoints', [{ x: Number.NaN, y: 0 }, { x: 100, y: 0 }]);
+    });
+    const before = {
+      points: map.get('points'),
+      rawPoints: map.get('rawPoints'),
+      x: map.get('x'),
+      y: map.get('y'),
+      width: map.get('width'),
+      height: map.get('height'),
+      rotation: map.get('rotation')
+    };
+
+    expect(applyBoardCommand(doc, { kind: 'rotate', id: 'invalid-raw-pen', rotation: 90 }, student))
+      .toMatchObject({ ok: false, reason: 'invalidObject' });
+    expect({
+      points: map.get('points'),
+      rawPoints: map.get('rawPoints'),
+      x: map.get('x'),
+      y: map.get('y'),
+      width: map.get('width'),
+      height: map.get('height'),
+      rotation: map.get('rotation')
+    }).toEqual(before);
+  });
+
   it('keeps a concurrent style edit on the surviving stroke identity', () => {
-    const base = new Y.Doc();
-    addAll(base, [pen('concurrent-pen')]);
-    const erased = new Y.Doc();
-    const styled = new Y.Doc();
-    Y.applyUpdate(erased, Y.encodeStateAsUpdate(base));
-    Y.applyUpdate(styled, Y.encodeStateAsUpdate(base));
-    const points = sceneJson(erased)[0].points as Array<{ x: number; y: number }>;
-    const segments = splitPenStroke(points, { x: 20, y: 30 }, 8);
-    expect(applyBoardCommand(erased, {
-      kind: 'erasePen',
-      id: 'concurrent-pen',
-      segments: segments.map((segment, index) => ({
-        id: index === 0 ? 'concurrent-pen' : 'concurrent-pen-right',
-        points: segment
-      }))
-    }, teacher)).toEqual({ ok: true });
-    expect(applyBoardCommand(styled, {
-      kind: 'updateStyle',
-      id: 'concurrent-pen',
-      patch: { color: '#dc2626' }
-    }, student)).toEqual({ ok: true });
-    const erasedUpdate = Y.encodeStateAsUpdate(erased, Y.encodeStateVector(styled));
-    const styledUpdate = Y.encodeStateAsUpdate(styled, Y.encodeStateVector(erased));
-    Y.applyUpdate(styled, erasedUpdate);
-    Y.applyUpdate(erased, styledUpdate);
-    expect(sceneJson(erased)).toEqual(sceneJson(styled));
-    expect(sceneJson(erased).find((object) => object.id === 'concurrent-pen'))
-      .toMatchObject({ color: '#dc2626' });
+    for (const [eraseClient, styleClient] of [[1, 2], [2, 1]]) {
+      const base = new Y.Doc();
+      addAll(base, [pen('concurrent-pen')]);
+      const erased = new Y.Doc();
+      const styled = new Y.Doc();
+      erased.clientID = eraseClient;
+      styled.clientID = styleClient;
+      Y.applyUpdate(erased, Y.encodeStateAsUpdate(base));
+      Y.applyUpdate(styled, Y.encodeStateAsUpdate(base));
+      const points = sceneJson(erased)[0].points as Array<{ x: number; y: number }>;
+      const segments = splitPenStroke(points, { x: 20, y: 30 }, 8);
+      expect(applyBoardCommand(erased, {
+        kind: 'erasePen',
+        id: 'concurrent-pen',
+        segments: segments.map((segment, index) => ({
+          id: index === 0 ? 'concurrent-pen' : 'concurrent-pen-right',
+          points: segment
+        }))
+      }, teacher)).toEqual({ ok: true });
+      expect(applyBoardCommand(styled, {
+        kind: 'updateStyle',
+        id: 'concurrent-pen',
+        patch: { color: '#dc2626' }
+      }, student)).toEqual({ ok: true });
+      const erasedUpdate = Y.encodeStateAsUpdate(erased, Y.encodeStateVector(styled));
+      const styledUpdate = Y.encodeStateAsUpdate(styled, Y.encodeStateVector(erased));
+      Y.applyUpdate(styled, erasedUpdate);
+      Y.applyUpdate(erased, styledUpdate);
+      expect(sceneJson(erased)).toEqual(sceneJson(styled));
+      expect(sceneJson(erased).find((object) => object.id === 'concurrent-pen'))
+        .toMatchObject({ color: '#dc2626' });
+    }
   });
 });
 

@@ -1234,20 +1234,11 @@ const handleResize = (event: MouseEvent) => {
   const dxLocal = dxScreen * cosR - dyScreen * sinR;
   const dyLocal = dxScreen * sinR + dyScreen * cosR;
 
-  // Original center point (for repositioning calculations)
-  const originalCenterX = initialObjectState.x + initialObjectState.width / 2;
-  const originalCenterY = initialObjectState.y + initialObjectState.height / 2;
-
-
   if (currentResizeHandle.value.includes('e')) {
     newWidth = Math.max(minSize, initialObjectState.width + dxLocal);
   }
   if (currentResizeHandle.value.includes('w')) {
     newWidth = Math.max(minSize, initialObjectState.width - dxLocal);
-    // Adjust X based on width change, considering rotation
-    const widthDiff = initialObjectState.width - newWidth;
-    newX = initialObjectState.x + widthDiff * Math.cos(initialObjectState.rotation * Math.PI / 180);
-    newY = initialObjectState.y + widthDiff * Math.sin(initialObjectState.rotation * Math.PI / 180);
   }
 
   if (currentResizeHandle.value.includes('s')) {
@@ -1255,11 +1246,31 @@ const handleResize = (event: MouseEvent) => {
   }
   if (currentResizeHandle.value.includes('n')) {
     newHeight = Math.max(minSize, initialObjectState.height - dyLocal);
-    // Adjust Y based on height change, considering rotation
-    const heightDiff = initialObjectState.height - newHeight;
-    newX = initialObjectState.x - heightDiff * Math.sin(initialObjectState.rotation * Math.PI / 180); // Sign flipped for X based on Y axis change
-    newY = initialObjectState.y + heightDiff * Math.cos(initialObjectState.rotation * Math.PI / 180);
   }
+
+  // Keep the opposite corner fixed in world space. With a centered CSS
+  // transform origin, changing one local edge moves the frame center by half
+  // the applied size delta before converting it back to its axis-aligned
+  // board-space frame. This also composes correctly for corner handles.
+  const rotation = initialObjectState.rotation * Math.PI / 180;
+  const widthShrink = initialObjectState.width - newWidth;
+  const heightShrink = initialObjectState.height - newHeight;
+  const centerShiftLocalX = currentResizeHandle.value.includes('w')
+    ? widthShrink / 2
+    : currentResizeHandle.value.includes('e')
+      ? -widthShrink / 2
+      : 0;
+  const centerShiftLocalY = currentResizeHandle.value.includes('n')
+    ? heightShrink / 2
+    : currentResizeHandle.value.includes('s')
+      ? -heightShrink / 2
+      : 0;
+  const centerShiftX = centerShiftLocalX * Math.cos(rotation) - centerShiftLocalY * Math.sin(rotation);
+  const centerShiftY = centerShiftLocalX * Math.sin(rotation) + centerShiftLocalY * Math.cos(rotation);
+  const originalCenterX = initialObjectState.x + initialObjectState.width / 2;
+  const originalCenterY = initialObjectState.y + initialObjectState.height / 2;
+  newX = originalCenterX + centerShiftX - newWidth / 2;
+  newY = originalCenterY + centerShiftY - newHeight / 2;
   
   // Update local reactive data for immediate feedback
   objectData.x = newX;

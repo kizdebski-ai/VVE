@@ -261,6 +261,29 @@ describe('MovableObject.vue', () => {
       expect(mockObject.set).not.toHaveBeenCalled();
       expect(wrapper.emitted('update:object')).toBeTruthy();
     });
+
+    it('keeps the opposite world edge fixed when resizing a rotated object', async () => {
+      mockObject = createMockYMap({ ...initialObjectData, rotation: 90 });
+      wrapper = createComponent({ ...defaultProps, object: mockObject, isSelected: true });
+      const targetHandle = wrapper.find('.resize-handle.w-handle');
+
+      await targetHandle.trigger('pointerdown', { clientX: 300, clientY: 250, button: 0 });
+      // At 90 degrees, moving the west handle down by 20px shrinks local
+      // width by 20px. The east edge must remain at its original world point.
+      dispatchPointer(document, 'pointermove', { clientX: 300, clientY: 270, buttons: 1 });
+      await nextTick();
+      dispatchPointer(document, 'pointerup', { button: 0 });
+      await nextTick();
+
+      expect(wrapper.emitted('commit-transform')).toEqual([[expect.objectContaining({
+        kind: 'resize',
+        id: initialObjectData.id,
+        x: 110,
+        y: 160,
+        width: 180,
+        height: 100,
+      })]]);
+    });
   });
 
   describe('Gesture cancellation and pointer identity', () => {

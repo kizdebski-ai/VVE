@@ -1423,9 +1423,20 @@ const rotatePenObjectMap = (map: Y.Map<unknown>, deltaDegrees: number): CommandR
   const rotatedPoints = (points as ScenePoint[]).map(rotate);
   const validation = validatePointList(rotatedPoints, 1);
   if (!validation) return commandFail('invalidObject', 'The rotated pen geometry is invalid.');
+  const rawPoints = map.get('rawPoints');
+  let rotatedRawPoints: ScenePoint[] | null = null;
+  if (rawPoints !== undefined) {
+    if (!validatePointList(rawPoints, 1)) {
+      return commandFail('invalidObject', 'The raw pen geometry is invalid.');
+    }
+    rotatedRawPoints = (rawPoints as ScenePoint[]).map(rotate);
+    if (!validatePointList(rotatedRawPoints, 1)) {
+      return commandFail('invalidObject', 'The rotated raw pen geometry is invalid.');
+    }
+  }
   map.set('points', rotatedPoints);
-  if (Array.isArray(map.get('rawPoints'))) {
-    map.set('rawPoints', (map.get('rawPoints') as ScenePoint[]).map(rotate));
+  if (rotatedRawPoints) {
+    map.set('rawPoints', rotatedRawPoints);
   }
   const bounds = boundsFromPoints(rotatedPoints);
   map.set('x', bounds.x);
@@ -1586,10 +1597,14 @@ export const applyBoardCommand = (
         if (replacements.length) {
           const first = replacements[0]!;
           const rest = replacements.slice(1);
-          for (const key of Object.keys(source)) {
-            if (!(key in first)) entry.map.delete(key);
+          for (const key of ['points', 'x', 'y', 'width', 'height']) {
+            entry.map.set(key, first[key]);
           }
-          for (const [key, value] of Object.entries(first)) entry.map.set(key, value);
+          if (first.rawPoints === undefined) {
+            if (source.rawPoints !== undefined) entry.map.delete('rawPoints');
+          } else {
+            entry.map.set('rawPoints', first.rawPoints);
+          }
           if (rest.length) drawings.insert(entry.index + 1, rest.map(toSceneMap));
         } else {
           drawings.delete(entry.index, 1);
@@ -1638,12 +1653,12 @@ export const applyBoardCommand = (
         return commandFail('invalidCommand', 'The rotation is not a finite number.');
       }
       if (entry.map.get('type') === 'pen') {
-        const currentRotation = isFiniteNumber(entry.map.get('rotation'))
-          ? Number(entry.map.get('rotation'))
-          : 0;
         let result: CommandResult = { ok: true };
         doc.transact(() => {
-          result = rotatePenObjectMap(entry.map, command.rotation - currentRotation);
+          // Pen points are world-space geometry. A non-zero legacy rotation
+          // is still part of the visible transform, so bake the requested
+          // absolute angle before clearing the metadata.
+          result = rotatePenObjectMap(entry.map, command.rotation);
         }, context.origin);
         return result;
       }

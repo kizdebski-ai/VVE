@@ -1401,6 +1401,41 @@ const resizeObjectMap = (
   return { ok: true };
 };
 
+const rotatePenObjectMap = (map: Y.Map<unknown>, deltaDegrees: number): CommandResult => {
+  const points = map.get('points');
+  const rect = rectOf(map);
+  if (!Array.isArray(points) || !rect) {
+    return commandFail('invalidCommand', 'The pen has no rotatable point geometry.');
+  }
+  const radians = (deltaDegrees * Math.PI) / 180;
+  const cos = Math.cos(radians);
+  const sin = Math.sin(radians);
+  const center = { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
+  const rotate = (point: ScenePoint): ScenePoint => {
+    const dx = point.x - center.x;
+    const dy = point.y - center.y;
+    return plainPoint({
+      ...point,
+      x: center.x + dx * cos - dy * sin,
+      y: center.y + dx * sin + dy * cos
+    });
+  };
+  const rotatedPoints = (points as ScenePoint[]).map(rotate);
+  const validation = validatePointList(rotatedPoints, 1);
+  if (!validation) return commandFail('invalidObject', 'The rotated pen geometry is invalid.');
+  map.set('points', rotatedPoints);
+  if (Array.isArray(map.get('rawPoints'))) {
+    map.set('rawPoints', (map.get('rawPoints') as ScenePoint[]).map(rotate));
+  }
+  const bounds = boundsFromPoints(rotatedPoints);
+  map.set('x', bounds.x);
+  map.set('y', bounds.y);
+  map.set('width', bounds.width);
+  map.set('height', bounds.height);
+  map.set('rotation', 0);
+  return { ok: true };
+};
+
 const STYLE_PATCH_KEYS: readonly (keyof StylePatch)[] = [
   'color',
   'lineWidth',
@@ -1548,10 +1583,16 @@ export const applyBoardCommand = (
         replacements.push(replacement);
       }
       doc.transact(() => {
-        drawings.delete(entry.index, 1);
         if (replacements.length) {
-          drawings.insert(entry.index, replacements.map(toSceneMap));
+          const first = replacements[0]!;
+          const rest = replacements.slice(1);
+          for (const key of Object.keys(source)) {
+            if (!(key in first)) entry.map.delete(key);
+          }
+          for (const [key, value] of Object.entries(first)) entry.map.set(key, value);
+          if (rest.length) drawings.insert(entry.index + 1, rest.map(toSceneMap));
         } else {
+          drawings.delete(entry.index, 1);
           detachBindingsForDeleted(doc, new Set([command.id]));
         }
       }, context.origin);
@@ -1595,6 +1636,16 @@ export const applyBoardCommand = (
       if (!entry) return commandFail('missingObject', `Object "${command.id}" does not exist.`);
       if (!isFiniteNumber(command.rotation)) {
         return commandFail('invalidCommand', 'The rotation is not a finite number.');
+      }
+      if (entry.map.get('type') === 'pen') {
+        const currentRotation = isFiniteNumber(entry.map.get('rotation'))
+          ? Number(entry.map.get('rotation'))
+          : 0;
+        let result: CommandResult = { ok: true };
+        doc.transact(() => {
+          result = rotatePenObjectMap(entry.map, command.rotation - currentRotation);
+        }, context.origin);
+        return result;
       }
       doc.transact(() => {
         entry.map.set('rotation', command.rotation);

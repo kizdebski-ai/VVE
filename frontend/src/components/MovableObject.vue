@@ -565,7 +565,7 @@ const objectStyle = computed(() => {
     border: isLineType.value 
       ? 'none' 
       : (internalIsSelected.value ? '2px solid dodgerblue' : '1px solid transparent'),
-    transformOrigin: 'top left', 
+    transformOrigin: 'center center',
     userSelect: 'none' as const,
     boxSizing: 'border-box' as const,
     zIndex: internalIsSelected.value ? 10 : 1,
@@ -809,10 +809,11 @@ const startRotate = (event: PointerEvent | MouseEvent) => {
     if (!movableObjectRef.value || !internalIsSelected.value) return; 
     isRotating.value = true;
     
-    const screenX = objectData.x * props.zoomLevel + props.panOffset.x;
-    const screenY = objectData.y * props.zoomLevel + props.panOffset.y;
-    const scaledWidth = objectData.width * props.zoomLevel;
-    const scaledHeight = objectData.height * props.zoomLevel;
+    const frame = displayFrame.value;
+    const screenX = frame.x * props.zoomLevel + props.panOffset.x;
+    const screenY = frame.y * props.zoomLevel + props.panOffset.y;
+    const scaledWidth = frame.width * props.zoomLevel;
+    const scaledHeight = frame.height * props.zoomLevel;
 
     objectCenter.x = screenX + scaledWidth / 2;
     objectCenter.y = screenY + scaledHeight / 2;
@@ -1505,4 +1506,3 @@ onUnmounted(() => {
 .se-handle { bottom: -5px; right: -5px; cursor: nwse-resize; }
 
 </style>
-

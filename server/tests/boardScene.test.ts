@@ -785,6 +785,52 @@ describe('board commands', () => {
       .toMatchObject({ ok: false, reason: 'missingObject' });
     expect(splitPenStroke([], { x: 0, y: 0 }, 10)).toEqual([]);
   });
+
+  it('bakes pen rotation into world points so hit testing and erasing use visible geometry', () => {
+    const doc = new Y.Doc();
+    addAll(doc, [{
+      ...pen('rotated-pen'),
+      points: [{ x: 0, y: 0 }, { x: 100, y: 0 }]
+    }]);
+    expect(applyBoardCommand(doc, { kind: 'rotate', id: 'rotated-pen', rotation: 90 }, student))
+      .toEqual({ ok: true });
+    const rotated = sceneJson(doc)[0] as SceneObject & { points: Array<{ x: number; y: number }> };
+    expect(rotated.rotation).toBe(0);
+    expect(rotated.points[0]).toMatchObject({ x: 50, y: -50 });
+    expect(rotated.points[1]).toMatchObject({ x: 50, y: 50 });
+    expect(splitPenStroke(rotated.points, { x: 50, y: 0 }, 10)).toHaveLength(2);
+  });
+
+  it('keeps a concurrent style edit on the surviving stroke identity', () => {
+    const base = new Y.Doc();
+    addAll(base, [pen('concurrent-pen')]);
+    const erased = new Y.Doc();
+    const styled = new Y.Doc();
+    Y.applyUpdate(erased, Y.encodeStateAsUpdate(base));
+    Y.applyUpdate(styled, Y.encodeStateAsUpdate(base));
+    const points = sceneJson(erased)[0].points as Array<{ x: number; y: number }>;
+    const segments = splitPenStroke(points, { x: 20, y: 30 }, 8);
+    expect(applyBoardCommand(erased, {
+      kind: 'erasePen',
+      id: 'concurrent-pen',
+      segments: segments.map((segment, index) => ({
+        id: index === 0 ? 'concurrent-pen' : 'concurrent-pen-right',
+        points: segment
+      }))
+    }, teacher)).toEqual({ ok: true });
+    expect(applyBoardCommand(styled, {
+      kind: 'updateStyle',
+      id: 'concurrent-pen',
+      patch: { color: '#dc2626' }
+    }, student)).toEqual({ ok: true });
+    const erasedUpdate = Y.encodeStateAsUpdate(erased, Y.encodeStateVector(styled));
+    const styledUpdate = Y.encodeStateAsUpdate(styled, Y.encodeStateVector(erased));
+    Y.applyUpdate(styled, erasedUpdate);
+    Y.applyUpdate(erased, styledUpdate);
+    expect(sceneJson(erased)).toEqual(sceneJson(styled));
+    expect(sceneJson(erased).find((object) => object.id === 'concurrent-pen'))
+      .toMatchObject({ color: '#dc2626' });
+  });
 });
 
 describe('collectUpdateEffects', () => {

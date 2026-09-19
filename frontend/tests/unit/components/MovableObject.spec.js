@@ -89,6 +89,37 @@ describe('MovableObject.vue', () => {
       expect(wrapper.find('.rotation-handle').exists()).toBe(false);
       expect(wrapper.findAll('.resize-handle').length).toBe(0);
     });
+
+    it('does not expose or mutate selected handles when interaction is disabled', async () => {
+      wrapper = createComponent({ ...defaultProps, isSelected: true });
+      const staleHandle = wrapper.find('.rotation-handle');
+      expect(staleHandle.exists()).toBe(true);
+
+      await wrapper.setProps({ interactionEnabled: false });
+      expect(wrapper.attributes('style')).toContain('pointer-events: none');
+      expect(wrapper.find('.rotation-handle').exists()).toBe(false);
+      expect(wrapper.findAll('.resize-handle')).toHaveLength(0);
+
+      // A pointer event can still be delivered to a stale handle during a
+      // hand/read-only transition. The handler guard must reject it even
+      // though the old hit target used pointer-events: all.
+      await staleHandle.trigger('pointerdown', {
+        clientX: 150,
+        clientY: 100,
+        button: 0,
+      });
+      dispatchPointer(document, 'pointermove', { clientX: 200, clientY: 150, buttons: 1 });
+      dispatchPointer(document, 'pointerup', { button: 0 });
+      await wrapper.find('.object-content').trigger('pointerdown', {
+        clientX: 50,
+        clientY: 60,
+        button: 0,
+      });
+
+      expect(wrapper.emitted('request-select')).toBeFalsy();
+      expect(wrapper.emitted('update:object')).toBeFalsy();
+      expect(wrapper.emitted('commit-transform')).toBeFalsy();
+    });
   });
 
   describe('Selection Request', () => {

@@ -11,7 +11,7 @@
   >
     <!-- Rotation Handle -->
     <div
-      v-if="isSelected && !isLineType"
+      v-if="isSelected && interactionEnabled && !isLineType"
       class="rotation-handle"
       @pointerdown.stop="startRotate"
     >
@@ -19,7 +19,7 @@
     </div>
 
     <!-- Line Endpoint Handles -->
-    <div v-if="isSelected && isLineType" class="line-handles">
+    <div v-if="isSelected && interactionEnabled && isLineType" class="line-handles">
       <div
         class="line-end-handle line-start-handle"
         :style="lineHandlePositions.start"
@@ -37,7 +37,7 @@
     </div>
 
     <!-- Resize Handles -->
-    <div v-else-if="isSelected" class="resize-handles">
+    <div v-else-if="isSelected && interactionEnabled" class="resize-handles">
       <div
         class="resize-handle nw-handle"
         @pointerdown.stop="startResize($event, 'nw')"
@@ -671,6 +671,7 @@ const objectCenter = reactive({ x: 0, y: 0 });
 const startAngle = ref(0); 
 
 const handleLeftClickOnObject = (event: MouseEvent) => {
+  if (!props.interactionEnabled) return;
   if (event.button === 0) { 
     if (internalIsSelected.value) {
         startDrag(event);
@@ -685,6 +686,7 @@ const handleDoubleClick = (event: MouseEvent) => {
 };
 
 const startDragIfSelectedOrRequestSelect = (event: MouseEvent) => {
+  if (!props.interactionEnabled) return;
   if (isLineType.value && !internalIsSelected.value) {
     emit('request-select', objectData.id);
     return;
@@ -712,6 +714,7 @@ const releaseCapture = () => {
 };
 
 const startDrag = (event: PointerEvent | MouseEvent) => {
+  if (!props.interactionEnabled) return;
   if (!movableObjectRef.value || !internalIsSelected.value) return; 
   
   // Check for Alt key for duplication
@@ -852,6 +855,7 @@ const stopDrag = () => {
 };
 
 const startRotate = (event: PointerEvent | MouseEvent) => {
+    if (!props.interactionEnabled) return;
     if (!movableObjectRef.value || !internalIsSelected.value) return; 
     isRotating.value = true;
     
@@ -935,6 +939,7 @@ const stopRotate = () => {
 };
 
 const startResize = (event: PointerEvent | MouseEvent, handle: string) => {
+  if (!props.interactionEnabled) return;
   if (!movableObjectRef.value) return;
   if (isLineType.value) return; // Lines use dedicated endpoint handles
    if (!internalIsSelected.value) {
@@ -1015,6 +1020,7 @@ const cancelResize = () => {
 };
 
 const startLineEndpointDrag = (event: PointerEvent | MouseEvent, handle: 'start' | 'end') => {
+  if (!props.interactionEnabled) return;
   if (!internalIsSelected.value) {
     emit('request-select', objectData.id);
     return;
@@ -1488,7 +1494,7 @@ onUnmounted(() => {
    upward so it does not compete with the top resize handle. */
 .rotation-hit-area {
   position: absolute;
-  top: -44px;
+  top: -34px;
   left: 50%;
   width: 44px;
   height: 44px;

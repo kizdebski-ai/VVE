@@ -16,6 +16,8 @@ import { createCapabilityAccess } from './pilot/capabilityAccess';
 import { createBoardLifecycle, type BoardLifecycle } from './pilot/boardLifecycle';
 import { requireAdminCapability } from './pilot/capabilityHttpAdapters';
 import { config } from './config';
+import { createResourceGovernor, type ResourceGovernor } from './pilot/resourceGovernor';
+import { resourceLimitsFromEnv } from './pilot/resourceLimits';
 
 import { createRateLimiter } from './middleware/rateLimiter';
 import { createAiRoutesRouter } from './routes/aiRoutes';
@@ -26,6 +28,15 @@ import { createAdminTeachersRouter } from './routes/adminTeachers';
 import { createTeacherAuthRouter } from './routes/teacherAuth';
 import { createTeacherBoardsRouter } from './routes/teacherBoards';
 import { createBoardAccessRouter } from './routes/boardAccess';
+import type { OperationalSignals, OperationalSnapshot } from './pilot/operationalSignals';
+
+export interface RuntimeHealthGateway {
+  live(): boolean;
+  ready(): boolean;
+  checks(): { database: boolean; persistence: boolean };
+  snapshot(): OperationalSnapshot;
+  refresh?(): Promise<{ database: boolean; persistence: boolean }>;
+}
 
 export interface CreateAppOptions {
   roomManager: RoomManager;
@@ -42,10 +53,16 @@ export interface CreateAppOptions {
   capabilityAccess?: ReturnType<typeof createCapabilityAccess>;
   /** BoardLifecycle dependency (VVE-102); defaults to an instance over the process db + CapabilityAccess. */
   boardLifecycle?: BoardLifecycle;
+  /** Truthful liveness/readiness owned by RuntimeControl (VVE-108). */
+  health?: RuntimeHealthGateway;
+  signals?: OperationalSignals;
+  /** Shared ResourceGovernor (VVE-107 policy, VVE-108 composition). */
+  resourceGovernor?: ResourceGovernor;
 }
 
-export const createHttpApp = ({ roomManager, aiSolver, environment, devSurface, capabilityAccess, boardLifecycle }: CreateAppOptions) => {
+export const createHttpApp = ({ roomManager, aiSolver, environment, devSurface, capabilityAccess, boardLifecycle, health, signals, resourceGovernor }: CreateAppOptions) => {
   const app = express();
+  const governor = resourceGovernor ?? createResourceGovernor({ limits: resourceLimitsFromEnv() });
 
   const resolvedEnvironment: RuntimeEnvironment = environment ?? config.pilotEnvironment;
   const resolvedDevSurface: boolean = devSurface ?? config.devSurface;
@@ -124,8 +141,9 @@ export const createHttpApp = ({ roomManager, aiSolver, environment, devSurface, 
         : undefined // Open in development
   ));
 
-  // AI endpoints accept screenshots, so allow a slightly larger body size
-  app.use(express.json({ limit: '20mb' }));
+  // AI endpoints accept screenshots, so allow a slightly larger body size.
+  // The limit is owned by ResourceGovernor, not a hardcoded product constant.
+  app.use(express.json({ limit: governor.limits().maxHttpJsonBytes }));
 
   // Correlation ID middleware
   app.use((req, res, next) => {
@@ -138,14 +156,22 @@ export const createHttpApp = ({ roomManager, aiSolver, environment, devSurface, 
     next();
   });
 
-  // Lightweight request logging for sensitive routes
+  // Lightweight request logging for sensitive routes — path and method only.
   app.use((req, _res, next) => {
-    const correlationId = (req as any).correlationId;
+    const correlationId = (req as any).correlationId as string | undefined;
     if (
       req.path.startsWith('/api/teacher/boards') ||
       req.path.startsWith('/board/')
     ) {
-      logger.info('HTTP request', { path: req.path, method: req.method, correlationId });
+      if (signals) {
+        signals.record({
+          name: 'process.phase',
+          ...(typeof correlationId === 'string' ? { correlationId } : {}),
+          dimensions: { phase: 'http', method: req.method, path: req.path }
+        });
+      } else {
+        logger.info('HTTP request', { path: req.path, method: req.method, correlationId });
+      }
     }
     next();
   });
@@ -156,6 +182,14 @@ export const createHttpApp = ({ roomManager, aiSolver, environment, devSurface, 
   register('http.adminTeachers', () => {
     app.use('/api/admin', createAdminAuthRouter(access));
     app.use('/api/admin/teachers', requireAdminCapability(access), createAdminTeachersRouter(access, lifecycle));
+    app.get('/api/admin/runtime', requireAdminCapability(access), (_, res) => {
+      res.set('Cache-Control', 'no-store');
+      if (!health) {
+        res.status(503).json({ error: 'Diagnostyka procesu jest niedostępna.' });
+        return;
+      }
+      res.json({ soak: health.snapshot() });
+    });
   });
   register('http.teacherAuth', () => {
     app.use(createTeacherAuthRouter(access));
@@ -180,17 +214,73 @@ export const createHttpApp = ({ roomManager, aiSolver, environment, devSurface, 
   // Basic root status page so Railway shows a friendly message instead of "Cannot GET /"
   app.get('/', (_, res) => {
     res.json({
-      status: 'ok',
+      status: health?.ready() ? 'ready' : 'ok',
       message: 'WhiteVue realtime backend is running.',
       pilotSurface: manifest.serverRoutes,
-      endpoints: ['/health', '/ws/whiteboard/:roomId']
+      endpoints: ['/live', '/ready', '/health', '/ws/whiteboard/:roomId']
     });
   });
 
-  app.get('/health', (_, res) => {
-    res.json({
-      status: 'ok',
-      rooms: roomManager.listRooms({ includeArchived: true, limit: 10 }).length
+  app.get('/api/resource-limits', (_, res) => {
+    // Content-free composition contract (VVE-107/VVE-108): clients and the
+    // listener adopt the live governor limits from this single owner.
+    res.json(governor.limits());
+  });
+
+  app.get('/live', (_, res) => {
+    const live = health ? health.live() : true;
+    res.status(live ? 200 : 503).json({ live, status: live ? 'live' : 'stopped' });
+  });
+
+  app.get('/ready', async (_, res) => {
+    if (!health) {
+      // Fail closed: without a health owner nobody can prove readiness.
+      res.status(503).json({ live: true, ready: false, status: 'not-ready', checks: { database: false, persistence: false } });
+      return;
+    }
+    if (health.refresh) {
+      try {
+        await health.refresh();
+      } catch {
+        // fail closed
+      }
+    }
+    const live = health.live();
+    const ready = health.ready();
+    const checks = health.checks();
+    res.status(ready ? 200 : 503).json({
+      live,
+      ready,
+      status: ready ? 'ready' : 'not-ready',
+      checks
+    });
+  });
+
+  app.get('/health', async (_, res) => {
+    if (!health) {
+      // Fail closed: without a health owner nobody can prove readiness.
+      res.status(503).json({
+        status: 'not-ready',
+        live: true,
+        ready: false
+      });
+      return;
+    }
+    if (health.refresh) {
+      try {
+        await health.refresh();
+      } catch {
+        // fail closed
+      }
+    }
+    const live = health.live();
+    const ready = health.ready();
+    const checks = health.checks();
+    res.status(ready ? 200 : 503).json({
+      status: ready ? 'ok' : 'not-ready',
+      live,
+      ready,
+      checks
     });
   });
 

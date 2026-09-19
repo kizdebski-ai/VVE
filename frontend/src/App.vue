@@ -5,6 +5,7 @@
       :role="effectiveRole"
       @clear-canvas="handleClearCanvas"
       @toggle-feature="toggleFeature"
+      @cycle-input-style="cycleInputStyle"
       @open-room-manager="handleOpenRoomManager"
       @export-whiteboard="handleExportRequest"
       @export-pdf-single="handleExportPdfSingle"
@@ -32,13 +33,16 @@
         :grid-align-options="gridAlignOptions"
         :handwriting-styler-options="handwritingStylerOptions"
         :math-recognizer-options="mathRecognizerOptions"
+        :input-profile="inputProfile"
         @update:recognition-status="recognitionStatus = $event"
         @update:latex-equation="latexEquation = $event"
         @update:solution="solution = $event"
         @update:has-char-groups="hasCharGroups = $event"
         @update:has-stylized-strokes="hasStylizedStrokes = $event"
         @update:active-users="handleActiveUsers"
-        @select-pen-preset="selectPenPreset"
+        @update:lesson-panel="activeLessonPanel = $event"
+        @select-pen-preset="selectInputProfile"
+        @pointer-observed="handlePointerObserved"
       />
       <AIChatPanel
         v-if="can('experiment.ai')"
@@ -54,32 +58,25 @@
          @align="triggerWhiteboardAction('alignToGrid')"
        />
 
-       <HandwritingStylerPanel
-         v-if="activeFeature === 'styleHandwriting'"
-         :options="handwritingStylerOptions"
-         :preset-cards="penPresetCards"
-         :has-char-groups="hasCharGroups"
-         :has-stylized-strokes="hasStylizedStrokes"
-         @update:options="handwritingStylerOptions = $event"
-         @close="toggleFeature(null)"
-         @select-preset="selectPenPreset"
-         @set-canvas-ref="setPresetCanvasRef"
-         @set-main-preview-ref="setMainPreviewRef"
-         @action="triggerWhiteboardAction"
+       <InputStyleControl
+         v-if="can('panel.inputStyle')"
+         class="input-style-overlay"
+         :model-value="inputProfile"
+         @update:model-value="selectInputProfile"
        />
 
       <!-- Math recognizer (AI OCR solving) is excluded from the Pilot surface;
            it has no trigger while `experiment.ai` is unavailable. -->
 
       <MathGraphPanel
-        v-if="showMathGraphPanel"
-        @close="toggleMathGraphPanel"
-        @plot-function="handleAddElement"
+        v-if="showMathGraphPanel && can('panel.mathGraph')"
+        @close="requestLessonPanel(null)"
+        @plot-function="handlePlotElement('mathGraph', $event)"
       />
       <PhysicsGraphPanel
-        v-if="showPhysicsGraphPanel"
-        @close="togglePhysicsGraphPanel"
-        @plot-data="handleAddElement"
+        v-if="showPhysicsGraphPanel && can('panel.physicsGraph')"
+        @close="requestLessonPanel(null)"
+        @plot-data="handlePlotElement('physicsGraph', $event)"
       />
       <DiagramPanel
         v-if="showDiagramPanel && can('experiment.ai')"
@@ -93,11 +90,11 @@
       />
 
       <!-- 3.4: Floating Toolbar (Left) with auto-hide toggle -->
-      <button v-if="toolbarCollapsed" class="toolbar-expand-btn glass-panel" @click="toggleToolbar" title="Show toolbar">
+      <button v-if="toolbarCollapsed" class="toolbar-expand-btn glass-panel" @click="toggleToolbar" title="Pokaż pasek narzędzi">
         <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
       </button>
       <div class="floating-toolbar" :class="{ 'toolbar-hidden': toolbarCollapsed }">
-        <button class="toolbar-collapse-btn" @click="toggleToolbar" title="Hide toolbar">
+        <button class="toolbar-collapse-btn" @click="toggleToolbar" title="Ukryj pasek narzędzi">
           <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>
         </button>
         <ToolBar
@@ -112,6 +109,7 @@
           :roughness="currentRoughness"
           :is-math-panel-open="showMathGraphPanel"
           :is-physics-panel-open="showPhysicsGraphPanel"
+          :is-calculator-open="activeLessonPanel === 'calculator'"
           :is-diagram-panel-open="showDiagramPanel"
           orientation="vertical"
           @update:activeTool="handleToolChange"
@@ -142,7 +140,7 @@
           v-if="userInfoCollapsed"
           class="user-info-toggle-btn glass-panel"
           @click="toggleUserInfoPanel"
-          title="Show user panel"
+          title="Pokaż panel uczestników"
         >
           <component :is="UsersIcon" :size="20" />
         </button>
@@ -163,9 +161,9 @@
 
         <div class="divider-vertical"></div>
 
-        <div class="user-count" title="Online users">
+        <div class="user-count" title="Uczestnicy online">
           <div class="status-dot"></div>
-          <span>{{ activeUsersCount }} Online</span>
+          <span>{{ activeUsersCount }} online</span>
         </div>
 
         <button v-if="can('dev.legacyPeerRooms')" class="share-btn" @click="shareRoom">
@@ -183,7 +181,7 @@
           D
         </button>
 
-        <button class="minimize-btn" @click="toggleUserInfoPanel" title="Hide">
+        <button class="minimize-btn" @click="toggleUserInfoPanel" title="Ukryj">
            <component :is="ChevronRightIcon" :size="18" />
         </button>
       </div>
@@ -205,9 +203,10 @@
       @copy="copyToClipboard"
     />
     <CalculatorModal
-      :is-visible="isCalculatorVisible"
-      @close="isCalculatorVisible = false"
-      @update:isVisible="val => isCalculatorVisible = val"
+      v-if="can('panel.calculator')"
+      :is-visible="activeLessonPanel === 'calculator'"
+      @close="requestLessonPanel(null)"
+      @update:isVisible="val => { if (!val) requestLessonPanel(null) }"
     />
 
     <EncryptionStatus v-if="can('dev.encryptionClaims')" />
@@ -245,19 +244,24 @@ import AIChatPanel from './components/AIChatPanel.vue';
 import ChemistryPanel from './components/ChemistryPanel.vue';
 import EncryptionStatus from './components/EncryptionStatus.vue';
 import GridAlignPanel from './components/GridAlignPanel.vue';
-import HandwritingStylerPanel from './components/HandwritingStylerPanel.vue';
+import InputStyleControl from './components/InputStyleControl.vue';
 import * as Y from 'yjs';
 import { undoRedoState as globalUndoRedoState } from './utils/undoRedoState';
+import { LESSON_OBJECT_DEFAULTS, PANEL_SHORTCUTS } from './utils/lessonObjectDefaults.js';
 
 import katex from 'katex';
 import { buildRoomHash, parseRoomHash } from './lib/roomLink';
 import { generateEncryptionKey } from './lib/crypto';
 import 'katex/dist/katex.min.css';
 import { drawStyledPen, DEFAULT_PEN_PRESETS, makePreviewPoints } from './utils/penStyles';
-import { usePdfImport } from './composables/usePdfImport';
 import { Users, Share2, ChevronRight, ChevronLeft } from 'lucide-vue-next';
 import PilotUnavailable from './views/PilotUnavailable.vue';
 import { featureAvailable } from './services/pilotSurface';
+import {
+  loadInputStyle,
+  saveInputStyle,
+  suggestProfile
+} from './board/inputStyle';
 
 // Debug logger
 const appDebugLog = (msg, ...args) => {
@@ -281,7 +285,7 @@ export default {
     ChemistryPanel,
     EncryptionStatus,
     GridAlignPanel,
-    HandwritingStylerPanel,
+    InputStyleControl,
     PilotUnavailable
   },
   setup() {
@@ -316,10 +320,7 @@ export default {
     const darkMode = ref(localStorage.getItem('darkMode') === 'true');
     const debugMode = ref(false);
     const userInfoCollapsed = ref(false);
-    const isCalculatorVisible = ref(false);
-    const toggleCalculator = () => {
-      isCalculatorVisible.value = !isCalculatorVisible.value;
-    };
+    const activeLessonPanel = ref(null);
     // 3.4: Toolbar auto-hide toggle with localStorage persistence
     const toolbarCollapsed = ref(localStorage.getItem('toolbar_collapsed') === 'true');
     const toggleToolbar = () => {
@@ -392,16 +393,6 @@ export default {
   const solution = ref('');
   const hasCharGroups = ref(false);
   const hasStylizedStrokes = ref(false);
-  const penPreviewRef = ref(null);
-  const presetCanvasRefs = ref({});
-  const previewPoints = ref(makePreviewPoints(320, 110));
-  const penPresetCards = computed(() => ([
-    { key: 'gel', title: 'Gel Pen', pill: 'Ultra smooth', desc: 'Soft ink with micro-shadow and speed-based width.' },
-    { key: 'technical', title: 'Technical Pen', pill: 'Monoline', desc: 'Stable, crisp stroke for math and schematics.' },
-    { key: 'marker', title: 'Highlighter', pill: 'Multiply', desc: 'Wide translucent marker with gentle offset shadow.' },
-    { key: 'calligraphy', title: 'Calligraphy', pill: 'Tilted nib', desc: 'Angled tip with expressive width variation.' }
-  ]));
-  const activePresetLabel = computed(() => penPresetCards.value.find(p => p.key === handwritingStylerOptions.value.preset)?.title || 'Preset');
 
     // Yjs awareness state (count/badges)
     const awarenessStates = ref([]);
@@ -432,33 +423,36 @@ export default {
       } catch { return null; }
     };
 
-    // Graph Panels
-    const showMathGraphPanel = ref(false);
-    const showPhysicsGraphPanel = ref(false);
+    // WhiteboardSession owns required lesson-panel exclusivity; App mirrors
+    // the selected panel solely to mount the corresponding Vue adapter.
+    const showMathGraphPanel = computed(() => activeLessonPanel.value === 'mathGraph');
+    const showPhysicsGraphPanel = computed(() => activeLessonPanel.value === 'physicsGraph');
     const showDiagramPanel = ref(false);
     const showChemistryPanel = ref(false);
 
-    const toggleMathGraphPanel = () => {
-        showMathGraphPanel.value = !showMathGraphPanel.value;
-        if (showMathGraphPanel.value) {
-          showPhysicsGraphPanel.value = false;
-          showDiagramPanel.value = false;
-        }
+    const requestLessonPanel = (panel) => {
+      if (panel !== null) {
+        activeFeature.value = null;
+        showDiagramPanel.value = false;
+        showChemistryPanel.value = false;
+      }
+      const sessionResult = panel === null
+        ? whiteboard.value?.setLessonPanel?.(null)
+        : whiteboard.value?.toggleLessonPanel?.(panel);
+      activeLessonPanel.value = sessionResult === undefined
+        ? (panel === activeLessonPanel.value ? null : panel)
+        : sessionResult;
+      return activeLessonPanel.value;
     };
 
-    const togglePhysicsGraphPanel = () => {
-        showPhysicsGraphPanel.value = !showPhysicsGraphPanel.value;
-        if (showPhysicsGraphPanel.value) {
-          showMathGraphPanel.value = false;
-          showDiagramPanel.value = false;
-        }
-    };
+    const toggleCalculator = () => requestLessonPanel('calculator');
+    const toggleMathGraphPanel = () => requestLessonPanel('mathGraph');
+    const togglePhysicsGraphPanel = () => requestLessonPanel('physicsGraph');
 
     const toggleDiagramPanel = () => {
         showDiagramPanel.value = !showDiagramPanel.value;
         if (showDiagramPanel.value) {
-          showMathGraphPanel.value = false;
-          showPhysicsGraphPanel.value = false;
+          requestLessonPanel(null);
           showChemistryPanel.value = false;
         }
     };
@@ -466,96 +460,76 @@ export default {
     const toggleChemistryPanel = () => {
         showChemistryPanel.value = !showChemistryPanel.value;
         if (showChemistryPanel.value) {
-          showMathGraphPanel.value = false;
-          showPhysicsGraphPanel.value = false;
+          requestLessonPanel(null);
           showDiagramPanel.value = false;
         }
     };
 
-    const resolvePresetConfig = (presetKey) => ({
-      ...(DEFAULT_PEN_PRESETS[presetKey] || {}),
-      ...(handwritingStylerOptions.value.presets?.[presetKey] || {})
-    });
+    const storedInputStyle = loadInputStyle(typeof localStorage === 'undefined' ? null : localStorage);
+    const inputProfile = ref(storedInputStyle.profile);
+    const inputStyleOverridden = ref(storedInputStyle.overridden);
 
-    let previewRaf = null;
-    const renderPresetPreview = (presetKey) => {
-      const canvas = presetCanvasRefs.value[presetKey];
-      if (!canvas) return;
-      const ctx = canvas.getContext('2d');
-      if (!ctx) return;
-      const cfg = resolvePresetConfig(presetKey);
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      drawStyledPen(ctx, makePreviewPoints(canvas.width, canvas.height), {
-        style: presetKey,
-        color: cfg.color || '#0f172a',
-        lineWidth: cfg.previewWidth || 2.8,
-        config: cfg,
-        globalSmoothing: (handwritingStylerOptions.value.smoothingFactor || 0) / 100
-      });
+    const persistInputStyle = (profile, overridden) => {
+      if (profile !== 'mouse' && profile !== 'pen') return;
+      inputProfile.value = profile;
+      if (overridden) inputStyleOverridden.value = true;
+      saveInputStyle(
+        { profile, overridden: inputStyleOverridden.value },
+        typeof localStorage === 'undefined' ? null : localStorage
+      );
     };
 
-    const renderMainPenPreview = () => {
-      const canvas = penPreviewRef.value;
-      if (!canvas) return;
-      const ctx = canvas.getContext('2d');
-      if (!ctx) return;
-      const presetKey = handwritingStylerOptions.value.preset || 'gel';
-      const cfg = resolvePresetConfig(presetKey);
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      const prefersPreset = !currentColor.value || ['#000000', '#000', 'black'].includes(String(currentColor.value).toLowerCase());
-      const strokeColor = prefersPreset ? (cfg.color || currentColor.value || '#0f172a') : currentColor.value;
-      drawStyledPen(ctx, previewPoints.value, {
-        style: presetKey,
-        color: strokeColor,
-        lineWidth: cfg.previewWidth || 3,
-        config: cfg,
-        globalSmoothing: (handwritingStylerOptions.value.smoothingFactor || 0) / 100
-      });
+    const selectInputProfile = (profile) => persistInputStyle(profile, true);
+
+    const cycleInputStyle = () => {
+      persistInputStyle(inputProfile.value === 'pen' ? 'mouse' : 'pen', true);
     };
 
-    const renderAllPenPreviews = () => {
-      Object.keys(presetCanvasRefs.value || {}).forEach(renderPresetPreview);
-      renderMainPenPreview();
-    };
-
-    const queuePreviewRender = () => {
-      if (previewRaf) return;
-      previewRaf = requestAnimationFrame(() => {
-        previewRaf = null;
-        renderAllPenPreviews();
-      });
-    };
-
-    const setPresetCanvasRef = (key, el) => {
-      if (!el) return;
-      presetCanvasRefs.value[key] = el;
-      queuePreviewRender();
-    };
-
-    const setMainPreviewRef = (el) => {
-      penPreviewRef.value = el;
-      queuePreviewRender();
-    };
-
-    const selectPenPreset = (presetKey) => {
-      handwritingStylerOptions.value.preset = presetKey;
-      queuePreviewRender();
+    const handlePointerObserved = (pointerType) => {
+      if (inputStyleOverridden.value) return;
+      persistInputStyle(suggestProfile(pointerType === 'pen' ? 'pen' : pointerType === 'touch' ? 'touch' : 'mouse'), false);
     };
 
     const handleAddElement = (elementData) => {
       if (whiteboard.value?.addElementFromPanel) {
-        whiteboard.value.addElementFromPanel(elementData);
+        return whiteboard.value.addElementFromPanel(elementData);
       } else {
         console.warn('Whiteboard not ready to add element.', elementData);
+        return false;
       }
     };
 
-    const { importPdfFile } = usePdfImport({
-      addElementFromPanel: (data) => handleAddElement(data),
-      showToast: (msg, type, dur) => showNotification(msg, type),
-      debugLog: appDebugLog,
-    });
-    const handleImportPdf = (file) => importPdfFile(file);
+    const handlePlotElement = (panel, elementData) => {
+      const added = handleAddElement(elementData);
+      if (added) requestLessonPanel(null);
+      return added;
+    };
+
+    const handleAddCoordinateSystem = (type = '2d') => {
+      const is3d = type === '3d';
+      const defaults = is3d
+        ? LESSON_OBJECT_DEFAULTS.coordinateSystem3D
+        : LESSON_OBJECT_DEFAULTS.coordinateSystem2D;
+      return handleAddElement({
+        type: is3d ? 'coordinateSystem3D' : 'coordinateSystem2D',
+        width: defaults.width,
+        height: defaults.height,
+        color: defaults.color,
+        lineWidth: defaults.lineWidth,
+        grid: defaults.grid,
+        xLabel: defaults.xLabel,
+        yLabel: defaults.yLabel,
+        ...(is3d ? { zLabel: defaults.zLabel } : {})
+      });
+    };
+
+    const handleImportPdf = (file) => {
+      if (whiteboard.value?.importArtifactFile) {
+        whiteboard.value.importArtifactFile(file);
+        return;
+      }
+      showNotification('Tablica nie jest jeszcze gotowa do importu.', 'warning');
+    };
 
     const handleDiagramApply = (diagramData) => {
       if (!diagramData?.nodes?.length) return;
@@ -937,7 +911,7 @@ export default {
         await whiteboard.value.exportBoardAsPdf();
       } else {
         console.warn('[App] whiteboard ref missing or exportBoardAsPdf not exposed');
-        showStatus('PDF export not available.', 3000);
+        showStatus('Eksport PDF jest niedostępny.', 3000);
       }
     };
 
@@ -946,7 +920,7 @@ export default {
         await whiteboard.value.exportBoardAsPdfPaged();
       } else {
         console.warn('[App] whiteboard ref missing or exportBoardAsPdfPaged not exposed');
-        showStatus('PDF export not available.', 3000);
+        showStatus('Eksport PDF jest niedostępny.', 3000);
       }
     };
 
@@ -1027,53 +1001,13 @@ export default {
     };
 
     const handleImageSelected = (file) => {
-      appDebugLog("App.vue: handleImageSelected called with:", file);
-      if (!file) {
-          console.warn("handleImageSelected: No file received.");
-          return;
+      if (!file) return;
+      if (whiteboard.value?.importArtifactFile) {
+        whiteboard.value.importArtifactFile(file);
+        return;
       }
-      if (!whiteboard.value) {
-          console.warn("handleImageSelected: Whiteboard ref not available yet.");
-          showNotification("Whiteboard not ready, please try again.", "warning");
-          return;
-      }
-
-      if (file instanceof File) {
-        appDebugLog(`handleImageSelected: Processing File object: ${file.name}, type: ${file.type}`);
-        const reader = new FileReader();
-
-        reader.onload = (e) => {
-          appDebugLog("FileReader onload triggered.");
-          const dataUrl = e.target.result;
-          if (whiteboard.value?.addImageFromDataUrl) {
-            appDebugLog("Calling whiteboard.addImageFromDataUrl with dataUrl (first 50 chars):", dataUrl.substring(0, 50));
-            whiteboard.value.addImageFromDataUrl(dataUrl);
-            appDebugLog("Called whiteboard.addImageFromDataUrl.");
-          } else {
-            console.error("Whiteboard ref or addImageFromDataUrl method not available when FileReader loaded.");
-            showNotification("Error processing image (internal).", "error");
-          }
-        };
-
-        reader.onerror = (err) => {
-            console.error("FileReader error:", err);
-            showNotification("Error reading selected file.", "error");
-        };
-
-        reader.readAsDataURL(file);
-        appDebugLog("FileReader readAsDataURL called.");
-
-      } else {
-         console.warn("handleImageSelected received non-File object:", file);
-         if (whiteboard.value?.addImageFromDataUrl && typeof file === 'string') {
-             appDebugLog("Calling whiteboard.addImageFromDataUrl with non-File object (string)...");
-             whiteboard.value.addImageFromDataUrl(file);
-         } else {
-             showNotification("Invalid image data received.", "error");
-         }
-      }
+      showNotification('Tablica nie jest jeszcze gotowa do importu.', 'warning');
     };
-
 
     const toggleDarkMode = () => {
       darkMode.value = !darkMode.value;
@@ -1165,6 +1099,7 @@ export default {
 
     // --- Feature Methods ---
     const toggleFeature = (featureName) => {
+      if (featureName) requestLessonPanel(null);
       if (activeFeature.value === featureName) {
         activeFeature.value = null; // Toggle off if clicking the same feature
       } else {
@@ -1187,15 +1122,27 @@ export default {
 
     // --- Keyboard Shortcuts ---
     const handleGlobalKeyDown = (event) => {
-      // Ignore if typing in an input
-      if (event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA') return;
-
-      // Shift + K for Calculator
-      if (event.shiftKey && event.key.toUpperCase() === 'K') {
+      if (event.key === 'Escape' && activeLessonPanel.value) {
         event.preventDefault();
-        toggleCalculator();
+        requestLessonPanel(null);
+        return;
       }
-      // Add other global shortcuts here if needed
+      // Ignore if typing in an input
+      if (
+        event.target?.tagName === 'INPUT' ||
+        event.target?.tagName === 'TEXTAREA' ||
+        event.target?.isContentEditable
+      ) return;
+
+      if (!event.ctrlKey && !event.metaKey && !event.altKey && event.shiftKey) {
+        const panel = Object.keys(PANEL_SHORTCUTS).find(
+          (id) => PANEL_SHORTCUTS[id].key === event.key.toUpperCase()
+        );
+        if (panel) {
+          event.preventDefault();
+          requestLessonPanel(panel);
+        }
+      }
     };
 
     const handleJoinRoom = async (id) => {
@@ -1231,32 +1178,6 @@ export default {
         console.error('Error saving recent rooms', e);
       }
     };
-
-    // 5.8: Watch specific properties instead of deep watcher on entire options object
-    watch(() => handwritingStylerOptions.value.preset, () => {
-      if (activeFeature.value === 'styleHandwriting') {
-        queuePreviewRender();
-      }
-    });
-    watch(() => handwritingStylerOptions.value.smoothingFactor, () => {
-      if (activeFeature.value === 'styleHandwriting') {
-        queuePreviewRender();
-      }
-    });
-
-    watch(currentColor, () => {
-      if (activeFeature.value === 'styleHandwriting') {
-        queuePreviewRender();
-      }
-    });
-
-    watch(activeFeature, (val) => {
-      if (val === 'styleHandwriting') {
-        nextTick(() => queuePreviewRender());
-      } else {
-        presetCanvasRefs.value = {};
-      }
-    });
 
     watch(whiteboard, (instance) => {
       if (instance) {
@@ -1325,7 +1246,6 @@ export default {
       
       window.addEventListener('beforeunload', handleBeforeUnload);
       window.addEventListener('keydown', handleGlobalKeyDown); // Add global key listener
-      queuePreviewRender();
     });
 
     onBeforeUnmount(() => {
@@ -1366,7 +1286,7 @@ export default {
       currentArrowStyle,
       currentRoughness,
       currentFillColor,
-      isCalculatorVisible,
+      activeLessonPanel,
       toolbarCollapsed,
       toggleToolbar,
       activeUsersCount,
@@ -1409,12 +1329,10 @@ export default {
       activeFeature,
       gridAlignOptions,
       handwritingStylerOptions,
-      penPresetCards,
-      selectPenPreset,
-      setPresetCanvasRef,
-      setMainPreviewRef,
-      penPreviewRef,
-      activePresetLabel,
+      selectInputProfile,
+      cycleInputStyle,
+      handlePointerObserved,
+      inputProfile,
       mathRecognizerOptions,
       recognitionStatus,
       latexEquation,
@@ -1424,6 +1342,7 @@ export default {
       toggleFeature,
       toggleMathGraphPanel,
       togglePhysicsGraphPanel,
+      requestLessonPanel,
       toggleDiagramPanel,
       triggerWhiteboardAction,
       handleJoinRoom,
@@ -1433,19 +1352,10 @@ export default {
       showChemistryPanel,
       toggleChemistryPanel,
       handleAddElement,
+      handlePlotElement,
       handleDiagramApply,
       handleImportPdf,
-      handleAddCoordinateSystem: (type) => {
-        // Create default coordinate system element
-        const elementData = {
-          type: type === '2d' ? 'coordinateSystem2D' : 'coordinateSystem3D',
-          position: { x: 100, y: 100 },
-          width: 400,
-          height: 300,
-          // Add default properties if needed
-        };
-        handleAddElement(elementData);
-      }
+      handleAddCoordinateSystem
       // Need to add computed for renderedLatex if KaTeX is used here
     };
   }
@@ -1465,6 +1375,10 @@ html, body {
   height: 100%;
 
   overflow: hidden;
+
+  touch-action: none;
+
+  overscroll-behavior: none;
 
 }
 
@@ -1514,6 +1428,14 @@ body {
 
   width: 100%;
 
+  background: var(--board-surface);
+
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9), inset 0 -1px 0 rgba(159, 173, 198, 0.2);
+
+  touch-action: none;
+
+  overscroll-behavior: none;
+
 }
 
 
@@ -1548,6 +1470,15 @@ body {
 
   z-index: 50;
 
+}
+
+.input-style-overlay {
+  position: absolute;
+  left: 50%;
+  bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  transform: translateX(-50%);
+  z-index: 40;
+  pointer-events: auto;
 }
 
 
@@ -1690,7 +1621,7 @@ body {
 
   z-index: var(--z-toolbar, 3000);
 
-  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: transform 180ms var(--ease-fluid), opacity 180ms ease-out;
 
 }
 
@@ -1720,7 +1651,7 @@ body {
   z-index: 1;
   box-shadow: 0 1px 3px rgba(0,0,0,0.1);
   pointer-events: auto;
-  transition: all 0.2s;
+  transition: background-color 140ms ease, color 140ms ease, box-shadow 140ms ease;
 }
 
 .toolbar-collapse-btn:hover {
@@ -1743,7 +1674,7 @@ body {
   justify-content: center;
   z-index: var(--z-toolbar, 3000);
   color: var(--text-secondary);
-  transition: all 0.2s;
+  transition: transform 140ms var(--ease-fluid), background-color 140ms ease, color 140ms ease;
 }
 
 .toolbar-expand-btn:hover {
@@ -1761,18 +1692,13 @@ body {
   gap: 16px; /* Increased from 12px to prevent overlap */
   z-index: var(--z-user-info, 3000);
   pointer-events: auto;
-  transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: transform 180ms var(--ease-fluid), opacity 180ms ease-out, background-color 140ms ease, box-shadow 140ms ease;
   
-  /* Glass Style */
-  background: rgba(255, 255, 255, 0.8);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border: 1px solid rgba(255, 255, 255, 0.4);
+  background: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
   padding: 8px 12px 8px 18px; /* Increased padding for better spacing */
   border-radius: 30px;
-  box-shadow: 
-    0 4px 20px -5px rgba(0, 0, 0, 0.1),
-    0 0 0 1px rgba(255, 255, 255, 0.1);
+  box-shadow: var(--shadow-raised-sm);
   color: var(--text-primary);
 }
 
@@ -1801,13 +1727,12 @@ body {
   align-items: center;
   justify-content: center;
   border-radius: 50%;
-  border: 1px solid rgba(255, 255, 255, 0.4);
-  background: rgba(255, 255, 255, 0.8);
-  backdrop-filter: blur(12px);
+  border: 1px solid var(--border-subtle);
+  background: var(--surface-raised);
   color: var(--text-primary);
   cursor: pointer;
-  transition: all 0.2s ease;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+  transition: transform 140ms var(--ease-fluid), background-color 140ms ease, color 140ms ease;
+  box-shadow: var(--shadow-raised-sm);
 }
 
 .dark-mode .user-info-toggle-btn {
@@ -1817,7 +1742,7 @@ body {
 
 .user-info-toggle-btn:hover {
   transform: scale(1.05);
-  background: white;
+  background: var(--glass-highlight);
 }
 
 .dark-mode .user-info-toggle-btn:hover {
@@ -1879,7 +1804,7 @@ body {
   font-size: 13px;
   font-weight: 500;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: background-color 140ms ease, color 140ms ease, border-color 140ms ease, box-shadow 140ms ease, transform 120ms ease;
   margin-left: 4px;
 }
 
@@ -1921,7 +1846,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: all 0.2s;
+  transition: background-color 140ms ease, color 140ms ease, box-shadow 140ms ease, transform 120ms ease;
   margin-left: 4px;
 }
 
@@ -2137,6 +2062,52 @@ body {
 
    color: var(--text-primary) !important;
 
+}
+
+@media (max-width: 1100px) {
+  .floating-user-info {
+    top: max(12px, env(safe-area-inset-top, 0px));
+    right: 12px;
+    max-width: calc(50vw - 48px);
+    gap: 8px;
+    padding: 7px 9px 7px 12px;
+  }
+
+  .username-container {
+    min-width: 0;
+  }
+
+  .username-static {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .user-count {
+    flex-shrink: 0;
+    margin-left: 0;
+  }
+
+  .username-input {
+    width: min(26vw, 100px);
+  }
+
+  .feature-panel {
+    top: max(76px, calc(60px + env(safe-area-inset-top, 0px)));
+    max-height: calc(100vh - 92px);
+    overflow: auto;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .floating-toolbar,
+  .toolbar-collapse-btn,
+  .toolbar-expand-btn,
+  .floating-user-info,
+  .user-info-toggle-btn {
+    transition: opacity 120ms ease, background-color 120ms ease, color 120ms ease;
+  }
 }
 
 </style>

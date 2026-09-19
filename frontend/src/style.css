@@ -1,27 +1,26 @@
-/* --- WhiteVue Design System: Clean Slate (Light High Contrast) --- */
+/* --- WhiteVue Design System: restrained tactile workbench --- */
 
 :root {
   /* --- Palette: Slate Light --- */
-  --bg-base: #f1f5f9;
-  /* Slate 100 - App Background */
-  --bg-surface: #ffffff;
-  /* White - Card Background */
-  --bg-surface-hover: #f8fafc;
-  /* Slate 50 */
+  --bg-base: #e4e9f2;
+  --bg-surface: #e4e9f2;
+  --bg-surface-hover: #edf1f6;
+  --board-surface: #fbfcfe;
+  --surface-raised: #e8edf4;
+  --surface-pressed: #dfe6ef;
+  --surface-light: rgba(255, 255, 255, 0.92);
+  --surface-dark: rgba(159, 173, 198, 0.58);
 
   /* --- Borders --- */
-  --border-subtle: #e2e8f0;
-  /* Slate 200 */
-  --border-strong: #cbd5e1;
-  /* Slate 300 */
+  --border-subtle: rgba(159, 173, 198, 0.38);
+  --border-strong: rgba(112, 130, 159, 0.52);
 
   /* --- Text --- */
   --text-primary: #0f172a;
   /* Slate 900 - High Contrast Black */
   --text-secondary: #475569;
   /* Slate 600 - Readable Gray */
-  --text-tertiary: #94a3b8;
-  /* Slate 400 */
+  --text-tertiary: #64748b;
 
   /* --- Brand Accent (Blue/Indigo) --- */
   --accent-primary: #2563eb;
@@ -41,14 +40,18 @@
 
   /* --- Spacing & Radius --- */
   --radius-md: 8px;
-  /* Sharper, cleaner radius */
+  --radius-lg: 16px;
   --spacing-container: 32px;
 
   /* --- Glass Compatibility (Mapped to Solid White) --- */
-  --glass-surface: #ffffff;
-  --glass-border: #e2e8f0;
-  --glass-highlight: #f8fafc;
-  --glass-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
+  --glass-surface: var(--surface-raised);
+  --glass-border: var(--border-subtle);
+  --glass-highlight: #f4f7fb;
+  --glass-shadow: 7px 7px 15px var(--surface-dark), -7px -7px 15px var(--surface-light);
+  --shadow-raised: 7px 7px 15px var(--surface-dark), -7px -7px 15px var(--surface-light);
+  --shadow-raised-sm: 4px 4px 9px var(--surface-dark), -4px -4px 9px var(--surface-light);
+  --shadow-pressed: inset 4px 4px 8px rgba(159, 173, 198, 0.5), inset -4px -4px 8px rgba(255, 255, 255, 0.85);
+  --focus-ring: #2563eb;
 
   /* 3.1: Unified z-index system */
   --z-canvas: 1;
@@ -64,7 +67,7 @@
   /* --- Missing variables --- */
   --radius-xl: 16px;
   --radius-sm: 4px;
-  --ease-fluid: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-fluid: cubic-bezier(0.23, 1, 0.32, 1);
   --accent-glow: 0 0 16px rgba(37, 99, 235, 0.3);
 }
 
@@ -77,7 +80,7 @@
 
 body {
   font-family: 'Inter', system-ui, -apple-system, sans-serif;
-  background-color: var(--bg-base);
+  background: var(--bg-base);
   color: var(--text-primary);
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
@@ -101,10 +104,10 @@ body {
 /* --- Cards & Panels --- */
 .minimal-card,
 .glass-panel {
-  background: var(--bg-surface) !important;
+  background: var(--surface-raised) !important;
   border: 1px solid var(--border-subtle) !important;
-  border-radius: var(--radius-md) !important;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1) !important;
+  border-radius: var(--radius-lg) !important;
+  box-shadow: var(--shadow-raised) !important;
   backdrop-filter: none !important;
   color: var(--text-primary) !important;
 }
@@ -142,6 +145,15 @@ select:focus {
   box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
 }
 
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
 input::placeholder {
   color: var(--text-tertiary);
 }
@@ -152,7 +164,7 @@ button {
   font-family: inherit;
   font-size: 14px;
   font-weight: 600;
-  transition: all 0.2s;
+  transition: background-color 150ms ease, color 150ms ease, border-color 150ms ease, box-shadow 150ms ease, transform 120ms ease;
   border-radius: 6px;
 }
 
@@ -327,10 +339,10 @@ h1 {
 
 /* Toolbars - Ensure they stand out on white canvas */
 .toolbar-container .glass-panel {
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1) !important;
-  border: 1px solid var(--border-strong) !important;
-  background: #ffffff !important;
-  color: #0f172a !important;
+  box-shadow: var(--shadow-raised) !important;
+  border: 1px solid var(--border-subtle) !important;
+  background: var(--surface-raised) !important;
+  color: var(--text-primary) !important;
 }
 
 .tool-btn {
@@ -338,13 +350,14 @@ h1 {
 }
 
 .tool-btn:hover {
-  color: #0f172a;
-  background: #f1f5f9;
+  color: var(--text-primary);
+  background: var(--glass-highlight);
 }
 
 .tool-btn.active {
   color: #2563eb;
-  background: #eff6ff;
+  background: #e7efff;
+  box-shadow: var(--shadow-pressed);
 }
 
 /* Animations */
@@ -371,4 +384,32 @@ h1 {
 
 .text-success {
   color: var(--success);
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .minimal-card,
+  .glass-panel,
+  .floating-user-info,
+  .user-info-toggle-btn {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    background: var(--surface-raised) !important;
+  }
+}
+
+@media (prefers-contrast: more) {
+  :root {
+    --border-subtle: #64748b;
+    --border-strong: #334155;
+    --text-secondary: #334155;
+  }
+
+  .minimal-card,
+  .glass-panel,
+  button:focus-visible,
+  input:focus-visible,
+  select:focus-visible,
+  textarea:focus-visible {
+    border-color: var(--border-strong) !important;
+  }
 }

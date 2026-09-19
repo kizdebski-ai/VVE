@@ -45,7 +45,11 @@ import { up as initialSchemaUp } from '../migrations/20241129000000_initial_sche
 import { up as permanentTokenUp } from '../migrations/20241207000000_add_teacher_permanent_token';
 import { up as capabilityAccessUp } from '../migrations/20260829000000_capability_access';
 import { up as boardLifecycleUp } from '../migrations/20260830000000_board_lifecycle';
-import { createCapabilityAccess, issueBoardWsToken, issueTeacherSessionToken } from '../src/pilot/capabilityAccess';
+import {
+  createCapabilityAccess,
+  issueBoardWsToken,
+  issueTeacherSessionToken
+} from '../src/pilot/capabilityAccess';
 import { createWsAdmission } from '../src/wsAdmission';
 import { createHttpApp } from '../src/httpApp';
 import { getDb } from '../src/db';
@@ -440,6 +444,19 @@ describe.skipIf(!hasPostgres)('CapabilityAccess decision matrix (local PostgreSQ
     const studentIn = await admission.admit(boardA1Id, studentWs, nowDate);
     expect(studentIn.admitted && studentIn.decision.role).toBe('student');
 
+    // The default transport credential must cover the three-hour lesson gate
+    // plus restart margin, while its bounded expiry still rejects a later use.
+    for (const token of [teacherWs, studentWs]) {
+      expect(await admission.admit(
+        boardA1Id,
+        token,
+        new Date(nowDate.getTime() + 3 * 60 * 60 * 1_000)
+      )).toMatchObject({ admitted: true });
+      const expiresAt = JSON.parse(Buffer.from(token.split('.')[0]!, 'base64url').toString()).exp;
+      expect(await admission.admit(boardA1Id, token, new Date(expiresAt + 1)))
+        .toMatchObject({ admitted: false, closeCode: 1008 });
+    }
+
     // Cross-board: board A's token cannot open board B's room.
     const cross = await admission.admit(boardBId, teacherWs, nowDate);
     expect(cross).toMatchObject({ admitted: false, closeCode: 1008 });
@@ -459,7 +476,8 @@ describe.skipIf(!hasPostgres)('CapabilityAccess decision matrix (local PostgreSQ
     await db('boards').where({ id: boardA1Id }).update({ access_credential_version: 2 });
     try {
       expect(await denial({
-        credential: { kind: 'boardWs', boardId: boardA1Id, token: studentWs }, action: 'board.edit', now: nowDate
+        credential: { kind: 'boardWs', boardId: boardA1Id, token: studentWs }, action: 'board.edit',
+        now: new Date(nowDate.getTime() + 3 * 60 * 60 * 1_000)
       })).toBe('revoked');
     } finally {
       await db('boards').where({ id: boardA1Id }).update({ access_credential_version: 1 });
@@ -680,6 +698,7 @@ describe.skipIf(!hasPostgres)('CapabilityAccess decision matrix (local PostgreSQ
     expect(studentView.status).toBe(200);
     expect(studentView.body.teacherName).toBe('Dawid Furmaniuk - Matsin');
     expect(studentView.body.role).toBe('student');
+    expect(studentView.body).not.toHaveProperty('studentLabel');
     expect(studentView.body.wsToken).toBeTruthy();
 
     // Expired board: Polish 401 with the typed reason.

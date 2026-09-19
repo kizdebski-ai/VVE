@@ -172,8 +172,8 @@ describe('MovableObject.vue', () => {
   describe('Resize Functionality (south-east handle)', () => {
     it('updates object dimensions on resize (se handle) and commits on pointerup', async () => {
       wrapper = createComponent({ ...defaultProps, isSelected: true });
-      const targetHandle = wrapper.find('.resize-handle.se-handle');
-      if (!targetHandle.exists()) throw new Error('SE resize handle (.resize-handle.se-handle) not found');
+      const targetHandle = wrapper.find('.resize-handle.se-handle .resize-hit-area');
+      if (!targetHandle.exists()) throw new Error('SE resize hit area (.resize-hit-area) not found');
 
       const startX = 300;
       const startY = 250;
@@ -200,8 +200,8 @@ describe('MovableObject.vue', () => {
     it('updates object dimensions correctly with zoom (se handle)', async () => {
       const zoomLevel = 2;
       wrapper = createComponent({ ...defaultProps, isSelected: true, zoomLevel });
-      const targetHandle = wrapper.find('.resize-handle.se-handle');
-      if (!targetHandle.exists()) throw new Error('SE resize handle (.resize-handle.se-handle) not found for zoom test');
+      const targetHandle = wrapper.find('.resize-handle.se-handle .resize-hit-area');
+      if (!targetHandle.exists()) throw new Error('SE resize hit area (.resize-hit-area) not found for zoom test');
 
       const startScreenX = 300;
       const startScreenY = 250;
@@ -260,6 +260,106 @@ describe('MovableObject.vue', () => {
       expect(mockObject.doc.transact).not.toHaveBeenCalled();
       expect(mockObject.set).not.toHaveBeenCalled();
       expect(wrapper.emitted('update:object')).toBeTruthy();
+    });
+
+    it('keeps the opposite world edge fixed when resizing a rotated object', async () => {
+      mockObject = createMockYMap({ ...initialObjectData, rotation: 90 });
+      wrapper = createComponent({ ...defaultProps, object: mockObject, isSelected: true });
+      const targetHandle = wrapper.find('.resize-handle.w-handle');
+
+      await targetHandle.trigger('pointerdown', { clientX: 300, clientY: 250, button: 0 });
+      // At 90 degrees, moving the west handle down by 20px shrinks local
+      // width by 20px. The east edge must remain at its original world point.
+      dispatchPointer(document, 'pointermove', { clientX: 300, clientY: 270, buttons: 1 });
+      await nextTick();
+      dispatchPointer(document, 'pointerup', { button: 0 });
+      await nextTick();
+
+      expect(wrapper.emitted('commit-transform')).toEqual([[expect.objectContaining({
+        kind: 'resize',
+        id: initialObjectData.id,
+        x: 110,
+        y: 160,
+        width: 180,
+        height: 100,
+      })]]);
+    });
+  });
+
+  describe('Gesture cancellation and pointer identity', () => {
+    const dragSetup = async () => {
+      wrapper = createComponent({ ...defaultProps, isSelected: true });
+      const contentArea = wrapper.find('.object-content');
+      await contentArea.trigger('pointerdown', {
+        clientX: 50, clientY: 60, button: 0, pointerId: 5, pointerType: 'touch', isPrimary: true, buttons: 1
+      });
+      dispatchPointer(document, 'pointermove', { clientX: 70, clientY: 90, buttons: 1, pointerId: 5 });
+      await nextTick();
+      return contentArea;
+    };
+
+    it('moves a touch-type pointer drag and commits one move intent on pointerup', async () => {
+      await dragSetup();
+      dispatchPointer(document, 'pointerup', { button: 0, pointerId: 5 });
+      await nextTick();
+
+      expect(wrapper.emitted('commit-transform')).toEqual([[{
+        kind: 'move',
+        id: initialObjectData.id,
+        x: initialObjectData.x + 20,
+        y: initialObjectData.y + 30,
+      }]]);
+    });
+
+    it('pointercancel ends the drag without committing a transform and detaches listeners', async () => {
+      const contentArea = await dragSetup();
+      const updatesBeforeCancel = (wrapper.emitted('update:object') || []).length;
+
+      dispatchPointer(document, 'pointercancel', { pointerId: 5 });
+      await nextTick();
+
+      // No transform command and no partial state: the preview reset restores
+      // the original position from the document.
+      expect(wrapper.emitted('commit-transform')).toBeFalsy();
+      expect(wrapper.emitted('interaction-end')).toEqual([[initialObjectData.id]]);
+      const restoration = wrapper.emitted('update:object')[wrapper.emitted('update:object').length - 1][0];
+      expect(restoration).toMatchObject({ x: initialObjectData.x, y: initialObjectData.y });
+
+      // Listeners are cleaned up: later moves for the same gesture are inert.
+      dispatchPointer(document, 'pointermove', { clientX: 200, clientY: 260, buttons: 1, pointerId: 5 });
+      await nextTick();
+      expect(wrapper.emitted('commit-transform')).toBeFalsy();
+      expect((wrapper.emitted('update:object') || []).length).toBe(updatesBeforeCancel + 1);
+    });
+
+    it('window blur cancels an in-progress drag without committing', async () => {
+      await dragSetup();
+
+      window.dispatchEvent(new Event('blur'));
+      await nextTick();
+
+      expect(wrapper.emitted('commit-transform')).toBeFalsy();
+      expect(wrapper.emitted('interaction-end')).toEqual([[initialObjectData.id]]);
+
+      dispatchPointer(document, 'pointerup', { button: 0, pointerId: 5 });
+      await nextTick();
+      expect(wrapper.emitted('commit-transform')).toBeFalsy();
+    });
+
+    it('pointercancel during a resize gesture does not emit a resize commit', async () => {
+      wrapper = createComponent({ ...defaultProps, isSelected: true });
+      const handle = wrapper.findAll('.resize-handle').at(-1);
+      await handle.trigger('pointerdown', {
+        clientX: 300, clientY: 250, button: 0, pointerId: 9, pointerType: 'pen', isPrimary: true, buttons: 1
+      });
+      dispatchPointer(document, 'pointermove', { clientX: 340, clientY: 290, buttons: 1, pointerId: 9 });
+      await nextTick();
+
+      dispatchPointer(document, 'pointercancel', { pointerId: 9 });
+      await nextTick();
+
+      expect(wrapper.emitted('commit-transform')).toBeFalsy();
+      expect(wrapper.emitted('interaction-end')).toEqual([[initialObjectData.id]]);
     });
   });
 });

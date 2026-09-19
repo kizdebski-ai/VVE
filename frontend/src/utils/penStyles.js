@@ -8,18 +8,25 @@ const toPoint = (point, fallbackTime = 0) => {
     return { x: 0, y: 0, t: fallbackTime };
   }
   if (Array.isArray(point)) {
+    const rawPressure = typeof point[3] === 'number'
+      ? point[3]
+      : (typeof point[2] === 'number' && point[2] >= 0 && point[2] <= 1 ? point[2] : undefined);
+    const rawTime = (typeof point[2] === 'number' && point[2] > 1)
+      ? point[2]
+      : fallbackTime;
     return {
       x: point[0] || 0,
       y: point[1] || 0,
-      t: point[2] || fallbackTime,
-      pressure: point[2]
+      t: rawTime,
+      pressure: rawPressure !== undefined && Number.isFinite(rawPressure) ? clamp(rawPressure, 0, 1) : undefined
     };
   }
+  const rawP = point.pressure ?? point.p ?? point.z;
   return {
     x: Number(point.x) || 0,
     y: Number(point.y) || 0,
     t: point.t || fallbackTime,
-    pressure: point.pressure ?? point.p ?? point.z
+    pressure: typeof rawP === 'number' && Number.isFinite(rawP) ? clamp(rawP, 0, 1) : undefined
   };
 };
 
@@ -106,7 +113,8 @@ const catmullRomStroke = (ctx, pts) => {
 
 const drawGelStroke = (ctx, points, { color, lineWidth, config, globalSmoothing }) => {
   if (points.length < 2) return;
-  const smoothing = config.smoothing ?? globalSmoothing ?? 0;
+  const hasPressure = points.some((p) => typeof (p.pressure ?? p.p) === 'number');
+  const smoothing = (hasPressure || config.disableSmoothing) ? 0 : (config.smoothing ?? globalSmoothing ?? 0);
   const pts = smoothPoints(points, smoothing);
   const scale = clamp(lineWidth / 2, 0.35, 4);
   const minWidth = (config.minWidth ?? 1.6) * scale;
@@ -123,7 +131,12 @@ const drawGelStroke = (ctx, points, { color, lineWidth, config, globalSmoothing 
     const prev = pts[i - 1];
     const dt = Math.max((curr.t || 0) - (prev.t || 0), 1);
     const v = distance(curr, prev) / dt;
-    const w = clamp(maxWidth - velocityK * v * 100, minWidth, maxWidth);
+    let w = clamp(maxWidth - velocityK * v * 100, minWidth, maxWidth);
+    const pVal = curr.pressure ?? curr.p;
+    if (typeof pVal === 'number' && Number.isFinite(pVal)) {
+      const pressureFactor = clamp(0.35 + pVal * 1.3, 0.25, 2.0);
+      w = clamp(w * pressureFactor, minWidth * 0.4, maxWidth * 2.2);
+    }
     widths.push(w);
   }
 
@@ -157,22 +170,48 @@ const drawGelStroke = (ctx, points, { color, lineWidth, config, globalSmoothing 
 
 const drawTechnicalStroke = (ctx, points, { color, lineWidth, config, globalSmoothing }) => {
   if (points.length < 2) return;
-  const pts = smoothPoints(points, config.smoothing ?? globalSmoothing ?? 0);
-  const width = (config.lineWidth ?? lineWidth ?? 2.4) * clamp(lineWidth / 2, 0.5, 3);
+  const hasPressure = points.some((p) => typeof (p.pressure ?? p.p) === 'number');
+  const smoothing = (hasPressure || config.disableSmoothing) ? 0 : (config.smoothing ?? globalSmoothing ?? 0);
+  const pts = smoothPoints(points, smoothing);
+  const baseWidth = (config.lineWidth ?? lineWidth ?? 2.4) * clamp(lineWidth / 2, 0.5, 3);
 
   ctx.save();
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
 
-  ctx.strokeStyle = `rgba(0,0,0,${config.shadowAlpha ?? 0.06})`;
-  ctx.lineWidth = width + (config.shadowInflate ?? 0.6);
-  catmullRomStroke(ctx, pts);
-  ctx.stroke();
+  if (hasPressure) {
+    for (let i = 1; i < pts.length; i++) {
+      const prev = pts[i - 1];
+      const curr = pts[i];
+      const pVal = curr.pressure ?? curr.p ?? 0.5;
+      const pressureFactor = clamp(0.35 + pVal * 1.3, 0.25, 2.0);
+      const w = clamp(baseWidth * pressureFactor, 0.5, baseWidth * 2.5);
 
-  ctx.strokeStyle = color;
-  ctx.lineWidth = width;
-  catmullRomStroke(ctx, pts);
-  ctx.stroke();
+      ctx.strokeStyle = `rgba(0,0,0,${config.shadowAlpha ?? 0.06})`;
+      ctx.lineWidth = w + (config.shadowInflate ?? 0.6);
+      ctx.beginPath();
+      ctx.moveTo(prev.x, prev.y);
+      ctx.lineTo(curr.x, curr.y);
+      ctx.stroke();
+
+      ctx.strokeStyle = color;
+      ctx.lineWidth = w;
+      ctx.beginPath();
+      ctx.moveTo(prev.x, prev.y);
+      ctx.lineTo(curr.x, curr.y);
+      ctx.stroke();
+    }
+  } else {
+    ctx.strokeStyle = `rgba(0,0,0,${config.shadowAlpha ?? 0.06})`;
+    ctx.lineWidth = baseWidth + (config.shadowInflate ?? 0.6);
+    catmullRomStroke(ctx, pts);
+    ctx.stroke();
+
+    ctx.strokeStyle = color;
+    ctx.lineWidth = baseWidth;
+    catmullRomStroke(ctx, pts);
+    ctx.stroke();
+  }
   ctx.restore();
 };
 
@@ -249,37 +288,59 @@ const drawCalligraphyStroke = (ctx, points, { color, lineWidth, config, globalSm
 
 const drawFallbackPen = (ctx, points, color, width) => {
   if (points.length < 2) return;
+  const hasPressure = points.some((p) => typeof (p.pressure ?? p.p) === 'number');
   ctx.save();
   ctx.strokeStyle = color;
-  ctx.lineWidth = width;
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
-  ctx.beginPath();
-  ctx.moveTo(points[0].x, points[0].y);
-  for (let i = 1; i < points.length; i++) {
-    ctx.lineTo(points[i].x, points[i].y);
+
+  if (hasPressure) {
+    for (let i = 1; i < points.length; i++) {
+      const prev = points[i - 1];
+      const curr = points[i];
+      const pVal = curr.pressure ?? curr.p ?? 0.5;
+      const pressureFactor = clamp(0.35 + pVal * 1.3, 0.25, 2.0);
+      ctx.lineWidth = clamp(width * pressureFactor, 0.5, width * 2.5);
+      ctx.beginPath();
+      ctx.moveTo(prev.x, prev.y);
+      ctx.lineTo(curr.x, curr.y);
+      ctx.stroke();
+    }
+  } else {
+    ctx.lineWidth = width;
+    ctx.beginPath();
+    ctx.moveTo(points[0].x, points[0].y);
+    for (let i = 1; i < points.length; i++) {
+      ctx.lineTo(points[i].x, points[i].y);
+    }
+    ctx.stroke();
   }
-  ctx.stroke();
   ctx.restore();
 };
 
 export const drawStyledPen = (ctx, rawPoints, { style = 'gel', color = '#000', lineWidth = 2, config = {}, globalSmoothing = 0 } = {}) => {
   if (!ctx || !rawPoints || rawPoints.length < 2) return;
   const normalized = rawPoints.map((p, idx) => toPoint(p, idx * 8));
-  const preset = { ...(DEFAULT_PEN_PRESETS[style] || {}), ...(config || {}) };
+  const hasPressure = normalized.some((p) => typeof p.pressure === 'number' && p.pressure > 0 && p.pressure !== 0.5);
+  const effectiveGlobalSmoothing = (hasPressure || style === 'pen') ? 0 : globalSmoothing;
+  const preset = {
+    ...(DEFAULT_PEN_PRESETS[style] || {}),
+    ...(config || {}),
+    ...(hasPressure || style === 'pen' ? { smoothing: 0, disableSmoothing: true } : {})
+  };
 
   switch (style) {
     case 'gel':
-      drawGelStroke(ctx, normalized, { color, lineWidth, config: preset, globalSmoothing });
+      drawGelStroke(ctx, normalized, { color, lineWidth, config: preset, globalSmoothing: effectiveGlobalSmoothing });
       break;
     case 'technical':
-      drawTechnicalStroke(ctx, normalized, { color, lineWidth, config: preset, globalSmoothing });
+      drawTechnicalStroke(ctx, normalized, { color, lineWidth, config: preset, globalSmoothing: effectiveGlobalSmoothing });
       break;
     case 'marker':
-      drawMarkerStroke(ctx, normalized, { color, lineWidth, config: preset, globalSmoothing });
+      drawMarkerStroke(ctx, normalized, { color, lineWidth, config: preset, globalSmoothing: effectiveGlobalSmoothing });
       break;
     case 'calligraphy':
-      drawCalligraphyStroke(ctx, normalized, { color, lineWidth, config: preset, globalSmoothing });
+      drawCalligraphyStroke(ctx, normalized, { color, lineWidth, config: preset, globalSmoothing: effectiveGlobalSmoothing });
       break;
     default:
       drawFallbackPen(ctx, normalized, color, lineWidth);

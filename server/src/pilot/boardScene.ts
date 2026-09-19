@@ -13,6 +13,7 @@
 //   distinguishable from ordinary deletion and reserved for the Teacher;
 // - validation bounds coordinates, point counts, string sizes and image size.
 import * as Y from 'yjs';
+import { MEASURED_RESOURCE_LIMITS } from './resourceLimits';
 
 export type BoardRole = 'teacher' | 'student' | 'developer';
 
@@ -41,20 +42,54 @@ export const SHAPE_TYPES = [
 ] as const;
 export type ShapeType = (typeof SHAPE_TYPES)[number];
 
-/**
- * Tool families whose full collaborative workflow lands with VVE-106. Their
- * objects already flow through the same command layer, but only a bounded
- * generic validation applies until that slice canonicalizes each of them.
- */
-export const EXTENSION_TYPES = [
+/** VVE-106 lesson objects with fully canonical, bounded schemas. */
+export const LESSON_OBJECT_TYPES = [
   'coordinateSystem2D',
   'coordinateSystem3D',
   'mathFunctionPlot',
-  'physicsDataPlot',
-  'functionPlot',
-  'latex'
+  'physicsDataPlot'
 ] as const;
-export type ExtensionType = (typeof EXTENSION_TYPES)[number];
+export type LessonObjectType = (typeof LESSON_OBJECT_TYPES)[number];
+
+export const LESSON_OBJECT_DEFAULTS = {
+  coordinateSystem2D: {
+    width: 400,
+    height: 300,
+    grid: true,
+    xLabel: 'x',
+    yLabel: 'y',
+    lineWidth: 2,
+    color: '#1f2937'
+  },
+  coordinateSystem3D: {
+    width: 400,
+    height: 300,
+    grid: true,
+    xLabel: 'x',
+    yLabel: 'y',
+    zLabel: 'z',
+    lineWidth: 2,
+    color: '#1f2937'
+  },
+  mathFunctionPlot: {
+    width: 400,
+    height: 300,
+    expression: 'x',
+    xRange: [-10, 10] as [number, number],
+    xLabel: 'x',
+    yLabel: 'f(x)',
+    lineWidth: 3,
+    color: '#2563eb'
+  },
+  physicsDataPlot: {
+    width: 400,
+    height: 300,
+    xLabel: 't',
+    yLabel: 'v',
+    lineWidth: 2,
+    color: '#2563eb'
+  }
+} as const;
 
 export const BINDABLE_TYPES: ReadonlySet<string> = new Set([
   ...SHAPE_TYPES,
@@ -82,7 +117,7 @@ export const SCENE_LIMITS = {
   maxFontSize: 400,
   minFontSize: 4,
   maxRoughness: 3,
-  maxImageSrcBytes: 5 * 1024 * 1024,
+  maxImageSrcBytes: MEASURED_RESOURCE_LIMITS.maxImageDataUrlChars,
   maxExtensionJsonBytes: 512 * 1024,
   maxPenConfigJsonBytes: 4 * 1024
 } as const;
@@ -91,6 +126,15 @@ export interface ScenePoint {
   x: number;
   y: number;
   t?: number;
+  /** Pointer pressure in [0, 1]. Omitted when the input device did not report it. */
+  p?: number;
+}
+
+export interface SceneBounds {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
 }
 
 export interface LineBinding {
@@ -131,6 +175,7 @@ export type BoardCommand =
   | { kind: 'updateStyle'; id: string; patch: StylePatch }
   | { kind: 'updateText'; id: string; text: string; width?: number; height?: number }
   | { kind: 'setPenPoints'; id: string; points: ScenePoint[] }
+  | { kind: 'erasePen'; id: string; segments: Array<{ id: string; points: ScenePoint[] }> }
   | { kind: 'move'; id: string; x: number; y: number }
   | { kind: 'resize'; id: string; x: number; y: number; width: number; height: number }
   | { kind: 'rotate'; id: string; rotation: number }
@@ -172,6 +217,12 @@ const isPlainPoint = (value: unknown): value is ScenePoint => {
   const point = value as Record<string, unknown>;
   if (!isCoordinate(point.x) || !isCoordinate(point.y)) return false;
   if (point.t !== undefined && !isFiniteNumber(point.t)) return false;
+  if (
+    point.p !== undefined &&
+    (!isFiniteNumber(point.p) || point.p < 0 || point.p > 1)
+  ) {
+    return false;
+  }
   return true;
 };
 
@@ -284,38 +335,6 @@ const jsonByteLength = (value: unknown): number => {
   }
 };
 
-const validateExtensionValue = (value: unknown, depth = 0): ValidationResult => {
-  if (depth > 6) return fail('oversized', 'The object nests too deeply.');
-  if (value === null || value === undefined || typeof value === 'boolean') return { ok: true };
-  if (typeof value === 'number') {
-    return Number.isFinite(value)
-      ? { ok: true }
-      : fail('invalidGeometry', 'A numeric field is not finite.');
-  }
-  if (typeof value === 'string') {
-    return value.length <= SCENE_LIMITS.maxStringLength
-      ? { ok: true }
-      : fail('oversized', 'A text field exceeds the allowed length.');
-  }
-  if (Array.isArray(value)) {
-    if (value.length > SCENE_LIMITS.maxPoints) {
-      return fail('oversized', 'An array field exceeds the allowed length.');
-    }
-    for (const item of value) {
-      const result = validateExtensionValue(item, depth + 1);
-      if (!result.ok) return result;
-    }
-    return { ok: true };
-  }
-  if (typeof value === 'object') {
-    for (const item of Object.values(value as Record<string, unknown>)) {
-      const result = validateExtensionValue(item, depth + 1);
-      if (!result.ok) return result;
-    }
-    return { ok: true };
-  }
-  return fail('invalidContent', 'The object contains an unsupported value.');
-};
 
 /**
  * Validate one scene object against the canonical schema. The input is plain
@@ -434,12 +453,63 @@ export const validateBoardObject = (value: unknown): ValidationResult => {
     return validateBounds(object);
   }
 
-  if ((EXTENSION_TYPES as readonly string[]).includes(type)) {
-    if (jsonByteLength(object) > SCENE_LIMITS.maxExtensionJsonBytes) {
-      return fail('oversized', 'The object payload is too large.');
+  if (type === 'coordinateSystem2D' || type === 'coordinateSystem3D') {
+    const bounds = validateBounds(object);
+    if (!bounds.ok) return bounds;
+    const labels = type === 'coordinateSystem3D'
+      ? [object.xLabel, object.yLabel, object.zLabel]
+      : [object.xLabel, object.yLabel];
+    if (labels.some((label) => label !== undefined && !isBoundedString(label, 32))) {
+      return fail('invalidContent', 'An axis label is missing or too long.');
     }
-    return validateExtensionValue(object);
+    if (object.grid !== undefined && typeof object.grid !== 'boolean') {
+      return fail('invalidContent', 'The coordinate grid setting is invalid.');
+    }
+    return { ok: true };
   }
+
+  if (type === 'mathFunctionPlot') {
+    const bounds = validateBounds(object);
+    if (!bounds.ok) return bounds;
+    if (!isBoundedString(object.expression, 1_024)) {
+      return fail('invalidContent', 'A mathematical graph needs a bounded expression.');
+    }
+    const range = object.xRange;
+    if (
+      !Array.isArray(range) ||
+      range.length !== 2 ||
+      !isCoordinate(range[0]) ||
+      !isCoordinate(range[1]) ||
+      range[0] >= range[1]
+    ) {
+      return fail('invalidGeometry', 'The mathematical graph range is invalid.');
+    }
+    return { ok: true };
+  }
+
+  if (type === 'physicsDataPlot') {
+    const bounds = validateBounds(object);
+    if (!bounds.ok) return bounds;
+    if (!validatePointList(object.points, 2)) {
+      return fail('invalidGeometry', 'A physical graph needs at least two finite data points.');
+    }
+    if (
+      (object.points as ScenePoint[]).some((point) =>
+        Object.keys(point).some((key) => key !== 'x' && key !== 'y')
+      )
+    ) {
+      return fail('invalidContent', 'A physical graph point must contain only x and y.');
+    }
+    if (
+      [object.xLabel, object.yLabel].some(
+        (label) => label !== undefined && !isBoundedString(label, 32)
+      )
+    ) {
+      return fail('invalidContent', 'A physical graph axis label is missing or too long.');
+    }
+    return { ok: true };
+  }
+
 
   return fail('unknownType', `The object type "${type}" is not part of the Pilot schema.`);
 };
@@ -465,8 +535,406 @@ const boundsFromPoints = (points: ScenePoint[]) => {
   };
 };
 
-const plainPoint = (point: ScenePoint): ScenePoint =>
-  point.t === undefined ? { x: point.x, y: point.y } : { x: point.x, y: point.y, t: point.t };
+const interpolatePoint = (a: ScenePoint, b: ScenePoint, ratio: number): ScenePoint => {
+  if (ratio <= 0) return plainPoint(a);
+  if (ratio >= 1) return plainPoint(b);
+  const point: ScenePoint = {
+    x: a.x + (b.x - a.x) * ratio,
+    y: a.y + (b.y - a.y) * ratio
+  };
+  if (a.t !== undefined && b.t !== undefined) point.t = a.t + (b.t - a.t) * ratio;
+  if (a.p !== undefined && b.p !== undefined) point.p = a.p + (b.p - a.p) * ratio;
+  return point;
+};
+
+const pointDistanceSquared = (a: ScenePoint, b: ScenePoint): number =>
+  (a.x - b.x) ** 2 + (a.y - b.y) ** 2;
+
+/**
+ * Split a pen polyline around one circular eraser hit. The returned pieces
+ * retain the original pressure/time samples and only interpolate values at
+ * the two circle boundaries. No hit returns one cloned stroke; a fully
+ * covered stroke returns an empty list.
+ */
+export const splitPenStroke = (
+  points: ScenePoint[],
+  center: { x: number; y: number },
+  radius: number
+): ScenePoint[][] => {
+  if (!Array.isArray(points) || points.length === 0) return [];
+  if (
+    !isCoordinate(center.x) ||
+    !isCoordinate(center.y) ||
+    !Number.isFinite(radius) ||
+    radius <= 0
+  ) {
+    return [points.map(plainPoint)];
+  }
+
+  const radiusSquared = radius * radius;
+  const pieces: ScenePoint[][] = [];
+  let current: ScenePoint[] = [];
+  const append = (point: ScenePoint) => {
+    const next = plainPoint(point);
+    if (!current.length || pointDistanceSquared(current[current.length - 1]!, next) > 1e-12) {
+      current.push(next);
+    }
+  };
+  const flush = () => {
+    if (current.length) pieces.push(current);
+    current = [];
+  };
+  const outside = (point: ScenePoint) =>
+    (point.x - center.x) ** 2 + (point.y - center.y) ** 2 > radiusSquared;
+
+  if (points.length === 1) return outside(points[0]!) ? [[plainPoint(points[0]!)]] : [];
+
+  for (let index = 0; index < points.length - 1; index += 1) {
+    const start = points[index]!;
+    const end = points[index + 1]!;
+    const dx = end.x - start.x;
+    const dy = end.y - start.y;
+    const fx = start.x - center.x;
+    const fy = start.y - center.y;
+    const a = dx * dx + dy * dy;
+    const cuts = [0, 1];
+    if (a > 0) {
+      const b = 2 * (fx * dx + fy * dy);
+      const c = fx * fx + fy * fy - radiusSquared;
+      const discriminant = b * b - 4 * a * c;
+      if (discriminant >= 0) {
+        const root = Math.sqrt(discriminant);
+        for (const ratio of [(-b - root) / (2 * a), (-b + root) / (2 * a)]) {
+          if (ratio > 0 && ratio < 1) cuts.push(ratio);
+        }
+      }
+    }
+    cuts.sort((left, right) => left - right);
+    const uniqueCuts = cuts.filter((ratio, cutIndex) => cutIndex === 0 || ratio - cuts[cutIndex - 1]! > 1e-9);
+    for (let cutIndex = 0; cutIndex < uniqueCuts.length - 1; cutIndex += 1) {
+      const from = uniqueCuts[cutIndex]!;
+      const to = uniqueCuts[cutIndex + 1]!;
+      const segmentStart = interpolatePoint(start, end, from);
+      const segmentEnd = interpolatePoint(start, end, to);
+      const midpoint = interpolatePoint(start, end, (from + to) / 2);
+      if (outside(midpoint)) {
+        append(segmentStart);
+        append(segmentEnd);
+      } else {
+        flush();
+      }
+    }
+  }
+  flush();
+  return pieces;
+};
+
+const plainPoint = (point: ScenePoint): ScenePoint => {
+  const next: ScenePoint = { x: point.x, y: point.y };
+  if (point.t !== undefined) next.t = point.t;
+  if (point.p !== undefined) next.p = point.p;
+  return next;
+};
+
+/**
+ * Axis-aligned bounds used by InputPipeline hit testing. Prefers stored
+ * `x/y/width/height` (canonical for every S4 family after VVE-104) so a
+ * pointer sample never has to convert nested Yjs values.
+ */
+export const sceneObjectBounds = (object: SceneObject): SceneBounds | null => {
+  const x = object.x;
+  const y = object.y;
+  const width = object.width;
+  const height = object.height;
+  if (isFiniteNumber(x) && isFiniteNumber(y) && isFiniteNumber(width) && isFiniteNumber(height)) {
+    return { x, y, width: Math.abs(width), height: Math.abs(height) };
+  }
+  const start = object.start as ScenePoint | undefined;
+  const end = object.end as ScenePoint | undefined;
+  if (isPlainPoint(start) && isPlainPoint(end)) {
+    return {
+      x: Math.min(start.x, end.x),
+      y: Math.min(start.y, end.y),
+      width: Math.abs(end.x - start.x),
+      height: Math.abs(end.y - start.y)
+    };
+  }
+  if (validatePointList(object.points, 1)) {
+    return boundsFromPoints(object.points as ScenePoint[]);
+  }
+  return null;
+};
+
+/**
+ * Spatial candidate index: spatial hash grid for fast, bounded hit testing.
+ * Updated incrementally on document changes instead of converting or scanning
+ * the full scene per pointer sample.
+ */
+export interface BoardSpatialIndex {
+  insert(object: SceneObject): void;
+  update(object: SceneObject): void;
+  remove(id: string): void;
+  clear(): void;
+  load(objects: readonly SceneObject[]): void;
+  size(): number;
+  queryNear(point: ScenePoint, radius: number): SceneObject[];
+  lastQueryCandidateCount(): number;
+}
+
+const DEFAULT_CELL_SIZE = 256;
+const MAX_CELL_SPAN = 64;
+
+export const createBoardSpatialIndex = (
+  initialObjects?: readonly SceneObject[],
+  cellSize = DEFAULT_CELL_SIZE
+): BoardSpatialIndex => {
+  const grid = new Map<string, Set<string>>();
+  interface Entry {
+    object: SceneObject;
+    bounds: SceneBounds | null;
+    cellKeys: string[];
+    isLarge: boolean;
+    order: number;
+  }
+  const entries = new Map<string, Entry>();
+  const largeObjectIds = new Set<string>();
+  let orderSeq = 0;
+  let lastCandidatesCount = 0;
+
+  const computeCells = (bounds: SceneBounds): { cellKeys: string[]; isLarge: boolean } => {
+    const minCX = Math.floor(bounds.x / cellSize);
+    const maxCX = Math.floor((bounds.x + bounds.width) / cellSize);
+    const minCY = Math.floor(bounds.y / cellSize);
+    const maxCY = Math.floor((bounds.y + bounds.height) / cellSize);
+    const totalCells = (maxCX - minCX + 1) * (maxCY - minCY + 1);
+    if (totalCells > MAX_CELL_SPAN) {
+      return { cellKeys: [], isLarge: true };
+    }
+    const cellKeys: string[] = [];
+    for (let cx = minCX; cx <= maxCX; cx++) {
+      for (let cy = minCY; cy <= maxCY; cy++) {
+        cellKeys.push(`${cx}:${cy}`);
+      }
+    }
+    return { cellKeys, isLarge: false };
+  };
+
+  const removeEntryCells = (entry: Entry) => {
+    if (entry.isLarge) {
+      largeObjectIds.delete(entry.object.id);
+    }
+    for (const key of entry.cellKeys) {
+      const set = grid.get(key);
+      if (set) {
+        set.delete(entry.object.id);
+        if (set.size === 0) grid.delete(key);
+      }
+    }
+  };
+
+  const insert = (object: SceneObject): void => {
+    if (!object || !object.id) return;
+    const existing = entries.get(object.id);
+    if (existing) {
+      update(object);
+      return;
+    }
+    orderSeq++;
+    const bounds = sceneObjectBounds(object);
+    if (!bounds) {
+      largeObjectIds.add(object.id);
+      entries.set(object.id, {
+        object,
+        bounds: null,
+        cellKeys: [],
+        isLarge: true,
+        order: orderSeq
+      });
+      return;
+    }
+    const { cellKeys, isLarge } = computeCells(bounds);
+    if (isLarge) {
+      largeObjectIds.add(object.id);
+    } else {
+      for (const key of cellKeys) {
+        let set = grid.get(key);
+        if (!set) {
+          set = new Set();
+          grid.set(key, set);
+        }
+        set.add(object.id);
+      }
+    }
+    entries.set(object.id, {
+      object,
+      bounds,
+      cellKeys,
+      isLarge,
+      order: orderSeq
+    });
+  };
+
+  const update = (object: SceneObject): void => {
+    if (!object || !object.id) return;
+    const existing = entries.get(object.id);
+    if (!existing) {
+      insert(object);
+      return;
+    }
+    removeEntryCells(existing);
+    const bounds = sceneObjectBounds(object);
+    if (!bounds) {
+      largeObjectIds.add(object.id);
+      existing.object = object;
+      existing.bounds = null;
+      existing.cellKeys = [];
+      existing.isLarge = true;
+      return;
+    }
+    const { cellKeys, isLarge } = computeCells(bounds);
+    if (isLarge) {
+      largeObjectIds.add(object.id);
+    } else {
+      for (const key of cellKeys) {
+        let set = grid.get(key);
+        if (!set) {
+          set = new Set();
+          grid.set(key, set);
+        }
+        set.add(object.id);
+      }
+    }
+    existing.object = object;
+    existing.bounds = bounds;
+    existing.cellKeys = cellKeys;
+    existing.isLarge = isLarge;
+  };
+
+  const remove = (id: string): void => {
+    const existing = entries.get(id);
+    if (!existing) return;
+    removeEntryCells(existing);
+    entries.delete(id);
+  };
+
+  const clear = (): void => {
+    grid.clear();
+    entries.clear();
+    largeObjectIds.clear();
+    orderSeq = 0;
+    lastCandidatesCount = 0;
+  };
+
+  const load = (objects: readonly SceneObject[]): void => {
+    clear();
+    if (!Array.isArray(objects)) return;
+    for (const obj of objects) {
+      insert(obj);
+    }
+  };
+
+  const queryNear = (point: ScenePoint, radius: number): SceneObject[] => {
+    if (!isPlainPoint(point) || !Number.isFinite(radius) || radius < 0) {
+      lastCandidatesCount = 0;
+      return [];
+    }
+    const minCX = Math.floor((point.x - radius) / cellSize);
+    const maxCX = Math.floor((point.x + radius) / cellSize);
+    const minCY = Math.floor((point.y - radius) / cellSize);
+    const maxCY = Math.floor((point.y + radius) / cellSize);
+
+    const candidateIds = new Set<string>();
+    for (const id of largeObjectIds) {
+      candidateIds.add(id);
+    }
+    for (let cx = minCX; cx <= maxCX; cx++) {
+      for (let cy = minCY; cy <= maxCY; cy++) {
+        const set = grid.get(`${cx}:${cy}`);
+        if (set) {
+          for (const id of set) candidateIds.add(id);
+        }
+      }
+    }
+    lastCandidatesCount = candidateIds.size;
+    if (candidateIds.size === 0) return [];
+
+    const hits: Entry[] = [];
+    for (const id of candidateIds) {
+      const entry = entries.get(id);
+      if (!entry) continue;
+      const bounds = entry.bounds;
+      if (!bounds) {
+        hits.push(entry);
+        continue;
+      }
+      if (
+        point.x >= bounds.x - radius &&
+        point.x <= bounds.x + bounds.width + radius &&
+        point.y >= bounds.y - radius &&
+        point.y <= bounds.y + bounds.height + radius
+      ) {
+        hits.push(entry);
+      }
+    }
+    // Return top-most-first (reverse document order)
+    hits.sort((a, b) => b.order - a.order);
+    return hits.map((entry) => entry.object);
+  };
+
+  if (initialObjects) {
+    load(initialObjects);
+  }
+
+  return {
+    insert,
+    update,
+    remove,
+    clear,
+    load,
+    size: () => entries.size,
+    queryNear,
+    lastQueryCandidateCount: () => lastCandidatesCount
+  };
+};
+
+/**
+ * Bounded candidate query: AABB overlap around a world point. Returns
+ * top-most-first (reverse document order) so eraser/select hit testing
+ * never walks or converts the rest of the scene. Supports BoardSpatialIndex
+ * or a static object array.
+ */
+export const queryObjectsNear = (
+  objectsOrIndex: readonly SceneObject[] | BoardSpatialIndex,
+  point: ScenePoint,
+  radius: number
+): SceneObject[] => {
+  if (!isPlainPoint(point) || !Number.isFinite(radius) || radius < 0) return [];
+  if (
+    typeof objectsOrIndex === 'object' &&
+    objectsOrIndex !== null &&
+    'queryNear' in objectsOrIndex &&
+    typeof (objectsOrIndex as BoardSpatialIndex).queryNear === 'function'
+  ) {
+    return (objectsOrIndex as BoardSpatialIndex).queryNear(point, radius);
+  }
+  const objects = objectsOrIndex as readonly SceneObject[];
+  const hits: SceneObject[] = [];
+  for (let index = objects.length - 1; index >= 0; index--) {
+    const object = objects[index];
+    if (!object) continue;
+    const bounds = sceneObjectBounds(object);
+    if (!bounds) continue;
+    if (
+      point.x >= bounds.x - radius &&
+      point.x <= bounds.x + bounds.width + radius &&
+      point.y >= bounds.y - radius &&
+      point.y <= bounds.y + bounds.height + radius
+    ) {
+      hits.push(object);
+    }
+  }
+  return hits;
+};
 
 const CANONICAL_COMMON_KEYS = ['id', 'type', 'rotation', 'timestamp', 'color', 'lineWidth'] as const;
 const CANONICAL_KEYS: Record<string, readonly string[]> = {
@@ -497,6 +965,48 @@ const CANONICAL_KEYS: Record<string, readonly string[]> = {
   ],
   text: [...CANONICAL_COMMON_KEYS, 'text', 'fontSize', 'x', 'y', 'width', 'height'],
   image: [...CANONICAL_COMMON_KEYS, 'src', 'x', 'y', 'width', 'height'],
+  coordinateSystem2D: [
+    ...CANONICAL_COMMON_KEYS,
+    'x',
+    'y',
+    'width',
+    'height',
+    'grid',
+    'xLabel',
+    'yLabel'
+  ],
+  coordinateSystem3D: [
+    ...CANONICAL_COMMON_KEYS,
+    'x',
+    'y',
+    'width',
+    'height',
+    'grid',
+    'xLabel',
+    'yLabel',
+    'zLabel'
+  ],
+  mathFunctionPlot: [
+    ...CANONICAL_COMMON_KEYS,
+    'x',
+    'y',
+    'width',
+    'height',
+    'expression',
+    'xRange',
+    'xLabel',
+    'yLabel'
+  ],
+  physicsDataPlot: [
+    ...CANONICAL_COMMON_KEYS,
+    'x',
+    'y',
+    'width',
+    'height',
+    'points',
+    'xLabel',
+    'yLabel'
+  ],
   shape: [
     ...CANONICAL_COMMON_KEYS,
     'lineStyle',
@@ -515,36 +1025,52 @@ const CANONICAL_KEYS: Record<string, readonly string[]> = {
 };
 
 /**
- * Normalize a candidate object to its canonical shape: derive bounds, keep
- * only canonical keys for the S4 families, and strip legacy aliases
- * (`position`, `dataUrl`, `strokeColor`, relative line points). Extension
- * types pass through minus known aliases until VVE-106 canonicalizes them.
+ * Normalize a candidate object to its canonical shape: apply canonical
+ * lesson-object defaults, derive bounds, and keep only canonical keys.
+ * Canonical command paths deliberately do not migrate historical aliases.
  */
 export const normalizeBoardObject = (candidate: SceneObject): SceneObject => {
   const object: Record<string, unknown> = { ...candidate };
   const type = String(object.type ?? '');
 
-  // Legacy alias intake (import edge): aliases are read once here and never
-  // stored. `strokeColor` -> color, `dataUrl`/`src`, nested `position` -> x/y.
-  if (object.color === undefined && typeof object.strokeColor === 'string') {
-    object.color = object.strokeColor;
+  if (type === 'coordinateSystem2D') {
+    if (object.grid === undefined) object.grid = LESSON_OBJECT_DEFAULTS.coordinateSystem2D.grid;
+    if (object.xLabel === undefined) object.xLabel = LESSON_OBJECT_DEFAULTS.coordinateSystem2D.xLabel;
+    if (object.yLabel === undefined) object.yLabel = LESSON_OBJECT_DEFAULTS.coordinateSystem2D.yLabel;
+    if (object.width === undefined) object.width = LESSON_OBJECT_DEFAULTS.coordinateSystem2D.width;
+    if (object.height === undefined) object.height = LESSON_OBJECT_DEFAULTS.coordinateSystem2D.height;
   }
-  if (type === 'image' && object.src === undefined && typeof object.dataUrl === 'string') {
-    object.src = object.dataUrl;
+  if (type === 'coordinateSystem3D') {
+    if (object.grid === undefined) object.grid = LESSON_OBJECT_DEFAULTS.coordinateSystem3D.grid;
+    if (object.xLabel === undefined) object.xLabel = LESSON_OBJECT_DEFAULTS.coordinateSystem3D.xLabel;
+    if (object.yLabel === undefined) object.yLabel = LESSON_OBJECT_DEFAULTS.coordinateSystem3D.yLabel;
+    if (object.zLabel === undefined) object.zLabel = LESSON_OBJECT_DEFAULTS.coordinateSystem3D.zLabel;
+    if (object.width === undefined) object.width = LESSON_OBJECT_DEFAULTS.coordinateSystem3D.width;
+    if (object.height === undefined) object.height = LESSON_OBJECT_DEFAULTS.coordinateSystem3D.height;
   }
-  const position = object.position as Record<string, unknown> | undefined;
-  if (
-    object.x === undefined &&
-    position &&
-    typeof position === 'object' &&
-    isFiniteNumber(position.x) &&
-    isFiniteNumber(position.y)
-  ) {
-    object.x = position.x;
-    object.y = position.y;
+  if (type === 'mathFunctionPlot') {
+    if (object.xRange === undefined) object.xRange = [...LESSON_OBJECT_DEFAULTS.mathFunctionPlot.xRange];
+    if (object.expression === undefined) object.expression = LESSON_OBJECT_DEFAULTS.mathFunctionPlot.expression;
+    if (object.xLabel === undefined) object.xLabel = LESSON_OBJECT_DEFAULTS.mathFunctionPlot.xLabel;
+    if (object.yLabel === undefined) object.yLabel = LESSON_OBJECT_DEFAULTS.mathFunctionPlot.yLabel;
+    if (object.width === undefined) object.width = LESSON_OBJECT_DEFAULTS.mathFunctionPlot.width;
+    if (object.height === undefined) object.height = LESSON_OBJECT_DEFAULTS.mathFunctionPlot.height;
   }
-  delete object.strokeColor;
-  delete object.dataUrl;
+  if (type === 'physicsDataPlot') {
+    if (Array.isArray(object.points)) {
+      object.points = object.points.map((point) => {
+        if (!point || typeof point !== 'object' || Array.isArray(point)) return point;
+        return {
+          x: (point as Record<string, unknown>).x,
+          y: (point as Record<string, unknown>).y
+        };
+      });
+    }
+    if (object.xLabel === undefined) object.xLabel = LESSON_OBJECT_DEFAULTS.physicsDataPlot.xLabel;
+    if (object.yLabel === undefined) object.yLabel = LESSON_OBJECT_DEFAULTS.physicsDataPlot.yLabel;
+    if (object.width === undefined) object.width = LESSON_OBJECT_DEFAULTS.physicsDataPlot.width;
+    if (object.height === undefined) object.height = LESSON_OBJECT_DEFAULTS.physicsDataPlot.height;
+  }
 
   if (object.rotation === undefined) object.rotation = 0;
 
@@ -575,16 +1101,27 @@ export const normalizeBoardObject = (candidate: SceneObject): SceneObject => {
     for (const key of Object.keys(object)) {
       if (!canonicalKeys.includes(key)) delete object[key];
     }
-  } else {
-    // Extension types keep their payload (bounded by validation) so VVE-106
-    // can canonicalize them without a data migration; keep x/y mirrored for
-    // the movable overlay.
-    if (position && object.x !== undefined && (object.position as Record<string, unknown>)) {
-      (object.position as Record<string, unknown>).x = object.x;
-      (object.position as Record<string, unknown>).y = object.y;
-    }
   }
   return object as SceneObject;
+};
+
+/**
+ * Normalize an object arriving through an explicitly legacy-aware import
+ * boundary. General board commands must use `normalizeBoardObject` so a
+ * newly submitted alias is rejected by the canonical schema.
+ */
+export const normalizeImportedBoardObject = (candidate: SceneObject): SceneObject => {
+  const object: Record<string, unknown> = { ...candidate };
+  const type = String(object.type ?? '');
+  if (type === 'image' && object.dataUrl !== undefined && object.src === undefined) {
+    object.src = object.dataUrl;
+  }
+  if (object.position && typeof object.position === 'object') {
+    const position = object.position as { x?: unknown; y?: unknown };
+    if (object.x === undefined && typeof position.x === 'number') object.x = position.x;
+    if (object.y === undefined && typeof position.y === 'number') object.y = position.y;
+  }
+  return normalizeBoardObject(object as SceneObject);
 };
 
 // --- Yjs access helpers ------------------------------------------------------
@@ -618,6 +1155,67 @@ const toSceneMap = (object: SceneObject): Y.Map<unknown> => {
 };
 
 const objectJson = (map: Y.Map<unknown>): SceneObject => map.toJSON() as SceneObject;
+
+/**
+ * Canonical scene bounds for any board scene object.
+ *
+ * For canonical lesson objects (`physicsDataPlot`, `mathFunctionPlot`),
+ * bounds are strictly defined by their displayed layout rectangle
+ * `[x, y, x + width, y + height]`. The `points` property on a physical graph
+ * contains plotted data values (e.g. time vs velocity, 0..1,000,000) and
+ * must NEVER be treated as world coordinates.
+ */
+export const canonicalObjectBounds = (
+  object: SceneObject | Record<string, unknown>
+): [number, number, number, number] | null => {
+  if (!object || typeof object !== 'object') return null;
+  const type = String(object.type ?? '');
+
+  if (type === 'pen' && Array.isArray(object.points) && object.points.length > 0) {
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const p of object.points as ScenePoint[]) {
+      if (p && isFiniteNumber(p.x) && isFiniteNumber(p.y)) {
+        if (p.x < minX) minX = p.x;
+        if (p.y < minY) minY = p.y;
+        if (p.x > maxX) maxX = p.x;
+        if (p.y > maxY) maxY = p.y;
+      }
+    }
+    if (minX !== Infinity && minY !== Infinity && maxX !== -Infinity && maxY !== -Infinity) {
+      return [minX, minY, maxX, maxY];
+    }
+    return null;
+  }
+
+  if (type === 'line' && object.start && object.end) {
+    const start = object.start as ScenePoint;
+    const end = object.end as ScenePoint;
+    if (isFiniteNumber(start.x) && isFiniteNumber(start.y) && isFiniteNumber(end.x) && isFiniteNumber(end.y)) {
+      return [
+        Math.min(start.x, end.x),
+        Math.min(start.y, end.y),
+        Math.max(start.x, end.x),
+        Math.max(start.y, end.y)
+      ];
+    }
+    return null;
+  }
+
+  // All rectangular objects (shapes, lesson objects, text, image, coordinate systems)
+  const x = object.x;
+  const y = object.y;
+  const width = object.width;
+  const height = object.height;
+  if (isFiniteNumber(x) && isFiniteNumber(y) && isFiniteNumber(width) && isFiniteNumber(height)) {
+    const minX = Math.min(x as number, (x as number) + (width as number));
+    const maxX = Math.max(x as number, (x as number) + (width as number));
+    const minY = Math.min(y as number, (y as number) + (height as number));
+    const maxY = Math.max(y as number, (y as number) + (height as number));
+    return [minX, minY, maxX, maxY];
+  }
+
+  return null;
+};
 
 const rectOf = (map: Y.Map<unknown>) => {
   const x = map.get('x');
@@ -737,29 +1335,25 @@ const translateObjectMap = (map: Y.Map<unknown>, dx: number, dy: number) => {
   }
   if (isFiniteNumber(map.get('x'))) map.set('x', (map.get('x') as number) + dx);
   if (isFiniteNumber(map.get('y'))) map.set('y', (map.get('y') as number) + dy);
-  const points = map.get('points');
-  if (Array.isArray(points)) {
-    map.set(
-      'points',
-      points.map((point: ScenePoint) => ({ ...point, x: point.x + dx, y: point.y + dy }))
-    );
-  }
-  if (Array.isArray(map.get('rawPoints'))) {
-    map.set(
-      'rawPoints',
-      (map.get('rawPoints') as ScenePoint[]).map((point) => ({
-        ...point,
-        x: point.x + dx,
-        y: point.y + dy
-      }))
-    );
-  }
-  // Extension objects mirror x/y in `position` until VVE-106 canonicalizes them.
-  const position = map.get('position');
-  if (position && typeof position === 'object' && !Array.isArray(position)) {
-    const point = position as Record<string, unknown>;
-    if (isFiniteNumber(point.x) && isFiniteNumber(point.y)) {
-      map.set('position', { ...point, x: (point.x as number) + dx, y: (point.y as number) + dy });
+  // Pen points are board-space geometry. Physics points are domain data and
+  // must remain unchanged when the plot frame moves.
+  if (type === 'pen') {
+    const points = map.get('points');
+    if (Array.isArray(points)) {
+      map.set(
+        'points',
+        points.map((point: ScenePoint) => ({ ...point, x: point.x + dx, y: point.y + dy }))
+      );
+    }
+    if (Array.isArray(map.get('rawPoints'))) {
+      map.set(
+        'rawPoints',
+        (map.get('rawPoints') as ScenePoint[]).map((point) => ({
+          ...point,
+          x: point.x + dx,
+          y: point.y + dy
+        }))
+      );
     }
   }
 };
@@ -775,38 +1369,81 @@ const resizeObjectMap = (
   }
   const scaleX = rect.width === 0 ? 1 : frame.width / rect.width;
   const scaleY = rect.height === 0 ? 1 : frame.height / rect.height;
-  const points = map.get('points');
-  if (Array.isArray(points)) {
-    map.set(
-      'points',
-      (points as ScenePoint[]).map((point) => ({
-        ...point,
-        x: frame.x + (point.x - rect.x) * scaleX,
-        y: frame.y + (point.y - rect.y) * scaleY
-      }))
-    );
-    if (Array.isArray(map.get('rawPoints'))) {
+  // Only pen points describe board-space geometry. Resizing a physical graph
+  // changes its frame, not the measured values stored in `points`.
+  if (map.get('type') === 'pen') {
+    const points = map.get('points');
+    if (Array.isArray(points)) {
       map.set(
-        'rawPoints',
-        (map.get('rawPoints') as ScenePoint[]).map((point) => ({
+        'points',
+        (points as ScenePoint[]).map((point) => ({
           ...point,
           x: frame.x + (point.x - rect.x) * scaleX,
           y: frame.y + (point.y - rect.y) * scaleY
         }))
       );
+      if (Array.isArray(map.get('rawPoints'))) {
+        map.set(
+          'rawPoints',
+          (map.get('rawPoints') as ScenePoint[]).map((point) => ({
+            ...point,
+            x: frame.x + (point.x - rect.x) * scaleX,
+            y: frame.y + (point.y - rect.y) * scaleY
+          }))
+        );
+      }
     }
   }
   map.set('x', frame.x);
   map.set('y', frame.y);
   map.set('width', frame.width);
   map.set('height', frame.height);
-  const position = map.get('position');
-  if (position && typeof position === 'object' && !Array.isArray(position)) {
-    map.set('position', { ...(position as Record<string, unknown>), x: frame.x, y: frame.y });
+  return { ok: true };
+};
+
+const rotatePenObjectMap = (map: Y.Map<unknown>, deltaDegrees: number): CommandResult => {
+  const points = map.get('points');
+  const rect = rectOf(map);
+  if (!Array.isArray(points) || !rect) {
+    return commandFail('invalidCommand', 'The pen has no rotatable point geometry.');
   }
-  if (isFiniteNumber(map.get('size'))) {
-    map.set('size', Math.max(frame.width, frame.height));
+  const radians = (deltaDegrees * Math.PI) / 180;
+  const cos = Math.cos(radians);
+  const sin = Math.sin(radians);
+  const center = { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
+  const rotate = (point: ScenePoint): ScenePoint => {
+    const dx = point.x - center.x;
+    const dy = point.y - center.y;
+    return plainPoint({
+      ...point,
+      x: center.x + dx * cos - dy * sin,
+      y: center.y + dx * sin + dy * cos
+    });
+  };
+  const rotatedPoints = (points as ScenePoint[]).map(rotate);
+  const validation = validatePointList(rotatedPoints, 1);
+  if (!validation) return commandFail('invalidObject', 'The rotated pen geometry is invalid.');
+  const rawPoints = map.get('rawPoints');
+  let rotatedRawPoints: ScenePoint[] | null = null;
+  if (rawPoints !== undefined) {
+    if (!validatePointList(rawPoints, 1)) {
+      return commandFail('invalidObject', 'The raw pen geometry is invalid.');
+    }
+    rotatedRawPoints = (rawPoints as ScenePoint[]).map(rotate);
+    if (!validatePointList(rotatedRawPoints, 1)) {
+      return commandFail('invalidObject', 'The rotated raw pen geometry is invalid.');
+    }
   }
+  map.set('points', rotatedPoints);
+  if (rotatedRawPoints) {
+    map.set('rawPoints', rotatedRawPoints);
+  }
+  const bounds = boundsFromPoints(rotatedPoints);
+  map.set('x', bounds.x);
+  map.set('y', bounds.y);
+  map.set('width', bounds.width);
+  map.set('height', bounds.height);
+  map.set('rotation', 0);
   return { ok: true };
 };
 
@@ -915,6 +1552,68 @@ export const applyBoardCommand = (
       return { ok: true };
     }
 
+    case 'erasePen': {
+      const entry = findObjectEntry(doc, command.id);
+      if (!entry) return commandFail('missingObject', `Object "${command.id}" does not exist.`);
+      if (entry.map.get('type') !== 'pen') {
+        return commandFail('invalidCommand', 'Only pen strokes support partial erasing.');
+      }
+      if (!Array.isArray(command.segments) || command.segments.length > SCENE_LIMITS.maxObjects) {
+        return commandFail('invalidCommand', 'The replacement stroke list is invalid.');
+      }
+      if (drawings.length - 1 + command.segments.length > SCENE_LIMITS.maxObjects) {
+        return commandFail('invalidObject', 'The board object limit was reached.');
+      }
+      const source = objectJson(entry.map);
+      const segmentIds = new Set<string>();
+      const existingIds = new Set(
+        drawings.toArray().map((map) => String(map.get('id')))
+      );
+      const replacements: SceneObject[] = [];
+      for (const [index, segment] of command.segments.entries()) {
+        if (
+          !segment ||
+          !isBoundedString(segment.id, SCENE_LIMITS.maxIdLength) ||
+          (index === 0 && segment.id !== command.id) ||
+          segmentIds.has(segment.id) ||
+          (segment.id !== command.id && existingIds.has(segment.id)) ||
+          !validatePointList(segment.points, 1)
+        ) {
+          return commandFail('invalidObject', 'A replacement pen stroke is invalid.');
+        }
+        segmentIds.add(segment.id);
+        const replacement = normalizeBoardObject({
+          ...source,
+          id: segment.id,
+          points: segment.points.map(plainPoint),
+          rawPoints: undefined
+        });
+        delete replacement.rawPoints;
+        const validation = validateBoardObject(replacement);
+        if (!validation.ok) return commandFail('invalidObject', validation.message);
+        replacements.push(replacement);
+      }
+      doc.transact(() => {
+        if (replacements.length) {
+          const first = replacements[0]!;
+          const rest = replacements.slice(1);
+          for (const key of ['points', 'x', 'y', 'width', 'height']) {
+            entry.map.set(key, first[key]);
+          }
+          if (first.rawPoints === undefined) {
+            if (source.rawPoints !== undefined) entry.map.delete('rawPoints');
+          } else {
+            entry.map.set('rawPoints', first.rawPoints);
+          }
+          if (rest.length) drawings.insert(entry.index + 1, rest.map(toSceneMap));
+        } else {
+          drawings.delete(entry.index, 1);
+          detachBindingsForDeleted(doc, new Set([command.id]));
+        }
+      }, context.origin);
+      return { ok: true };
+    }
+
     case 'move': {
       const entry = findObjectEntry(doc, command.id);
       if (!entry) return commandFail('missingObject', `Object "${command.id}" does not exist.`);
@@ -952,6 +1651,16 @@ export const applyBoardCommand = (
       if (!entry) return commandFail('missingObject', `Object "${command.id}" does not exist.`);
       if (!isFiniteNumber(command.rotation)) {
         return commandFail('invalidCommand', 'The rotation is not a finite number.');
+      }
+      if (entry.map.get('type') === 'pen') {
+        let result: CommandResult = { ok: true };
+        doc.transact(() => {
+          // Pen points are world-space geometry. A non-zero legacy rotation
+          // is still part of the visible transform, so bake the requested
+          // absolute angle before clearing the metadata.
+          result = rotatePenObjectMap(entry.map, command.rotation);
+        }, context.origin);
+        return result;
       }
       doc.transact(() => {
         entry.map.set('rotation', command.rotation);
@@ -1110,6 +1819,16 @@ export const collectUpdateEffects = (
 
     const changed = new Set<Y.Map<unknown>>();
     let removedCount = 0;
+    let incompatibleCollections = false;
+    const meta = doc.getMap(BOARD_META_KEY);
+    const inspectCollections = (transaction: Y.Transaction) => {
+      // Root collection types are not encoded in Yjs updates. Reject a peer
+      // writing map fields into drawings or array items into boardMeta.
+      const drawingChanges = transaction.changed.get(drawings);
+      const metaChanges = transaction.changed.get(meta as Y.AbstractType<any>);
+      if (drawingChanges && [...drawingChanges].some((key) => key !== null)) incompatibleCollections = true;
+      if (metaChanges?.has(null)) incompatibleCollections = true;
+    };
     const observer = (events: Y.YEvent<any>[]) => {
       for (const event of events) {
         if (event.target === drawings) {
@@ -1118,6 +1837,7 @@ export const collectUpdateEffects = (
             if (Array.isArray(delta.insert)) {
               for (const inserted of delta.insert) {
                 if (inserted instanceof Y.Map) changed.add(inserted);
+                else incompatibleCollections = true;
               }
             }
           }
@@ -1131,11 +1851,18 @@ export const collectUpdateEffects = (
       }
     };
     drawings.observeDeep(observer);
+    doc.on('afterTransaction', inspectCollections);
     try {
       Y.applyUpdate(doc, update, 'effects-candidate');
     } finally {
       drawings.unobserveDeep(observer);
+      doc.off('afterTransaction', inspectCollections);
     }
+    const clearEpoch = meta.get(CLEAR_EPOCH_KEY);
+    if (clearEpoch !== undefined && (!Number.isSafeInteger(clearEpoch) || Number(clearEpoch) < 0)) {
+      incompatibleCollections = true;
+    }
+    if (incompatibleCollections) throw new Error('The update does not use canonical board collections.');
 
     const changedObjects: SceneObject[] = [];
     for (const map of changed) {

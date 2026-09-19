@@ -95,6 +95,33 @@ describe('BoardDocument Interface', () => {
     expect(document.digest()).toBe(before);
   });
 
+  it.each(['plain-object', 'scalar', 'nested-array', 'drawings-map', 'meta-array', 'invalid-epoch'])(
+    'rejects malformed scene collections (%s) without accepting hidden state', (kind) => {
+      const document = createBoardDocument();
+      document.apply(commandUpdate(document, { kind: 'add', object: rectangle }, 'teacher'), {
+        kind: 'remote', actorId: 'teacher', role: 'teacher'
+      });
+      const before = document.digest();
+      const rogue = new Y.Doc();
+      Y.applyUpdate(rogue, document.encode());
+      const vector = Y.encodeStateVector(rogue);
+      if (kind === 'drawings-map') rogue.getMap('drawings').set('hidden', 'not an object');
+      else if (kind === 'meta-array') rogue.getArray('boardMeta').push(['not metadata']);
+      else if (kind === 'invalid-epoch') rogue.getMap('boardMeta').set('clearEpoch', 'invalid');
+      else rogue.getArray('drawings').push([
+        kind === 'plain-object' ? { ...rectangle, id: 'plain' } : kind === 'scalar' ? 17 : new Y.Array()
+      ]);
+      const result = document.apply(Y.encodeStateAsUpdate(rogue, vector), {
+        kind: 'remote', actorId: 'student', role: 'student'
+      });
+      expect(result).toMatchObject({ ok: false, reason: 'incompatibleUpdate' });
+      expect(document.digest()).toBe(before);
+      expect(drawingsOf(document)).toMatchObject([rectangle]);
+      rogue.destroy();
+      document.destroy();
+    }
+  );
+
   it('authorizes a whole-board clear for the Teacher only', () => {
     const document = createBoardDocument();
     const add = document.apply(
@@ -134,6 +161,101 @@ describe('BoardDocument Interface', () => {
     );
     expect(moved.ok).toBe(true);
     expect(drawingsOf(document)).toMatchObject([{ id: 'rect-1', x: 42, y: 24 }]);
+  });
+
+  it('validates and converges canonical math, physics, and coordinate updates', () => {
+    const document = createBoardDocument();
+    const objects = [
+      {
+        id: 'coordinate',
+        type: 'coordinateSystem2D',
+        x: 10,
+        y: 20,
+        width: 400,
+        height: 300,
+        grid: true,
+        xLabel: 'x',
+        yLabel: 'y'
+      },
+      {
+        id: 'math',
+        type: 'mathFunctionPlot',
+        x: 30,
+        y: 40,
+        width: 400,
+        height: 300,
+        expression: 'x^2',
+        xRange: [-10, 10]
+      },
+      {
+        id: 'physics',
+        type: 'physicsDataPlot',
+        x: 50,
+        y: 60,
+        width: 400,
+        height: 300,
+        points: [{ x: 0, y: 0 }, { x: 1, y: 9.8 }],
+        xLabel: 't',
+        yLabel: 'v'
+      }
+    ];
+
+    for (const object of objects) {
+      const result = document.apply(
+        commandUpdate(document, { kind: 'add', object }, 'student'),
+        { kind: 'remote', actorId: 'student-1', role: 'student' }
+      );
+      expect(result.ok).toBe(true);
+    }
+    const replica = createBoardDocument();
+    expect(replica.apply(document.encode(), { kind: 'hydrate' }).ok).toBe(true);
+    expect(replica.digest()).toBe(document.digest());
+    expect(replica.snapshot()).toEqual(document.snapshot());
+    expect(drawingsOf(replica)).toHaveLength(3);
+  });
+
+  it('replays canonical lesson objects with snapshot and update parity', () => {
+    const source = createBoardDocument();
+    const math = {
+      id: 'canon-math',
+      type: 'mathFunctionPlot',
+      x: 75,
+      y: 85,
+      width: 400,
+      height: 300,
+      expression: 'x^2',
+      xRange: [-10, 10],
+      xLabel: 'x',
+      yLabel: 'f(x)',
+      lineWidth: 3,
+      color: '#2563eb',
+      rotation: 0
+    };
+    const physics = {
+      id: 'canon-physics',
+      type: 'physicsDataPlot',
+      x: 30,
+      y: 40,
+      width: 400,
+      height: 300,
+      points: [{ x: 0, y: 0 }, { x: 1, y: 9.8 }, { x: 2, y: 19.6 }],
+      xLabel: 't',
+      yLabel: 'v',
+      lineWidth: 2,
+      color: '#2563eb',
+      rotation: 0
+    };
+    expect(source.apply(commandUpdate(source, { kind: 'add', object: math }, 'teacher'), { kind: 'local', actorId: 't1', role: 'teacher' }).ok).toBe(true);
+    const snapshot = source.encode();
+
+    const replica = createBoardDocument({ initialState: snapshot });
+    expect(source.apply(commandUpdate(source, { kind: 'add', object: physics }, 'teacher'), { kind: 'local', actorId: 't1', role: 'teacher' }).ok).toBe(true);
+
+    const update = source.encode(replica.stateVector());
+    expect(replica.apply(update, { kind: 'hydrate' }).ok).toBe(true);
+
+    expect(drawingsOf(replica)).toEqual([math, physics]);
+    expect(replica.digest()).toBe(source.digest());
   });
 
   it('hydrate updates bypass schema authorization (trusted stored history)', () => {

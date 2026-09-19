@@ -4,6 +4,12 @@ import { config } from '../config';
 import { getDb } from '../db';
 import { logger } from '../logger';
 import { normalizeTeacherEmail } from '../services/teacherService';
+import type { OperationalSignals } from './operationalSignals';
+import {
+  createResourceGovernor,
+  type ResourceGovernor
+} from './resourceGovernor';
+import { createResourceLimits } from './resourceLimits';
 
 /**
  * CapabilityAccess — Module 1 of the VVE Pilot deep-module design (slice S1).
@@ -249,6 +255,10 @@ export interface CreateCapabilityAccessOptions {
   /** Administrator login rate limit; defaults come from config (5/min). */
   loginMax?: number;
   loginWindowMs?: number;
+  /** Content-free operational events (VVE-108). */
+  signals?: OperationalSignals;
+  /** ResourceGovernor owns the login window; RuntimeControl composes one shared instance (VVE-108). */
+  resourceGovernor?: ResourceGovernor;
 }
 
 export interface CapabilityAccess {
@@ -281,18 +291,23 @@ export const createCapabilityAccess = (options: CreateCapabilityAccessOptions = 
   const db = () => options.db ?? getDb();
   const loginMax = options.loginMax ?? config.adminLoginMax;
   const loginWindowMs = options.loginWindowMs ?? config.adminLoginWindowMs;
+  const signals = options.signals;
+  const governor =
+    options.resourceGovernor ??
+    createResourceGovernor({
+      limits: createResourceLimits({
+        administratorLoginMax: loginMax,
+        administratorLoginWindowMs: loginWindowMs
+      })
+    });
 
-  // ---- Administrator login rate limiting (hidden inside the module) -------
-  const loginBuckets = new Map<string, { count: number; resetAt: number }>();
+  // ---- Administrator login rate limiting (single owner: ResourceGovernor) -
   const loginAllowed = (clientKey: string, now: Date): boolean => {
-    const bucket = loginBuckets.get(clientKey);
-    if (!bucket || bucket.resetAt < now.getTime()) {
-      loginBuckets.set(clientKey, { count: 1, resetAt: now.getTime() + loginWindowMs });
-      return true;
-    }
-    if (bucket.count >= loginMax) return false;
-    bucket.count += 1;
-    return true;
+    const decision = governor.admit(
+      { kind: 'administratorLogin', clientKey },
+      { now: now.getTime() }
+    );
+    return decision.decision === 'allow' || decision.decision === 'allowWithBudget';
   };
 
   // ---- Shared durable lookups (single indexed query on the hot path) -----
@@ -810,13 +825,62 @@ export const createCapabilityAccess = (options: CreateCapabilityAccessOptions = 
     }
   };
 
+  const decideWithSignals: CapabilityAccess['decide'] = async (input) => {
+    const decision = await decide(input);
+    signals?.record({
+      name: 'access.decision',
+      dimensions: {
+        action: input.action,
+        granted: decision.granted,
+        reason: decision.granted ? 'granted' : decision.reason,
+        role: decision.granted ? decision.role : 'none',
+        credentialKind: input.credential.kind
+      }
+    });
+    return decision;
+  };
+
+  const createOrReuseWithSignals: CapabilityAccess['createOrReuseTeacherAccessLink'] = async (input) => {
+    const result = await createOrReuseTeacherAccessLink(input);
+    signals?.record({
+      name: 'access.credential',
+      dimensions: {
+        operation: 'createOrReuseTeacherAccessLink',
+        ok: result.ok
+      }
+    });
+    return result;
+  };
+
+  const regenerateWithSignals: CapabilityAccess['regenerateTeacherAccessLink'] = async (teacherId, now) => {
+    const result = await regenerateTeacherAccessLink(teacherId, now);
+    signals?.record({
+      name: 'access.credential',
+      dimensions: { operation: 'regenerateTeacherAccessLink', ok: result.ok }
+    });
+    return result;
+  };
+
+  const deactivateWithSignals: CapabilityAccess['deactivateTeacher'] = async (teacherId, now) => {
+    const result = await deactivateTeacher(teacherId, now);
+    signals?.record({
+      name: 'access.credential',
+      dimensions: {
+        operation: 'deactivateTeacher',
+        ok: result.ok,
+        reason: result.ok ? 'ok' : result.reason
+      }
+    });
+    return result;
+  };
+
   return {
-    decide,
+    decide: decideWithSignals,
     exchangeAdministratorPassphrase,
     verifyAdministratorSessionToken,
-    createOrReuseTeacherAccessLink,
-    regenerateTeacherAccessLink,
-    deactivateTeacher,
+    createOrReuseTeacherAccessLink: createOrReuseWithSignals,
+    regenerateTeacherAccessLink: regenerateWithSignals,
+    deactivateTeacher: deactivateWithSignals,
     listTeacherAccessLinks
   };
 };
@@ -829,6 +893,11 @@ export const TEACHER_SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 30;
 
 export const issueTeacherSessionToken = (teacherId: string, cv: number): string =>
   signPayload({ teacherId, cv, exp: Date.now() + TEACHER_SESSION_TTL_MS }, config.teacherSessionSecret);
+
+// A lesson may run for three hours and survive a controlled restart. The
+// transport token remains bounded at four hours while every mutation still
+// revalidates durable board and teacher state.
+export const BOARD_WS_TOKEN_TTL_MS = 1000 * 60 * 60 * 4;
 
 export const issueBoardWsToken = (input: {
   boardId: string;
@@ -843,7 +912,7 @@ export const issueBoardWsToken = (input: {
       role: input.role,
       ...(input.role === 'teacher' && input.teacherId ? { teacherId: input.teacherId } : {}),
       cv: input.cv,
-      exp: Date.now() + (input.ttlMs ?? 1000 * 60 * 60 * 2)
+      exp: Date.now() + (input.ttlMs ?? BOARD_WS_TOKEN_TTL_MS)
     },
     config.boardWsSecret
   );

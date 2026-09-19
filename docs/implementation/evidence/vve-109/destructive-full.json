@@ -1,0 +1,32 @@
+{
+  "profile": "destructive",
+  "smoke": false,
+  "startedAt": "2026-09-18T23:56:20.778Z",
+  "finishedAt": "2026-09-18T23:56:26.879Z",
+  "durationMs": 6100,
+  "clients": 1,
+  "boards": 1,
+  "acknowledgedOperations": 25,
+  "reconnects": 0,
+  "backendRestarts": 1,
+  "metrics": {
+    "samples": 1,
+    "maxRssBytes": 0,
+    "maxEventLoopDelayMs": 0,
+    "blockerEvents": 0,
+    "digestMismatches": 0,
+    "crossBoardLeaks": 0
+  },
+  "fixtures": null,
+  "coverage": "complete",
+  "destructive": {
+    "attemptedInvalidOperations": 24,
+    "rejectedInvalidOperations": 24,
+    "nonMapEntryRejectionReason": "malformed",
+    "malformedFrameCloseCode": 1008,
+    "oversizedFrameCloseCode": 1009,
+    "preservedState": true,
+    "restartVerified": true
+  },
+  "passed": true
+}

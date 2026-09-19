@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { readFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -26,8 +26,19 @@ const fixturePath = path.resolve(
 const fixture = JSON.parse(readFileSync(fixturePath, 'utf8'));
 
 const adminPassphrase = process.env.PILOT_ADMIN_PASSPHRASE || 'pilot-e2e-admin-passphrase';
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
+const captureTrackedArtifacts = process.env.VVE_CAPTURE_VISUALS === '1' || process.env.CAPTURE_EVIDENCE === '1';
+
+const artifactDirectory = (testInfo, temporaryRelativePath, trackedRelativePath) => {
+  const root = captureTrackedArtifacts ? repoRoot : path.join(testInfo.outputDir, 'artifacts');
+  const relativePath = captureTrackedArtifacts ? trackedRelativePath : temporaryRelativePath;
+  const directory = path.join(root, relativePath);
+  mkdirSync(directory, { recursive: true });
+  return directory;
+};
 
 test.describe('Pilot fixture: Administrator, Teacher, Student browser contexts', () => {
+  test.describe.configure({ mode: 'serial' });
   test('Teacher opens the access link and lands on the dashboard with the seeded board', async ({ browser }) => {
     const context = await browser.newContext();
     const page = await context.newPage();
@@ -77,8 +88,8 @@ test.describe('Pilot fixture: Administrator, Teacher, Student browser contexts',
     await join(second);
 
     // Presence is hydrated for a later join and converges on both devices.
-    await expect(first.getByText('2 Online')).toBeVisible({ timeout: 5_000 });
-    await expect(second.getByText('2 Online')).toBeVisible({ timeout: 5_000 });
+    await expect(first.getByText('2 online')).toBeVisible({ timeout: 5_000 });
+    await expect(second.getByText('2 online')).toBeVisible({ timeout: 5_000 });
 
     const secondCanvas = second.locator('canvas.static-layer');
     const beforeRemote = await secondCanvas.evaluate((canvas) => canvas.toDataURL());
@@ -235,6 +246,241 @@ test.describe('Pilot fixture: Administrator, Teacher, Student browser contexts',
     await firstContext.close();
     await secondContext.close();
     await teacherContext.close();
+  });
+
+  test('Math, physics, coordinates, shapes, lines, and calculator complete the collaborative workflow', async ({ browser }) => {
+    test.setTimeout(90_000);
+    const teacherContext = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const teacher = await teacherContext.newPage();
+    await teacher.goto(fixture.teacherAccessLink);
+    await expect(teacher.getByRole('heading', { name: 'Moje tablice' })).toBeVisible({ timeout: 15_000 });
+
+    const boardLabel = `E2E narzędzia ${Date.now()}`;
+    await teacher.getByRole('button', { name: 'Nowa tablica ucznia' }).click();
+    await teacher.getByLabel('Etykieta ucznia / grupy').fill(boardLabel);
+    await teacher.getByLabel('Temat lekcji (opcjonalnie)').fill('Test narzędzi matematycznych i fizycznych');
+    await teacher.getByRole('button', { name: 'Utwórz tablicę' }).click();
+    const freshLink = teacher.locator('.modal-panel .keyway.fresh .keyway-channel');
+    await expect(freshLink).toBeVisible({ timeout: 10_000 });
+    const boardAccessLink = (await freshLink.innerText()).trim();
+    await teacher.locator('.modal-foot').getByRole('button', { name: 'Zamknij' }).click();
+
+    const firstContext = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
+    const secondContext = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const first = await firstContext.newPage();
+    const second = await secondContext.newPage();
+    const browserErrors = [];
+    for (const page of [first, second]) {
+      page.on('console', (message) => {
+        if (['warning', 'error'].includes(message.type())) browserErrors.push(message.text());
+      });
+      page.on('pageerror', (error) => browserErrors.push(error.message));
+    }
+    const join = async (page) => {
+      await page.goto(boardAccessLink);
+      await page.getByRole('button', { name: 'Dołącz do lekcji' }).click();
+      await expect(page.locator('canvas.static-layer')).toBeVisible({ timeout: 20_000 });
+      await expect(page.getByTestId('collaboration-read-only')).toBeHidden({ timeout: 5_000 });
+    };
+    await join(first);
+    await join(second);
+
+    // Calculator is functional and opening another required panel closes it.
+    await first.locator('[data-tool-id="panel.calculator"]').click();
+    const calculator = first.getByRole('dialog', { name: 'Kalkulator naukowy' });
+    await expect(calculator).toBeVisible();
+    await calculator.locator('.two').click();
+    await calculator.locator('.add').click();
+    await calculator.locator('.three').click();
+    await calculator.locator('.btn-equal').click();
+    await expect(calculator.locator('.result')).toHaveText('5');
+
+    await first.locator('[data-tool-id="panel.mathGraph"]').click();
+    await expect(calculator).toBeHidden();
+    const mathPanel = first.getByRole('dialog', { name: 'Wykres funkcji' });
+    await expect(mathPanel).toBeVisible();
+    await mathPanel.getByLabel('Funkcja f(x)').fill('sin(x)');
+    await mathPanel.getByLabel('Od').fill('-8');
+    await mathPanel.getByLabel('Do').fill('8');
+    await mathPanel.getByRole('button', { name: 'Dodaj wykres' }).click();
+    await expect(mathPanel).toBeHidden();
+
+    const firstMath = first.locator('[data-object-type="mathFunctionPlot"]');
+    const secondMath = second.locator('[data-object-type="mathFunctionPlot"]');
+    await expect(firstMath).toBeVisible({ timeout: 5_000 });
+    await expect(secondMath).toBeVisible({ timeout: 5_000 });
+
+    // A direct manipulation synchronizes, and local undo/redo reverses only
+    // this participant's graph movement.
+    const initialSecondBox = await secondMath.boundingBox();
+    await first.locator('[data-tool-id="tool.select"]').click();
+    await firstMath.click();
+    await expect(firstMath).toHaveClass(/is-selected/);
+    const firstMathBox = await firstMath.boundingBox();
+    await first.mouse.move(firstMathBox.x + firstMathBox.width / 2, firstMathBox.y + firstMathBox.height / 2);
+    await first.mouse.down();
+    await first.mouse.move(
+      firstMathBox.x + firstMathBox.width / 2 + 70,
+      firstMathBox.y + firstMathBox.height / 2 + 45,
+      { steps: 8 }
+    );
+    await first.mouse.up();
+    await expect.poll(async () => (await secondMath.boundingBox()).x, { timeout: 5_000 })
+      .not.toBeCloseTo(initialSecondBox.x, 0);
+    const movedSecondBox = await secondMath.boundingBox();
+
+    await first.locator('[data-tool-id="tool.undo"]').click();
+    await expect.poll(async () => (await secondMath.boundingBox()).x, { timeout: 5_000 })
+      .toBeCloseTo(initialSecondBox.x, 0);
+    await first.locator('[data-tool-id="tool.redo"]').click();
+    await expect.poll(async () => (await secondMath.boundingBox()).x, { timeout: 5_000 })
+      .toBeCloseTo(movedSecondBox.x, 0);
+
+    await first.locator('[data-tool-id="panel.physicsGraph"]').click();
+    const physicsPanel = first.getByRole('dialog', { name: 'Wykres fizyczny' });
+    await physicsPanel.getByLabel(/Punkty danych/).fill('0,0\n1,9.8\n2,19.6');
+    await physicsPanel.getByLabel('Opis osi poziomej').fill('czas');
+    await physicsPanel.getByLabel('Opis osi pionowej').fill('prędkość');
+    await physicsPanel.getByRole('button', { name: 'Dodaj wykres' }).click();
+    await expect(second.locator('[data-object-type="physicsDataPlot"]')).toBeVisible({ timeout: 5_000 });
+
+    await first.locator('[data-tool-id="panel.coordinateSystem"]').click();
+    await first.getByRole('button', { name: 'Układ współrzędnych 2D' }).click();
+    await expect(second.locator('[data-object-type="coordinateSystem2D"]')).toBeVisible({ timeout: 5_000 });
+
+    // Representative shape and line styles cross the same command,
+    // collaboration, transform, export, and persistence seams.
+    await first.locator('[data-tool-id="tool.shapes"]').click();
+    await first.getByRole('button', { name: 'Kreskowana' }).click();
+    await first.getByRole('button', { name: 'Trójkąt' }).click();
+    const canvasBox = await first.locator('canvas.draw-layer').boundingBox();
+    // Stay below the floating properties bar so the real canvas receives the
+    // complete direct-manipulation gesture.
+    await first.mouse.move(canvasBox.x + 180, canvasBox.y + 320);
+    await first.mouse.down();
+    await first.mouse.move(canvasBox.x + 300, canvasBox.y + 420, { steps: 6 });
+    await first.mouse.up();
+    await expect(second.locator('[data-object-type="triangle"]')).toBeVisible({ timeout: 5_000 });
+
+    await first.locator('[data-tool-id="tool.shapes"]').click();
+    await first.getByRole('button', { name: 'Po obu stronach' }).click();
+    await first.getByRole('button', { name: 'Linia' }).click();
+    await first.mouse.move(canvasBox.x + 340, canvasBox.y + 220);
+    await first.mouse.down();
+    await first.mouse.move(canvasBox.x + 500, canvasBox.y + 300, { steps: 6 });
+    await first.mouse.up();
+    await expect(second.locator('[data-object-type="line"]')).toBeVisible({ timeout: 5_000 });
+
+    // Reload hydrates all acknowledged lesson objects from durable storage.
+    await second.reload();
+    await expect(second.getByTestId('collaboration-read-only')).toBeHidden({ timeout: 5_000 });
+    for (const type of ['mathFunctionPlot', 'physicsDataPlot', 'coordinateSystem2D', 'triangle', 'line']) {
+      await expect(second.locator(`[data-object-type="${type}"]`)).toBeVisible({ timeout: 10_000 });
+    }
+
+    // The real PDF action renders and downloads the scene containing all
+    // VVE-106 objects.
+    await first.mouse.move(10, 5);
+    await expect(first.locator('.gear-btn')).toBeVisible();
+    await first.locator('.gear-btn').click();
+    const downloadPromise = first.waitForEvent('download');
+    await first.locator('.pdf-menu-wrapper > button').click();
+    const download = await downloadPromise;
+    expect(download.suggestedFilename()).toBe('whiteboard.pdf');
+
+    for (const hidden of ['experiment.ai', 'experiment.chemistry', 'experiment.gridAlign']) {
+      await expect(first.locator(`[data-tool-id="${hidden}"]`)).toHaveCount(0);
+    }
+    expect(browserErrors).toEqual([]);
+
+    await firstContext.close();
+    await secondContext.close();
+    await teacherContext.close();
+  });
+
+  test('lesson panels remain focused and inside desktop and iPad portrait viewports', async ({ browser }, testInfo) => {
+    const profiles = [
+      { name: 'desktop', viewport: { width: 1440, height: 900 }, hasTouch: false },
+      { name: 'ipad-portrait', viewport: { width: 768, height: 1024 }, hasTouch: true }
+    ];
+
+    for (const profile of profiles) {
+      const context = await browser.newContext({
+        viewport: profile.viewport,
+        hasTouch: profile.hasTouch,
+        isMobile: profile.hasTouch,
+        reducedMotion: 'reduce'
+      });
+      const page = await context.newPage();
+      const browserErrors = [];
+      page.on('console', (message) => {
+        if (['warning', 'error'].includes(message.type())) browserErrors.push(message.text());
+      });
+      page.on('pageerror', (error) => browserErrors.push(error.message));
+
+      await page.goto(fixture.boardAccessLink);
+      await page.getByRole('button', { name: 'Dołącz do lekcji' }).click();
+      await expect(page.locator('canvas.static-layer')).toBeVisible({ timeout: 20_000 });
+      await expect(page.getByTestId('collaboration-read-only')).toBeHidden({ timeout: 5_000 });
+
+      await page.locator('[data-tool-id="panel.mathGraph"]').click();
+      const mathPanel = page.getByRole('dialog', { name: 'Wykres funkcji' });
+      await expect(mathPanel).toBeVisible();
+      await expect(mathPanel.getByLabel('Funkcja f(x)')).toBeFocused();
+      await mathPanel.getByLabel('Od').fill('5');
+      await mathPanel.getByLabel('Do').fill('-5');
+      await mathPanel.getByRole('button', { name: 'Dodaj wykres' }).click();
+      await expect(mathPanel.getByRole('alert')).toHaveText('Początek zakresu musi być mniejszy od końca.');
+
+      await page.locator('[data-tool-id="panel.physicsGraph"]').click();
+      await expect(mathPanel).toBeHidden();
+      const physicsPanel = page.getByRole('dialog', { name: 'Wykres fizyczny' });
+      await expect(physicsPanel).toBeVisible();
+      await expect(physicsPanel.getByLabel(/Punkty danych/)).toBeFocused();
+      await physicsPanel.getByLabel(/Punkty danych/).fill('0,0');
+      await physicsPanel.getByRole('button', { name: 'Dodaj wykres' }).click();
+      await expect(physicsPanel.getByRole('alert')).toHaveText('Podaj co najmniej dwa poprawne punkty.');
+
+      const panelBox = await physicsPanel.boundingBox();
+      expect(panelBox).not.toBeNull();
+      expect(panelBox.x).toBeGreaterThanOrEqual(0);
+      expect(panelBox.y).toBeGreaterThanOrEqual(0);
+      expect(panelBox.x + panelBox.width).toBeLessThanOrEqual(profile.viewport.width);
+      expect(panelBox.y + panelBox.height).toBeLessThanOrEqual(profile.viewport.height);
+      const layout = await page.evaluate(({ panelX, panelY }) => ({
+        innerWidth: window.innerWidth,
+        scrollWidth: document.documentElement.scrollWidth,
+        panelIsTopmost: Boolean(
+          document.elementFromPoint(panelX + 24, panelY + 24)?.closest('[role="dialog"]')
+        )
+      }), { panelX: panelBox.x, panelY: panelBox.y });
+      expect(layout.scrollWidth).toBeLessThanOrEqual(layout.innerWidth);
+      expect(layout.panelIsTopmost).toBe(true);
+
+      if (captureTrackedArtifacts) {
+        const evidenceDir = artifactDirectory(
+          testInfo,
+          path.join('vve-106'),
+          path.join('docs', 'implementation')
+        );
+        await page.screenshot({
+          path: path.join(evidenceDir, `VVE-106-${profile.name}.png`),
+          fullPage: true
+        });
+      }
+
+      await page.keyboard.press('Escape');
+      await expect(physicsPanel).toBeHidden();
+      await page.locator('[data-tool-id="panel.calculator"]').click();
+      const calculator = page.getByRole('dialog', { name: 'Kalkulator naukowy' });
+      await expect(calculator).toBeVisible();
+      await expect(calculator.locator(':focus')).toHaveCount(1);
+      await page.keyboard.press('Escape');
+      await expect(calculator).toBeHidden();
+
+      expect(browserErrors).toEqual([]);
+      await context.close();
+    }
   });
 
   test('Administrator signs in with the passphrase; viewing the list never rotates links', async ({ browser }) => {
@@ -457,5 +703,388 @@ test.describe('Pilot fixture: Administrator, Teacher, Student browser contexts',
 
     await context.close();
     await adminContext.close();
+  });
+
+  test('Pointer pipeline: Input Style Mysz/Pióro, drawing, pinch does not scroll the page', async ({ browser }) => {
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    const errors = [];
+    page.on('pageerror', (err) => errors.push(err.message));
+
+    await page.goto(fixture.boardAccessLink);
+    await page.getByRole('button', { name: 'Dołącz do lekcji' }).click();
+    await expect(page.locator('canvas.draw-layer')).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByTestId('collaboration-read-only')).toBeHidden({ timeout: 5_000 });
+
+    const control = page.getByTestId('input-style-control');
+    await expect(control).toBeVisible();
+    await expect(control.getByRole('radio', { name: 'Mysz' })).toBeVisible();
+    await expect(control.getByRole('radio', { name: 'Pióro' })).toBeVisible();
+    await expect(control.getByRole('radio', { name: 'Mysz' })).toHaveAttribute('aria-checked', 'true');
+
+    await control.getByRole('radio', { name: 'Pióro' }).click();
+    await expect(control.getByRole('radio', { name: 'Pióro' })).toHaveAttribute('aria-checked', 'true');
+
+    const staticCanvas = page.locator('canvas.static-layer');
+    const before = await staticCanvas.evaluate((canvas) => canvas.toDataURL());
+    const box = await page.locator('canvas.draw-layer').boundingBox();
+    expect(box).not.toBeNull();
+    const x = box.x + box.width * 0.45;
+    const y = box.y + box.height * 0.4;
+    await page.mouse.move(x, y);
+    await page.mouse.down();
+    await page.mouse.move(x + 90, y + 40, { steps: 12 });
+    await page.mouse.up();
+    await expect.poll(
+      () => staticCanvas.evaluate((canvas) => canvas.toDataURL()),
+      { timeout: 5_000 }
+    ).not.toBe(before);
+
+    const scrollBefore = await page.evaluate(() => window.scrollY);
+    await page.locator('canvas.draw-layer').evaluate((canvas) => {
+      canvas.dispatchEvent(new PointerEvent('pointerdown', {
+        bubbles: true, cancelable: true, pointerId: 21, pointerType: 'touch',
+        isPrimary: true, clientX: 200, clientY: 240, buttons: 1, button: 0, pressure: 1
+      }));
+      canvas.dispatchEvent(new PointerEvent('pointerdown', {
+        bubbles: true, cancelable: true, pointerId: 22, pointerType: 'touch',
+        isPrimary: false, clientX: 280, clientY: 240, buttons: 1, button: 0, pressure: 1
+      }));
+      canvas.dispatchEvent(new PointerEvent('pointermove', {
+        bubbles: true, cancelable: true, pointerId: 21, pointerType: 'touch',
+        isPrimary: true, clientX: 180, clientY: 250, buttons: 1, pressure: 1
+      }));
+      canvas.dispatchEvent(new PointerEvent('pointermove', {
+        bubbles: true, cancelable: true, pointerId: 22, pointerType: 'touch',
+        isPrimary: false, clientX: 320, clientY: 250, buttons: 1, pressure: 1
+      }));
+      canvas.dispatchEvent(new PointerEvent('pointerup', {
+        bubbles: true, cancelable: true, pointerId: 21, pointerType: 'touch',
+        isPrimary: true, clientX: 180, clientY: 250, buttons: 0, button: 0
+      }));
+      canvas.dispatchEvent(new PointerEvent('pointerup', {
+        bubbles: true, cancelable: true, pointerId: 22, pointerType: 'touch',
+        isPrimary: false, clientX: 320, clientY: 250, buttons: 0, button: 0
+      }));
+    });
+    expect(await page.evaluate(() => window.scrollY)).toBe(scrollBefore);
+
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    await expect(control).toBeVisible();
+    await control.getByRole('radio', { name: 'Mysz' }).click();
+    await expect(control.getByRole('radio', { name: 'Mysz' })).toHaveAttribute('aria-checked', 'true');
+
+    const critical = errors.filter(
+      (message) => message.includes('is not defined') || message.includes('is not a function')
+    );
+    expect(critical).toHaveLength(0);
+    await context.close();
+  });
+
+  test('Pointer pipeline: persistence, cancel, p95, desktop and iPad layout', async ({ browser }, testInfo) => {
+    test.setTimeout(90_000);
+    const shouldCapture = captureTrackedArtifacts;
+    const evidenceDir = shouldCapture
+      ? artifactDirectory(
+        testInfo,
+        path.join('vve-105'),
+        path.join('docs', 'implementation', 'evidence', 'vve-105')
+      )
+      : null;
+
+    const assertNoPageOverflow = async (page) => {
+      const box = await page.evaluate(() => ({
+        scrollWidth: document.documentElement.scrollWidth,
+        clientWidth: document.documentElement.clientWidth,
+        scrollX: window.scrollX
+      }));
+      expect(box.scrollWidth).toBeLessThanOrEqual(box.clientWidth + 1);
+      expect(box.scrollX).toBe(0);
+    };
+
+    const joinBoard = async (page) => {
+      await page.goto(fixture.boardAccessLink);
+      const join = page.getByRole('button', { name: 'Dołącz do lekcji' });
+      if (await join.count()) {
+        await join.click();
+      }
+      await expect(page.locator('canvas.draw-layer')).toBeVisible({ timeout: 20_000 });
+      await expect(page.getByTestId('collaboration-read-only')).toBeHidden({ timeout: 5_000 });
+    };
+
+    const desktop = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const page = await desktop.newPage();
+    const consoleErrors = [];
+    page.on('pageerror', (err) => consoleErrors.push(err.message));
+    page.on('console', (msg) => {
+      if (msg.type() === 'error') consoleErrors.push(msg.text());
+    });
+
+    await joinBoard(page);
+    const control = page.getByTestId('input-style-control');
+    await expect(control).toBeVisible();
+    await assertNoPageOverflow(page);
+    const desktopControlBox = await control.boundingBox();
+    expect(desktopControlBox).not.toBeNull();
+    expect(desktopControlBox.x).toBeGreaterThanOrEqual(0);
+    expect(desktopControlBox.y).toBeGreaterThanOrEqual(0);
+    expect(desktopControlBox.x + desktopControlBox.width).toBeLessThanOrEqual(1440 + 1);
+    expect(desktopControlBox.y + desktopControlBox.height).toBeLessThanOrEqual(900 + 1);
+
+    if (shouldCapture) {
+      await page.screenshot({
+        path: path.join(evidenceDir, 'desktop-1440x900-input-style.png'),
+        fullPage: false
+      });
+    }
+
+    await page.keyboard.press('2');
+    await expect(control.getByRole('radio', { name: 'Pióro' })).toHaveAttribute('aria-checked', 'true');
+    await control.getByRole('radio', { name: 'Pióro' }).focus();
+    await expect(control.getByRole('radio', { name: 'Pióro' })).toBeFocused();
+    await page.keyboard.press('ArrowRight');
+    await expect(control.getByRole('radio', { name: 'Mysz' })).toHaveAttribute('aria-checked', 'true');
+    await page.keyboard.press('1');
+    await expect(control.getByRole('radio', { name: 'Mysz' })).toHaveAttribute('aria-checked', 'true');
+
+    await control.getByRole('radio', { name: 'Pióro' }).click();
+    const stored = JSON.parse(await page.evaluate(() => localStorage.getItem('vve.inputStyle.v1')));
+    expect(stored.profile).toBe('pen');
+    expect(stored.overridden).toBe(true);
+
+    const staticCanvas = page.locator('canvas.static-layer');
+    const beforeCancel = await staticCanvas.evaluate((canvas) => canvas.toDataURL());
+    const box = await page.locator('canvas.draw-layer').boundingBox();
+    expect(box).not.toBeNull();
+    const cancelX = box.x + box.width * 0.3;
+    const cancelY = box.y + box.height * 0.3;
+    await page.mouse.move(cancelX, cancelY);
+    await page.mouse.down();
+    await page.mouse.move(cancelX + 70, cancelY + 24, { steps: 8 });
+    await page.evaluate(() => window.dispatchEvent(new Event('blur')));
+    await page.mouse.up();
+    await page.waitForTimeout(250);
+    expect(await staticCanvas.evaluate((canvas) => canvas.toDataURL())).toBe(beforeCancel);
+
+    const paintX = box.x + box.width * 0.55;
+    const paintY = box.y + box.height * 0.45;
+    await page.mouse.move(paintX, paintY);
+    await page.mouse.down();
+    await page.mouse.move(paintX + 160, paintY + 70, { steps: 40 });
+    await page.mouse.up();
+    await expect.poll(
+      () => page.locator('[data-input-paint-samples]').getAttribute('data-input-paint-samples'),
+      { timeout: 5_000 }
+    ).not.toBe('0');
+
+    const p95Raw = await page.locator('[data-input-paint-p95]').getAttribute('data-input-paint-p95');
+    const sampleCount = await page.locator('[data-input-paint-samples]').getAttribute('data-input-paint-samples');
+    const p95 = Number(p95Raw);
+    expect(Number.isFinite(p95)).toBe(true);
+    expect(p95).toBeGreaterThanOrEqual(0);
+    expect(p95).toBeLessThanOrEqual(50);
+
+    const dispatchRaw = await page.locator('[data-input-dispatch-p95]').getAttribute('data-input-dispatch-p95');
+    const dispatchP95 = Number(dispatchRaw);
+    expect(Number.isFinite(dispatchP95)).toBe(true);
+    expect(dispatchP95).toBeLessThanOrEqual(50);
+
+    // Injected delay test: simulated slow frame presentation must fail the paint latency gate (> 50ms) while dispatch latency stays <= 50ms
+    await page.evaluate(() => {
+      window.__vve_injected_presentation_delay_ms = 80;
+    });
+    const delayStartX = box.x + box.width * 0.35;
+    const delayStartY = box.y + box.height * 0.55;
+    await page.mouse.move(delayStartX, delayStartY);
+    await page.mouse.down();
+    await page.mouse.move(delayStartX + 120, delayStartY + 50, { steps: 25 });
+    await page.mouse.up();
+    await page.waitForTimeout(200);
+
+    const delayedPaintRaw = await page.locator('[data-input-paint-p95]').getAttribute('data-input-paint-p95');
+    const delayedDispatchRaw = await page.locator('[data-input-dispatch-p95]').getAttribute('data-input-dispatch-p95');
+    const delayedPaintP95 = Number(delayedPaintRaw);
+    const delayedDispatchP95 = Number(delayedDispatchRaw);
+    expect(delayedPaintP95).toBeGreaterThan(50);
+    expect(delayedDispatchP95).toBeLessThanOrEqual(50);
+
+    // Reset injected delay
+    await page.evaluate(() => {
+      window.__vve_injected_presentation_delay_ms = 0;
+    });
+
+    if (shouldCapture) {
+      await page.screenshot({
+        path: path.join(evidenceDir, 'desktop-1440x900-after-stroke.png'),
+        fullPage: false
+      });
+
+      writeFileSync(
+        path.join(evidenceDir, 'input-paint-p95.json'),
+        JSON.stringify(
+          {
+            viewport: '1440x900',
+            p95Ms: p95,
+            samples: Number(sampleCount),
+            targetMs: 50,
+            adapter: 'Playwright mouse Pointer Events',
+            hardware: 'Cloud Agent Linux VM, Google Chrome 148 headless',
+            note: "Apple Pencil and graphics-tablet feel remain Kordian's external confirmation."
+          },
+          null,
+          2
+        )
+      );
+    }
+
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await joinBoard(page);
+    await expect(page.getByTestId('input-style-control').getByRole('radio', { name: 'Pióro' }))
+      .toHaveAttribute('aria-checked', 'true');
+
+    const blockingErrors = consoleErrors.filter(
+      (message) =>
+        message.includes('is not defined') ||
+        message.includes('is not a function') ||
+        message.includes('Failed to fetch')
+    );
+    expect(blockingErrors).toHaveLength(0);
+    await desktop.close();
+
+    const ipad = await browser.newContext({
+      viewport: { width: 768, height: 1024 },
+      hasTouch: true,
+      isMobile: true
+    });
+    const ipadPage = await ipad.newPage();
+    await ipadPage.emulateMedia({ reducedMotion: 'reduce' });
+    await joinBoard(ipadPage);
+    const ipadControl = ipadPage.getByTestId('input-style-control');
+    await expect(ipadControl).toBeVisible();
+    await assertNoPageOverflow(ipadPage);
+    const ipadBox = await ipadControl.boundingBox();
+    expect(ipadBox).not.toBeNull();
+    expect(ipadBox.x).toBeGreaterThanOrEqual(0);
+    expect(ipadBox.y).toBeGreaterThanOrEqual(0);
+    expect(ipadBox.x + ipadBox.width).toBeLessThanOrEqual(768 + 1);
+    expect(ipadBox.y + ipadBox.height).toBeLessThanOrEqual(1024 + 1);
+    await ipadControl.getByRole('radio', { name: 'Pióro' }).click();
+    await expect(ipadControl.getByRole('radio', { name: 'Pióro' })).toHaveAttribute('aria-checked', 'true');
+    if (shouldCapture) {
+      await ipadPage.screenshot({
+        path: path.join(evidenceDir, 'ipad-768x1024-input-style.png'),
+        fullPage: false
+      });
+    }
+    await ipad.close();
+
+    const autoContext = await browser.newContext();
+    const autoPage = await autoContext.newPage();
+    await joinBoard(autoPage);
+    await autoPage.locator('canvas.draw-layer').evaluate((canvas) => {
+      canvas.dispatchEvent(new PointerEvent('pointerdown', {
+        bubbles: true,
+        cancelable: true,
+        pointerId: 7,
+        pointerType: 'pen',
+        isPrimary: true,
+        clientX: 220,
+        clientY: 260,
+        buttons: 1,
+        button: 0,
+        pressure: 0.42
+      }));
+    });
+    await expect.poll(async () => {
+      return autoPage.getByTestId('input-style-control').getByRole('radio', { name: 'Pióro' })
+        .getAttribute('aria-checked');
+    }, { timeout: 5_000 }).toBe('true');
+    await autoContext.close();
+  });
+
+  test('PDF import collaborates, reloads, and exports from the synchronized board', async ({ browser }, testInfo) => {
+    test.setTimeout(120_000);
+    const teacherContext = await browser.newContext();
+    const teacher = await teacherContext.newPage();
+    await teacher.goto(fixture.teacherAccessLink);
+    await expect(teacher.getByRole('heading', { name: 'Moje tablice' })).toBeVisible({ timeout: 15_000 });
+
+    const boardLabel = `E2E PDF ${Date.now()}`;
+    await teacher.getByRole('button', { name: 'Nowa tablica ucznia' }).click();
+    await teacher.getByLabel('Etykieta ucznia / grupy').fill(boardLabel);
+    await teacher.getByLabel('Temat lekcji (opcjonalnie)').fill('Import PDF');
+    await teacher.getByRole('button', { name: 'Utwórz tablicę' }).click();
+    const freshLink = teacher.locator('.modal-panel .keyway.fresh .keyway-channel');
+    await expect(freshLink).toBeVisible({ timeout: 10_000 });
+    const boardAccessLink = (await freshLink.innerText()).trim();
+    await teacher.locator('.modal-foot').getByRole('button', { name: 'Zamknij' }).click();
+
+    const firstContext = await browser.newContext();
+    const secondContext = await browser.newContext();
+    const first = await firstContext.newPage();
+    const second = await secondContext.newPage();
+    const join = async (page) => {
+      await page.goto(boardAccessLink);
+      await page.getByRole('button', { name: 'Dołącz do lekcji' }).click();
+      await expect(page.locator('canvas.static-layer')).toBeVisible({ timeout: 20_000 });
+      await expect(page.getByTestId('collaboration-read-only')).toBeHidden({ timeout: 5_000 });
+    };
+    await join(first);
+    await join(second);
+
+    const evidenceDir = artifactDirectory(
+      testInfo,
+      path.join('vve-107'),
+      path.join('docs', 'implementation', 'evidence', 'vve-107')
+    );
+    const pdfBytes = readFileSync(
+      path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'fixtures', 'artifacts', 'lesson-2page.pdf')
+    );
+    const before = await second.locator('canvas.static-layer').evaluate((canvas) => canvas.toDataURL());
+    await first.locator('[data-testid="artifact-file-input"]').setInputFiles({
+      name: 'karta.pdf',
+      mimeType: 'application/pdf',
+      buffer: pdfBytes
+    });
+    await expect(first.getByText(/Zaimportowano 2 strony z PDF/)).toBeVisible({ timeout: 25_000 });
+    await expect.poll(
+      () => second.locator('canvas.static-layer').evaluate((canvas) => canvas.toDataURL()),
+      { timeout: 20_000 }
+    ).not.toBe(before);
+    const imported = await second.locator('canvas.static-layer').evaluate((canvas) => canvas.toDataURL());
+
+    await first.setViewportSize({ width: 1440, height: 900 });
+    await first.screenshot({ path: path.join(evidenceDir, 'desktop-1440x900.png'), fullPage: true });
+    const desktopOverflow = await first.evaluate(
+      () => document.documentElement.scrollWidth - document.documentElement.clientWidth
+    );
+    expect(desktopOverflow).toBeLessThanOrEqual(1);
+
+    await first.setViewportSize({ width: 768, height: 1024 });
+    await first.screenshot({ path: path.join(evidenceDir, 'ipad-768x1024.png'), fullPage: true });
+    const ipadOverflow = await first.evaluate(
+      () => document.documentElement.scrollWidth - document.documentElement.clientWidth
+    );
+    expect(ipadOverflow).toBeLessThanOrEqual(1);
+    await first.setViewportSize({ width: 1280, height: 720 });
+
+    await second.reload();
+    await expect(second.locator('canvas.static-layer')).toBeVisible({ timeout: 20_000 });
+    await expect(second.getByTestId('collaboration-read-only')).toBeHidden({ timeout: 5_000 });
+    await expect.poll(
+      () => second.locator('canvas.static-layer').evaluate((canvas) => canvas.toDataURL()),
+      { timeout: 8_000 }
+    ).toBe(imported);
+
+    const downloadPromise = first.waitForEvent('download', { timeout: 20_000 });
+    await first.locator('.hover-trigger-area').hover({ force: true });
+    await first.locator('.gear-btn').click({ force: true });
+    await first.getByTitle('Eksportuj do PDF (A4)').click();
+    const download = await downloadPromise;
+    expect(download.suggestedFilename()).toMatch(/\.pdf$/i);
+
+    await firstContext.close();
+    await secondContext.close();
+    await teacherContext.close();
   });
 });

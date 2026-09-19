@@ -9,8 +9,15 @@
     "start": "node dist/src/server.js",
     "start:prod": "npm run migrate && npm run start",
     "test": "vitest run",
+    "test:release-gate": "vitest run tests/pilotReleaseGate.test.ts",
     "migrate": "knex migrate:latest",
-    "seed:pilot": "ts-node scripts/pilotFixture.ts"
+    "seed:pilot": "ts-node scripts/pilotFixture.ts",
+    "gate:smoke": "ts-node scripts/pilotReleaseGate.ts --profile change --smoke --report tmp/vve-109-smoke.json",
+    "gate:change": "ts-node scripts/pilotReleaseGate.ts --profile change --report tmp/vve-109-change.json",
+    "gate:mature": "ts-node scripts/pilotReleaseGate.ts --profile mature --report tmp/vve-109-mature.json",
+    "gate:destructive": "ts-node scripts/pilotReleaseGate.ts --profile destructive --report tmp/vve-109-destructive.json",
+    "gate:soak": "ts-node scripts/pilotReleaseGate.ts --profile soak --report tmp/vve-109-soak.json",
+    "gate:stress": "ts-node scripts/pilotReleaseGate.ts --profile stress --report tmp/vve-109-stress.json"
   },
   "keywords": [],
   "author": "",

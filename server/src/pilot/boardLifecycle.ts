@@ -6,6 +6,7 @@ import { config } from '../config';
 import { getDb } from '../db';
 import { logger } from '../logger';
 import type { CapabilityAccess } from './capabilityAccess';
+import type { OperationalSignals } from './operationalSignals';
 
 /**
  * BoardLifecycle — Module 2 of the VVE Pilot deep-module design (slice S2).
@@ -239,6 +240,8 @@ export interface CreateBoardLifecycleOptions {
   onBoardsPurged?: (boardIds: string[]) => void;
   /** Internal test seam: runs inside each per-board purge attempt. */
   hooks?: { beforePurgeBoard?: (boardId: string) => Promise<void> | void };
+  /** Content-free operational events (VVE-108). */
+  signals?: OperationalSignals;
 }
 
 const createFailure = (
@@ -697,12 +700,23 @@ export const createBoardLifecycle = (options: CreateBoardLifecycleOptions): Boar
 
   const sweepOnce = async (): Promise<void> => {
     const result = await execute({ kind: 'purgeDueBoards' }, new Date());
-    if (result.ok && result.command === 'purgeDueBoards' && (result.purged > 0 || result.scheduled > 0 || result.failed > 0)) {
-      logger.info('BoardLifecycle: deletion sweep', {
-        scheduled: result.scheduled,
-        purged: result.purged,
-        failed: result.failed
+    if (result.ok && result.command === 'purgeDueBoards') {
+      options.signals?.record({
+        name: 'lifecycle.job',
+        dimensions: {
+          job: 'purgeDueBoards',
+          scheduled: result.scheduled,
+          purged: result.purged,
+          failed: result.failed
+        }
       });
+      if (result.purged > 0 || result.scheduled > 0 || result.failed > 0) {
+        logger.info('BoardLifecycle: deletion sweep', {
+          scheduled: result.scheduled,
+          purged: result.purged,
+          failed: result.failed
+        });
+      }
     }
   };
 

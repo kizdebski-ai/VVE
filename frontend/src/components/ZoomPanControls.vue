@@ -1,9 +1,9 @@
 <template>
   <div class="zoom-controls">
-    <button class="zoom-btn" @click="$emit('zoom-out')" title="Zoom Out">−</button>
+    <button type="button" class="zoom-btn" @click="$emit('zoom-out')" title="Pomniejsz" aria-label="Pomniejsz">−</button>
     <div class="zoom-level">{{ Math.round(zoomLevel * 100) }}%</div>
-    <button class="zoom-btn" @click="$emit('zoom-in')" title="Zoom In">+</button>
-    <button class="zoom-btn" @click="$emit('reset-zoom')" title="Reset View">⟲</button>
+    <button type="button" class="zoom-btn" @click="$emit('zoom-in')" title="Powiększ" aria-label="Powiększ">+</button>
+    <button type="button" class="zoom-btn" @click="$emit('reset-zoom')" title="Resetuj widok" aria-label="Resetuj widok">⟲</button>
   </div>
 </template>
 
@@ -41,8 +41,9 @@ export default {
 }
 
 .zoom-btn {
-  width: 30px;
-  height: 30px;
+  width: 44px;
+  height: 44px;
+  flex-shrink: 0;
   background: none;
   border: none;
   display: flex;

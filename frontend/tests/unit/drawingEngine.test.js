@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
+import * as Y from 'yjs';
+import { ref } from 'vue';
 import { distanceToSegment, isPointInElement } from '../../src/utils/canvasDrawing.js';
 import { normalizeBoardObject, validateBoardObject } from '@pilot/boardScene';
+import { createWhiteboardSession } from '@/board/whiteboardSession';
+import { useDrawingEngine } from '@/composables/useDrawingEngine';
 
 describe('1.1: Grid snap uses correct function name', () => {
   it('useDrawingEngine source does not reference _getSnapSettingsInternal', async () => {
@@ -45,16 +49,16 @@ describe('1.8: Coordinate validation', () => {
 });
 
 describe('1.10: Image loading timeout', () => {
-  it('createImageElement source has timeout', async () => {
+  it('ArtifactPipeline decode path times out and releases the object URL', async () => {
     const fs = await import('fs');
     const path = await import('path');
     const source = fs.readFileSync(
-      path.resolve(__dirname, '../../src/utils/canvasTools.js'),
+      path.resolve(__dirname, '../../src/board/artifactCodecs.ts'),
       'utf-8'
     );
     expect(source).toContain('setTimeout');
-    expect(source).toContain('10_000');
-    expect(source).toContain('clearTimeout');
+    expect(source).toContain('12_000');
+    expect(source).toContain('revokeObjectURL');
   });
 });
 
@@ -110,5 +114,54 @@ describe('Geometry: isPointInElement', () => {
   it('returns false for null/undefined element', () => {
     expect(isPointInElement({ x: 0, y: 0 }, null)).toBe(false);
     expect(isPointInElement({ x: 0, y: 0 }, undefined)).toBe(false);
+  });
+});
+
+describe('Eraser command wiring', () => {
+  const makeEngine = (mode) => {
+    const ydoc = new Y.Doc();
+    const session = createWhiteboardSession({ ydoc, role: 'teacher' });
+    const yDrawings = ref(ydoc.getArray('drawings'));
+    const engine = useDrawingEngine({
+      isDrawing: ref(true),
+      currentTool: ref('eraser'),
+      currentColor: ref('#111827'),
+      currentLineWidth: ref(3),
+      zoomLevel: ref(1),
+      panOffset: ref({ x: 0, y: 0 }),
+      ydoc,
+      yDrawings,
+      yjsConnection: ref(null),
+      session: ref(session),
+      smoothingFactor: ref(0.5),
+      getEraserMode: () => mode.value,
+      getEraserRadius: () => 10,
+      refreshMovableElements: vi.fn(),
+      updateGlobalState: vi.fn()
+    });
+    return { session, engine };
+  };
+
+  it('uses the bounded hit object for partial erase and whole-object delete', () => {
+    const mode = ref('erase');
+    const { session, engine } = makeEngine(mode);
+    const stroke = {
+      id: 'wired-pen',
+      type: 'pen',
+      color: '#7c3aed',
+      lineWidth: 3,
+      points: [{ x: 0, y: 0, p: 0.2 }, { x: 50, y: 0, p: 0.8 }, { x: 100, y: 0, p: 0.4 }]
+    };
+    expect(session.execute({ kind: 'add', object: stroke })).toEqual({ ok: true });
+    const hit = session.snapshot()[0];
+    engine.eraseElement(hit.id, { x: 50, y: 0 }, hit);
+    expect(session.snapshot()).toHaveLength(2);
+
+    mode.value = 'delete';
+    const remaining = session.snapshot()[0];
+    engine.eraseElement(remaining.id, { x: remaining.points[0].x, y: remaining.points[0].y }, remaining);
+    expect(session.snapshot()).toHaveLength(1);
+    expect(session.snapshot()[0].id).not.toBe('wired-pen');
+    session.dispose();
   });
 });

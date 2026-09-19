@@ -1,0 +1,49 @@
+{
+  "date": "2026-09-19",
+  "candidate": "d2493d8 plus bounded inline text editor",
+  "environment": "Codex in-app Browser, local PostgreSQL-backed production runtime, synthetic fixture",
+  "viewports": [
+    {
+      "width": 1440,
+      "height": 900
+    },
+    {
+      "width": 768,
+      "height": 1024
+    }
+  ],
+  "verified": [
+    "Keyboard utility menu via Tab/Enter and End",
+    "PDF import rendered both fixture pages",
+    "PDF export invoked from explicit paged option and displayed success; IAB download event unavailable, output-file verification pending",
+    "Student link resolves Student after removing only local teacher test cookie",
+    "Student has no clear-board control",
+    "Student stroke appears on Teacher",
+    "Student undo removes own stroke and redo restores it",
+    "Teacher undo leaves Student stroke intact",
+    "Mouse stroke ends at actual pointer-up after f5e65b3; Browser drag (130,860) to (530,885)",
+    "Mathematical 1/x plot has separate asymptote branches; selection, move, resize and peer propagation work",
+    "Physics input rejects malformed row with Polish error; large data values keep bounded display geometry; move synchronizes",
+    "Calculator basic 2+2=4 and scientific sqrt(9)=3; panel fits portrait viewport",
+    "2D and 3D coordinate systems insert and survive page reload",
+    "All 15 visible shapes render through native drag; square and sphere preserve constrained proportions",
+    "Pan moves the working area; canonical objects persist through page reload",
+    "Inline text accepts Polish and Greek characters; Enter commits; bounded editor prevents container scrolling at right and bottom edges",
+    "Reduced motion and reduced transparency emulation honored; glass-panel backdrop filter is none",
+    "PDF export output bytes captured at native Blob delivery boundary: valid A4 PDF, jsPDF 3.0.4, 33554 bytes, one occupied tile; rendered with Poppler and visually inspected"
+  ],
+  "inputSample": {
+    "mode": "mouse emulation",
+    "samples": 69,
+    "eventToRenderP95Ms": 13.444444457691134,
+    "eventToDispatchP95Ms": 13.066666659382463,
+    "note": "Frame-correlated software measurement, not physical display presentation or Apple Pencil certification."
+  },
+  "remaining": [
+    "Complete remaining tool interaction, image and reconnect matrix",
+    "Multi-tile export and uncached image regression after PR feedback repair",
+    "Enlarged desktop layout",
+    "Physical Apple Pencil and graphics-tablet flow"
+  ],
+  "deliveryLimitation": "IAB download event was unavailable. A temporary CDP observer captured the actual application PDF Blob, then restored URL.createObjectURL. This verifies generated output, not OS download completion."
+}

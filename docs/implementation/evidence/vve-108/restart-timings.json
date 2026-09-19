@@ -1,0 +1,51 @@
+{
+  "gate": "VVE-108 S8 controlled restart with a live production browser client",
+  "environment": {
+    "server": "node dist/src/server.js (production build, RuntimeControl process adapter)",
+    "database": "isolated PostgreSQL 16 container vve-108-restart-pg on 127.0.0.1:5499 (dedicated database vve108_restart; shared databases never touched)",
+    "migrations": "real knex migrate path (knexfile contract: migrations-js), 6 migrations applied before the run; RuntimeControl re-ran migrate.latest() on every start",
+    "frontend": "vite dev server on 127.0.0.1:5188 proxying to the backend on 127.0.0.1:3118",
+    "browser": "ZCode built-in browser, real GUI interactions (pointer drawing through the shapes tool), viewports 1440x900 and 768x1024"
+  },
+  "durableStateBeforeRestart": {
+    "digest": "8b331a3410660099e3cdc968a12dd00c05f764e02c6c9c237554e34af1664e1e",
+    "canonicalObjects": [
+      { "type": "rectangle", "x": 600, "y": 300, "width": 250, "height": 150 },
+      { "type": "rectangle", "x": 950, "y": 520, "width": 230, "height": 120 }
+    ],
+    "storedAcknowledgedOperations": 2,
+    "method": "hydrated from PostgreSQL via the production postgresBoardDocumentStore + Yjs; digest = sha256(encodeStateAsUpdate)"
+  },
+  "cycles": [
+    {
+      "cycle": 1,
+      "sigtermAtEpochMs": 1789762484256,
+      "readOnlyBannerFirstSeenMsAfterSigterm": 340,
+      "serverStopReport": { "clean": true, "deadlineExceeded": false, "remaining": 0, "compactionCutoff": 2 },
+      "serverListeningAgainAtEpochMs": 1789762555055,
+      "clientRecoveredAtEpochMs": 1789762558595,
+      "reconnectMsAfterServerReady": 3540
+    },
+    {
+      "cycle": 2,
+      "processExitObservation": "process exited by itself 1113ms after SIGTERM (bounded adapter exit after the stop report)",
+      "serverSideWsReadmissionMsAfterListen": 154,
+      "note": "in-page wall-clock sampling overstated recovery because the occluded webview throttles timers; the server-side admission log is authoritative"
+    },
+    {
+      "cycle": 6,
+      "client": "portrait 768x1024, second live participant (2 Online)",
+      "sigtermAtEpochMs": 1789763044141,
+      "readOnlyBannerFirstSeenMsAfterSigterm": 462,
+      "recoveryMsAfterServerReady": 1771,
+      "horizontalOverflow": false
+    }
+  ],
+  "durableStateAfterRestart": {
+    "digest": "8b331a3410660099e3cdc968a12dd00c05f764e02c6c9c237554e34af1664e1e",
+    "digestParity": true,
+    "acknowledgedLoss": "none — both GUI-drawn canonical rectangles survived with identical geometry"
+  },
+  "bounds": { "readOnlyBannerMs": 2000, "reconnectMs": 5000, "recoveryMs": 30000 },
+  "notClaimed": ["physical iPad or Apple Pencil hardware", "Railway deployment restart", "three-hour 57-client soak"]
+}

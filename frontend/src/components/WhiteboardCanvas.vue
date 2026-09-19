@@ -3,6 +3,9 @@
     ref="containerRef"
     class="whiteboard-container"
     :class="{ 'dark-mode': darkMode, 'collaboration-read-only': collaborationReadOnly }"
+    :data-input-paint-p95="inputPaintP95Ms == null ? '' : String(inputPaintP95Ms)"
+    :data-input-paint-samples="String(inputPaintSampleCount)"
+    :data-input-dispatch-p95="inputDispatchP95Ms == null ? '' : String(inputDispatchP95Ms)"
   >
     <div v-if="debugMode" style="position: absolute; top: 5px; left: 5px; z-index: 9999;
      background: rgba(0,0,0,0.7); color: white; padding: 5px; border-radius: 4px; font-size: 12px;">
@@ -17,16 +20,14 @@
       ref="drawCanvas" 
       class="whiteboard-canvas draw-layer"
       style="position: absolute; top: 0; left: 0; z-index: 1;"
-      @mousedown="handleMouseDown"
-      @mousemove="handleMouseMove"
-      @mouseup="handleMouseUp"
-      @mouseleave="handleMouseLeave"
+      @pointerdown="handlePointerDown"
+      @pointermove="handlePointerMove"
+      @pointerup="handlePointerUp"
+      @pointercancel="handlePointerCancel"
+      @lostpointercapture="handleLostPointerCapture"
+      @pointerleave="handlePointerLeave"
       @wheel="handleZoom"
       @contextmenu.prevent
-      @touchstart="handleTouchStart"
-      @touchmove="handleTouchMove"
-      @touchend="handleTouchEnd"
-      @touchcancel="handleTouchEnd"
     ></canvas>
 
     <!-- Cursor overlays for other users -->
@@ -73,13 +74,12 @@
       ref="inlineTextRef"
       v-model="inlineTextEditor.value"
       class="inline-text-editor"
-      autofocus
       :style="inlineTextStyle"
       @blur="finalizeInlineText"
       @keydown.enter.stop="handleInlineTextEnter"
       @keydown.stop
-      @mousedown.stop
-      placeholder="Type here..."
+      @pointerdown.stop
+      placeholder="Wpisz tekst…"
     ></textarea>
 
     <!-- Zoom and pan controls -->
@@ -98,9 +98,9 @@
     />
 
     <!-- Connection loading indicator -->
-    <div v-if="isConnecting" class="connection-loading">
+    <div v-if="isConnecting" class="connection-loading" data-testid="connection-loading">
       <div class="connection-spinner"></div>
-      <span>Connecting...</span>
+      <span>{{ connectionBanner }}</span>
     </div>
 
     <div
@@ -111,11 +111,26 @@
       data-testid="collaboration-read-only"
     >
       <span class="read-only-dot" aria-hidden="true"></span>
-      Tylko podgląd — czekamy na bezpieczną synchronizację
+      {{ readOnlyBanner }}
     </div>
 
     <!-- Status message -->
     <StatusMessage :message="statusMessage" />
+
+    <ArtifactProgress
+      :visible="artifactProgress.visible"
+      :message="artifactProgress.message"
+      :current="artifactProgress.current"
+      :total="artifactProgress.total"
+      :cancellable="artifactProgress.cancellable"
+      @cancel="cancelArtifactWork"
+    />
+    <ArtifactReady
+      :visible="Boolean(pendingPdfArtifact)"
+      :message="pendingPdfMessage"
+      @deliver="deliverPendingPdf"
+      @dismiss="dismissPendingPdf"
+    />
 
     <!-- Clipboard handler -->
     <input 
@@ -158,6 +173,8 @@ import 'katex/dist/katex.min.css';
 import Collaborators from './Collaborators.vue';
 import ZoomPanControls from './ZoomPanControls.vue';
 import EraserModeControls from './EraserModeControls.vue';
+import ArtifactProgress from './ArtifactProgress.vue';
+import ArtifactReady from './ArtifactReady.vue';
 import StatusMessage from './StatusMessage.vue';
 // Helper modules
 import GridAlignModule from '../modules/GridAlignModule.js';
@@ -167,10 +184,10 @@ import MathRecognizerModule from '../modules/MathRecognizerModule.js';
 // Utils and Services
 import { resolveBackendBaseUrl } from '../services/backendUrl';
 import { connectToYjs } from '../services/connectToYjs';
+import { fetchServerResourceLimits } from '../services/resourceLimitsClient';
 import { drawElement, throttle, isPointInElement, distanceToSegment } from '../utils/canvasDrawing.js';
 import { isPointInRotatedRectangle } from '../utils/geometry.js';
 import {
-  createImageElement,
   getCursorStyle,
   createCoordinateSystem2DElement,
   createCoordinateSystem3DElement
@@ -179,7 +196,18 @@ import { drawGrid as drawUtilGrid, computeGridSteps } from '../utils/canvasGrid.
 import MovableObject from './MovableObject.vue';
 import { useNotifications } from '../composables/useNotifications';
 import { createWhiteboardSession } from '../board/whiteboardSession';
-import { normalizeBoardObject } from '@pilot/boardScene';
+import { createInputPipeline } from '../board/inputPipeline';
+import {
+  batchFromPointerEvent,
+  prefersReducedMotion,
+  viewportFromElement
+} from '../board/pointerEventAdapter';
+import { suggestProfile } from '../board/inputStyle';
+import { createArtifactPipeline, deliverPdfArtifact, isIosArtifactDevice } from '../board/artifactPipeline';
+import { ArtifactCodecError } from '../board/artifactCodecs';
+import { polishArtifactMessage } from '@pilot/artifactContract';
+import { createResourceGovernor } from '@pilot/resourceGovernor';
+import { normalizeBoardObject, queryObjectsNear } from '@pilot/boardScene';
 import { undoRedoState } from '../utils/undoRedoState';
 import { useLineBindings } from '../composables/useLineBindings';
 import { usePdfExport } from '../composables/usePdfExport';
@@ -215,17 +243,6 @@ const clampDevicePixelRatio = () => {
 
 const clampZoom = (value) => Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, value));
 
-const getTouchDistance = (touchA, touchB) => {
-  const dx = touchA.clientX - touchB.clientX;
-  const dy = touchA.clientY - touchB.clientY;
-  return Math.hypot(dx, dy);
-};
-
-const getTouchCenter = (touchA, touchB, rect) => ({
-  x: ((touchA.clientX + touchB.clientX) / 2) - rect.left,
-  y: ((touchA.clientY + touchB.clientY) / 2) - rect.top,
-});
-
 
 export default {
   name: 'WhiteboardCanvas',
@@ -234,6 +251,8 @@ export default {
     ZoomPanControls,
     EraserModeControls,
     StatusMessage,
+    ArtifactProgress,
+    ArtifactReady,
     MovableObject, // Register MovableObject
   },
   props: {
@@ -248,6 +267,7 @@ export default {
     gridAlignOptions: { type: Object, default: () => ({}) },
     handwritingStylerOptions: { type: Object, default: () => ({}) },
     mathRecognizerOptions: { type: Object, default: () => ({}) },
+    inputProfile: { type: String, default: 'mouse' },
     // Props from App.vue (already existed)
     roomId: { type: String, required: true },
     roomKey: { type: [String, Object], default: null },
@@ -267,7 +287,9 @@ export default {
     'update:has-char-groups',
     'update:has-stylized-strokes',
     'update:active-users',
-    'select-pen-preset'
+    'update:lesson-panel',
+    'select-pen-preset',
+    'pointer-observed'
   ],
   setup(props, { emit, expose }) {
     const devicePixelRatio = ref(clampDevicePixelRatio());
@@ -324,14 +346,20 @@ export default {
     const inlineTextStyle = computed(() => {
       const screenX = inlineTextEditor.x * zoomLevel.value + panOffset.value.x;
       const screenY = inlineTextEditor.y * zoomLevel.value + panOffset.value.y;
+      // Keep the editor inside the viewport so focusing its caret cannot
+      // scroll the canvas container independently of the board transform.
+      const left = Math.max(0, Math.min(screenX, canvasWidth.value - 80));
+      const top = Math.max(0, Math.min(screenY, canvasHeight.value - 60));
       const safeColor = currentColor.value || '#000000';
       return {
         position: 'absolute',
-        left: `${screenX}px`,
-        top: `${screenY}px`,
+        left: `${left}px`,
+        top: `${top}px`,
+        width: `${Math.max(1, Math.min(400, canvasWidth.value - left - 4))}px`,
+        maxHeight: `${Math.max(1, canvasHeight.value - top - 4)}px`,
         fontSize: `${inlineTextEditor.fontSize * zoomLevel.value}px`,
         color: safeColor,
-        minWidth: '50px',
+        minWidth: '0',
         minHeight: '1.2em',
         zIndex: 2000,
         background: 'rgba(255, 255, 255, 0.05)',
@@ -339,7 +367,7 @@ export default {
         outline: 'none',
         borderRadius: '2px',
         resize: 'none',
-        overflow: 'hidden',
+        overflow: 'auto',
         fontFamily: '"Kalam", cursive', // Hand-like font
         fontWeight: '400',
         lineHeight: '1.2',
@@ -460,6 +488,21 @@ export default {
     const collaborationReadOnly = computed(() =>
       Boolean(props.wsToken) && connectionStatus.value !== 'connected'
     );
+    const RESTART_BANNER_PL = 'Serwer jest restartowany. Twoja praca zostanie przywrócona.';
+    const connectionBanner = computed(() =>
+      connectionStatus.value === 'draining'
+        ? RESTART_BANNER_PL
+        : 'Łączenie…'
+    );
+    const readOnlyBanner = computed(() => {
+      if (connectionStatus.value === 'draining') {
+        return RESTART_BANNER_PL;
+      }
+      if (connectionStatus.value === 'disconnected' || connectionStatus.value === 'reconnecting') {
+        return 'Tylko podgląd — brak połączenia';
+      }
+      return 'Tylko podgląd — czekamy na bezpieczną synchronizację';
+    });
     const canMutateDocument = () =>
       !props.wsToken || yjsConnection.value?.isEditable?.() === true;
     const denyReadOnlyMutation = () => {
@@ -502,9 +545,185 @@ export default {
 
     // --- PDF Export Composable (after yDrawings/ydoc are declared) ---
     const {
-      exportBoardAsPdf, exportBoardAsPdfPaged,
       getSnapshot, getSerializableState, loadState, exportAsText, importFromText,
-    } = usePdfExport({ session, yDrawings, ydoc, smoothingFactor, imageCache, showToast, debugLog, debugWarn });
+    } = usePdfExport({ ydoc, debugWarn });
+
+    let artifactGovernor = createResourceGovernor();
+    const buildArtifactPipeline = (governor) => createArtifactPipeline({
+      governor,
+      clientKey: 'whiteboard',
+      drawScene: (ctx, elements, exportImageCache) => {
+        elements.forEach((element) => {
+          drawElement(ctx, element, false, smoothingFactor.value, exportImageCache ?? imageCache.value);
+        });
+      }
+    });
+    let artifactPipeline = buildArtifactPipeline(artifactGovernor);
+    // VVE-107: adopt the server's live resource limits so the client enforces
+    // the same budgets (payload, image, PDF) the server admits — one owner.
+    const applyServerResourceLimits = async () => {
+      const limits = await fetchServerResourceLimits();
+      artifactGovernor = createResourceGovernor({ limits });
+      artifactPipeline = buildArtifactPipeline(artifactGovernor);
+      return limits;
+    };
+    const artifactProgress = reactive({
+      visible: false,
+      message: '',
+      current: 0,
+      total: 1,
+      cancellable: false
+    });
+    const pendingPdfArtifact = shallowRef(null);
+    const pendingPdfMessage = ref('PDF jest gotowy. Kliknij, aby go udostępnić.');
+    let artifactAbort = null;
+    let artifactProgressResetTimer = null;
+    const cancelArtifactWork = () => artifactAbort?.abort();
+    const clearArtifactProgressResetTimer = () => {
+      if (artifactProgressResetTimer !== null) {
+        window.clearTimeout(artifactProgressResetTimer);
+        artifactProgressResetTimer = null;
+      }
+    };
+    const resetArtifactProgress = () => {
+      clearArtifactProgressResetTimer();
+      artifactProgress.visible = false;
+      artifactProgress.message = '';
+      artifactProgress.current = 0;
+      artifactProgress.total = 1;
+      artifactProgress.cancellable = false;
+    };
+    const dismissPendingPdf = () => {
+      pendingPdfArtifact.value = null;
+    };
+    const deliverPendingPdf = async () => {
+      const artifact = pendingPdfArtifact.value;
+      if (!artifact) return;
+      try {
+        const delivery = await deliverPdfArtifact(artifact, { userActivated: true });
+        pendingPdfArtifact.value = null;
+        showToast(delivery === 'share' ? 'Wybrano sposób udostępnienia PDF.' : 'Wyeksportowano PDF.', 'success');
+      } catch (error) {
+        if (error?.name === 'AbortError') {
+          showToast('Udostępnianie PDF anulowano. Możesz spróbować ponownie.', 'warning');
+          return;
+        }
+        showToast(error instanceof ArtifactCodecError ? error.message : polishArtifactMessage('artifact.exportFailed'), 'error', 4000);
+      }
+    };
+    const applyArtifactProgress = (event, controller) => {
+      clearArtifactProgressResetTimer();
+      artifactProgress.visible = event.phase !== 'done';
+      artifactProgress.message = event.message;
+      artifactProgress.current = event.current;
+      artifactProgress.total = Math.max(1, event.total);
+      artifactProgress.cancellable = event.phase === 'planning' || event.phase === 'decoding' || event.phase === 'committing';
+      if (event.phase === 'done' || event.phase === 'failed' || event.phase === 'cancelled') {
+        showToast(event.message, event.phase === 'done' ? 'success' : event.phase === 'cancelled' ? 'warning' : 'error', 4000);
+        artifactProgressResetTimer = window.setTimeout(() => {
+          artifactProgressResetTimer = null;
+          if (artifactAbort === controller) resetArtifactProgress();
+        }, event.phase === 'done' ? 400 : 1200);
+      }
+    };
+    const artifactTarget = (origin) => ({
+      newObjectId: () => session.value?.newObjectId() ?? `img-${Date.now()}`,
+      origin,
+      isEditable: () => canMutateDocument(),
+      addImage: (object) => {
+        if (!session.value) return { ok: false, message: polishArtifactMessage('artifact.readOnlyMutation') };
+        const result = session.value.execute({ kind: 'add', object });
+        if (result.ok) {
+          refreshMovableElements();
+          nextTick(() => {
+            redrawCanvas(true);
+            updateGlobalState();
+          });
+        }
+        return result;
+      }
+    });
+    const runArtifactImport = async (bytes, fileName, declaredMime, origin) => {
+      if (!canMutateDocument()) return denyReadOnlyMutation();
+      artifactAbort?.abort();
+      clearArtifactProgressResetTimer();
+      const controller = new AbortController();
+      artifactAbort = controller;
+      artifactProgress.visible = true;
+      artifactProgress.message = 'Odczytywanie materiału…';
+      artifactProgress.current = 0;
+      artifactProgress.total = 1;
+      artifactProgress.cancellable = true;
+      try {
+        const plan = await artifactPipeline.planImport({ bytes, fileName, declaredMime }, controller.signal);
+        if (controller.signal.aborted) return null;
+        let last = null;
+        for await (const event of artifactPipeline.import(plan, artifactTarget(origin), controller.signal)) {
+          last = event;
+          if (artifactAbort === controller) applyArtifactProgress(event, controller);
+        }
+        return last;
+      } catch (error) {
+        if (artifactAbort !== controller) return null;
+        const key = error instanceof ArtifactCodecError ? error.key : 'artifact.importFailed';
+        const message = error instanceof ArtifactCodecError ? error.message : polishArtifactMessage(key);
+        showToast(message, 'error', 4000);
+        resetArtifactProgress();
+        return null;
+      } finally {
+        if (artifactAbort === controller && controller.signal.aborted) resetArtifactProgress();
+      }
+    };
+    const importArtifactFile = async (file) => {
+      if (!file) return;
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const origin = {
+        x: (canvasWidth.value / 2 - panOffset.value.x) / zoomLevel.value - 80,
+        y: 80 + (0 - panOffset.value.y) / zoomLevel.value
+      };
+      return runArtifactImport(bytes, file.name, file.type, origin);
+    };
+    const exportBoardWithPipeline = async (mode) => {
+      const elements = session.value?.snapshot() ?? [];
+      pendingPdfArtifact.value = null;
+      artifactAbort?.abort();
+      clearArtifactProgressResetTimer();
+      const controller = new AbortController();
+      artifactAbort = controller;
+      artifactProgress.visible = true;
+      artifactProgress.message = 'Przygotowywanie PDF…';
+      artifactProgress.current = 0;
+      artifactProgress.total = 1;
+      artifactProgress.cancellable = true;
+      try {
+        const artifact = await artifactPipeline.export(elements, {
+          mode,
+          signal: controller.signal
+        });
+        if (controller.signal.aborted || artifactAbort !== controller) return;
+        if (isIosArtifactDevice()) {
+          pendingPdfArtifact.value = artifact;
+          pendingPdfMessage.value = mode === 'paged'
+            ? 'Notatki z lekcji są gotowe. Kliknij, aby udostępnić PDF.'
+            : 'Tablica jest gotowa. Kliknij, aby udostępnić PDF.';
+          resetArtifactProgress();
+          return;
+        }
+        await deliverPdfArtifact(artifact);
+        showToast(mode === 'paged' ? 'Wyeksportowano notatki do PDF.' : 'Wyeksportowano tablicę do PDF.', 'success');
+      } catch (error) {
+        if (artifactAbort !== controller) return;
+        const message =
+          error instanceof ArtifactCodecError
+            ? error.message
+            : polishArtifactMessage('artifact.exportFailed');
+        showToast(message, 'error', 4000);
+      } finally {
+        if (artifactAbort === controller) resetArtifactProgress();
+      }
+    };
+    const exportBoardAsPdf = () => exportBoardWithPipeline('single');
+    const exportBoardAsPdfPaged = () => exportBoardWithPipeline('paged');
     const canUndo = ref(false);
     const canRedo = ref(false);
     const updateGlobalState = () => {
@@ -588,7 +807,7 @@ export default {
       activePenPresetKey,
       activePenPreset,
       cancelActiveDrawing,
-      startDrawing,
+      startDrawingAt,
       draw,
       finishDrawing,
       eraseElement,
@@ -612,6 +831,8 @@ export default {
       getCurrentArrowStyle: () => props.currentArrowStyle,
       getActiveFeature: () => props.activeFeature,
       getHandwritingStylerOptions: () => props.handwritingStylerOptions,
+      getEraserMode: () => eraserMode.value,
+      getEraserRadius: () => Math.max(eraserSize.value / 2, 8),
       updateGlobalState,
       redrawCanvas: (...args) => redrawCanvas(...args),
       scheduleRedraw: (...args) => scheduleRedraw(...args),
@@ -645,36 +866,60 @@ export default {
       activeConfigPanel.value = null;
     };
 
+    const setLessonPanel = (panel) => session.value?.setActivePanel(panel) ?? null;
+    const toggleLessonPanel = (panel) => session.value?.togglePanel(panel) ?? null;
+
+    const deleteSelectedObject = () => {
+      if (!selectedObjectId.value) return false;
+      if (!canMutateDocument()) {
+        denyReadOnlyMutation();
+        return false;
+      }
+      const result = session.value?.execute({
+        kind: 'delete',
+        ids: [String(selectedObjectId.value)]
+      });
+      if (!result?.ok) {
+        if (result) showToast(result.message, 'error');
+        return false;
+      }
+      session.value?.select(null);
+      selectedObjectId.value = null;
+      refreshMovableElements();
+      updateGlobalState();
+      redrawCanvas(true);
+      return true;
+    };
+
     // Method to add a plot/coord system from panel data
     const addElementFromPanel = (elementData) => {
-      if (!canMutateDocument()) return denyReadOnlyMutation();
+      if (!canMutateDocument()) {
+        denyReadOnlyMutation();
+        return false;
+      }
       if (!session.value || !elementData || !elementData.type) {
         console.error("Invalid data received from panel or session not ready", elementData);
         closeConfigPanel();
-        return;
+        return false;
       }
 
       try {
         const object = { ...elementData };
         if (!object.id) object.id = uuidv4();
-
-        // Mirror geometry for MovableObject overlays (extension types keep
-        // their `position` payload until VVE-106 canonicalizes them)
-        const hasPosition = object.position && typeof object.position.x === 'number' && typeof object.position.y === 'number';
-        if (hasPosition) {
-          object.x = object.position.x;
-          object.y = object.position.y;
+        const width = Number.isFinite(object.width) ? object.width : 400;
+        const height = Number.isFinite(object.height) ? object.height : 300;
+        if (!Number.isFinite(object.x) || !Number.isFinite(object.y)) {
+          const center = getViewportCenter();
+          object.x = center.x - width / 2;
+          object.y = center.y - height / 2;
         }
-        if (object.type === 'coordinateSystem3D' && typeof object.size === 'number') {
-          const planeSize = object.size * 1.2;
-          object.width = planeSize;
-          object.height = planeSize;
-        }
+        object.width = width;
+        object.height = height;
 
         const result = session.value.execute({ kind: 'add', object });
         if (!result.ok) {
           showToast(result.message, 'error');
-          return;
+          return false;
         }
         refreshMovableElements();
 
@@ -682,6 +927,7 @@ export default {
           updateGlobalState();
           redrawCanvas(true); // Redraw to show the new element
         });
+        return true;
       } finally {
         closeConfigPanel(); // Close panel after adding
       }
@@ -716,7 +962,7 @@ export default {
         // UX-006: Warn user when element count is getting high
         if (rawArray.length >= ELEMENT_COUNT_WARNING && !elementCountWarningShown) {
             elementCountWarningShown = true;
-            showToast(`Board has ${rawArray.length}+ elements. Performance may degrade.`, "warning");
+            showToast(`Tablica ma ponad ${rawArray.length} obiektów i może działać wolniej.`, "warning");
         } else if (rawArray.length < ELEMENT_COUNT_WARNING) {
             elementCountWarningShown = false;
         }
@@ -1014,6 +1260,7 @@ export default {
     let redrawStaticNeeded = false;
     let redrawDynamicNeeded = false;
     let rafId = null;
+    let flushInputPaintSamples = () => {};
 
     const invalidate = (full = false) => {
         redrawDynamicNeeded = true;
@@ -1031,7 +1278,9 @@ export default {
     const renderLoop = () => {
         rafId = requestAnimationFrame(renderLoop);
         
-        if (!redrawStaticNeeded && !redrawDynamicNeeded) return;
+        if (!redrawStaticNeeded && !redrawDynamicNeeded) {
+            return;
+        }
 
         if (redrawStaticNeeded) {
             redrawStatic();
@@ -1042,6 +1291,8 @@ export default {
             redrawDynamic();
             redrawDynamicNeeded = false;
         }
+
+        flushInputPaintSamples();
     };
 
     // syncModulesWithYjs moved to useHelperModules composable
@@ -1222,22 +1473,26 @@ export default {
         isConnecting.value = true;
 
         try {
+            const serverLimits = await applyServerResourceLimits();
             // Pass roomKey to connectToYjs for E2E encryption
             const connection = await connectToYjs(normalizedRoomId, {
               wsToken: props.wsToken || undefined,
+              maxPayloadBytes: serverLimits.maxWebsocketPayloadBytes,
               onMutationDenied: (denial) => {
-                // Defense-in-depth path: the session enforces the same rules
-                // locally, so an honest client should never see this.
                 showToast(
-                  denial.reason === 'forbidden'
-                    ? 'Serwer odrzucił operację: tylko nauczyciel może wyczyścić tablicę.'
-                    : 'Serwer odrzucił nieprawidłową operację.',
+                  denial.messageKey
+                    ? polishArtifactMessage(denial.messageKey)
+                    : denial.reason === 'forbidden'
+                      ? 'Serwer odrzucił operację: tylko nauczyciel może wyczyścić tablicę.'
+                      : denial.reason === 'resource'
+                        ? polishArtifactMessage('resource.updateTooLarge')
+                        : 'Serwer odrzucił nieprawidłową operację.',
                   'error'
                 );
               },
               onStatus: (status) => {
                 connectionStatus.value = status;
-                isConnecting.value = status === 'connecting' || status === 'reconnecting';
+                isConnecting.value = status === 'connecting' || status === 'reconnecting' || status === 'draining';
                 if (status !== 'connected') {
                   // A stroke that started before network loss must not be
                   // committed after the session becomes read-only.
@@ -1272,7 +1527,8 @@ export default {
                 canUndo.value = nextCanUndo;
                 canRedo.value = nextCanRedo;
                 undoRedoState.update(nextCanUndo, nextCanRedo);
-              }
+              },
+              onPanelChange: (panel) => emit('update:lesson-panel', panel)
             });
 
             yDrawings.value.observeDeep(handleYjsUpdate);
@@ -1439,48 +1695,6 @@ export default {
       updateCursor();
     };
 
-    const startPinchGesture = (touches) => {
-      if (touches.length < 2 || !drawCanvas.value) return;
-      const rect = drawCanvas.value.getBoundingClientRect();
-      const touchA = touches[0];
-      const touchB = touches[1];
-      if (!touchA || !touchB) return;
-      pinchGesture.value = {
-        startDistance: getTouchDistance(touchA, touchB),
-        initialZoom: zoomLevel.value,
-        lastCanvasCenter: getTouchCenter(touchA, touchB, rect),
-      };
-      if (isDrawing.value) {
-        finishDrawing();
-      }
-      isPanning.value = true;
-      panStartedWithSpace.value = false;
-      updateCursor();
-    };
-
-    const updatePinchGesture = (touches) => {
-      if (!pinchGesture.value || touches.length < 2 || !drawCanvas.value) return;
-      const rect = drawCanvas.value.getBoundingClientRect();
-      const touchA = touches[0];
-      const touchB = touches[1];
-      if (!touchA || !touchB) return;
-      const canvasCenter = getTouchCenter(touchA, touchB, rect);
-      const gesture = pinchGesture.value;
-      const prevCenter = gesture.lastCanvasCenter || canvasCenter;
-
-      panSessionBy(canvasCenter.x - prevCenter.x, canvasCenter.y - prevCenter.y);
-
-      const distance = getTouchDistance(touchA, touchB);
-      const scale = gesture.startDistance ? distance / gesture.startDistance : 1;
-      const targetZoom = clampZoom(gesture.initialZoom * scale);
-
-      zoomSessionAt(canvasCenter.x, canvasCenter.y, targetZoom);
-      gesture.lastCanvasCenter = canvasCenter;
-
-      redrawCanvas();
-      showStatus(`Zoom: ${Math.round(zoomLevel.value * 100)}%`);
-    };
-
     const endTouchGesture = () => {
       pinchGesture.value = null;
       if (!panStartedWithSpace.value) {
@@ -1500,17 +1714,11 @@ export default {
 
     const darkModeObserver = new MutationObserver(handleDarkModeChange);
 
-    // --- Input Handlers ---
+    // --- Input Handlers (Pointer Events → InputPipeline) ---
 
     const getCoordinates = (event) => {
       if (!drawCanvas.value) return { offsetX: 0, offsetY: 0 };
       const rect = drawCanvas.value.getBoundingClientRect();
-      if (event.touches && event.touches[0]) {
-        return {
-          offsetX: event.touches[0].clientX - rect.left,
-          offsetY: event.touches[0].clientY - rect.top
-        };
-      }
       return {
         offsetX: event.clientX - rect.left,
         offsetY: event.clientY - rect.top
@@ -1524,8 +1732,89 @@ export default {
       };
     };
 
-    // addSmoothedPenPoint, computePenWidthFromPreset, getSnapSettings,
-    // applySoftGridSnap, applyGridSnapHard moved to useDrawingEngine composable
+    const inputPipeline = createInputPipeline({
+      initialProfile: props.inputProfile === 'pen' ? 'pen' : 'mouse'
+    });
+    const inputDispatchSamples = [];
+    const inputDispatchP95Ms = ref(null);
+    const inputPaintSamples = [];
+    const inputPaintP95Ms = ref(null);
+    const inputPaintSampleCount = ref(0);
+    const pendingFramePaintTimestamps = [];
+    let pinchStartZoom = 1;
+    const capturedPointers = new Set();
+
+    const recordInputDispatch = (timeStamp) => {
+      if (typeof performance === 'undefined' || !Number.isFinite(timeStamp)) return;
+      const dt = performance.now() - timeStamp;
+      if (dt >= 0 && dt < 2000) {
+        inputDispatchSamples.push(dt);
+        if (inputDispatchSamples.length > 240) inputDispatchSamples.shift();
+        const sorted = [...inputDispatchSamples].sort((a, b) => a - b);
+        const index = Math.min(sorted.length - 1, Math.max(0, Math.ceil(sorted.length * 0.95) - 1));
+        inputDispatchP95Ms.value = sorted[index];
+      }
+    };
+
+    const queueInputPaintSample = (timeStamp) => {
+      if (typeof performance === 'undefined' || !Number.isFinite(timeStamp)) return;
+      pendingFramePaintTimestamps.push(timeStamp);
+    };
+
+    // Test hook: injected presentation delay (ms) added to the input-to-paint
+    // boundary. It models a slow frame presentation without blocking the main
+    // thread, so dispatch latency stays fast while the paint gate must fail.
+    const injectedPresentationDelayMs = () => {
+      const value = typeof window !== 'undefined' ? window.__vve_injected_presentation_delay_ms : 0;
+      return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0;
+    };
+
+    flushInputPaintSamples = () => {
+      if (pendingFramePaintTimestamps.length === 0) return;
+      const paintTime = performance.now();
+      const presentationDelay = injectedPresentationDelayMs();
+      while (pendingFramePaintTimestamps.length > 0) {
+        const timeStamp = pendingFramePaintTimestamps.shift();
+        const dt = paintTime - timeStamp + presentationDelay;
+        if (dt >= 0 && dt < 5000) {
+          inputPaintSamples.push(dt);
+          if (inputPaintSamples.length > 240) inputPaintSamples.shift();
+        }
+      }
+      if (inputPaintSamples.length > 0) {
+        inputPaintSampleCount.value = inputPaintSamples.length;
+        const sorted = [...inputPaintSamples].sort((a, b) => a - b);
+        const index = Math.min(sorted.length - 1, Math.max(0, Math.ceil(sorted.length * 0.95) - 1));
+        inputPaintP95Ms.value = sorted[index];
+      }
+    };
+
+    const inputPaintP95 = () => inputPaintP95Ms.value;
+
+    const indexOfObjectId = (id) => {
+      if (!id || !localScene) return -1;
+      return localScene.findIndex((el) => el.id === id);
+    };
+
+    const hitTestAt = (world) => {
+      const radius = Math.max(eraserSize.value / 2, 8);
+      const candidates = session.value
+        ? session.value.queryObjectsNear(world, radius)
+        : [];
+      for (const element of candidates) {
+        const hitPadding = Math.max((element.lineWidth || 2) / 2 + 5, eraserSize.value / 2);
+        if (isPointInElement(world, element, hitPadding)) return element;
+      }
+      return null;
+    };
+
+    const setEraserHover = (id) => {
+      const foundIndex = indexOfObjectId(id);
+      if (hoveredElementIndex.value !== foundIndex) {
+        hoveredElementIndex.value = foundIndex;
+        redrawCanvas(false);
+      }
+    };
 
     const updateLocalAwarenessCursor = throttle((coords) => {
         if (yjsConnection.value?.awareness) {
@@ -1538,320 +1827,294 @@ export default {
         }
     }, 50);
 
-    const handleMouseMove = (e) => {
-      const coords = getCoordinates(e);
-      const transformedCoords = transformCoordinates(coords.offsetX, coords.offsetY);
-      lastMouseCoords.value = transformedCoords; // Store for keydown events
-      updateLocalAwarenessCursor(transformedCoords);
-
-      // Don't handle drawing/panning if a config panel is active
-      if (activeConfigPanel.value) return;
-
-      if (isPanning.value && lastPanPoint.value) {
-        const currentPanPoint = transformCoordinates(coords.offsetX, coords.offsetY);
-        panSessionBy(
-          coords.offsetX - lastPanPoint.value.screenX,
-          coords.offsetY - lastPanPoint.value.screenY
-        );
-        lastPanPoint.value = { ...currentPanPoint, screenX: coords.offsetX, screenY: coords.offsetY };
-        redrawCanvas(true); // Pan requires full redraw
-        return;
-      }
-
-      if (!canMutateDocument()) return;
-
-      if (isDrawing.value && currentTool.value !== 'eraser') {
-        draw(transformedCoords, e.shiftKey, e.timeStamp); // Pass shift key state
-      } else if (currentTool.value === 'eraser') {
-        let foundIndex = -1;
-        if (yDrawings.value) {
-            const elementsArray = yDrawings.value.toArray(); // Get a JS array
-            for (let i = elementsArray.length - 1; i >= 0; i--) {
-                const elementMap = elementsArray[i];
-                try {
-                    // Convert Y.Map to plain object for hit testing
-                    const element = {};
-                    for (const [key, value] of elementMap.entries()) {
-                        element[key] = (value instanceof Y.Map || value instanceof Y.Array) ? value.toJSON() : value;
-                    }
-                    const hitPadding = Math.max((element.lineWidth || 2) / 2 + 5, eraserSize.value / 2);
-                    if (isPointInElement(transformedCoords, element, hitPadding)) {
-                        foundIndex = i;
-                        break;
-                    }
-                } catch (error) {
-                    // console.error("Error processing element for eraser hover:", elementMap, error); // Commented out
-                }
-            }
-        }
-        if (hoveredElementIndex.value !== foundIndex) {
-            hoveredElementIndex.value = foundIndex;
-            redrawCanvas(false); // Dynamic only (highlight)
-        }
-        if (isDrawing.value && foundIndex !== -1) {
-           eraseElement(foundIndex);
-        }
-      } else {
-         if (hoveredElementIndex.value !== -1) {
-             hoveredElementIndex.value = -1;
-             redrawCanvas(false); // Dynamic only
-         }
+    const clearAwarenessCursor = () => {
+      if (!yjsConnection.value?.awareness) return;
+      yjsConnection.value.awareness.setLocalStateField('cursor', null);
+      const userState = yjsConnection.value.awareness.getLocalState()?.user;
+      if (userState) {
+        yjsConnection.value.awareness.setLocalStateField('user', userState);
       }
     };
 
-    const handleMouseDown = (event) => {
-      shiftPressedAtStart.value = event.shiftKey; 
-      startCoordsForShiftLine.value = null; 
-
-      if (activeConfigPanel.value) return;
-
-      const coords = getCoordinates(event);
-      const transformedCoords = transformCoordinates(coords.offsetX, coords.offsetY);
-
-      if (event.button === 2) { // Right-click
-        event.preventDefault();
-        if (isDrawing.value) return; // Don't select if in the middle of drawing a new shape
-
-        const clickedObjectFoundId = findMovableElementIdAtPoint(transformedCoords);
-        session.value?.select(clickedObjectFoundId);
-        selectedObjectId.value = session.value?.selectedObjectId() ?? clickedObjectFoundId;
-        debugLog('[WhiteboardCanvas] Right-click selected:', selectedObjectId.value);
-        redrawCanvas(false); // Selection is dynamic (overlay/MovableObject) - wait, MovableObject is DOM.
-        // But if we have selection logic in canvas (e.g. highlight), we need redraw.
-        // MovableObject handles its own rendering.
-        // redrawCanvas() calls drawElement with isHighlighted=false for static.
-        // But wait, MovableObject is a component.
-        // Does redrawCanvas draw selection box? No.
-        // So redrawCanvas might not be needed for selection if it's purely DOM.
-        // But let's keep it safe.
-        return;
-      }
-
-      const shouldSpacePan = event.button === 0 && spacePanActive.value;
-      const shouldToolPan = event.button === 0 && currentTool.value === 'pan';
-      if (event.button === 1 || (event.button === 0 && event.altKey) || shouldSpacePan || shouldToolPan) { // Middle mouse, Alt+Left, Space+Left, or Pan tool
-        isPanning.value = true;
-        lastPanPoint.value = { ...transformedCoords, screenX: coords.offsetX, screenY: coords.offsetY };
-        panStartedWithSpace.value = shouldSpacePan;
-        event.preventDefault();
-        updateCursor();
-        return;
-      }
-
-      if (!canMutateDocument()) return denyReadOnlyMutation();
-      
-      if (event.button === 0) { // Left-click
-        if (currentTool.value === 'select') {
-            const hitObjectId = findMovableElementIdAtPoint(transformedCoords);
-            if (hitObjectId) {
-                if (event.altKey) {
-                    const map = findElementMapById(hitObjectId);
-                    if (map && map.get('type') === 'line') {
-                        detachLineBindings(hitObjectId);
-                        redrawCanvas(true); // Line binding change -> static update
-                        return;
-                    }
-                }
+    const applyInputIntents = (result) => {
+      for (const intent of result.intents) {
+        switch (intent.kind) {
+          case 'drawStart': {
+            lastMouseCoords.value = intent.world;
+            updateLocalAwarenessCursor(intent.world);
+            recordInputDispatch(intent.timeStamp);
+            if (activeConfigPanel.value) break;
+            if (!canMutateDocument()) {
+              denyReadOnlyMutation();
+              break;
+            }
+            if (currentTool.value === 'select') {
+              const hitObjectId = findMovableElementIdAtPoint(intent.world);
+              if (hitObjectId) {
                 handleObjectSelectionRequest(hitObjectId);
-            } else if (selectedObjectId.value) {
+              } else if (selectedObjectId.value) {
                 session.value?.select(null);
                 selectedObjectId.value = null;
                 redrawCanvas(false);
+              }
+              break;
             }
-            return;
-        }
-
-        if (selectedObjectId.value) {
-            session.value?.select(null);
-            selectedObjectId.value = null;
-        }
-
-        if (currentTool.value === 'eraser') {
-            // Eraser logic (hover and click to erase is handled in mouseMove)
-            isDrawing.value = true; // Allow dragging eraser over elements
-        } else if (currentTool.value === 'mathPlot') {
-          openConfigPanel('math', transformedCoords);
-        } else if (currentTool.value === 'physicsPlot') {
-          openConfigPanel('physics', transformedCoords);
-        } else if (currentTool.value === 'coordSystem2D') {
-          const elementData = createCoordinateSystem2DElement(transformedCoords);
-          addElementFromPanel(elementData);
-        } else if (currentTool.value === 'coordSystem3D') {
-          const elementData = createCoordinateSystem3DElement(transformedCoords);
-          addElementFromPanel(elementData);
-        } else {
-          startDrawing(event, getCoordinates, transformCoordinates);
-        }
-        return; 
-      }
-    };
-
-
-    const handleMouseUp = (event) => {
-      // Don't handle mouse up if a config panel is active
-      if (activeConfigPanel.value) return;
-
-      if (isPanning.value) {
-        isPanning.value = false;
-        lastPanPoint.value = null;
-        panStartedWithSpace.value = false;
-        updateCursor();
-        return;
-      }
-      if (!canMutateDocument()) {
-        isDrawing.value = false;
-        currentElementPreview.value = null;
-        snapIndicator.value = null;
-        redrawCanvas(false);
-        return;
-      }
-      if (isDrawing.value) {
-         if (currentTool.value === 'eraser') {
-             isDrawing.value = false;
-         } else {
-             finishDrawing();
-         }
-      }
-      snapIndicator.value = null;
-      redrawCanvas(true); // Mouse up -> finish drawing -> static update
-    };
-
-    const handleWindowMouseUp = (event) => {
-      if (isDrawing.value || isPanning.value) {
-        handleMouseUp(event);
-      }
-    };
-
-    const handleMouseLeave = (event) => {
-      // Don't handle mouse leave if a config panel is active
-      if (activeConfigPanel.value) return;
-
-      if (isPanning.value) {
-        isPanning.value = false;
-        lastPanPoint.value = null;
-        panStartedWithSpace.value = false;
-        updateCursor();
-      }
-      if (isDrawing.value) {
-        if (canMutateDocument()) finishDrawing();
-        else {
-          isDrawing.value = false;
-          currentElementPreview.value = null;
-        }
-      }
-       if (yjsConnection.value?.awareness) {
-           yjsConnection.value.awareness.setLocalStateField('cursor', null);
-           const userState = yjsConnection.value.awareness.getLocalState()?.user;
-       if (userState) {
-               yjsConnection.value.awareness.setLocalStateField('user', userState);
-           }
-       }
-       snapIndicator.value = null;
-       redrawCanvas(false); // Mouse leave -> clear dynamic
-    };
-
-    const handleTouchStart = (event) => {
-        if (event.touches.length >= 2) {
-            event.preventDefault();
-            startPinchGesture(event.touches);
-            return;
-        }
-
-        if (event.touches.length === 1 && !pinchGesture.value) {
-            event.preventDefault();
-            const syntheticMouseEvent = {
-                clientX: event.touches[0].clientX,
-                clientY: event.touches[0].clientY,
-                button: 0,
-                shiftKey: event.shiftKey,
-                altKey: event.altKey,
-                preventDefault: () => event.preventDefault(),
-            };
-            handleMouseDown(syntheticMouseEvent);
-        }
-    };
-
-    const handleTouchMove = (event) => {
-        if (pinchGesture.value && event.touches.length >= 2) {
-            event.preventDefault();
-            updatePinchGesture(event.touches);
-            return;
-        }
-
-        if (event.touches.length === 1 && !pinchGesture.value) {
-            event.preventDefault();
-            const coords = getCoordinates(event);
-            const transformedCoords = transformCoordinates(coords.offsetX, coords.offsetY);
-            updateLocalAwarenessCursor(transformedCoords);
-
-            // P1-FIX: Pan tool panning via touch
-            if (isPanning.value && lastPanPoint.value) {
-                panSessionBy(
-                  coords.offsetX - lastPanPoint.value.screenX,
-                  coords.offsetY - lastPanPoint.value.screenY
-                );
-                lastPanPoint.value = { ...transformedCoords, screenX: coords.offsetX, screenY: coords.offsetY };
-                redrawCanvas(true);
-                return;
+            if (selectedObjectId.value) {
+              session.value?.select(null);
+              selectedObjectId.value = null;
             }
-
-            if (!canMutateDocument()) return;
-
-            // P0-FIX: Eraser must work on touch (iPad) - replicate handleMouseMove eraser logic
             if (currentTool.value === 'eraser') {
-                let foundIndex = -1;
-                if (yDrawings.value) {
-                    const elementsArray = yDrawings.value.toArray();
-                    for (let i = elementsArray.length - 1; i >= 0; i--) {
-                        const elementMap = elementsArray[i];
-                        try {
-                            const element = {};
-                            for (const [key, value] of elementMap.entries()) {
-                                element[key] = (value instanceof Y.Map || value instanceof Y.Array) ? value.toJSON() : value;
-                            }
-                            const hitPadding = Math.max((element.lineWidth || 2) / 2 + 5, eraserSize.value / 2);
-                            if (isPointInElement(transformedCoords, element, hitPadding)) {
-                                foundIndex = i;
-                                break;
-                            }
-                        } catch (_) { /* ignore */ }
-                    }
-                }
-                if (hoveredElementIndex.value !== foundIndex) {
-                    hoveredElementIndex.value = foundIndex;
-                    redrawCanvas(false);
-                }
-                if (isDrawing.value && foundIndex !== -1) {
-                    eraseElement(foundIndex);
-                }
-            } else if (isDrawing.value) {
-                draw(transformedCoords, false, event.timeStamp);
+              isDrawing.value = true;
+              const hit = hitTestAt(intent.world);
+              setEraserHover(hit?.id);
+              if (hit?.id) eraseElement(hit.id, intent.world, hit);
+              break;
             }
+            if (currentTool.value === 'mathPlot') {
+              openConfigPanel('math', intent.world);
+              break;
+            }
+            if (currentTool.value === 'physicsPlot') {
+              openConfigPanel('physics', intent.world);
+              break;
+            }
+            if (currentTool.value === 'coordSystem2D') {
+              addElementFromPanel(createCoordinateSystem2DElement(intent.world));
+              break;
+            }
+            if (currentTool.value === 'coordSystem3D') {
+              addElementFromPanel(createCoordinateSystem3DElement(intent.world));
+              break;
+            }
+            startDrawingAt(intent.world, intent.timeStamp, {
+              pressure: intent.pressure,
+              tiltX: intent.tiltX,
+              tiltY: intent.tiltY
+            });
+            if (isDrawing.value && currentElementPreview.value) {
+              queueInputPaintSample(intent.timeStamp);
+              redrawCanvas(false);
+            }
+            break;
+          }
+          case 'drawUpdate': {
+            lastMouseCoords.value = intent.world;
+            updateLocalAwarenessCursor(intent.world);
+            recordInputDispatch(intent.timeStamp);
+            if (activeConfigPanel.value || !canMutateDocument()) break;
+            if (currentTool.value === 'eraser') {
+              const hit = hitTestAt(intent.world);
+              setEraserHover(hit?.id);
+              if (isDrawing.value && hit?.id) eraseElement(hit.id, intent.world, hit);
+            } else if (isDrawing.value) {
+              draw(
+                { ...intent.world, p: intent.pressure, tiltX: intent.tiltX, tiltY: intent.tiltY },
+                intent.shiftKey === true,
+                intent.timeStamp
+              );
+              if (currentElementPreview.value) queueInputPaintSample(intent.timeStamp);
+            }
+            break;
+          }
+          case 'drawFinish': {
+            recordInputDispatch(intent.timeStamp);
+            const paintedDrawing = canMutateDocument() && isDrawing.value && currentElementPreview.value;
+            if (currentTool.value === 'eraser') {
+              isDrawing.value = false;
+            } else if (canMutateDocument()) {
+              // Keep the interior stroke smoothed, but feed the terminal raw
+              // pointer sample through the drawing engine before committing.
+              // Without this, Mysz/Pióro smoothing leaves the visible endpoint
+              // behind the user's actual pointer-up location.
+              if (paintedDrawing && intent.rawWorld) {
+                draw(
+                  { ...intent.rawWorld, p: intent.pressure, tiltX: intent.tiltX, tiltY: intent.tiltY },
+                  intent.shiftKey === true,
+                  intent.timeStamp
+                );
+              }
+              finishDrawing();
+            } else {
+              isDrawing.value = false;
+              currentElementPreview.value = null;
+            }
+            snapIndicator.value = null;
+            if (paintedDrawing) queueInputPaintSample(intent.timeStamp);
+            redrawCanvas(true);
+            break;
+          }
+          case 'drawCancel': {
+            pendingFramePaintTimestamps.length = 0;
+            cancelActiveDrawing();
+            isDrawing.value = false;
+            snapIndicator.value = null;
+            redrawCanvas(false);
+            break;
+          }
+          case 'panStart': {
+            isPanning.value = true;
+            panStartedWithSpace.value = spacePanActive.value === true;
+            lastPanPoint.value = { ...intent.screen, screenX: intent.screen.x, screenY: intent.screen.y };
+            updateCursor();
+            break;
+          }
+          case 'panUpdate': {
+            panSessionBy(intent.dx, intent.dy);
+            lastPanPoint.value = { ...intent.screen, screenX: intent.screen.x, screenY: intent.screen.y };
+            redrawCanvas(true);
+            break;
+          }
+          case 'panFinish':
+          case 'panCancel': {
+            isPanning.value = false;
+            lastPanPoint.value = null;
+            panStartedWithSpace.value = false;
+            updateCursor();
+            break;
+          }
+          case 'pinchStart': {
+            pinchStartZoom = zoomLevel.value;
+            pinchGesture.value = { pointerIds: intent.pointerIds };
+            isPanning.value = true;
+            panStartedWithSpace.value = false;
+            updateCursor();
+            break;
+          }
+          case 'pinchUpdate': {
+            panSessionBy(intent.dx, intent.dy);
+            const targetZoom = clampZoom(pinchStartZoom * (intent.scale || 1));
+            zoomSessionAt(intent.screen.x, intent.screen.y, targetZoom);
+            redrawCanvas();
+            showStatus(`Zoom: ${Math.round(zoomLevel.value * 100)}%`);
+            break;
+          }
+          case 'pinchFinish':
+          case 'pinchCancel': {
+            endTouchGesture();
+            break;
+          }
+          case 'hover': {
+            lastMouseCoords.value = intent.world;
+            updateLocalAwarenessCursor(intent.world);
+            if (currentTool.value === 'eraser' && canMutateDocument()) {
+              const hit = hitTestAt(intent.world);
+              setEraserHover(hit?.id);
+            } else if (hoveredElementIndex.value !== -1) {
+              hoveredElementIndex.value = -1;
+              redrawCanvas(false);
+            }
+            break;
+          }
+          case 'awareness': {
+            if (intent.world) updateLocalAwarenessCursor(intent.world);
+            else clearAwarenessCursor();
+            break;
+          }
+          default:
+            break;
         }
+      }
     };
 
-    const handleTouchEnd = (event) => {
+    const pointerViewport = () => {
+      if (!drawCanvas.value) return null;
+      return viewportFromElement(drawCanvas.value, {
+        zoom: zoomLevel.value,
+        panX: panOffset.value.x,
+        panY: panOffset.value.y
+      });
+    };
+
+    const ingestPointerEvent = (event, phase) => {
+      const viewport = pointerViewport();
+      if (!viewport) return;
+      const result = inputPipeline.ingest(batchFromPointerEvent(event, {
+        phase,
+        viewport,
+        reducedMotion: prefersReducedMotion(),
+        altKey: event.altKey === true,
+        shiftKey: event.shiftKey === true,
+        spacePan: spacePanActive.value === true,
+        panTool: currentTool.value === 'pan',
+        smoothPath: currentTool.value === 'pen'
+      }));
+      applyInputIntents(result);
+    };
+
+    const capturePointer = (event) => {
+      const target = event.currentTarget;
+      if (target && typeof target.setPointerCapture === 'function' && event.pointerId != null) {
+        try {
+          target.setPointerCapture(event.pointerId);
+          capturedPointers.add(event.pointerId);
+        } catch {
+          /* happy-dom and detached nodes */
+        }
+      }
+    };
+
+    const handleRightClickSelect = (event) => {
+      if (isDrawing.value) return;
+      const coords = getCoordinates(event);
+      const transformedCoords = transformCoordinates(coords.offsetX, coords.offsetY);
+      const clickedObjectFoundId = findMovableElementIdAtPoint(transformedCoords);
+      session.value?.select(clickedObjectFoundId);
+      selectedObjectId.value = session.value?.selectedObjectId() ?? clickedObjectFoundId;
+      debugLog('[WhiteboardCanvas] Right-click selected:', selectedObjectId.value);
+    };
+
+    const handlePointerDown = (event) => {
+      shiftPressedAtStart.value = event.shiftKey;
+      startCoordsForShiftLine.value = null;
+      emit('pointer-observed', event.pointerType || 'mouse');
+      if (event.button === 2) {
         event.preventDefault();
+        handleRightClickSelect(event);
+        return;
+      }
+      event.preventDefault();
+      capturePointer(event);
+      if (activeConfigPanel.value) return;
+      ingestPointerEvent(event, 'down');
+    };
 
-        if (pinchGesture.value && event.touches.length < 2) {
-            endTouchGesture();
-        }
+    const handlePointerMove = (event) => {
+      event.preventDefault();
+      const phase = event.buttons ? 'move' : 'hover';
+      ingestPointerEvent(event, phase);
+    };
 
-        if (event.touches.length === 0) {
-            const syntheticMouseEvent = {
-                button: 0,
-            };
-            handleMouseUp(syntheticMouseEvent);
-        }
+    const handlePointerUp = (event) => {
+      event.preventDefault();
+      capturedPointers.delete(event.pointerId);
+      ingestPointerEvent(event, 'up');
+    };
 
-        if (yjsConnection.value?.awareness && event.touches.length === 0) {
-            yjsConnection.value.awareness.setLocalStateField('cursor', null);
-            const userState = yjsConnection.value.awareness.getLocalState()?.user;
-            if (userState) {
-                yjsConnection.value.awareness.setLocalStateField('user', userState);
-            }
-        }
-        snapIndicator.value = null;
+    const handlePointerCancel = (event) => {
+      event.preventDefault();
+      capturedPointers.delete(event.pointerId);
+      ingestPointerEvent(event, 'cancel');
+    };
+
+    const handleLostPointerCapture = (event) => {
+      if (!capturedPointers.has(event.pointerId)) return;
+      capturedPointers.delete(event.pointerId);
+      ingestPointerEvent(event, 'cancel');
+    };
+
+    const handlePointerLeave = () => {
+      if (isDrawing.value || isPanning.value || pinchGesture.value) return;
+      clearAwarenessCursor();
+      snapIndicator.value = null;
+      if (hoveredElementIndex.value !== -1) {
+        hoveredElementIndex.value = -1;
+        redrawCanvas(false);
+      }
+    };
+
+    const cancelPipeline = (reason) => {
+      applyInputIntents(inputPipeline.cancel(reason));
+      capturedPointers.clear();
     };
 
     // --- Drawing Logic (Yjs Integration) ---
@@ -2012,9 +2275,7 @@ export default {
     };
 
     const selectObject = (objectId) => {
-      // This was the old @select handler from MovableObject.
-      // Its primary selection role is now handled by handleObjectSelectionRequest or right-click.
-      debugLog('[WhiteboardCanvas] selectObject (old handler) called with ID:', objectId);
+      handleObjectSelectionRequest(objectId);
     };
 
 
@@ -2101,7 +2362,10 @@ export default {
       zoomOut,
       resetZoom,
       setTool,
-      cancelActiveDrawing,
+      cancelActiveDrawing: () => {
+        cancelPipeline('gesture');
+        return cancelActiveDrawing();
+      },
       closeConfigPanel,
       undo,
       redo,
@@ -2110,7 +2374,12 @@ export default {
       endTouchGesture,
       applyMathAnswer,
       selectPenPreset: (presetKey) => emit('select-pen-preset', presetKey),
+      deleteSelection: deleteSelectedObject,
     });
+    const onWindowBlur = () => {
+      handleWindowBlur();
+      cancelPipeline('blur');
+    };
 
     // --- Other Actions ---
     const handlePaste = (event) => {
@@ -2122,9 +2391,14 @@ export default {
        for (let i = 0; i < items.length; i++) {
          if (items[i].type.indexOf('image') !== -1) {
            const blob = items[i].getAsFile();
-           const reader = new FileReader();
-           reader.onload = (e) => addImageFromDataUrl(e.target.result);
-           reader.readAsDataURL(blob);
+           if (!blob) return;
+           const origin = {
+             x: (canvasWidth.value / 2 - panOffset.value.x) / zoomLevel.value,
+             y: (canvasHeight.value / 2 - panOffset.value.y) / zoomLevel.value
+           };
+           blob.arrayBuffer().then((buffer) =>
+             runArtifactImport(new Uint8Array(buffer), blob.name || 'schowek', blob.type, origin)
+           );
            return;
          }
        }
@@ -2137,68 +2411,20 @@ export default {
        }
     };
 
-    const MAX_IMAGE_DATAURL_BYTES = 5 * 1024 * 1024; // 5 MB limit for base64 dataUrl
-
     const addImageFromDataUrl = (dataUrl) => {
         if (!canMutateDocument()) return denyReadOnlyMutation();
-        if (!session.value) {
-            console.error("[addImageFromDataUrl] Error: session not available!");
-            showToast("Cannot add image - connection issue", "error");
+        if (typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image/')) {
+            showToast(polishArtifactMessage('artifact.unsupportedType'), 'error');
             return;
         }
-
-        // SEC-003: Validate image size before syncing via Yjs
-        if (typeof dataUrl === 'string' && dataUrl.length > MAX_IMAGE_DATAURL_BYTES) {
-            const sizeMB = (dataUrl.length / (1024 * 1024)).toFixed(1);
-            showToast(`Image too large (${sizeMB} MB). Maximum is 5 MB.`, "error");
-            return;
-        }
-
-        const centerX = (canvasWidth.value / 2 - panOffset.value.x) / zoomLevel.value;
-        const centerY = (canvasHeight.value / 2 - panOffset.value.y) / zoomLevel.value;
-
-        createImageElement(dataUrl, centerX, centerY)
-            .then(imageData => {
-                imageData.id = session.value.newObjectId();
-
-                try {
-                    const result = session.value.execute({
-                      kind: 'add',
-                      object: {
-                        id: imageData.id,
-                        type: 'image',
-                        timestamp: Date.now(),
-                        x: imageData.x,
-                        y: imageData.y,
-                        src: imageData.dataUrl,
-                        width: imageData.width,
-                        height: imageData.height,
-                        rotation: 0
-                      }
-                    });
-                    if (!result.ok) {
-                      showToast(result.message, 'error');
-                      return;
-                    }
-                    refreshMovableElements();
-
-                    nextTick(() => {
-                        redrawCanvas();
-                        updateGlobalState();
-                    });
-
-                    // Show success message
-                    showToast("Image added successfully", "success");
-                }
-                catch (error) {
-                    console.error("[addImageFromDataUrl] Error adding image:", error);
-                    showToast("Failed to add image", "error");
-                }
-            })
-            .catch(error => {
-                console.error("[addImageFromDataUrl] Error creating image:", error);
-                showToast("Failed to process image", "error");
-            });
+        const origin = {
+            x: (canvasWidth.value / 2 - panOffset.value.x) / zoomLevel.value,
+            y: (canvasHeight.value / 2 - panOffset.value.y) / zoomLevel.value
+        };
+        fetch(dataUrl)
+          .then((response) => response.arrayBuffer())
+          .then((buffer) => runArtifactImport(new Uint8Array(buffer), 'obraz', undefined, origin))
+          .catch(() => showToast(polishArtifactMessage('artifact.decodeFailed'), 'error'));
     };
 
     // --- Undo/Redo Methods --- (Replaced by Fragment 1)
@@ -2395,6 +2621,12 @@ export default {
         }
     });
 
+    watch(() => props.inputProfile, (next) => {
+      if (next === 'pen' || next === 'mouse') {
+        inputPipeline.configure(next);
+      }
+    });
+
     watch(() => props.username, (newUsername) => {
         latestUsername.value = newUsername;
         updateAwarenessUser(newUsername);
@@ -2411,8 +2643,7 @@ export default {
       window.addEventListener('keydown', handleKeyDown);
       window.addEventListener('keyup', handleKeyUp);
       window.addEventListener('paste', handlePaste);
-      window.addEventListener('blur', handleWindowBlur);
-      window.addEventListener('mouseup', handleWindowMouseUp);
+      window.addEventListener('blur', onWindowBlur);
       darkModeObserver.observe(document.body, { attributes: true });
       handleResize(); // Initial resize call
 
@@ -2451,13 +2682,13 @@ export default {
   });
 
     onBeforeUnmount(() => {
+      artifactAbort?.abort();
       if (rafId) cancelAnimationFrame(rafId);
       window.removeEventListener('resize', handleResize);
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
       window.removeEventListener('paste', handlePaste);
-      window.removeEventListener('blur', handleWindowBlur);
-      window.removeEventListener('mouseup', handleWindowMouseUp);
+      window.removeEventListener('blur', onWindowBlur);
       darkModeObserver.disconnect();
       if (resizeObserver) {
         resizeObserver.disconnect();
@@ -2468,6 +2699,8 @@ export default {
         clipboardFocusHandler = null;
       }
       teardownYjsConnection();
+      cancelPipeline('dispose');
+      inputPipeline.dispose();
     });
 
     const snapGuides = ref([]);
@@ -2525,28 +2758,34 @@ export default {
       eraserMode,
       notifications,
       statusMessage,
+      artifactProgress,
+      pendingPdfArtifact,
+      pendingPdfMessage,
       yjsConnection,
       connectionStatus,
       collaborationReadOnly,
+      connectionBanner,
+      readOnlyBanner,
       canUndo,
       canRedo,
       selectedObjectId,
       movableElements,
 
       // Methods
-      handleMouseDown,
-      handleMouseMove,
-      handleMouseUp,
-      handleMouseLeave,
+      handlePointerDown,
+      handlePointerMove,
+      handlePointerUp,
+      handlePointerCancel,
       handleZoom,
       handlePaste,
       handleResize,
-      handleTouchStart,
-      handleTouchMove,
-      handleTouchEnd,
       handleObjectSelectionRequest,
       handleCloneObject,
       handleCommitTransform,
+      inputPaintP95,
+      inputPaintP95Ms,
+      inputPaintSampleCount,
+      inputDispatchP95Ms,
 
       // Public API
       setTool,
@@ -2568,6 +2807,10 @@ export default {
       exportBoardAsPdf,
       exportBoardAsPdfPaged,
       addImageFromDataUrl,
+      importArtifactFile,
+      cancelArtifactWork,
+      deliverPendingPdf,
+      dismissPendingPdf,
       getViewportCenter,
       toggleDebug,
       redrawCanvas,
@@ -2578,6 +2821,9 @@ export default {
       configPanelCoords,
       closeConfigPanel,
       addElementFromPanel,
+      setLessonPanel,
+      toggleLessonPanel,
+      deleteSelectedObject,
 
       // MovableObject handlers & selection state
       handleObjectUpdate,
@@ -2633,6 +2879,7 @@ export default {
   background-color: #f8f9fa;
   touch-action: none;
   user-select: none;
+  overscroll-behavior: none;
 }
 
 .whiteboard-container.dark-mode {
@@ -2806,6 +3053,14 @@ export default {
   border-top-color: white;
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .connection-spinner {
+    animation: none;
+    border-top-color: white;
+    opacity: 0.85;
+  }
 }
 
 @keyframes spin {

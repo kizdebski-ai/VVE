@@ -1,0 +1,187 @@
+{
+  "live": true,
+  "ready": true,
+  "status": "ready",
+  "checks": {
+    "database": true,
+    "persistence": true
+  },
+  "soak": {
+    "at": "[timestamp]",
+    "sequence": 14,
+    "eventsLost": 0,
+    "eventLoopDelayMs": {
+      "min": 0.000511,
+      "mean": 19.800095,
+      "p50": 21.118975,
+      "p95": 21.135359,
+      "max": 21.135359
+    },
+    "memory": {
+      "rssBytes": 117293056,
+      "heapUsedBytes": 53509568
+    },
+    "connections": 1,
+    "boards": 1,
+    "errors": {
+      "persistence": 0,
+      "unhandled": 0
+    },
+    "lastDigests": {
+      "e24e4c9d-a63a-471a-b815-04421fe47c11": "ea269f5939a6245c92057ab39774ff311fdabaea24f746af1c7e4ba06f265672"
+    },
+    "counters": {
+      "process.phase": 3,
+      "boards.active": 1,
+      "connections.active": 1,
+      "access.decision": 6,
+      "session.admission": 2,
+      "sync.complete": 2,
+      "session.close": 1
+    },
+    "measurements": {
+      "memory.rssBytes": {
+        "name": "memory.rssBytes",
+        "count": 16,
+        "last": 117293056,
+        "min": 113049600,
+        "max": 178651136,
+        "sum": 2179088384,
+        "samples": [
+          172490752,
+          174718976,
+          176242688,
+          177618944,
+          178651136,
+          118013952,
+          113049600,
+          113557504,
+          114622464,
+          118177792,
+          122699776,
+          123633664,
+          121503744,
+          120782848,
+          116031488,
+          117293056
+        ]
+      },
+      "memory.heapUsedBytes": {
+        "name": "memory.heapUsedBytes",
+        "count": 16,
+        "last": 53509568,
+        "min": 45180248,
+        "max": 72666464,
+        "sum": 836136168,
+        "samples": [
+          45180248,
+          55709248,
+          64296968,
+          72666464,
+          50621352,
+          46823296,
+          47712384,
+          49369320,
+          50271552,
+          53177536,
+          46807272,
+          48203928,
+          49411168,
+          50578176,
+          51797688,
+          53509568
+        ]
+      },
+      "eventLoop.delayMs": {
+        "name": "eventLoop.delayMs",
+        "count": 16,
+        "last": 21.118975,
+        "min": 0.000511,
+        "max": 21.135359,
+        "sum": 316.80152,
+        "samples": [
+          0.000511,
+          21.135359,
+          21.118975,
+          21.118975,
+          21.118975,
+          21.118975,
+          21.118975,
+          21.118975,
+          21.118975,
+          21.118975,
+          21.118975,
+          21.118975,
+          21.118975,
+          21.118975,
+          21.118975,
+          21.118975
+        ]
+      },
+      "boards.active": {
+        "name": "boards.active",
+        "count": 18,
+        "last": 1,
+        "min": 0,
+        "max": 1,
+        "sum": 17,
+        "samples": [
+          0,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1
+        ]
+      },
+      "connections.active": {
+        "name": "connections.active",
+        "count": 18,
+        "last": 1,
+        "min": 0,
+        "max": 2,
+        "sum": 22,
+        "samples": [
+          0,
+          1,
+          2,
+          2,
+          2,
+          2,
+          2,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1
+        ]
+      },
+      "board.digest": {
+        "name": "board.digest",
+        "count": 2,
+        "last": "ea269f5939a6245c92057ab39774ff311fdabaea24f746af1c7e4ba06f265672",
+        "min": null,
+        "max": null,
+        "sum": 0
+      }
+    }
+  }
+}

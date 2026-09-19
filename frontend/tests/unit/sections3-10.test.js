@@ -52,22 +52,18 @@ describe('3.5: ColorPicker click-outside handler', () => {
 // ─── Section 5: Memory Leaks ─────────────────────────────────────────────────
 
 describe('5.7: WebSocket max payload', () => {
-  it('server.ts sets maxPayload on WebSocketServer', () => {
+  it('realtime listener sets maxPayload on WebSocketServer', () => {
     const src = readFileSync(
-      resolve(__dirname, '../../../server/src/server.ts'),
+      resolve(__dirname, '../../../server/src/pilot/realtimeListener.ts'),
       'utf-8'
     );
     expect(src).toContain('maxPayload');
   });
 });
 
-describe('5.8: Specific watchers instead of deep watcher', () => {
-  it('App.vue watches preset and smoothingFactor separately', () => {
-    const src = readSrc('App.vue');
-    expect(src).toContain("handwritingStylerOptions.value.preset");
-    expect(src).toContain("handwritingStylerOptions.value.smoothingFactor");
-  });
-});
+// 5.8: Obsolete unmounted HandwritingStyler preview RAF loops and competing
+// smoothing watchers were removed with VVE-105. Input pipeline smoothing and
+// input style selection are verified behaviorally in inputPipeline.test.ts.
 
 // ─── Section 6: Synchronization ──────────────────────────────────────────────
 
@@ -167,10 +163,11 @@ describe('8.1: No position:relative on * selector', () => {
 });
 
 describe('8.3: Dark mode uses @media instead of :deep(.dark-mode)', () => {
-  it('EraserModeControls.vue uses @media prefers-color-scheme', () => {
+  it('EraserModeControls.vue uses the shared tactile material tokens', () => {
     const src = readSrc('components/EraserModeControls.vue');
-    expect(src).toContain('prefers-color-scheme: dark');
-    expect(src).not.toContain(':deep(.dark-mode)');
+    expect(src).toContain('var(--glass-surface');
+    expect(src).toContain('var(--glass-shadow');
+    expect(src).not.toContain('prefers-color-scheme: dark');
   });
 
   it('ZoomPanControls.vue uses @media prefers-color-scheme', () => {
@@ -277,23 +274,9 @@ describe('9.8: Unused CSS variables removed', () => {
 
 // ─── Section 10: Missing Features ────────────────────────────────────────────
 
-describe('10.1: Pen preset keyboard shortcuts 1-4', () => {
-  it('useKeyboardShortcuts.js has pen preset shortcuts', () => {
-    const src = readSrc('composables/useKeyboardShortcuts.js');
-    expect(src).toContain('selectPenPreset');
-    expect(src).toContain("'1': 'gel'");
-    expect(src).toContain("'2': 'technical'");
-    expect(src).toContain("'3': 'marker'");
-    expect(src).toContain("'4': 'calligraphy'");
-  });
-
-  it('WhiteboardCanvas.vue wires up useKeyboardShortcuts composable', () => {
-    const src = readSrc('components/WhiteboardCanvas.vue');
-    expect(src).toContain('useKeyboardShortcuts({');
-    expect(src).toContain("emit('select-pen-preset'");
-  });
-});
-
+// Input Style shortcut behavior is covered by keyboardShortcuts.spec.js and
+// the mounted WhiteboardCanvas interaction tests. Keep this suite focused on
+// executable feature behavior instead of mirroring component source text.
 describe('10.3: Extended color palette (20+ colors)', () => {
   it('ColorPicker.vue has 20+ basic colors', () => {
     const src = readSrc('components/ColorPicker.vue');

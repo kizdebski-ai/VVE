@@ -1,0 +1,10 @@
+{
+  "capture": "ZCode built-in browser (GUI), capture-boundary redaction: query strings stripped from URLs",
+  "url": "http://127.0.0.1:5188/ (board canvas, redacted query)",
+  "viewport": {
+    "width": 1440,
+    "height": 900
+  },
+  "errors": [],
+  "notes": "After restart: banner gone, connection re-established, canonical rectangles intact."
+}

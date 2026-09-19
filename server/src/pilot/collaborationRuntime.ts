@@ -10,6 +10,13 @@ import {
   createBoardDocument,
   type BoardDocument
 } from './boardDocument';
+import type { OperationalSignals } from './operationalSignals';
+import {
+  createResourceGovernor,
+  polishResourceMessage,
+  type ResourceGovernor,
+  type ResourceMessageKey
+} from './resourceGovernor';
 
 export type ClientFrame =
   | { kind: 'mutation'; operationId: string; update: Uint8Array }
@@ -25,7 +32,8 @@ export type CollaborationDenial =
   | 'forbidden'
   | 'persistenceUnavailable'
   | 'draining'
-  | 'internal';
+  | 'internal'
+  | 'resource';
 
 export type ServerFrame =
   | { kind: 'sync'; update: Uint8Array }
@@ -33,12 +41,13 @@ export type ServerFrame =
   | { kind: 'update'; operationId: string; update: Uint8Array }
   | { kind: 'acknowledgement'; operationId: string; digest: string; duplicate: boolean }
   | { kind: 'awareness'; update: Uint8Array }
-  | { kind: 'denial'; reason: CollaborationDenial; operationId?: string }
+  | { kind: 'denial'; reason: CollaborationDenial; operationId?: string; messageKey?: ResourceMessageKey; digest?: string }
   | { kind: 'serverDraining'; reason: string };
 
 export interface CollaborationTransport {
   send(frame: ServerFrame): Promise<void> | void;
   close(code: number, reason: string): Promise<void> | void;
+  bufferedBytes?: () => number;
 }
 
 export interface AuthenticatedConnection {
@@ -46,6 +55,7 @@ export interface AuthenticatedConnection {
   grant: AccessGrant;
   /** Re-runs CapabilityAccess against durable state for every mutation. */
   revalidate(): Promise<boolean>;
+  clientKey?: string;
 }
 
 export interface ConnectionHandle {
@@ -82,7 +92,7 @@ export interface AppendResult {
 export interface BoardDocumentStore {
   hydrate(boardId: string): Promise<HydratedBoardState>;
   append(boardId: string, operationId: string, update: Uint8Array): Promise<AppendResult>;
-  compact(boardId: string, snapshot: Uint8Array, cutoff: number): Promise<void>;
+  compact(boardId: string, snapshot: Uint8Array, cutoff: number, signal?: AbortSignal): Promise<void>;
 }
 
 export class CollaborationFailure extends Error {
@@ -174,8 +184,10 @@ export class InMemoryBoardDocumentStore implements BoardDocumentStore {
     return { sequence: row.sequence, duplicate: false };
   }
 
-  async compact(boardId: string, snapshot: Uint8Array, cutoff: number): Promise<void> {
+  async compact(boardId: string, snapshot: Uint8Array, cutoff: number, signal?: AbortSignal): Promise<void> {
+    if (signal?.aborted) return;
     const board = this.board(boardId);
+    if (signal?.aborted) return;
     if (cutoff < board.cutoff) return;
     board.snapshot = snapshot.slice();
     board.cutoff = cutoff;
@@ -200,6 +212,7 @@ type LiveConnection = {
   synchronized: boolean;
   closed: boolean;
   awarenessClientIds: Set<number>;
+  clientKey: string;
 };
 
 type LiveBoard = {
@@ -227,6 +240,14 @@ export interface CreateCollaborationRuntimeOptions {
   idleMs?: number;
   compactAfterOperations?: number;
   crashInjector?: (point: CrashPoint) => Promise<void> | void;
+  signals?: OperationalSignals;
+  resourceGovernor?: ResourceGovernor;
+}
+
+export interface CollaborationRuntimeStats {
+  boards: number;
+  connections: number;
+  draining: boolean;
 }
 
 export interface CollaborationRuntime {
@@ -234,7 +255,12 @@ export interface CollaborationRuntime {
   inspect(boardId: string): Promise<CollaborationSnapshot>;
   unloadIdle(): Promise<string[]>;
   closeBoard(boardId: string, reason: string): Promise<boolean>;
-  drain(input: { deadline: Date; reason: string }): Promise<{ boards: number; connections: number; complete: boolean }>;
+  drain(input: {
+    deadline: Date;
+    reason: string;
+    signal?: AbortSignal;
+  }): Promise<{ boards: number; connections: number; complete: boolean }>;
+  stats(): CollaborationRuntimeStats;
 }
 
 const validOperationId = (value: string): boolean =>
@@ -251,6 +277,8 @@ export const createCollaborationRuntime = (
   const now = options.now ?? Date.now;
   const idleMs = options.idleMs ?? 30_000;
   const compactAfterOperations = options.compactAfterOperations ?? 20;
+  const signals = options.signals;
+  const governor = options.resourceGovernor ?? createResourceGovernor();
   const rooms = new Map<string, LiveBoard>();
   const hydration = new Map<string, Promise<LiveBoard>>();
   let draining = false;
@@ -268,6 +296,10 @@ export const createCollaborationRuntime = (
       } catch (error) {
         throw new CollaborationFailure('persistenceUnavailable', (error as Error).message);
       }
+      const hydrationBytes =
+        stored.snapshot.byteLength +
+        stored.operations.reduce((sum, operation) => sum + operation.update.byteLength, 0);
+      governor.admit({ kind: 'boardHydration', bytes: hydrationBytes, boardId }, { now: now() });
       const document = createBoardDocument({ initialState: stored.snapshot });
       for (const operation of stored.operations.sort((a, b) => a.sequence - b.sequence)) {
         const result = document.apply(operation.update, { kind: 'hydrate' });
@@ -331,13 +363,45 @@ export const createCollaborationRuntime = (
       throw new CollaborationFailure('revoked', 'The durable grant is no longer active.');
     }
 
-    const room = await hydrate(input.boardId);
+    const clientKey = input.clientKey && input.clientKey.length > 0 ? input.clientKey : 'anonymous';
+    const connectionAdmit = governor.admit(
+      { kind: 'connection', clientKey, boardId: input.boardId },
+      { now: now() }
+    );
+    if (connectionAdmit.decision !== 'allow' && connectionAdmit.decision !== 'allowWithBudget') {
+      throw new CollaborationFailure(
+        'resource',
+        polishResourceMessage(
+          'messageKey' in connectionAdmit ? connectionAdmit.messageKey : 'resource.connectionLimit'
+        )
+      );
+    }
+
+    let slotHeld = true;
+    const releaseSlot = () => {
+      if (!slotHeld) return;
+      slotHeld = false;
+      governor.observe({
+        kind: 'connectionClosed',
+        clientKey,
+        boardId: input.boardId
+      });
+    };
+
+    let room: LiveBoard;
+    try {
+      room = await hydrate(input.boardId);
+    } catch (error) {
+      releaseSlot();
+      throw error;
+    }
     const live: LiveConnection = {
       input,
       transport,
       synchronized: false,
       closed: false,
-      awarenessClientIds: new Set()
+      awarenessClientIds: new Set(),
+      clientKey
     };
     room.connections.add(live);
     room.lastActive = now();
@@ -353,34 +417,70 @@ export const createCollaborationRuntime = (
       }
       await transport.send({ kind: 'synchronizationComplete', digest: room.document.digest() });
       live.synchronized = true;
+      signals?.record({
+        name: 'session.admission',
+        dimensions: { role: input.grant.role, action: input.grant.action }
+      });
+      signals?.record({
+        name: 'sync.complete',
+        dimensions: { connections: room.connections.size }
+      });
+      signals?.measure({
+        name: 'board.digest',
+        value: room.document.digest(),
+        dimensions: { boardId: input.boardId }
+      });
+      signals?.measure({ name: 'boards.active', value: rooms.size });
+      signals?.measure({
+        name: 'connections.active',
+        value: Array.from(rooms.values()).reduce((sum, item) => sum + item.connections.size, 0)
+      });
     } catch (error) {
       room.connections.delete(live);
+      releaseSlot();
       throw new CollaborationFailure('internal', (error as Error).message);
     }
 
-    const close = async (reason: string) => {
-      if (live.closed) return;
+    const cleanupConnection = async (reason: string): Promise<boolean> => {
+      if (live.closed) return false;
       live.closed = true;
       room.connections.delete(live);
+      releaseSlot();
       room.lastActive = now();
+      signals?.record({
+        name: 'session.close',
+        dimensions: { reason: reason.slice(0, 80), remaining: room.connections.size }
+      });
       if (live.awarenessClientIds.size) {
         const removed = Array.from(live.awarenessClientIds);
         removeAwarenessStates(room.awareness, removed, live);
         const removalUpdate = encodeAwarenessUpdate(room.awareness, removed);
         for (const peer of room.connections) {
-          if (!peer.closed) await peer.transport.send({ kind: 'awareness', update: removalUpdate });
+          if (!peer.closed) {
+            try {
+              await peer.transport.send({ kind: 'awareness', update: removalUpdate });
+            } catch {
+              // The peer may have disconnected while the removal was being relayed.
+            }
+          }
         }
         live.awarenessClientIds.clear();
       }
+      return room.connections.size === 0;
+    };
+
+    const compactIfLastConnection = async (): Promise<void> => {
       // The last participant leaving is a prompt durability boundary. The
       // idle timer only releases memory later; it is not responsible for
       // making the completed lesson restart-safe.
-      if (room.connections.size === 0) {
-        await serial(room, async () => {
-          await options.store.compact(input.boardId, room.document.encode(), room.lastSequence);
-          room.operationsSinceCompaction = 0;
-        });
-      }
+      await options.store.compact(input.boardId, room.document.encode(), room.lastSequence);
+      room.operationsSinceCompaction = 0;
+    };
+
+    const close = async (reason: string) => {
+      await serial(room, async () => {
+        if (await cleanupConnection(reason)) await compactIfLastConnection();
+      });
     };
 
     const receive = async (frame: ClientFrame): Promise<ReceiveResult> => {
@@ -388,6 +488,14 @@ export const createCollaborationRuntime = (
       room.lastActive = now();
 
       if (frame.kind === 'awareness') {
+        const awarenessAdmit = governor.admit(
+          { kind: 'awareness', bytes: frame.update.byteLength, clientKey, boardId: input.boardId },
+          { now: now() }
+        );
+        if (awarenessAdmit.decision !== 'allow' && awarenessAdmit.decision !== 'allowWithBudget') {
+          return { accepted: false, reason: 'resource' };
+        }
+
         let changed: { added: number[]; updated: number[]; removed: number[] } = {
           added: [],
           updated: [],
@@ -425,7 +533,39 @@ export const createCollaborationRuntime = (
         return { accepted: false, reason: 'revoked' };
       }
 
+      const messageAdmit = governor.admit(
+        { kind: 'message', bytes: frame.update.byteLength, clientKey, boardId: input.boardId },
+        { now: now() }
+      );
+      if (messageAdmit.decision !== 'allow' && messageAdmit.decision !== 'allowWithBudget') {
+        const messageKey =
+          'messageKey' in messageAdmit ? messageAdmit.messageKey : 'resource.messageRate';
+        await transport.send({ kind: 'denial', reason: 'resource', operationId: frame.operationId, messageKey });
+        return { accepted: false, reason: 'resource' };
+      }
+      const updateAdmit = governor.admit(
+        { kind: 'documentUpdate', bytes: frame.update.byteLength, clientKey, boardId: input.boardId },
+        { now: now() }
+      );
+      if (updateAdmit.decision !== 'allow' && updateAdmit.decision !== 'allowWithBudget') {
+        const messageKey =
+          'messageKey' in updateAdmit ? updateAdmit.messageKey : 'resource.updateTooLarge';
+        await transport.send({ kind: 'denial', reason: 'resource', operationId: frame.operationId, messageKey });
+        return { accepted: false, reason: 'resource' };
+      }
+
       return serial(room, async () => {
+        if (live.closed) return { accepted: false, reason: 'unauthorized' };
+        if (!(await input.revalidate())) {
+          const becameLastConnection = await cleanupConnection('revoked');
+          try {
+            await transport.send({ kind: 'denial', reason: 'revoked' });
+            await transport.close(1008, 'Access revoked');
+          } finally {
+            if (becameLastConnection) await compactIfLastConnection();
+          }
+          return { accepted: false, reason: 'revoked' };
+        }
         const shadow = createBoardDocument({ initialState: room.document.encode() });
         const validation = shadow.apply(frame.update, {
           kind: 'remote',
@@ -434,18 +574,39 @@ export const createCollaborationRuntime = (
         });
         shadow.destroy();
         if (!validation.ok) {
-          // A mutation-level denial keeps the connection open: the client
-          // rolls back exactly this operation and stays synchronized.
           const reason: CollaborationDenial =
-            validation.reason === 'forbiddenCommand' ? 'forbidden' : 'malformed';
-          await transport.send({ kind: 'denial', reason, operationId: frame.operationId });
+            validation.reason === 'forbiddenCommand'
+              ? 'forbidden'
+              : validation.reason === 'resourceViolation'
+                ? 'resource'
+                : 'malformed';
+          const denial: ServerFrame =
+            reason === 'resource'
+              ? {
+                  kind: 'denial',
+                  reason,
+                  operationId: frame.operationId,
+                  messageKey: 'resource.updateTooLarge'
+                }
+              : { kind: 'denial', reason, operationId: frame.operationId };
+          await transport.send(denial);
           return { accepted: false, reason };
         }
 
         let append: AppendResult;
+        const persistStarted = now();
         try {
           append = await options.store.append(input.boardId, frame.operationId, frame.update);
+          signals?.measure({
+            name: 'persistence.latencyMs',
+            value: Math.max(0, now() - persistStarted)
+          });
+          signals?.measure({ name: 'update.bytes', value: frame.update.length });
         } catch (error) {
+          signals?.record({
+            name: 'persistence.error',
+            dimensions: { stage: 'append', error: (error as Error).message.slice(0, 120) }
+          });
           if (error instanceof CollaborationFailure) throw error;
           throw new CollaborationFailure('persistenceUnavailable', (error as Error).message);
         }
@@ -463,13 +624,49 @@ export const createCollaborationRuntime = (
         await options.crashInjector?.('afterApplyBeforeBroadcast');
 
         for (const peer of room.connections) {
-          if (peer !== live && !peer.closed) {
-            await peer.transport.send({
-              kind: 'update',
-              operationId: frame.operationId,
-              update: frame.update
+          if (peer === live || peer.closed) continue;
+          const buffered = peer.transport.bufferedBytes?.() ?? 0;
+          const slow = governor.admit(
+            {
+              kind: 'slowClientBuffer',
+              bytes: buffered + frame.update.byteLength,
+              clientKey: peer.clientKey,
+              boardId: input.boardId
+            },
+            { now: now() }
+          );
+          if (slow.decision === 'reject' || slow.decision === 'retryAfter' || slow.decision === 'readOnly') {
+            peer.closed = true;
+            room.connections.delete(peer);
+            if (peer.awarenessClientIds.size) {
+              const removed = Array.from(peer.awarenessClientIds);
+              removeAwarenessStates(room.awareness, removed, peer);
+              const removalUpdate = encodeAwarenessUpdate(room.awareness, removed);
+              for (const remainingPeer of room.connections) {
+                if (!remainingPeer.closed) {
+                  await remainingPeer.transport.send({ kind: 'awareness', update: removalUpdate });
+                }
+              }
+              peer.awarenessClientIds.clear();
+            }
+            governor.observe({
+              kind: 'connectionClosed',
+              clientKey: peer.clientKey,
+              boardId: input.boardId
             });
+            await peer.transport.send({
+              kind: 'denial',
+              reason: 'resource',
+              messageKey: 'resource.slowClient'
+            });
+            await peer.transport.close(1013, 'Slow consumer');
+            continue;
           }
+          await peer.transport.send({
+            kind: 'update',
+            operationId: frame.operationId,
+            update: frame.update
+          });
         }
         await options.crashInjector?.('afterBroadcastBeforeAcknowledgement');
 
@@ -479,11 +676,24 @@ export const createCollaborationRuntime = (
           digest: room.document.digest(),
           duplicate: append.duplicate
         });
+        signals?.record({
+          name: 'sync.acknowledgement',
+          dimensions: { duplicate: append.duplicate, sequence: room.lastSequence }
+        });
+        signals?.measure({
+          name: 'board.digest',
+          value: room.document.digest(),
+          dimensions: { boardId: input.boardId }
+        });
 
         if (!append.duplicate) room.operationsSinceCompaction += 1;
         if (room.operationsSinceCompaction >= compactAfterOperations) {
           await options.store.compact(input.boardId, room.document.encode(), room.lastSequence);
           room.operationsSinceCompaction = 0;
+          signals?.record({
+            name: 'persistence.compact',
+            dimensions: { cutoff: room.lastSequence }
+          });
         }
         return { accepted: true, operationId: frame.operationId, duplicate: append.duplicate };
       });
@@ -523,40 +733,107 @@ export const createCollaborationRuntime = (
     const room = rooms.get(boardId);
     if (!room) return false;
     const connections = Array.from(room.connections);
-    room.connections.clear();
-    const awarenessClientIds = connections.flatMap((connection) =>
-      Array.from(connection.awarenessClientIds)
-    );
-    if (awarenessClientIds.length) {
-      removeAwarenessStates(room.awareness, awarenessClientIds, 'board-closed');
-    }
-    for (const connection of connections) {
-      connection.closed = true;
-      await connection.transport.send({ kind: 'denial', reason: 'revoked' });
-      await connection.transport.close(1008, reason);
-    }
+    // Mark first, then serialize the actual teardown behind any mutation
+    // already in flight. Queued mutations see `closed` inside the same queue
+    // before they can append to durable storage.
+    for (const connection of connections) connection.closed = true;
+    await serial(room, async () => {
+      room.connections.clear();
+      const awarenessClientIds = connections.flatMap((connection) =>
+        Array.from(connection.awarenessClientIds)
+      );
+      if (awarenessClientIds.length) {
+        removeAwarenessStates(room.awareness, awarenessClientIds, 'board-closed');
+      }
+      for (const connection of connections) {
+        governor.observe({
+          kind: 'connectionClosed',
+          clientKey: connection.clientKey,
+          boardId
+        });
+        await connection.transport.send({ kind: 'denial', reason: 'revoked' });
+        await connection.transport.close(1008, reason);
+        connection.awarenessClientIds.clear();
+      }
+    });
     room.lastActive = now();
     return true;
   };
 
-  const drain: CollaborationRuntime['drain'] = async ({ deadline, reason }) => {
+  const drain: CollaborationRuntime['drain'] = async ({ deadline, reason, signal }) => {
     draining = true;
+    signals?.record({ name: 'process.phase', dimensions: { phase: 'collaborationDrain', reason } });
     let connectionCount = 0;
+    let complete = true;
     for (const [boardId, room] of rooms) {
-      connectionCount += room.connections.size;
-      for (const connection of room.connections) {
-        await connection.transport.send({ kind: 'serverDraining', reason });
+      if (signal?.aborted) {
+        complete = false;
+        break;
       }
-      await serial(room, async () => {
-        await options.store.compact(boardId, room.document.encode(), room.lastSequence);
-      });
+      if (now() > deadline.getTime()) {
+        complete = false;
+        break;
+      }
+      connectionCount += room.connections.size;
+      for (const connection of Array.from(room.connections)) {
+        try {
+          await connection.transport.send({ kind: 'serverDraining', reason });
+        } catch {
+          // Drain continues even if one transport is already gone.
+        }
+      }
+      const remainingMs = Math.max(0, deadline.getTime() - now());
+      if (remainingMs <= 0) {
+        complete = false;
+        break;
+      }
+      try {
+        const compactPromise = serial(room, async () => {
+          if (signal?.aborted) throw new Error('Compact aborted');
+          await options.store.compact(boardId, room.document.encode(), room.lastSequence, signal);
+        });
+        const timeoutPromise = new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('Compact timed out')), remainingMs)
+        );
+        await Promise.race([compactPromise, timeoutPromise]);
+        signals?.record({
+          name: 'persistence.compact',
+          dimensions: { cutoff: room.lastSequence, reason: 'drain' }
+        });
+      } catch (error) {
+        complete = false;
+        signals?.record({
+          name: 'persistence.error',
+          dimensions: { stage: 'drain-compact', error: (error as Error).message.slice(0, 120) }
+        });
+      }
+      for (const connection of Array.from(room.connections)) {
+        connection.closed = true;
+        governor.observe({
+          kind: 'connectionClosed',
+          clientKey: connection.clientKey,
+          boardId
+        });
+        try {
+          await connection.transport.close(1012, reason);
+        } catch {
+          // already closed
+        }
+      }
+      room.connections.clear();
     }
     return {
       boards: rooms.size,
       connections: connectionCount,
-      complete: now() <= deadline.getTime()
+      complete: complete && now() <= deadline.getTime()
     };
   };
 
-  return { connect, inspect, unloadIdle, closeBoard, drain };
+  const stats = (): CollaborationRuntimeStats => ({
+    boards: rooms.size,
+    connections: Array.from(rooms.values()).reduce((sum, room) => sum + room.connections.size, 0),
+    draining
+  });
+
+  return { connect, inspect, unloadIdle, closeBoard, drain, stats };
 };

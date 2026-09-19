@@ -1,0 +1,10 @@
+{
+  "capture": "ZCode built-in browser (GUI), capture-boundary redaction: query strings stripped from URLs",
+  "url": "http://127.0.0.1:5188/ (board canvas, redacted query)",
+  "viewport": {
+    "width": 1440,
+    "height": 900
+  },
+  "errors": [],
+  "notes": "Teacher board session through the governor-composed runtime; canonical rectangles drawn via GUI; page console collector active during drawing and restart cycles."
+}

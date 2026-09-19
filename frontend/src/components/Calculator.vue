@@ -1,13 +1,23 @@
 <template>
-  <div class="calculator glass-panel" :class="{ 'scientific-mode-active': isScientificMode }" @keydown="handleKeydown" tabindex="0" ref="calculatorRef">
+  <div class="calculator" :class="{ 'scientific-mode-active': isScientificMode }" @keydown="handleKeydown" tabindex="0" ref="calculatorRef">
      <!-- Integrated Close Button -->
-     <button class="internal-close-btn" @click="$emit('close')">
+     <button v-if="showClose" type="button" class="internal-close-btn" aria-label="Zamknij kalkulator" @click="$emit('close')">
        <X :size="20" />
      </button>
 
     <div class="display">
       <div class="expression">{{ currentExpression || '&nbsp;' }}</div>
-      <div class="result">{{ result || '0' }}</div>
+      <div class="result" aria-live="polite">{{ result || '0' }}</div>
+      <button
+        v-if="result && !result.startsWith('Błąd')"
+        type="button"
+        class="copy-result"
+        @click="copyResult"
+      >
+        <Copy :size="15" />
+        Kopiuj wynik
+      </button>
+      <span v-if="statusMessage" class="copy-status" role="status">{{ statusMessage }}</span>
     </div>
 
     <!-- Combined Buttons Container -->
@@ -37,10 +47,10 @@
         <button @click="inputParenthesis(')')" class="btn-sci paren-r">)</button>
 
         <!-- Scientific Buttons Row 5: memory -->
-        <button @click="memoryStore" class="btn-sci mem-store" title="Memory Store">MS</button>
-        <button @click="memoryRecall" class="btn-sci mem-recall" title="Memory Recall">MR</button>
-        <button @click="memoryAdd" class="btn-sci mem-add" title="Memory Add">M+</button>
-        <button @click="toggleScientificMode" class="btn-sci toggle-basic">Basic</button>
+        <button @click="memoryStore" class="btn-sci mem-store" title="Zapisz w pamięci">MS</button>
+        <button @click="memoryRecall" class="btn-sci mem-recall" title="Przywołaj z pamięci">MR</button>
+        <button @click="memoryAdd" class="btn-sci mem-add" title="Dodaj do pamięci">M+</button>
+        <button @click="toggleScientificMode" class="btn-sci toggle-basic">Podst.</button>
 
         <!-- Basic Buttons (Always Rendered, position adjusted by CSS) -->
         <button @click="clearAll" class="btn-op ac">AC</button>
@@ -65,7 +75,7 @@
         <button @click="inputDigit('3')" class="btn-digit three">3</button>
         <button @click="calculate" class="btn-equal">=</button>
 
-        <button @click="toggleScientificMode" class="btn-op sci-toggle">Sci</button>
+        <button @click="toggleScientificMode" class="btn-op sci-toggle" title="Tryb naukowy">Nauk.</button>
         <button @click="inputDigit('0')" class="btn-digit btn-zero">0</button>
         <button @click="inputDecimal" class="btn-digit decimal">.</button>
     </div>
@@ -75,8 +85,12 @@
 <script setup>
 import { ref, onMounted, nextTick } from 'vue';
 import { create, all } from 'mathjs';
-import { copyToClipboard } from '../utils/fileUtils';
 import { X, Copy, Delete } from 'lucide-vue-next';
+
+const props = defineProps({
+  showClose: { type: Boolean, default: true }
+});
+const emit = defineEmits(['close']);
 
 // Configure mathjs
 const math = create(all, {
@@ -248,8 +262,7 @@ const calculate = () => {
             result.value = simplifiedResult.toString();
             return;
         }
-    } catch (simplifyError) {
-        console.warn("Simplification failed, falling back to fraction evaluation:", simplifyError);
+    } catch {
         // Proceed to fraction evaluation if simplification fails
     }
 
@@ -258,15 +271,14 @@ const calculate = () => {
     result.value = math.format(evalResult, { fraction: 'ratio' }); // Format as fraction
 
   } catch (error) {
-    console.error("Calculator error:", error);
-    result.value = 'Error: ' + error.message; // Provide more error info
+    result.value = 'Błąd: sprawdź działanie';
   }
 };
 
 
 // 7.3: Clipboard with fallback + toast feedback
 const copyResult = () => {
-  if (!result.value || result.value.startsWith('Error')) return;
+  if (!result.value || result.value.startsWith('Błąd')) return;
   const text = result.value;
   const fallbackCopy = () => {
     try {
@@ -283,19 +295,19 @@ const copyResult = () => {
   };
   if (navigator.clipboard?.writeText) {
     navigator.clipboard.writeText(text)
-      .then(() => { statusMessage.value = 'Copied!'; setTimeout(() => statusMessage.value = '', 1500); })
+      .then(() => { statusMessage.value = 'Skopiowano.'; setTimeout(() => statusMessage.value = '', 1500); })
       .catch(() => {
-        if (fallbackCopy()) { statusMessage.value = 'Copied!'; setTimeout(() => statusMessage.value = '', 1500); }
-        else { statusMessage.value = 'Copy failed'; setTimeout(() => statusMessage.value = '', 2000); }
+        if (fallbackCopy()) { statusMessage.value = 'Skopiowano.'; setTimeout(() => statusMessage.value = '', 1500); }
+        else { statusMessage.value = 'Nie udało się skopiować wyniku.'; setTimeout(() => statusMessage.value = '', 2000); }
       });
   } else {
-    if (fallbackCopy()) { statusMessage.value = 'Copied!'; setTimeout(() => statusMessage.value = '', 1500); }
-    else { statusMessage.value = 'Copy failed'; setTimeout(() => statusMessage.value = '', 2000); }
+    if (fallbackCopy()) { statusMessage.value = 'Skopiowano.'; setTimeout(() => statusMessage.value = '', 1500); }
+    else { statusMessage.value = 'Nie udało się skopiować wyniku.'; setTimeout(() => statusMessage.value = '', 2000); }
   }
 };
 
 const getNumericResult = () => {
-  if (!result.value || result.value.startsWith('Error')) return 0;
+  if (!result.value || result.value.startsWith('Błąd')) return 0;
   try {
     const tempMath = create(all, { number: 'number' });
     return tempMath.evaluate(result.value) || 0;
@@ -334,7 +346,9 @@ const handleKeydown = (event) => {
          currentExpression.value = expr.slice(0, -1); // Remove last char
      }
   } else if (key === 'Escape') {
-    clearAll();
+    event.preventDefault();
+    event.stopPropagation();
+    emit('close');
   }
 };
 
@@ -347,15 +361,10 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.glass-panel {
-  width: 320px; /* Fixed width */
-  border-radius: 24px;
+.calculator {
+  width: 100%;
   overflow: hidden;
-  background: rgba(255, 255, 255, 0.8);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  box-shadow: 0 12px 35px rgba(0, 0, 0, 0.15);
-  border: 1px solid rgba(255, 255, 255, 0.5);
+  background: transparent;
   font-family: 'Inter', sans-serif;
   display: flex;
   flex-direction: column;
@@ -414,6 +423,27 @@ onMounted(() => {
   line-height: 1.1;
 }
 
+.copy-result {
+  align-self: flex-end;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 6px 10px;
+  border: 1px solid rgba(37, 99, 235, 0.25);
+  border-radius: 10px;
+  background: rgba(219, 234, 254, 0.7);
+  color: #1d4ed8;
+  cursor: pointer;
+}
+
+.copy-status {
+  min-height: 18px;
+  margin-top: 4px;
+  color: #166534;
+  font-size: 12px;
+}
+
 /* Combined Buttons Container */
 .buttons {
   display: grid;
@@ -454,6 +484,13 @@ onMounted(() => {
 }
 .buttons button:active {
   transform: scale(0.98);
+}
+
+.buttons button:focus-visible,
+.copy-result:focus-visible,
+.internal-close-btn:focus-visible {
+  outline: 3px solid rgba(37, 99, 235, 0.45);
+  outline-offset: 2px;
 }
 
 /* Hide scientific buttons by default */
@@ -567,5 +604,22 @@ onMounted(() => {
 .buttons.scientific-mode .sci-toggle { display: none; }
 .buttons.scientific-mode .btn-zero { grid-column: 2 / 3; grid-row: 10 / 11; }
 .buttons.scientific-mode .decimal { grid-column: 3 / 4; grid-row: 10 / 11; }
+
+@media (max-height: 760px) {
+  .display {
+    min-height: 100px;
+    padding-block: 24px 12px;
+  }
+
+  .result {
+    min-height: 44px;
+    font-size: 36px;
+  }
+
+  .buttons {
+    gap: 7px;
+    padding: 14px;
+  }
+}
 
 </style>

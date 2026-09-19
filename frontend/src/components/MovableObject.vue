@@ -933,7 +933,12 @@ const stopRotate = () => {
     emit('commit-transform', {
       kind: 'rotate',
       id: objectData.id,
-      rotation: objectData.rotation,
+      // Pen geometry is baked into world-space by the canonical command and
+      // its stored rotation is reset. Send each pen gesture as a relative
+      // delta so a second 90° gesture rotates the already-baked stroke by 90°.
+      rotation: objectData.type === 'pen'
+        ? objectData.rotation - initialObjectState.rotation
+        : objectData.rotation,
     });
   }
 };

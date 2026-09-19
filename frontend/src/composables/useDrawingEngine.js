@@ -23,6 +23,36 @@ const LINE_TOOLS = new Set(['line']);
 
 export { SHAPE_TOOLS };
 
+const finitePositive = (value, fallback) => (
+  typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : fallback
+);
+
+// Keep the canonical erase split wide enough to remove the visible ink, not
+// just its centerline. The renderer varies width by pen preset and pressure;
+// these bounds mirror each preset's largest rendered stroke.
+const getPenInkHalfWidth = (element) => {
+  const requestedWidth = finitePositive(element?.lineWidth, 2);
+  const style = typeof element?.penStyle === 'string' ? element.penStyle : 'technical';
+  const preset = DEFAULT_PEN_PRESETS[style] || {};
+  const config = element?.penConfig && typeof element.penConfig === 'object'
+    ? { ...preset, ...element.penConfig }
+    : preset;
+  const scale = Math.min(Math.max(requestedWidth / 2, 0.5), 3);
+  let maxWidth;
+  if (style === 'marker') {
+    maxWidth = finitePositive(config.width, 14) * scale;
+  } else if (style === 'gel') {
+    maxWidth = finitePositive(config.maxWidth, 3.4) * scale * 2.2;
+  } else if (style === 'technical') {
+    maxWidth = finitePositive(config.lineWidth, 2.4) * scale * 2.5;
+  } else if (style === 'calligraphy') {
+    maxWidth = finitePositive(config.maxWidth, 5) * scale;
+  } else {
+    maxWidth = requestedWidth * 2.5;
+  }
+  return (maxWidth + finitePositive(config.shadowInflate, 0)) / 2;
+};
+
 export function useDrawingEngine({
   // Refs (shared)
   isDrawing,
@@ -626,10 +656,11 @@ export function useDrawingEngine({
       }
       let command = { kind: 'delete', ids: [elementId] };
       if (getEraserMode() === 'erase' && element.type === 'pen' && point) {
+        const eraserRadius = Math.max(Number(getEraserRadius()) || 8, 1);
         const segments = splitPenStroke(
           Array.isArray(element.points) ? element.points : [],
           point,
-          Math.max(Number(getEraserRadius()) || 8, 1)
+          eraserRadius + getPenInkHalfWidth(element)
         );
         const unchanged = segments.length === 1 &&
           JSON.stringify(segments[0]) === JSON.stringify(element.points);

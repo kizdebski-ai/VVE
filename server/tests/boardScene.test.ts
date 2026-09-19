@@ -801,6 +801,38 @@ describe('board commands', () => {
     expect(splitPenStroke(rotated.points, { x: 50, y: 0 }, 10)).toHaveLength(2);
   });
 
+  it('applies successive pen rotation gestures as relative turns', () => {
+    const doc = new Y.Doc();
+    addAll(doc, [{
+      ...pen('multi-rotate-pen'),
+      points: [{ x: 0, y: 0 }, { x: 100, y: 0 }]
+    }]);
+    expect(applyBoardCommand(doc, { kind: 'rotate', id: 'multi-rotate-pen', rotation: 90 }, student))
+      .toEqual({ ok: true });
+    expect(applyBoardCommand(doc, { kind: 'rotate', id: 'multi-rotate-pen', rotation: 90 }, student))
+      .toEqual({ ok: true });
+    const rotated = sceneJson(doc)[0] as SceneObject & { points: Array<{ x: number; y: number }> };
+    expect(rotated.rotation).toBe(0);
+    expect(rotated.points[0]!.x).toBeCloseTo(100);
+    expect(rotated.points[0]!.y).toBeCloseTo(0);
+    expect(rotated.points[1]!.x).toBeCloseTo(0);
+    expect(rotated.points[1]!.y).toBeCloseTo(0);
+  });
+
+  it('rejects a rotated pen whose derived bounds exceed the size limit atomically', () => {
+    const doc = new Y.Doc();
+    addAll(doc, [{
+      ...pen('max-size-pen'),
+      points: [{ x: 0, y: 0 }, { x: SCENE_LIMITS.maxSize, y: SCENE_LIMITS.maxSize }]
+    }]);
+    const before = sceneJson(doc);
+    expect(before[0]).toMatchObject({ width: SCENE_LIMITS.maxSize, height: SCENE_LIMITS.maxSize });
+
+    expect(applyBoardCommand(doc, { kind: 'rotate', id: 'max-size-pen', rotation: 45 }, student))
+      .toMatchObject({ ok: false, reason: 'invalidObject' });
+    expect(sceneJson(doc)).toEqual(before);
+  });
+
   it('rejects malformed raw pen geometry before rotating any map fields', () => {
     const doc = new Y.Doc();
     addAll(doc, [{

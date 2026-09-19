@@ -1434,11 +1434,15 @@ const rotatePenObjectMap = (map: Y.Map<unknown>, deltaDegrees: number): CommandR
       return commandFail('invalidObject', 'The rotated raw pen geometry is invalid.');
     }
   }
+  const bounds = boundsFromPoints(rotatedPoints);
+  const boundsValidation = validateBounds(bounds);
+  if (!boundsValidation.ok) {
+    return commandFail('invalidObject', boundsValidation.message);
+  }
   map.set('points', rotatedPoints);
   if (rotatedRawPoints) {
     map.set('rawPoints', rotatedRawPoints);
   }
-  const bounds = boundsFromPoints(rotatedPoints);
   map.set('x', bounds.x);
   map.set('y', bounds.y);
   map.set('width', bounds.width);

@@ -293,6 +293,31 @@ describe('MovableObject.vue', () => {
       expect(wrapper.emitted('update:object')).toBeTruthy();
     });
 
+    it('emits a relative rotation delta for pen gestures', async () => {
+      mockObject = createMockYMap({
+        ...initialObjectData,
+        type: 'pen',
+        rotation: 90,
+        points: [{ x: 100, y: 150 }, { x: 300, y: 150 }]
+      });
+      wrapper = createComponent({ ...defaultProps, object: mockObject, isSelected: true });
+      const rotationHandle = wrapper.find('.rotation-handle');
+      const centerX = (initialObjectData.x + initialObjectData.width / 2);
+      const centerY = (initialObjectData.y + initialObjectData.height / 2);
+
+      await rotationHandle.trigger('pointerdown', { clientX: centerX, clientY: centerY - 50, button: 0 });
+      dispatchPointer(document, 'pointermove', { clientX: centerX + 50, clientY: centerY, buttons: 1 });
+      await nextTick();
+      dispatchPointer(document, 'pointerup', { button: 0 });
+      await nextTick();
+
+      expect(wrapper.emitted('commit-transform')).toEqual([[{
+        kind: 'rotate',
+        id: initialObjectData.id,
+        rotation: 90,
+      }]]);
+    });
+
     it('keeps the opposite world edge fixed when resizing a rotated object', async () => {
       mockObject = createMockYMap({ ...initialObjectData, rotation: 90 });
       wrapper = createComponent({ ...defaultProps, object: mockObject, isSelected: true });

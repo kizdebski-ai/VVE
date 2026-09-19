@@ -118,7 +118,7 @@ describe('Geometry: isPointInElement', () => {
 });
 
 describe('Eraser command wiring', () => {
-  const makeEngine = (mode) => {
+  const makeEngine = (mode, eraserRadius = 10) => {
     const ydoc = new Y.Doc();
     const session = createWhiteboardSession({ ydoc, role: 'teacher' });
     const yDrawings = ref(ydoc.getArray('drawings'));
@@ -135,7 +135,7 @@ describe('Eraser command wiring', () => {
       session: ref(session),
       smoothingFactor: ref(0.5),
       getEraserMode: () => mode.value,
-      getEraserRadius: () => 10,
+      getEraserRadius: () => eraserRadius,
       refreshMovableElements: vi.fn(),
       updateGlobalState: vi.fn()
     });
@@ -162,6 +162,25 @@ describe('Eraser command wiring', () => {
     engine.eraseElement(remaining.id, { x: remaining.points[0].x, y: remaining.points[0].y }, remaining);
     expect(session.snapshot()).toHaveLength(1);
     expect(session.snapshot()[0].id).not.toBe('wired-pen');
+    session.dispose();
+  });
+
+  it('clips visible thick marker ink even when the eraser misses its centerline', () => {
+    const mode = ref('erase');
+    const { session, engine } = makeEngine(mode, 2);
+    const stroke = {
+      id: 'thick-marker',
+      type: 'pen',
+      penStyle: 'marker',
+      penConfig: { width: 14 },
+      color: '#7c3aed',
+      lineWidth: 2,
+      points: [{ x: 0, y: 0 }, { x: 100, y: 0 }]
+    };
+    expect(session.execute({ kind: 'add', object: stroke })).toEqual({ ok: true });
+    const hit = session.snapshot()[0];
+    engine.eraseElement(hit.id, { x: 50, y: 8 }, hit);
+    expect(session.snapshot()).toHaveLength(2);
     session.dispose();
   });
 });

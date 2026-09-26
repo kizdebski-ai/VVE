@@ -9,7 +9,7 @@
  */
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import type { BoardCommand, SceneObject } from '../src/pilot/boardScene';
+import { SCENE_LIMITS, type BoardCommand, type SceneObject } from '../src/pilot/boardScene';
 
 export type ScenarioRole = 'teacher' | 'student';
 
@@ -33,7 +33,14 @@ export class ScenarioCommandDenied extends Error {
 
 export interface ScenarioClient {
   readonly boardId: string;
+  /** Milliseconds from opening the board to an editable, synchronized state. */
+  readonly synchronizationMs: number;
   apply(command: BoardCommand): Promise<ScenarioResult | void>;
+  /**
+   * Submit a deliberately invalid object straight to the server, bypassing
+   * every local validator, so each counted rejection is a server rejection.
+   */
+  submitInvalidObject?(object: Record<string, unknown>): Promise<ScenarioResult | void>;
   digest(): Promise<string> | string;
   snapshot(): Promise<unknown> | unknown;
   close(): Promise<void> | void;
@@ -51,13 +58,19 @@ export interface ScenarioContext {
   readonly fixtures?: { pdfPath?: string; imagePath?: string };
 }
 
+/** Workflows the protocol harness does not exercise; the built-in Browser lane owns them. */
+export const PROTOCOL_GATE_NOT_COVERED = Object.freeze({ artifactImportExport: 'browser-owned' } as const);
+
+/** Pilot target: opening a mature board reaches an editable synchronized state within 5 s. */
+export const MATURE_OPEN_TARGET_MS = 5_000;
+
 export interface ScenarioFixtureEvidence {
   pdfBytes: number;
   imageBytes: number;
   encodedImageBytes: number;
   pdfHeader: string;
   imageMime: 'image/png' | 'image/jpeg' | 'image/webp';
-  artifactImportExport: 'browser-owned';
+  artifactImportExport: typeof PROTOCOL_GATE_NOT_COVERED.artifactImportExport;
 }
 
 export interface MatureScenarioReport {
@@ -70,6 +83,7 @@ export interface MatureScenarioReport {
   historyOperations: number;
   acceptedOperations: number;
   reloadDigest: string;
+  openMs: { reload: number; restart: number };
   peerDigests: string[];
   peerConverged: boolean;
   restartVerified: boolean;
@@ -86,6 +100,7 @@ export interface DestructiveScenarioReport {
   digestBeforeInvalid: string;
   digestAfterInvalid: string;
   reloadDigest: string;
+  restartDigest: string;
   preservedState: boolean;
   restartVerified: boolean;
 }
@@ -103,25 +118,20 @@ const requireApplied = async (client: ScenarioClient, command: BoardCommand): Pr
   }
 };
 
-const requireRejected = async (client: ScenarioClient, command: BoardCommand): Promise<void> => {
+const requireRejected = async (client: ScenarioClient, object: Record<string, unknown>): Promise<void> => {
+  if (!client.submitInvalidObject) {
+    throw new Error('Destructive scenario client cannot submit an invalid object to the server.');
+  }
+  let result: ScenarioResult | void;
   try {
-    const result = await client.apply(command);
-    if (result && 'ok' in result && result.ok === true) {
-      throw new Error(`Destructive scenario accepted invalid ${command.kind} operation.`);
-    }
-    if (!result) {
-      throw new Error(`Destructive scenario adapter did not report the invalid ${command.kind} operation.`);
-    }
+    result = await client.submitInvalidObject(object);
   } catch (error) {
-    if (error instanceof Error && /accepted invalid|did not report/.test(error.message)) throw error;
     if (error instanceof ScenarioCommandDenied) return;
-    if (
-      error &&
-      typeof error === 'object' &&
-      (error as { code?: unknown }).code === 'SCENARIO_COMMAND_DENIED'
-    ) return;
+    if (error && typeof error === 'object' && (error as { code?: unknown }).code === 'SCENARIO_COMMAND_DENIED') return;
     throw error;
   }
+  if (!result) throw new Error('Destructive scenario adapter did not report the invalid add operation.');
+  if (result.ok) throw new Error('Destructive scenario accepted invalid add operation.');
 };
 
 const digestOf = async (client: ScenarioClient): Promise<string> => {
@@ -185,7 +195,7 @@ const readFixtureEvidence = (paths: ScenarioContext['fixtures'] = {}): ScenarioF
     encodedImageBytes: Buffer.byteLength(`data:${imageMime};base64,${image.toString('base64')}`, 'utf8'),
     pdfHeader,
     imageMime,
-    artifactImportExport: 'browser-owned'
+    artifactImportExport: PROTOCOL_GATE_NOT_COVERED.artifactImportExport
   };
 };
 
@@ -208,12 +218,21 @@ export const MATURE_PRETELEMETRY_PRESET = Object.freeze({
 
 const boundedCanonicalObjects = (imageDataUrl: string, count: number): SceneObject[] => {
   const base = canonicalObjects(imageDataUrl);
-    const shapeTypes = ['rectangle', 'circle', 'triangle', 'diamond', 'trapezoid'] as const;
+  const shapeTypes = ['rectangle', 'circle', 'triangle', 'diamond', 'trapezoid'] as const;
   for (let index = base.length; index < count; index += 1) {
     const type = shapeTypes[index % shapeTypes.length]!;
     base.push(objectFor(`mature-shape-${index}`, index + 1, type));
   }
   return base;
+};
+
+const requireMatureOpen = (client: ScenarioClient, phase: string): number => {
+  const openMs = client.synchronizationMs;
+  if (!Number.isFinite(openMs) || openMs < 0) throw new Error(`Mature scenario ${phase} client reported no open time.`);
+  if (openMs > MATURE_OPEN_TARGET_MS) {
+    throw new Error(`Mature board ${phase} open took ${Math.round(openMs)} ms; target is ${MATURE_OPEN_TARGET_MS} ms.`);
+  }
+  return openMs;
 };
 
 export const runMatureBoardScenario = async (
@@ -314,11 +333,13 @@ export const runMatureBoardScenario = async (
     tracked.add(clients[1]!);
     const reloadDigest = await digestOf(clients[1]!);
     if (reloadDigest !== beforeReload) throw new Error('Mature scenario durable reload changed the acknowledged digest.');
+    const reloadOpenMs = requireMatureOpen(clients[1]!, 'reload');
     await Promise.all([...tracked].map((client) => closeTracked(client)));
     await context.restart();
     const restartClient = await createTracked('student', 'mature-student-restart');
     const restartDigest = await digestOf(restartClient);
     if (restartDigest !== beforeReload) throw new Error('Mature scenario lost acknowledged state after backend restart.');
+    const restartOpenMs = requireMatureOpen(restartClient, 'restart');
     const snapshot = await awaitValue(restartClient.snapshot());
     const snapshotBytes = Buffer.byteLength(JSON.stringify(snapshot) ?? 'null', 'utf8');
     return {
@@ -331,6 +352,7 @@ export const runMatureBoardScenario = async (
       historyOperations,
       acceptedOperations,
       reloadDigest,
+      openMs: { reload: reloadOpenMs, restart: restartOpenMs },
       peerDigests,
       peerConverged: true,
       restartVerified: true,
@@ -342,17 +364,43 @@ export const runMatureBoardScenario = async (
   }
 };
 
-const invalidObjects = (seed: number): SceneObject[] => {
+type InvalidCase = (object: SceneObject, random: () => number) => Record<string, unknown>;
+
+const outOfRange = (random: () => number, limit: number): number => {
+  const choice = random();
+  if (choice < 0.25) return Number.NaN;
+  if (choice < 0.5) return random() > 0.5 ? Number.POSITIVE_INFINITY : Number.NEGATIVE_INFINITY;
+  return (random() > 0.5 ? 1 : -1) * (limit + 1 + Math.floor(random() * limit));
+};
+
+/** Every case violates one SCENE_LIMITS rule the server must enforce. */
+const INVALID_CASES: readonly InvalidCase[] = [
+  (object, random) => ({ ...object, type: `not-a-lesson-object-${Math.floor(random() * 1_000)}` }),
+  (object, random) => ({ ...object, x: outOfRange(random, SCENE_LIMITS.maxCoordinate) }),
+  (object, random) => ({ ...object, y: outOfRange(random, SCENE_LIMITS.maxCoordinate) }),
+  (object, random) => ({ ...object, type: 'text', text: 'x'.repeat(SCENE_LIMITS.maxTextLength + 1 + Math.floor(random() * 64)) }),
+  (object, random) => ({ ...object, width: random() > 0.5 ? -1 - Math.floor(random() * 100) : SCENE_LIMITS.maxSize + 1 + Math.floor(random() * 1_000) }),
+  (object, random) => ({ ...object, height: random() > 0.5 ? Number.NaN : SCENE_LIMITS.maxSize + 1 + Math.floor(random() * 1_000) })
+];
+
+/**
+ * Seeded invalid objects. Each block of INVALID_CASES.length objects is a
+ * seeded permutation of every case, so any count of at least one block covers
+ * all rules while the order and the offending values vary with the seed.
+ */
+export const invalidSceneObjects = (seed: number, count: number): Record<string, unknown>[] => {
   const random = seededRandom(seed);
-  const result: SceneObject[] = [];
-  for (let index = 0; index < 24; index += 1) {
-    const object = objectFor(`invalid-${seed}-${index}`, index);
-    if (index % 6 === 0) result.push({ ...object, type: 'not-a-lesson-object' });
-    else if (index % 6 === 1) result.push({ ...object, x: Number.NaN });
-    else if (index % 6 === 2) result.push({ ...object, y: Number.POSITIVE_INFINITY });
-    else if (index % 6 === 3) result.push({ ...object, type: 'text', text: 'x'.repeat(20_001) });
-    else if (index % 6 === 4) result.push({ ...object, width: random() > 0.5 ? -1 : Number.POSITIVE_INFINITY });
-    else result.push({ ...object, height: 100_001 });
+  const result: Record<string, unknown>[] = [];
+  let block: InvalidCase[] = [];
+  for (let index = 0; index < count; index += 1) {
+    if (block.length === 0) {
+      block = [...INVALID_CASES];
+      for (let at = block.length - 1; at > 0; at -= 1) {
+        const other = Math.floor(random() * (at + 1));
+        [block[at], block[other]] = [block[other]!, block[at]!];
+      }
+    }
+    result.push(block.pop()!(objectFor(`invalid-${seed}-${index}`, index), random));
   }
   return result;
 };
@@ -362,25 +410,35 @@ export const runDestructiveScenario = async (
   options: { seed?: number; invalidOperations?: number; validOperations?: number } = {}
 ): Promise<DestructiveScenarioReport> => {
   const seed = options.seed ?? 109_404;
-  const clients = new Set<ScenarioClient>();
-  const client = await context.createClient('student', 'destructive-student');
-  clients.add(client);
   const attemptedInvalidOperations = options.invalidOperations ?? 24;
   if (attemptedInvalidOperations < 12) throw new Error('Destructive scenario requires at least 12 invalid operations.');
   const requestedValidOperations = options.validOperations ?? 8;
   if (requestedValidOperations < 4 || requestedValidOperations > 32) {
     throw new Error('Destructive scenario valid operation count must be between 4 and 32.');
   }
+  const clients = new Set<ScenarioClient>();
+  const client = await context.createClient('student', 'destructive-student');
+  clients.add(client);
+  const reloadDigestOf = async (label: string): Promise<string> => {
+    const fresh = await context.createClient('student', label);
+    clients.add(fresh);
+    try {
+      return await digestOf(fresh);
+    } finally {
+      clients.delete(fresh);
+      await awaitValue(fresh.close());
+    }
+  };
   try {
     const digestBeforeInvalid = await digestOf(client);
-    const candidates = invalidObjects(seed);
     let rejectedInvalidOperations = 0;
-    for (let index = 0; index < attemptedInvalidOperations; index += 1) {
-      const object = candidates[index % candidates.length]!;
-      await requireRejected(client, { kind: 'add', object });
+    for (const object of invalidSceneObjects(seed, attemptedInvalidOperations)) {
+      await requireRejected(client, object);
       rejectedInvalidOperations += 1;
     }
-    const digestAfterInvalid = await digestOf(client);
+    // The submitting client's local document never held the invalid objects;
+    // only a fresh load of server state proves nothing was persisted.
+    const digestAfterInvalid = await reloadDigestOf('destructive-invalid-reload');
     if (digestAfterInvalid !== digestBeforeInvalid) throw new Error('Destructive invalid operations changed acknowledged board state.');
     const validTypes = ['rectangle', 'circle', 'triangle', 'diamond', 'trapezoid'] as const;
     const validIds: string[] = [];
@@ -405,17 +463,11 @@ export const runDestructiveScenario = async (
     if (afterValid === digestBeforeInvalid) throw new Error('Destructive scenario valid write did not change the board.');
     await awaitValue(client.close());
     clients.delete(client);
-    const reloaded = await context.createClient('student', 'destructive-reload');
-    clients.add(reloaded);
-    let reloadDigest = await digestOf(reloaded);
-    await awaitValue(reloaded.close());
-    clients.delete(reloaded);
+    const reloadDigest = await reloadDigestOf('destructive-reload');
+    if (reloadDigest !== afterValid) throw new Error('Destructive scenario lost the valid write after reload.');
     await context.restart();
-    const afterRestart = await context.createClient('student', 'destructive-restart-reload');
-    clients.add(afterRestart);
-    reloadDigest = await digestOf(afterRestart);
-    const restartVerified = true;
-    if (reloadDigest !== afterValid) throw new Error('Destructive scenario lost the valid write after reload/restart.');
+    const restartDigest = await reloadDigestOf('destructive-restart-reload');
+    if (restartDigest !== afterValid) throw new Error('Destructive scenario lost the valid write after backend restart.');
     return {
       profile: 'destructive',
       seed,
@@ -425,8 +477,9 @@ export const runDestructiveScenario = async (
       digestBeforeInvalid,
       digestAfterInvalid,
       reloadDigest,
+      restartDigest,
       preservedState: true,
-      restartVerified
+      restartVerified: true
     };
   } finally {
     await closeAll([...clients]);

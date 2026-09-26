@@ -21,9 +21,13 @@ import * as Y from 'yjs';
 import WebSocket from 'ws';
 import { createBoardDocument, type BoardDocument } from '../src/pilot/boardDocument';
 import { MEASURED_RESOURCE_LIMITS } from '../src/pilot/resourceLimits';
-import { runDestructiveScenario, runMatureBoardScenario, type ScenarioResult } from './pilotGateScenarios';
+import {
+  PROTOCOL_GATE_NOT_COVERED,
+  runDestructiveScenario,
+  runMatureBoardScenario,
+  type ScenarioResult
+} from './pilotGateScenarios';
 import type { BoardCommand, SceneObject } from '../src/pilot/boardScene';
-import type { BoardRole } from '../src/pilot/boardScene';
 import { collaborationMessage } from '../src/pilot/collaborationProtocol';
 
 const ROOT = resolve(__dirname, '..');
@@ -68,9 +72,14 @@ export type GateReport = {
     clientErrors: number;
     digestMismatches: number;
     crossBoardLeaks: number;
+    /** ACK digests that differed from the local digest and were proven equal by a fresh server reload. */
+    ackDigestReloadChecks: number;
   };
-  coverage: 'protocol-complete' | 'smoke-only';
+  /** The protocol harness drives the production client and server; browser-owned workflows are listed in notCovered. */
+  coverage: 'protocol' | 'smoke-only';
+  notCovered: typeof PROTOCOL_GATE_NOT_COVERED;
   fixtures: { pdfBytes: number; imageBytes: number } | null;
+  mature?: { reloadOpenMs: number; restartOpenMs: number };
   finalDigests?: string[];
   destructive?: {
     attemptedInvalidOperations: number;
@@ -210,8 +219,13 @@ const startPostgres = async (port: number): Promise<() => Promise<void>> => {
   }
 };
 
-type RunningBackend = { process: ChildProcess; stop: () => Promise<void> };
-type BackendSpawnObserver = (child: ChildProcess) => void;
+export type ExitStatus = { code: number | null; signal: NodeJS.Signals | null; escalated: boolean };
+type RunningBackend = { process: ChildProcess; stop: () => Promise<ExitStatus> };
+type BackendHooks = {
+  onSpawn?: (child: ChildProcess) => void;
+  /** Receives every error-level backend log line and any unexpected exit. */
+  onBlocker: (description: string) => void;
+};
 
 const hasExited = (child: ChildProcess): boolean => child.exitCode !== null || child.signalCode !== null;
 
@@ -236,14 +250,15 @@ export const stopChildProcess = async (
   child: ChildProcess,
   graceMs = 12_000,
   killWaitMs = 5_000
-): Promise<void> => {
-  if (hasExited(child)) return;
+): Promise<ExitStatus> => {
+  const status = (escalated: boolean): ExitStatus => ({ code: child.exitCode, signal: child.signalCode, escalated });
+  if (hasExited(child)) return status(false);
   try {
     child.kill('SIGTERM');
   } catch {
     // The child can exit between the state check and kill().
   }
-  if (await waitForExit(child, graceMs)) return;
+  if (await waitForExit(child, graceMs)) return status(false);
   try {
     child.kill('SIGKILL');
   } catch {
@@ -252,9 +267,76 @@ export const stopChildProcess = async (
   if (!(await waitForExit(child, killWaitMs))) {
     throw new Error(`Backend process ${child.pid ?? 'unknown'} did not exit after SIGKILL.`);
   }
+  return status(true);
 };
 
-const startBackend = async (port: number, pgPort: number, onSpawn?: BackendSpawnObserver): Promise<RunningBackend> => {
+/** A controlled stop must drain on SIGTERM and exit 0; anything else hides shutdown errors. */
+export const assertCleanExit = (status: ExitStatus, label: string): void => {
+  if (status.escalated || status.signal !== null || status.code !== 0) {
+    throw new Error(
+      `Backend ${label} was not clean: code=${status.code ?? 'none'} signal=${status.signal ?? 'none'} sigkill=${status.escalated}.`
+    );
+  }
+};
+
+const scrubLog = (text: string): string => text.replace(/(?:token|secret|password|passphrase|wsToken)[^\s]*/gi, '[redacted]');
+
+const BLOCKING_PHASES = new Set(['unhandledRejection', 'uncaughtException', 'failed']);
+
+/**
+ * Classify one backend log line. Structured OperationalSignals events count
+ * when their name reports an error, failure, or loss, when they carry an error
+ * level or an internal-failure reason, or when a process phase reports a
+ * crash or an unclean stop. Plain
+ * logger lines count at [ERROR] level, as do bare uncaught-error lines.
+ */
+export const backendLogBlocker = (line: string): string | null => {
+  const text = line.trim();
+  if (!text) return null;
+  const describe = (): string => scrubLog(text).slice(0, 300);
+  if (text.startsWith('{')) {
+    let event: Record<string, unknown> | null = null;
+    try {
+      event = JSON.parse(text) as Record<string, unknown>;
+    } catch {
+      event = null;
+    }
+    if (event && typeof event === 'object') {
+      const name = String(event.name ?? '');
+      const level = String(event.level ?? '').toLowerCase();
+      const dimensions = (event.dimensions ?? {}) as Record<string, unknown>;
+      if (/error|failure|loss/i.test(name) || level === 'error' || level === 'fatal') return describe();
+      // An internal failure closes a live session with 1011 (session.close,
+      // session.admission) whatever the event name.
+      if (dimensions.reason === 'internal') return describe();
+      if (name === 'process.phase') {
+        const phase = String(dimensions.phase ?? '');
+        if (BLOCKING_PHASES.has(phase) || (phase === 'stopped' && dimensions.clean !== true)) return describe();
+      }
+      return null;
+    }
+  }
+  if (/\[ERROR\]/.test(text) || /^(?:Uncaught|Unhandled|[A-Za-z]*Error\b:?)/.test(text)) return describe();
+  return null;
+};
+
+/** Split a byte stream into complete lines; a partial line is kept until the next chunk or flush(). */
+const lineSplitter = (onLine: (line: string) => void): { push: (chunk: Buffer) => void; flush: () => void } => {
+  let rest = '';
+  return {
+    push: (chunk) => {
+      const lines = `${rest}${chunk.toString()}`.split(/\r?\n/);
+      rest = lines.pop() ?? '';
+      lines.forEach(onLine);
+    },
+    flush: () => {
+      if (rest) onLine(rest);
+      rest = '';
+    }
+  };
+};
+
+const startBackend = async (port: number, pgPort: number, hooks: BackendHooks): Promise<RunningBackend> => {
   await assertPortAvailable(port);
   const child = spawn('node', ['dist/src/server.js'], {
     cwd: ROOT,
@@ -274,36 +356,48 @@ const startBackend = async (port: number, pgPort: number, onSpawn?: BackendSpawn
     },
     stdio: ['ignore', 'pipe', 'pipe']
   });
-  onSpawn?.(child);
+  hooks.onSpawn?.(child);
+  let stopRequested = false;
   const output: string[] = [];
-  const capture = (chunk: Buffer): void => {
-    const scrubbed = chunk.toString().replace(/(?:token|secret|password|wsToken)[^\s]*/gi, '[redacted]');
-    output.push(scrubbed.slice(-400));
-    if (output.length > 20) output.shift();
-  };
-  child.stdout?.on('data', capture);
-  child.stderr?.on('data', capture);
   let resolveChildReady!: () => void;
   const childReady = new Promise<void>((resolvePromise) => {
     resolveChildReady = resolvePromise;
   });
-  let readyOutput = '';
-  const detectChildReady = (chunk: Buffer): void => {
-    const lines = `${readyOutput}${chunk.toString()}`.split(/\r?\n/);
-    readyOutput = (lines.pop() ?? '').slice(-4_096);
-    for (const line of lines) {
-      try {
-        const event = JSON.parse(line) as { name?: string; dimensions?: { phase?: string } };
-        if (event.name === 'process.phase' && event.dimensions?.phase === 'ready') {
-          resolveChildReady();
-          return;
-        }
-      } catch {
-        // Logger and diagnostics are not all JSON; only structured ready events count.
-      }
+  const onLine = (line: string): void => {
+    output.push(scrubLog(line).slice(-400));
+    if (output.length > 20) output.shift();
+    const blocker = backendLogBlocker(line);
+    if (blocker) hooks.onBlocker(blocker);
+    try {
+      const event = JSON.parse(line) as { name?: string; dimensions?: { phase?: string } };
+      if (event.name === 'process.phase' && event.dimensions?.phase === 'ready') resolveChildReady();
+    } catch {
+      // Logger and diagnostics are not all JSON; only structured ready events count.
     }
   };
-  child.stdout?.on('data', detectChildReady);
+  const streams = [lineSplitter(onLine), lineSplitter(onLine)];
+  child.stdout?.on('data', streams[0]!.push);
+  child.stderr?.on('data', streams[1]!.push);
+  // 'close' fires after exit once stdio is drained, so every shutdown line is classified.
+  const streamsClosed = new Promise<void>((resolvePromise) => {
+    child.once('close', () => {
+      streams.forEach((stream) => stream.flush());
+      resolvePromise();
+    });
+  });
+  child.once('exit', (code, signal) => {
+    if (!stopRequested) hooks.onBlocker(`Backend exited unexpectedly (code=${code ?? 'none'} signal=${signal ?? 'none'}).`);
+  });
+  let stopPromise: Promise<ExitStatus> | null = null;
+  const stop = (): Promise<ExitStatus> => {
+    stopRequested = true;
+    stopPromise ??= (async () => {
+      const status = await stopChildProcess(child);
+      await Promise.race([streamsClosed, sleep(5_000)]);
+      return status;
+    })();
+    return stopPromise;
+  };
   const earlyExit = new Promise<never>((_, reject) => {
     child.once('error', (error) => reject(error));
     child.once('exit', (code) => reject(new Error(`Backend exited before readiness (${code ?? 'signal'}).`)));
@@ -322,7 +416,7 @@ const startBackend = async (port: number, pgPort: number, onSpawn?: BackendSpawn
       }
       await sleep(250);
     }
-    throw new Error(`Backend did not become ready within 20 seconds. ${output.join('').slice(-400)}`);
+    throw new Error(`Backend did not become ready within 20 seconds. ${output.join('\n').slice(-400)}`);
   })();
   let startupTimer: ReturnType<typeof setTimeout> | null = null;
   const startupDeadline = new Promise<never>((_, rejectPromise) => {
@@ -334,20 +428,14 @@ const startBackend = async (port: number, pgPort: number, onSpawn?: BackendSpawn
     await Promise.race([Promise.all([waitReady, childReady]), earlyExit, startupDeadline]);
   } catch (error) {
     try {
-      await stopChildProcess(child);
+      await stop();
     } catch (cleanupError) {
       throw new Error(`Backend startup failed and cleanup failed: ${(cleanupError as Error).message}`);
     }
     throw error;
   } finally {
     if (startupTimer) clearTimeout(startupTimer);
-    child.stdout?.removeListener('data', detectChildReady);
   }
-  let stopPromise: Promise<void> | null = null;
-  const stop = (): Promise<void> => {
-    stopPromise ??= stopChildProcess(child);
-    return stopPromise;
-  };
   return { process: child, stop };
 };
 
@@ -438,146 +526,127 @@ const encodeMutation = (operationId: string, update: Uint8Array): Buffer => {
   return prefixed(collaborationMessage.mutation, payload);
 };
 
-const frameJson = (data: Uint8Array): Record<string, unknown> => JSON.parse(new TextDecoder().decode(data)) as Record<string, unknown>;
+const mutationOperationId = (bytes: Uint8Array): string | null => {
+  if (bytes[0] !== collaborationMessage.mutation || bytes.length < 3) return null;
+  const idLength = new DataView(bytes.buffer, bytes.byteOffset + 1, 2).getUint16(0);
+  return new TextDecoder().decode(bytes.subarray(3, 3 + idLength));
+};
 
-class CanonicalGateClient {
-  readonly doc = new Y.Doc();
-  private canonical: BoardDocument | null = null;
-  private socket: WebSocket | null = null;
-  private operation = 0;
-  private readonly pending = new Map<string, { resolve: (digest: string) => void; reject: (error: Error) => void }>();
-  private syncResolve: (() => void) | null = null;
-  private syncReject: ((error: Error) => void) | null = null;
-  private closed = false;
-  acknowledged = 0;
+const bytesOf = (data: unknown): Uint8Array => {
+  if (data instanceof ArrayBuffer) return new Uint8Array(data);
+  if (Array.isArray(data)) return Buffer.concat(data as Buffer[]);
+  if (ArrayBuffer.isView(data)) return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+  return new Uint8Array();
+};
 
-  constructor(readonly boardId: string, readonly wsToken: string, readonly role: BoardRole, readonly actorId: string) {}
+/**
+ * Every unexpected client-side failure of the run, across every client ever
+ * created: socket errors, unexpected closes, and server denials of
+ * operations the harness intended to be valid. Replacing a client never
+ * discards its failures.
+ */
+const clientErrorLog: string[] = [];
 
-  async connect(base: string): Promise<void> {
-    const socket = new WebSocket(`${base.replace(/^http/, 'ws')}/ws/whiteboard/${this.boardId}?wsToken=${encodeURIComponent(this.wsToken)}`);
-    this.socket = socket;
-    socket.binaryType = 'arraybuffer';
-    const synchronized = new Promise<void>((resolvePromise, rejectPromise) => {
-      this.syncResolve = resolvePromise;
-      this.syncReject = rejectPromise;
-    });
-    socket.on('message', (raw) => this.receive(Buffer.from(raw as Buffer)));
-    socket.on('error', (error) => this.syncReject?.(error instanceof Error ? error : new Error('WebSocket error.')));
-    socket.on('close', (code) => {
-      if (!this.closed && code !== 1000 && this.syncReject) this.syncReject(new Error(`Unexpected WebSocket close ${code}.`));
-    });
-    await Promise.race([synchronized, sleep(10_000).then(() => { throw new Error('Client did not synchronize within 10 seconds.'); })]);
+/** Commands whose ACK digest differed from the local digest and were proven by a fresh server reload. */
+let ackDigestReloadChecks = 0;
+
+const assertNoClientErrors = (phase: string): void => {
+  if (clientErrorLog.length) {
+    throw new Error(`${phase}: ${clientErrorLog.length} unexpected client error(s): ${clientErrorLog.slice(0, 5).join('; ')}`);
+  }
+};
+
+type OperationResponse = { acknowledged: true; digest: string } | { acknowledged: false; reason: string };
+
+/**
+ * Server responses to one client's mutations. A command is credited only
+ * with the operations it actually sent, so an earlier ACK can never vouch for
+ * a command that sent nothing, and a denial of any intended-valid operation
+ * is a client error even when it is not the latest one.
+ */
+export class MutationLedger {
+  private readonly acknowledged = new Map<string, string>();
+  private readonly denied = new Map<string, string>();
+  private readonly expectedDenials = new Set<string>();
+  private recording: string[] | null = null;
+
+  constructor(private readonly onUnexpectedDenial: (operationId: string, reason: string) => void) {}
+
+  sent(operationId: string): void {
+    this.recording?.push(operationId);
   }
 
-  private receive(frame: Buffer): void {
-    const type = frame[0];
-    const payload = new Uint8Array(frame.subarray(1));
-    if (type === collaborationMessage.sync) {
-      Y.applyUpdate(this.doc, payload, 'collaborationRemote');
-      this.canonical?.destroy();
-      this.canonical = createBoardDocument({ initialState: payload });
-    } else if (type === collaborationMessage.update) {
-      const idLength = frame.readUInt16BE(1);
-      const update = new Uint8Array(frame.subarray(3 + idLength));
-      const checked = this.canonical?.apply(update, { kind: 'remote', actorId: 'peer', role: 'student' });
-      if (checked && !checked.ok) throw new Error(`Remote update rejected by canonical BoardDocument: ${checked.message}`);
-      Y.applyUpdate(this.doc, update, 'collaborationRemote');
-    } else if (type === collaborationMessage.synchronizationComplete) {
-      this.syncResolve?.();
-      this.syncResolve = null;
-    } else if (type === collaborationMessage.acknowledgement) {
-      const parsed = frameJson(payload);
-      const operationId = String(parsed.operationId ?? '');
-      const waiter = this.pending.get(operationId);
-      if (waiter) {
-        this.pending.delete(operationId);
-        this.acknowledged += 1;
-        waiter.resolve(String(parsed.digest ?? ''));
-      }
-    } else if (type === collaborationMessage.denial) {
-      const parsed = frameJson(payload);
-      const operationId = parsed.operationId ? String(parsed.operationId) : '';
-      const waiter = this.pending.get(operationId);
-      if (waiter) {
-        this.pending.delete(operationId);
-        waiter.reject(new Error(`Server denied operation ${operationId}: ${String(parsed.reason ?? 'unknown')}.`));
-      }
+  acknowledge(operationId: string, digest: string): void {
+    this.acknowledged.set(operationId, digest);
+  }
+
+  deny(operationId: string, reason: string): void {
+    this.denied.set(operationId, reason);
+    if (!this.expectedDenials.delete(operationId)) this.onUnexpectedDenial(operationId, reason);
+  }
+
+  expectDenial(operationId: string): void {
+    this.expectedDenials.add(operationId);
+  }
+
+  /**
+   * Run one command. `run` returns false when the command was refused locally
+   * (the result is then null). An accepted command must send at least one new
+   * mutation and every one must be acknowledged; the last ACK digest is returned.
+   */
+  async settle(run: () => boolean, timeoutMs = 10_000): Promise<string | null> {
+    const sent: string[] = [];
+    this.recording = sent;
+    let accepted: boolean;
+    try {
+      accepted = run();
+    } finally {
+      this.recording = null;
     }
+    if (!accepted) return null;
+    if (sent.length === 0) throw new Error('Command sent no mutation; an earlier acknowledgement cannot vouch for it.');
+    let digest = '';
+    for (const operationId of sent) {
+      const response = await this.response(operationId, timeoutMs);
+      if (!response.acknowledged) throw new Error(`Server denied operation ${operationId}: ${response.reason}.`);
+      digest = response.digest;
+    }
+    return digest;
   }
 
-  addObject(object: Record<string, unknown>): Promise<string> {
-    if (!this.canonical) throw new Error('Client is not synchronized.');
-    const before = Y.encodeStateAsUpdate(this.doc);
-    const current = new Y.Doc();
-    Y.applyUpdate(current, before);
-    const next = new Y.Doc();
-    Y.applyUpdate(next, before);
-    const map = new Y.Map<unknown>();
-    for (const [key, value] of Object.entries(object)) map.set(key, value);
-    next.getArray('drawings').push([map]);
-    const update = Y.encodeStateAsUpdate(next, Y.encodeStateVector(current));
-    current.destroy();
-    next.destroy();
-    const checked = this.canonical.apply(update, { kind: 'local', actorId: this.actorId, role: this.role });
-    if (!checked.ok) throw new Error(`Local canonical operation rejected: ${checked.message}`);
-    Y.applyUpdate(this.doc, update);
-    const operationId = `vve109-${this.actorId}-${this.operation++}`;
-    return new Promise<string>((resolvePromise, rejectPromise) => {
-      this.pending.set(operationId, { resolve: resolvePromise, reject: rejectPromise });
-      if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
-        rejectPromise(new Error('WebSocket is not open.'));
-        return;
+  async response(operationId: string, timeoutMs = 10_000): Promise<OperationResponse> {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      const digest = this.acknowledged.get(operationId);
+      if (digest !== undefined) {
+        this.acknowledged.delete(operationId);
+        return { acknowledged: true, digest };
       }
-      this.socket.send(encodeMutation(operationId, update));
-    });
-  }
-
-  digest(): string {
-    if (!this.canonical) throw new Error('Client is not synchronized.');
-    return this.canonical.digest();
-  }
-
-  snapshot(): Record<string, unknown> {
-    if (!this.canonical) throw new Error('Client is not synchronized.');
-    // BoardDocument owns validation and digest. The headless client reads the
-    // canonical scene root through Yjs only to assert object isolation; it
-    // never uses an unrelated `lesson` map.
-    return { drawings: this.doc.getArray('drawings').toJSON() };
-  }
-
-  sendRaw(frame: Uint8Array): void {
-    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) throw new Error('WebSocket is not open.');
-    this.socket.send(frame);
-  }
-
-  waitForClose(timeoutMs: number): Promise<void> {
-    if (!this.socket) return Promise.reject(new Error('WebSocket is not open.'));
-    return Promise.race([
-      new Promise<void>((resolvePromise) => this.socket?.once('close', () => resolvePromise())),
-      sleep(timeoutMs).then(() => { throw new Error('WebSocket did not close within the bounded timeout.'); })
-    ]);
-  }
-
-  close(): void {
-    this.closed = true;
-    this.pending.forEach(({ reject }) => reject(new Error('Client closed.')));
-    this.pending.clear();
-    this.socket?.close();
-    this.canonical?.destroy();
-    this.doc.destroy();
+      const reason = this.denied.get(operationId);
+      if (reason !== undefined) {
+        this.denied.delete(operationId);
+        return { acknowledged: false, reason };
+      }
+      if (Date.now() >= deadline) throw new Error(`No server response to operation ${operationId} within ${timeoutMs} ms.`);
+      await sleep(10);
+    }
   }
 }
 
 type ProductionConnection = {
   ydoc: Y.Doc;
   yDrawings: Y.Array<unknown>;
+  readonly socket: WebSocket | null;
   isEditable: () => boolean;
   pendingOperationCount: () => number;
   disconnect: () => void;
 };
 
 type ProductionClientModule = {
-  connectToYjs: (roomId: string, options: { wsToken: string; onStatus?: (status: string) => void }) => ProductionConnection;
+  connectToYjs: (
+    roomId: string,
+    options: { wsToken: string; onMutationDenied?: (denial: { reason: string; operationId: string }) => void }
+  ) => ProductionConnection;
   createWhiteboardSession?: (options: { ydoc: Y.Doc; role: 'teacher' | 'student'; isEditable: () => boolean }) => {
     execute: (command: BoardCommand) => { ok: true } | { ok: false; reason: string; message: string };
     undo: () => boolean;
@@ -595,8 +664,15 @@ export const applyAtomicReorder = (
   yDrawings: Y.Array<any>,
   ids: readonly string[]
 ): void => {
-  const byId = new Map(yDrawings.toArray().map((entry: any) => [entry?.get?.('id') ?? entry?.id, entry]));
-  const ordered = ids.map((id) => byId.get(id)).filter((entry) => entry !== undefined).map((entry: any) => {
+  const entries = yDrawings.toArray();
+  const byId = new Map(entries.map((entry: any) => [entry?.get?.('id') ?? entry?.id, entry]));
+  const permutation = ids.length === entries.length && byId.size === entries.length &&
+    new Set(ids).size === ids.length && ids.every((id) => byId.has(id));
+  if (!permutation) {
+    throw new Error(`Reorder must name every board object exactly once (${ids.length} ids for ${entries.length} objects).`);
+  }
+  const ordered = ids.map((id) => {
+    const entry = byId.get(id);
     const clone = new entry.constructor();
     for (const [key, value] of Object.entries(entry.toJSON ? entry.toJSON() : {})) clone.set(key, value);
     return clone;
@@ -605,6 +681,32 @@ export const applyAtomicReorder = (
     yDrawings.delete(0, yDrawings.length);
     yDrawings.insert(0, ordered);
   }, { vve109: 'reorder' });
+};
+
+/** One connect()..close() span of a client; every socket it opens belongs to it. */
+type ConnectionGeneration = { expectedOutage: boolean };
+type SocketOwner = { client: ProductionGateClient; generation: ConnectionGeneration };
+
+const liveProductionClients = new Set<ProductionGateClient>();
+const socketOwners = new WeakMap<object, SocketOwner>();
+
+/**
+ * connectToYjs creates a fresh socket on every automatic reconnect. The first
+ * event of a socket always arrives while it is its connection's current
+ * socket, so ownership resolves then and stays bound to that generation.
+ */
+const socketOwner = (socket: object): SocketOwner | null => {
+  const known = socketOwners.get(socket);
+  if (known) return known;
+  for (const client of liveProductionClients) {
+    const generation = client.generationOwning(socket);
+    if (generation) {
+      const owner = { client, generation };
+      socketOwners.set(socket, owner);
+      return owner;
+    }
+  }
+  return null;
 };
 
 const loadProductionClient = async (): Promise<ProductionClientModule> => {
@@ -623,10 +725,30 @@ const loadProductionClient = async (): Promise<ProductionClientModule> => {
         clearTimeout
       };
       (globalThis as unknown as { window: typeof browserWindow }).window = browserWindow;
+      // Listeners are registered in the constructor, before connectToYjs
+      // assigns its own handlers, so every socket of every reconnect is
+      // observed from its first event.
       class HarnessWebSocket extends WebSocket {
         constructor(address: string | URL | null, protocols?: string | string[]) {
           super(address as string | URL, protocols);
-          this.on('error', () => undefined);
+          this.on('message', (data: unknown) => {
+            const owner = socketOwner(this);
+            owner?.client.receiveFrame(bytesOf(data));
+          });
+          this.on('error', (error: Error) => {
+            const owner = socketOwner(this);
+            owner?.client.socketEnded(this, owner.generation, `error: ${error.message}`);
+          });
+          this.on('close', (code: number) => {
+            const owner = socketOwner(this);
+            owner?.client.socketEnded(this, owner.generation, `close ${code}`);
+          });
+        }
+
+        override send(data: any, ...rest: any[]): void {
+          const operationId = mutationOperationId(bytesOf(data));
+          if (operationId !== null) socketOwner(this)?.client.mutationSent(operationId);
+          (super.send as (...args: unknown[]) => void)(data, ...rest);
         }
       }
       (globalThis as unknown as { WebSocket: typeof WebSocket }).WebSocket = HarnessWebSocket as typeof WebSocket;
@@ -656,15 +778,17 @@ const loadProductionClient = async (): Promise<ProductionClientModule> => {
 
 class ProductionGateClient {
   synchronizationMs = 0;
-  private clientErrorEvents = 0;
   private connection: ProductionConnection | null = null;
   private canonical: BoardDocument | null = null;
   private session: ReturnType<NonNullable<ProductionClientModule['createWhiteboardSession']>> | null = null;
-  private socketError: Error | null = null;
-  private expectingDisconnect = false;
-  private closed = false;
-  private acknowledged = new Map<string, string>();
-  private denied = new Map<string, string>();
+  private generation: ConnectionGeneration = { expectedOutage: true };
+  private readonly expectedCloses = new WeakSet<object>();
+  private readonly ledger = new MutationLedger((operationId, reason) =>
+    this.recordError(`server denied intended-valid operation ${operationId}: ${reason}`)
+  );
+  private failure: string | null = null;
+  private rawOperations = 0;
+  private base: string | null = null;
 
   constructor(
     public readonly boardId: string,
@@ -675,6 +799,7 @@ class ProductionGateClient {
 
   async connect(base: string): Promise<void> {
     const openedAt = performance.now();
+    this.base = base;
     const module = await loadProductionClient();
     const browserWindow = (globalThis as unknown as { window: { location: { protocol: string; host: string; origin: string; port: string } } }).window;
     const url = new URL(base);
@@ -682,34 +807,16 @@ class ProductionGateClient {
     browserWindow.location.host = url.host;
     browserWindow.location.origin = url.origin;
     browserWindow.location.port = url.port;
-    this.closed = false;
-    this.expectingDisconnect = false;
-    this.socketError = null;
-    this.acknowledged.clear();
-    this.denied.clear();
+    this.generation = { expectedOutage: false };
+    this.failure = null;
+    liveProductionClients.add(this);
     this.connection = module.connectToYjs(this.boardId, {
       wsToken: this.wsToken,
-      onStatus: (status) => {
-        if (status === 'disconnected') this.canonical?.destroy();
-      }
+      onMutationDenied: (denial) => this.ledger.deny(denial.operationId, denial.reason)
     });
-    const socket = (this.connection as ProductionConnection & { socket?: { on?: (event: string, handler: (...args: any[]) => void) => void } }).socket;
-    socket?.on?.('error', (error: Error) => {
-      if (!this.closed && !this.expectingDisconnect) {
-        this.clientErrorEvents += 1;
-        this.socketError = error;
-      }
-    });
-    socket?.on?.('close', (code: number) => {
-      if (!this.closed && !this.expectingDisconnect) {
-        this.clientErrorEvents += 1;
-        this.socketError = new Error(`Unexpected production socket close ${code}.`);
-      }
-    });
-    this.attachProtocolHooks();
     const deadline = Date.now() + 10_000;
     while (!this.connection.isEditable()) {
-      if (this.socketError) throw new Error(`Production connectToYjs socket failed for ${this.actorId}: ${(this.socketError as Error).message}`);
+      if (this.failure) throw new Error(`Production connectToYjs failed for ${this.actorId}: ${this.failure}`);
       if (Date.now() >= deadline) throw new Error(`Production connectToYjs did not synchronize for ${this.actorId}.`);
       await sleep(25);
     }
@@ -720,6 +827,44 @@ class ProductionGateClient {
     this.synchronizationMs = performance.now() - openedAt;
   }
 
+  generationOwning(socket: object): ConnectionGeneration | null {
+    return this.connection && this.connection.socket === socket ? this.generation : null;
+  }
+
+  receiveFrame(bytes: Uint8Array): void {
+    const type = bytes[0];
+    if (type !== collaborationMessage.acknowledgement && type !== collaborationMessage.denial) return;
+    let body: { operationId?: string; digest?: string; reason?: string };
+    try {
+      body = JSON.parse(new TextDecoder().decode(bytes.subarray(1))) as typeof body;
+    } catch {
+      this.recordError(`unparseable ${type === collaborationMessage.denial ? 'denial' : 'acknowledgement'} frame`);
+      return;
+    }
+    if (type === collaborationMessage.acknowledgement) {
+      if (body.operationId) this.ledger.acknowledge(body.operationId, body.digest ?? '');
+    } else if (!body.operationId) {
+      // Operation denials arrive through onMutationDenied; a denial without an
+      // operation id makes the production client read-only.
+      this.recordError(`connection-level denial: ${body.reason ?? 'unknown'}`);
+    }
+  }
+
+  mutationSent(operationId: string): void {
+    this.ledger.sent(operationId);
+  }
+
+  socketEnded(socket: object, generation: ConnectionGeneration, detail: string): void {
+    if (generation.expectedOutage || this.expectedCloses.has(socket)) return;
+    this.recordError(`unexpected production socket ${detail}`);
+  }
+
+  private recordError(message: string): void {
+    const entry = `${this.actorId}: ${message}`;
+    clientErrorLog.push(entry);
+    this.failure ??= entry;
+  }
+
   private refreshCanonical(): BoardDocument {
     if (!this.connection) throw new Error('Production client is not connected.');
     this.canonical?.destroy();
@@ -727,188 +872,154 @@ class ProductionGateClient {
     return this.canonical;
   }
 
-  private attachProtocolHooks(): void {
-    const connection = this.connection as (ProductionConnection & { socket?: any }) | null;
-    const socket = connection?.socket as any;
-    if (!socket || socket.__vve109Hooks) return;
-    socket.__vve109Hooks = true;
-    const originalSend = socket.send.bind(socket);
-    socket.send = (data: unknown) => {
-      const bytes = data instanceof Uint8Array
-        ? data
-        : data instanceof ArrayBuffer
-          ? new Uint8Array(data)
-          : new Uint8Array((data as ArrayBufferView).buffer, (data as ArrayBufferView).byteOffset, (data as ArrayBufferView).byteLength);
-      if (bytes[0] === collaborationMessage.mutation && bytes.length >= 3) {
-        const idLength = new DataView(bytes.buffer, bytes.byteOffset + 1, 2).getUint16(0);
-        socket.__vve109LastOperationId = new TextDecoder().decode(bytes.slice(3, 3 + idLength));
-      }
-      return originalSend(data);
-    };
-    const originalMessage = socket.onmessage;
-    socket.onmessage = (event: MessageEvent) => {
-      const bytes = event.data instanceof ArrayBuffer ? new Uint8Array(event.data) : event.data instanceof Uint8Array ? event.data : null;
-      if (bytes?.[0] === collaborationMessage.acknowledgement) {
-        const body = JSON.parse(new TextDecoder().decode(bytes.slice(1))) as { operationId?: string; digest?: string };
-        if (body.operationId && body.digest) this.acknowledged.set(body.operationId, body.digest);
-      } else if (bytes?.[0] === collaborationMessage.denial) {
-        const body = JSON.parse(new TextDecoder().decode(bytes.slice(1))) as { operationId?: string; reason?: string };
-        if (body.operationId) this.denied.set(body.operationId, body.reason ?? 'unknown');
-      }
-      originalMessage?.call(socket, event);
-    };
-  }
-
-  private async sendMutationUpdate(update: Uint8Array, operationId: string): Promise<{ acknowledged: boolean; reason?: string }> {
-    this.attachProtocolHooks();
-    const socket = (this.connection as (ProductionConnection & { socket?: any }) | null)?.socket;
+  private openSocket(): WebSocket {
+    const socket = this.connection?.socket;
     if (!socket || socket.readyState !== WebSocket.OPEN) throw new Error(`Production client ${this.actorId} is not connected.`);
-    this.acknowledged.delete(operationId);
-    this.denied.delete(operationId);
-    socket.send(encodeMutation(operationId, update));
-    const deadline = Date.now() + 10_000;
-    while (!this.acknowledged.has(operationId) && !this.denied.has(operationId)) {
-      if (Date.now() >= deadline) throw new Error(`Production mutation response timeout for ${this.actorId}.`);
-      await sleep(10);
-    }
-    const reason = this.denied.get(operationId);
-    return reason ? { acknowledged: false, reason } : { acknowledged: true };
+    return socket;
   }
 
-  /** Send a schema-invalid Yjs update through the production WebSocket boundary. */
-  async rejectInvalidObject(object: Record<string, unknown>, operationId: string): Promise<string> {
+  private requireSession(): NonNullable<ProductionGateClient['session']> {
+    if (!this.session) throw new Error(`Production whiteboard session is not ready for ${this.actorId}.`);
+    return this.session;
+  }
+
+  /**
+   * Settle one production command and prove the server holds this client's
+   * state. The ACK digest hashes the server's live Yjs encoding, which
+   * depends on edit history: after a bulk delete (reorder, undo of an add) it
+   * can differ from a re-hydration of the same logical state. A mismatch is
+   * therefore resolved by a fresh load of server state, which must equal the
+   * local digest exactly. Returns false when the command was refused locally.
+   */
+  private async settle(run: () => boolean): Promise<boolean> {
+    const ackDigest = await this.ledger.settle(run);
+    if (ackDigest === null) return false;
+    const localDigest = this.refreshCanonical().digest();
+    if (ackDigest === localDigest) return true;
+    if (!this.base) throw new Error(`Production client ${this.actorId} has no server to reload from.`);
+    ackDigestReloadChecks += 1;
+    const verifier = new ProductionGateClient(this.boardId, this.wsToken, this.role, `${this.actorId}-ack-reload-${ackDigestReloadChecks}`);
+    try {
+      await verifier.connect(this.base);
+      const serverDigest = verifier.digest();
+      if (serverDigest !== localDigest) {
+        throw new Error(
+          `Server state ${serverDigest} (ACK ${ackDigest || '(none)'}) differs from local digest ${localDigest} for ${this.actorId}.`
+        );
+      }
+    } finally {
+      await verifier.close();
+    }
+    return true;
+  }
+
+  /**
+   * Send a Yjs update straight through the production socket, bypassing every
+   * local validator, and require the server to deny it.
+   */
+  private async requireServerDenial(mutate: (next: Y.Doc) => void): Promise<string> {
     if (!this.connection) throw new Error(`Production client ${this.actorId} is not connected.`);
     const base = Y.encodeStateAsUpdate(this.connection.ydoc);
     const current = new Y.Doc();
     const next = new Y.Doc();
     Y.applyUpdate(current, base);
     Y.applyUpdate(next, base);
-    const map = new Y.Map<unknown>();
-    for (const [key, value] of Object.entries(object)) map.set(key, value);
-    next.getArray('drawings').push([map]);
+    mutate(next);
     const update = Y.encodeStateAsUpdate(next, Y.encodeStateVector(current));
     current.destroy();
     next.destroy();
-    const result = await this.sendMutationUpdate(update, operationId);
-    if (result.acknowledged) throw new Error(`Production server accepted invalid object for ${this.actorId}.`);
-    return result.reason ?? 'unknown';
+    const operationId = `vve109-${this.actorId}-invalid-${this.rawOperations++}`;
+    this.ledger.expectDenial(operationId);
+    this.openSocket().send(encodeMutation(operationId, update));
+    const response = await this.ledger.response(operationId);
+    if (response.acknowledged) throw new Error(`Production server accepted an invalid update from ${this.actorId}.`);
+    return response.reason;
+  }
+
+  /** ScenarioClient: a deliberately invalid object goes to the server, never through the local session. */
+  async submitInvalidObject(object: Record<string, unknown>): Promise<ScenarioResult> {
+    const reason = await this.requireServerDenial((next) => {
+      const map = new Y.Map<unknown>();
+      for (const [key, value] of Object.entries(object)) map.set(key, value);
+      next.getArray('drawings').push([map]);
+    });
+    return { ok: false, reason };
   }
 
   /** Send a Y.Array entry that is JSON rather than the canonical Y.Map. */
-  async rejectNonMapEntry(operationId: string): Promise<string> {
-    if (!this.connection) throw new Error(`Production client ${this.actorId} is not connected.`);
-    const base = Y.encodeStateAsUpdate(this.connection.ydoc);
-    const current = new Y.Doc();
-    const next = new Y.Doc();
-    Y.applyUpdate(current, base);
-    Y.applyUpdate(next, base);
-    next.getArray('drawings').push([{
-      id: `non-map-${this.actorId}`,
-      type: 'rectangle',
-      x: 1,
-      y: 1,
-      width: 20,
-      height: 20,
-      color: '#2563eb',
-      lineWidth: 2,
-      timestamp: 1
-    }]);
-    const update = Y.encodeStateAsUpdate(next, Y.encodeStateVector(current));
-    current.destroy();
-    next.destroy();
-    const result = await this.sendMutationUpdate(update, operationId);
-    if (result.acknowledged) throw new Error('Production server accepted a non-Y.Map drawings entry.');
-    return result.reason ?? 'unknown';
+  rejectNonMapEntry(): Promise<string> {
+    return this.requireServerDenial((next) => {
+      next.getArray('drawings').push([{
+        id: `non-map-${this.actorId}`,
+        type: 'rectangle',
+        x: 1,
+        y: 1,
+        width: 20,
+        height: 20,
+        color: '#2563eb',
+        lineWidth: 2,
+        timestamp: 1
+      }]);
+    });
   }
 
   async sendRawFrame(frame: Uint8Array): Promise<number> {
-    if (!this.connection) throw new Error(`Production client ${this.actorId} is not connected.`);
-    const socket = (this.connection as (ProductionConnection & { socket?: any })).socket;
-    if (!socket || socket.readyState !== WebSocket.OPEN) throw new Error(`Production client ${this.actorId} is not connected.`);
-    this.expectingDisconnect = true;
+    const socket = this.openSocket();
+    this.expectedCloses.add(socket);
     const closed = new Promise<number>((resolvePromise, rejectPromise) => {
       const timer = setTimeout(() => rejectPromise(new Error(`Production raw frame was not closed for ${this.actorId}.`)), 10_000);
       socket.once('close', (code: number) => { clearTimeout(timer); resolvePromise(code); });
-      socket.once('error', (error: Error) => { clearTimeout(timer); rejectPromise(error); });
     });
     socket.send(frame);
     return closed;
   }
 
+  async apply(command: BoardCommand): Promise<ScenarioResult> {
+    const session = this.requireSession();
+    let message = '';
+    const applied = await this.settle(() => {
+      const result = session.execute(command);
+      if (!result.ok) message = result.message;
+      return result.ok;
+    });
+    return applied ? { ok: true, digest: this.refreshCanonical().digest() } : { ok: false, message };
+  }
+
   async addObject(object: SceneObject): Promise<string> {
-    if (!this.session) throw new Error(`Production client ${this.actorId} has no whiteboard session.`);
-    const result = this.session.execute({ kind: 'add', object });
-    if (!result.ok) throw new Error(`Production command rejected for ${this.actorId}: ${result.message}`);
-    const ackDigest = await this.waitForActualAcknowledgement();
-    if (!this.session.snapshot().some((entry) => entry.id === object.id)) {
+    const result = await this.apply({ kind: 'add', object });
+    if (!result.ok) throw new Error(`Production command rejected for ${this.actorId}: ${result.message ?? 'unknown'}`);
+    if (!this.requireSession().snapshot().some((entry) => entry.id === object.id)) {
       throw new Error(`Acknowledged object ${object.id} is absent from the production scene.`);
     }
-    if (ackDigest !== this.refreshCanonical().digest()) throw new Error(`Server ACK digest mismatch for ${this.actorId}.`);
-    return ackDigest;
+    return result.digest!;
   }
 
-  async apply(command: BoardCommand): Promise<ScenarioResult> {
-    if (!this.session) throw new Error(`Production whiteboard session is not ready for ${this.actorId}.`);
-    const result = this.session.execute(command);
-    if (!result.ok) return { ok: false, message: result.message };
-    await this.waitForActualAcknowledgement();
-    return { ok: true, digest: this.refreshCanonical().digest() };
+  undo(): Promise<boolean> {
+    const session = this.requireSession();
+    return this.settle(() => session.undo());
   }
 
-  private async waitForActualAcknowledgement(): Promise<string> {
-    this.attachProtocolHooks();
-    const socket = (this.connection as ProductionConnection & { socket?: any }).socket;
-    const operationId = socket?.__vve109LastOperationId as string | undefined;
-    if (!operationId) throw new Error(`Production session did not expose a mutation operation for ${this.actorId}.`);
-    const deadline = Date.now() + 10_000;
-    while (!this.acknowledged.has(operationId) && !this.denied.has(operationId)) {
-      if (Date.now() >= deadline) throw new Error(`Production session ACK timeout for ${this.actorId}.`);
-      await sleep(10);
-    }
-    const denial = this.denied.get(operationId);
-    if (denial) throw new Error(`Production session denied operation for ${this.actorId}: ${denial}.`);
-    return this.acknowledged.get(operationId)!;
-  }
-
-  async undo(): Promise<boolean> {
-    if (!this.session?.undo()) return false;
-    await this.waitForActualAcknowledgement();
-    return true;
-  }
-
-  async redo(): Promise<boolean> {
-    if (!this.session?.redo()) return false;
-    await this.waitForActualAcknowledgement();
-    return true;
+  redo(): Promise<boolean> {
+    const session = this.requireSession();
+    return this.settle(() => session.redo());
   }
 
   async reorder(ids: readonly string[]): Promise<void> {
-    if (!this.connection?.isEditable()) throw new Error(`Production client ${this.actorId} is not editable.`);
-    applyAtomicReorder(this.connection.ydoc, this.connection.yDrawings, ids);
-    await this.waitForActualAcknowledgement();
-  }
-
-  async waitUntilEditable(timeoutMs = 10_000): Promise<void> {
-    if (!this.connection) throw new Error(`Production client ${this.actorId} is disconnected.`);
-    const deadline = Date.now() + timeoutMs;
-    while (!this.connection.isEditable()) {
-      if (Date.now() >= deadline) throw new Error(`Production connectToYjs did not recover for ${this.actorId}.`);
-      await sleep(25);
-    }
-    this.attachProtocolHooks();
-    this.refreshCanonical();
+    const connection = this.connection;
+    if (!connection?.isEditable()) throw new Error(`Production client ${this.actorId} is not editable.`);
+    await this.settle(() => {
+      applyAtomicReorder(connection.ydoc, connection.yDrawings, ids);
+      return true;
+    });
   }
 
   isEditable(): boolean {
     return this.connection?.isEditable() ?? false;
   }
 
-  expectDisconnect(): void {
-    this.expectingDisconnect = true;
-  }
-
-  clientErrors(): number {
-    return this.clientErrorEvents;
+  /** The server is about to go away (controlled restart); socket loss in this connection is expected. */
+  expectOutage(): void {
+    this.generation.expectedOutage = true;
   }
 
   digest(): string {
@@ -920,8 +1031,24 @@ class ProductionGateClient {
     return { drawings: this.session?.snapshot() ?? [] };
   }
 
-  close(): void {
-    this.closed = true;
+  /**
+   * Resolves once the socket has closed, so harness teardown never overlaps
+   * the next operation; a participant leaving mid-edit is exercised only
+   * where the scenario does it on purpose.
+   */
+  close(): Promise<void> {
+    this.generation.expectedOutage = true;
+    liveProductionClients.delete(this);
+    const socket = this.connection?.socket ?? null;
+    const closed = !socket || socket.readyState === WebSocket.CLOSED
+      ? Promise.resolve()
+      : new Promise<void>((resolvePromise) => {
+          const timer = setTimeout(resolvePromise, 5_000);
+          socket.once('close', () => {
+            clearTimeout(timer);
+            resolvePromise();
+          });
+        });
     this.session?.dispose();
     this.session = null;
     this.connection?.disconnect();
@@ -929,17 +1056,9 @@ class ProductionGateClient {
     this.connection = null;
     this.canonical?.destroy();
     this.canonical = null;
+    return closed;
   }
 }
-
-type GateClient = {
-  boardId: string;
-  connect: (base: string) => Promise<void>;
-  addObject: (object: SceneObject) => Promise<string>;
-  digest: () => string;
-  snapshot: () => Record<string, unknown>;
-  close: () => void;
-};
 
 const objectFor = (board: number, index: number, kind = 'rectangle'): SceneObject => ({
   id: `b${board}-o${index}`,
@@ -984,42 +1103,80 @@ const connectClients = async (base: string, boards: BoardAccess[], studentCounts
   return clients;
 };
 
-const closeClients = (clients: GateClient[]): void => clients.forEach((client) => client.close());
+const closeClients = async (clients: readonly ProductionGateClient[]): Promise<void> => {
+  await Promise.all(clients.map((client) => client.close()));
+};
 
-type RuntimeMetrics = { blockerEvents: number; maxRssBytes: number; maxEventLoopDelayMs: number };
+export type RuntimeHealth = {
+  blockers: number;
+  rssBytes: number;
+  heapUsedBytes: number;
+  eventLoopP95Ms: number;
+  connections: number;
+  boards: number;
+};
 
-const runtimeMetrics = (value: unknown): RuntimeMetrics => {
+/** Parse the protected runtime snapshot strictly; a missing counter must not read as zero. */
+export const runtimeHealth = (value: unknown): RuntimeHealth => {
   const soak = (value ?? {}) as Record<string, unknown>;
-  const errors = (soak.errors ?? {}) as Record<string, unknown>;
-  const memory = (soak.memory ?? {}) as Record<string, unknown>;
-  const eventLoop = (soak.eventLoopDelayMs ?? {}) as Record<string, unknown>;
+  const errors = soak.errors as Record<string, unknown> | undefined;
+  const memory = soak.memory as Record<string, unknown> | undefined;
+  const loop = soak.eventLoopDelayMs as Record<string, unknown> | null | undefined;
+  const numbers = [soak.eventsLost, errors?.persistence, errors?.unhandled, memory?.rssBytes, memory?.heapUsedBytes, soak.connections, soak.boards];
+  if (numbers.some((entry) => typeof entry !== 'number' || !Number.isFinite(entry))) {
+    throw new Error('Runtime snapshot is missing error, memory, or connection counters.');
+  }
   return {
-    blockerEvents: Number(soak.eventsLost ?? 0) + Number(errors.persistence ?? 0) + Number(errors.unhandled ?? 0),
-    maxRssBytes: Number(memory.rssBytes ?? 0),
-    maxEventLoopDelayMs: Number(eventLoop.p95 ?? 0)
+    blockers: Number(soak.eventsLost) + Number(errors!.persistence) + Number(errors!.unhandled),
+    rssBytes: Number(memory!.rssBytes),
+    heapUsedBytes: Number(memory!.heapUsedBytes),
+    eventLoopP95Ms: Number(loop?.p95 ?? 0),
+    connections: Number(soak.connections),
+    boards: Number(soak.boards)
   };
 };
 
-const waitForReady = async (base: string, adminCookie?: string): Promise<Record<string, unknown>> => {
-  const result = await fetchJson<Record<string, unknown>>(base, '/ready');
-  if (result.status !== 200) throw new Error(`Backend readiness failed with HTTP ${result.status}.`);
-  if (adminCookie) {
-    const runtime = await fetchJson<{ soak?: Record<string, unknown> }>(base, '/api/admin/runtime', { headers: { cookie: adminCookie } });
-    if (runtime.status !== 200 || !runtime.body.soak) throw new Error(`Protected runtime readiness failed with HTTP ${runtime.status}.`);
-    return { ...result.body, soak: runtime.body.soak };
+const assertNoBackendBlockers = (blockers: readonly string[], phase: string): void => {
+  if (blockers.length) {
+    throw new Error(`${phase}: backend reported ${blockers.length} error-level event(s): ${blockers.slice(0, 5).join(' | ')}`);
   }
-  return result.body;
 };
 
-const runChangeGate = async (base: string, boards: BoardAccess[], options: ReleaseGateOptions, restart: () => Promise<void>, adminCookie: string): Promise<{ clients: number; acknowledged: number; reconnects: number; restarts: number; digestMismatches: number; leaks: number; blockerEvents: number; clientErrors: number; maxRssBytes: number; maxEventLoopDelayMs: number; finalDigests: string[] }> => {
-  const clients = await connectClients(base, [boards[0]!], [3]);
+type RuntimeProbe = {
+  sample: (label: string) => Promise<RuntimeHealth>;
+  readonly totals: { samples: number; maxRssBytes: number; maxHeapUsedBytes: number; maxEventLoopDelayMs: number };
+};
+
+/**
+ * Administrator-authenticated runtime sampling. Every sample fails the gate
+ * on any server blocker counter or error-level backend log line seen so far.
+ */
+const createRuntimeProbe = (base: string, adminCookie: string, backendBlockers: readonly string[]): RuntimeProbe => {
+  const totals = { samples: 0, maxRssBytes: 0, maxHeapUsedBytes: 0, maxEventLoopDelayMs: 0 };
+  const sample = async (label: string): Promise<RuntimeHealth> => {
+    const ready = await fetchJson<unknown>(base, '/ready');
+    if (ready.status !== 200) throw new Error(`Backend readiness at ${label} failed with HTTP ${ready.status}.`);
+    const runtime = await fetchJson<{ soak?: unknown }>(base, '/api/admin/runtime', { headers: { cookie: adminCookie } });
+    if (runtime.status !== 200 || !runtime.body.soak) throw new Error(`Runtime metrics at ${label} failed with HTTP ${runtime.status}.`);
+    const health = runtimeHealth(runtime.body.soak);
+    totals.samples += 1;
+    totals.maxRssBytes = Math.max(totals.maxRssBytes, health.rssBytes);
+    totals.maxHeapUsedBytes = Math.max(totals.maxHeapUsedBytes, health.heapUsedBytes);
+    totals.maxEventLoopDelayMs = Math.max(totals.maxEventLoopDelayMs, health.eventLoopP95Ms);
+    if (health.blockers) throw new Error(`Runtime recorded ${health.blockers} blocker event(s) at ${label}.`);
+    assertNoBackendBlockers(backendBlockers, label);
+    return health;
+  };
+  return { sample, totals };
+};
+
+type Restart = (afterStop?: () => Promise<void>) => Promise<void>;
+
+const runChangeGate = async (base: string, board: BoardAccess, options: ReleaseGateOptions, restart: Restart): Promise<{ clients: number; acknowledged: number; reconnects: number; finalDigests: string[] }> => {
+  const clients = await connectClients(base, [board], [3]);
   let acknowledged = 0;
   let reconnects = 0;
   const count = options.operations;
-  const assertHealthy = (): void => {
-    const clientErrors = clients.reduce((sum, client) => sum + client.clientErrors(), 0);
-    if (clientErrors) throw new Error(`Change gate observed ${clientErrors} unexpected client error(s).`);
-  };
   const changeStarted = Date.now();
   const paceMs = options.smoke ? 0 : Math.max(1, Math.floor((options.durationMs * 0.9) / Math.max(count, 1)));
   for (let index = 0; index < count || (!options.smoke && Date.now() - changeStarted < options.durationMs); index += 1) {
@@ -1028,15 +1185,14 @@ const runChangeGate = async (base: string, boards: BoardAccess[], options: Relea
       continue;
     }
     const client = clients[index % clients.length]!;
-    const ackDigest = await client.addObject(seededChangeObject(0, index));
-    if (ackDigest !== client.digest()) throw new Error(`Acknowledgement digest mismatch at operation ${index}.`);
-    assertHealthy();
+    // addObject requires a fresh ACK whose digest equals the local digest.
+    await client.addObject(seededChangeObject(0, index));
+    assertNoClientErrors(`Change gate operation ${index}`);
     acknowledged += 1;
     if (index === Math.floor(count / 4) || index === Math.floor((count * 3) / 4)) {
       const clientIndex = index % clients.length;
       const before = clients[clientIndex]!.digest();
-      clients[clientIndex]!.close();
-      const board = boards[0]!;
+      await clients[clientIndex]!.close();
       const replacement = new ProductionGateClient(
         board.boardId,
         clientIndex === 0 ? board.teacherWsToken : board.studentWsToken,
@@ -1051,52 +1207,25 @@ const runChangeGate = async (base: string, boards: BoardAccess[], options: Relea
     if (!options.smoke && paceMs > 0) await sleep(paceMs);
   }
   const beforeRestart = clients[0]!.digest();
-  const beforeRestartDigests = clients.map((client) => client.digest());
-  assertHealthy();
-  const clientErrorsBeforeRestart = clients.reduce((sum, client) => sum + client.clientErrors(), 0);
-  if (clientErrorsBeforeRestart) throw new Error(`Change gate observed ${clientErrorsBeforeRestart} unexpected client error(s) before restart.`);
-  const runtimeBeforeRestart = await waitForReady(base, adminCookie);
-  const metricsBeforeRestart = runtimeMetrics(runtimeBeforeRestart.soak);
-  clients.forEach((client) => client.expectDisconnect());
-  closeClients(clients);
-  // Let the production listener observe close frames before SIGTERM. Runtime
-  // drain also compacts, but this makes the client-side close boundary
-  // deterministic on fast local runs.
-  await sleep(250);
+  if (clients.some((client) => client.digest() !== beforeRestart)) throw new Error('Live client digests diverged before backend restart.');
+  assertNoClientErrors('Change gate before restart');
+  // Every close handshake completes before SIGTERM, so the restart starts
+  // from a deterministic client-side boundary.
+  await closeClients(clients);
   await restart();
-  const reloaded = await connectClients(base, [boards[0]!], [3]);
+  const reloaded = await connectClients(base, [board], [3]);
   const finalDigests = reloaded.map((client) => client.digest());
-  const clientErrorsAfterRestart = reloaded.reduce((sum, client) => sum + client.clientErrors(), 0);
-  if (clientErrorsAfterRestart) throw new Error(`Change gate observed ${clientErrorsAfterRestart} unexpected client error(s) after restart.`);
+  assertNoClientErrors('Change gate after restart');
   if (finalDigests.some((digest) => digest !== beforeRestart)) throw new Error('A rehydrated client digest changed after backend restart.');
-  if (beforeRestartDigests.some((digest) => digest !== beforeRestart)) throw new Error('Live client digests diverged before backend restart.');
-  const snapshot = reloaded[0]!.snapshot();
-  const drawings = Array.isArray(snapshot.drawings) ? snapshot.drawings as Array<Record<string, unknown>> : [];
+  const drawings = reloaded[0]!.snapshot().drawings as unknown[];
   if (drawings.length !== acknowledged) throw new Error(`Reloaded ${drawings.length} objects; expected ${acknowledged}.`);
-  const ready = await waitForReady(base, adminCookie);
-  const metricsAfterRestart = runtimeMetrics(ready.soak);
-  const blockerEvents = metricsBeforeRestart.blockerEvents + metricsAfterRestart.blockerEvents;
-  closeClients(reloaded);
-  return {
-    clients: 4,
-    acknowledged,
-    reconnects: reconnects + 1,
-    restarts: 1,
-    digestMismatches: 0,
-    leaks: 0,
-    blockerEvents,
-    clientErrors: clientErrorsBeforeRestart + clientErrorsAfterRestart,
-    maxRssBytes: Math.max(metricsBeforeRestart.maxRssBytes, metricsAfterRestart.maxRssBytes),
-    maxEventLoopDelayMs: Math.max(metricsBeforeRestart.maxEventLoopDelayMs, metricsAfterRestart.maxEventLoopDelayMs),
-    finalDigests
-  };
+  await closeClients(reloaded);
+  return { clients: clients.length, acknowledged, reconnects: reconnects + 1, finalDigests };
 };
 
-const runMatureGate = async (base: string, boards: BoardAccess[], options: ReleaseGateOptions, restart: () => Promise<void>): Promise<{ clients: number; acknowledged: number; clientErrors: number; fixtures: { pdfBytes: number; imageBytes: number } }> => {
-  const board = boards[0]!;
+const runMatureGate = async (base: string, board: BoardAccess, restart: Restart): Promise<{ clients: number; acknowledged: number; fixtures: { pdfBytes: number; imageBytes: number }; openMs: { reload: number; restart: number } }> => {
   const pdfPath = resolve(ROOT, '..', 'frontend', 'tests', 'fixtures', 'artifacts', 'lesson-2page.pdf');
   const imagePath = resolve(ROOT, '..', 'frontend', 'tests', 'fixtures', 'artifacts', 'pixel.png');
-  const clients: ProductionGateClient[] = [];
   const scenario = await runMatureBoardScenario({
     base,
     restart,
@@ -1104,17 +1233,15 @@ const runMatureGate = async (base: string, boards: BoardAccess[], options: Relea
     createClient: async (role, label) => {
       const client = new ProductionGateClient(board.boardId, role === 'teacher' ? board.teacherWsToken : board.studentWsToken, role, label);
       await client.connect(base);
-      clients.push(client);
       return client;
     }
   }, { historyOperations: 96 });
-  const clientErrors = clients.reduce((sum, client) => sum + client.clientErrors(), 0);
-  if (clientErrors) throw new Error(`Mature gate observed ${clientErrors} unexpected client error(s).`);
+  assertNoClientErrors('Mature gate');
   return {
     clients: scenario.clients,
     acknowledged: scenario.acceptedOperations,
-    clientErrors,
-    fixtures: { pdfBytes: scenario.fixtures.pdfBytes, imageBytes: scenario.fixtures.imageBytes }
+    fixtures: { pdfBytes: scenario.fixtures.pdfBytes, imageBytes: scenario.fixtures.imageBytes },
+    openMs: scenario.openMs
   };
 };
 
@@ -1122,69 +1249,27 @@ const runDestructiveGate = async (
   base: string,
   board: BoardAccess,
   options: ReleaseGateOptions,
-  restart: () => Promise<void>
-): Promise<{
-  attemptedInvalidOperations: number;
-  rejectedInvalidOperations: number;
-  validOperations: number;
-  clientErrors: number;
-  nonMapEntryRejectionReason: string;
-  malformedFrameCloseCode: number;
-  oversizedFrameCloseCode: number;
-  resourceLimitBytes: number;
-  oversizedFrameBytes: number;
-  preservedState: boolean;
-  restartVerified: boolean;
-}> => {
-  const createdClients: ProductionGateClient[] = [];
+  restart: Restart
+): Promise<NonNullable<GateReport['destructive']>> => {
   const createClient = async (label: string): Promise<ProductionGateClient> => {
     const client = new ProductionGateClient(board.boardId, board.studentWsToken, 'student', label);
     await client.connect(base);
-    createdClients.push(client);
     return client;
   };
+  // Every invalid object reaches the server through submitInvalidObject; the
+  // local session never sees it, so each counted rejection is a server denial.
   const scenario = await runDestructiveScenario({
     base,
     restart,
-    createClient: async (_role, label) => {
-      const client = await createClient(label);
-      return {
-        boardId: client.boardId,
-        apply: async (command: BoardCommand): Promise<ScenarioResult> => {
-          if (command.kind === 'add') {
-            const object = command.object as unknown as Record<string, unknown>;
-            const type = object.type;
-            const invalid = type === 'not-a-lesson-object' ||
-              typeof object.x !== 'number' || !Number.isFinite(object.x) ||
-              typeof object.y !== 'number' || !Number.isFinite(object.y) ||
-              typeof object.width !== 'number' || !Number.isFinite(object.width) || object.width <= 0 ||
-              typeof object.height !== 'number' || !Number.isFinite(object.height) || object.height <= 0 ||
-              (typeof object.text === 'string' && object.text.length > 20_000);
-            if (invalid) {
-              const reason = await client.rejectInvalidObject(object, `vve109-destructive-${label}-${Date.now()}`);
-              return { ok: false, reason };
-            }
-          }
-          return client.apply(command);
-        },
-        digest: () => client.digest(),
-        snapshot: () => client.snapshot(),
-        close: () => client.close(),
-        undo: () => client.undo(),
-        redo: () => client.redo(),
-        reorder: (ids) => client.reorder(ids)
-      };
-    }
+    createClient: (_role, label) => createClient(label)
   }, {
     invalidOperations: options.smoke ? 12 : 24,
     validOperations: options.smoke ? 4 : 8
   });
 
   const nonMapClient = await createClient('destructive-non-map-entry');
-  const nonMapEntryRejectionReason = await nonMapClient.rejectNonMapEntry(
-    `vve109-destructive-non-map-${Date.now()}`
-  );
-  nonMapClient.close();
+  const nonMapEntryRejectionReason = await nonMapClient.rejectNonMapEntry();
+  await nonMapClient.close();
 
   const malformedClient = await createClient('destructive-malformed-frame');
   const malformedFrameCloseCode = await malformedClient.sendRawFrame(
@@ -1193,7 +1278,7 @@ const runDestructiveGate = async (
   if (malformedFrameCloseCode !== 1008) {
     throw new Error(`Production malformed frame was closed with ${malformedFrameCloseCode}; expected 1008.`);
   }
-  malformedClient.close();
+  await malformedClient.close();
 
   const oversizedClient = await createClient('destructive-oversized-frame');
   const maxPayload = Number(process.env.VVE_MAX_WS_PAYLOAD_BYTES ?? MEASURED_RESOURCE_LIMITS.maxWebsocketPayloadBytes);
@@ -1206,15 +1291,13 @@ const runDestructiveGate = async (
   if (oversizedFrameCloseCode !== 1009 && oversizedFrameCloseCode !== 1013) {
     throw new Error(`Production oversized frame was closed with ${oversizedFrameCloseCode}; expected 1009 or 1013.`);
   }
-  oversizedClient.close();
-  await waitForReady(base);
-  const clientErrors = createdClients.reduce((sum, client) => sum + client.clientErrors(), 0);
-  if (clientErrors) throw new Error(`Destructive gate observed ${clientErrors} unexpected client error(s).`);
+  await oversizedClient.close();
+  assertNoClientErrors('Destructive gate');
   return {
     attemptedInvalidOperations: scenario.attemptedInvalidOperations,
     rejectedInvalidOperations: scenario.rejectedInvalidOperations,
     validOperations: scenario.validOperations,
-    clientErrors,
+    clientErrors: clientErrorLog.length,
     nonMapEntryRejectionReason,
     malformedFrameCloseCode,
     oversizedFrameCloseCode,
@@ -1248,57 +1331,38 @@ const assertSoakCheckpoint = async (clients: ProductionGateClient[], boards: Boa
   }
 };
 
-const runSoak = async (base: string, boards: BoardAccess[], options: ReleaseGateOptions, restart: (afterStop?: () => Promise<void>) => Promise<void>, adminCookie: string): Promise<{ details: SoakDetails; clients: number; acknowledged: number; reconnects: number; restarts: number; maxRssBytes: number; maxEventLoopDelayMs: number; samples: number; blockerEvents: number; digestMismatches: number; crossBoardLeaks: number; clientErrors: number }> => {
+const runSoak = async (base: string, boards: BoardAccess[], options: ReleaseGateOptions, restart: Restart, probe: RuntimeProbe): Promise<{ details: SoakDetails; clients: number; acknowledged: number; reconnects: number; digestMismatches: number; crossBoardLeaks: number }> => {
   const studentCounts = boards.map((_, index) => index === 0 ? 3 : index < 12 ? 2 : 1);
   const clients = await connectClients(base, boards, studentCounts);
   const openingSamples = clients.map((client) => client.synchronizationMs);
   const propagationSamples: number[] = [];
   let injectedReconnects = 0;
   let adapterReloads = 0;
-  let maxHeapUsedBytes = 0;
   let restartRecoveryMs = 0;
   let freshRestartClients = 0;
   let acknowledged = 0;
   let reconnects = 0;
-  let restarts = 0;
-  let maxRssBytes = 0;
-  let maxEventLoopDelayMs = 0;
-  let blockerEvents = 0;
   let digestMismatches = 0;
   let crossBoardLeaks = 0;
-  let clientErrors = 0;
-  let samples = 0;
   const started = Date.now();
   let lastProgressAt = started;
   let restarted = false;
-  const assertClientHealth = (): void => {
-    clientErrors = clients.reduce((sum, client) => sum + client.clientErrors(), 0);
-    if (clientErrors) throw new Error(`Soak observed ${clientErrors} unexpected client error(s).`);
+  const sampleRuntime = async (label: string, expectedConnections = clients.length): Promise<void> => {
+    const health = await probe.sample(label);
+    if (health.connections !== expectedConnections || health.boards !== boards.length) {
+      throw new Error(`Runtime connection/board count mismatch at ${label}: expected ${expectedConnections}/${boards.length}, got ${health.connections}/${health.boards}.`);
+    }
   };
   while (Date.now() - started < options.durationMs) {
-    const ready = await waitForReady(base, adminCookie);
-    samples += 1;
-    const soak = (ready.soak ?? {}) as Record<string, unknown>;
-    const memory = (soak.memory ?? {}) as Record<string, unknown>;
-    const loop = (soak.eventLoopDelayMs ?? {}) as Record<string, unknown>;
-    const errors = (soak.errors ?? {}) as Record<string, unknown>;
-    const currentBlockers = Number(soak.eventsLost ?? 0) + Number(errors.persistence ?? 0) + Number(errors.unhandled ?? 0);
-    blockerEvents = Math.max(blockerEvents, currentBlockers);
-    if (currentBlockers) throw new Error(`Runtime recorded ${currentBlockers} blocker event(s).`);
-    maxHeapUsedBytes = Math.max(maxHeapUsedBytes, Number(memory.heapUsedBytes ?? 0));
-    if (Number(soak.connections ?? -1) !== clients.length || Number(soak.boards ?? -1) !== boards.length) {
-      throw new Error(`Readiness connection/board count mismatch: expected ${clients.length}/${boards.length}, got ${String(soak.connections)}/${String(soak.boards)}.`);
-    }
-    maxRssBytes = Math.max(maxRssBytes, Number(memory.rssBytes ?? 0));
-    maxEventLoopDelayMs = Math.max(maxEventLoopDelayMs, Number(loop.p95 ?? 0));
-    assertClientHealth();
+    await sampleRuntime('soak');
+    assertNoClientErrors('Soak');
     const index = acknowledged % clients.length;
     const operationBoardIndex = boards.findIndex((board) => board.boardId === clients[index]!.boardId);
     if (operationBoardIndex < 0) throw new Error(`Soak client ${clients[index]!.boardId} is not one of the gate boards.`);
     const mutationStarted = performance.now();
     await clients[index]!.addObject(seededChangeObject(operationBoardIndex, acknowledged + 10_000));
     acknowledged += 1;
-    assertClientHealth();
+    assertNoClientErrors('Soak');
     const checkpoint = await assertSoakCheckpoint(clients, boards);
     propagationSamples.push(performance.now() - mutationStarted);
     digestMismatches += checkpoint.digestMismatches;
@@ -1309,11 +1373,11 @@ const runSoak = async (base: string, boards: BoardAccess[], options: ReleaseGate
       const reload = injectedReconnects > 0;
       const selected = reload ? 2 : 1;
       const expected = clients[selected]!.digest();
-      clients[selected]!.expectDisconnect();
-      clients[selected]!.close();
-      if (clients[selected]!.isEditable()) throw new Error('Disconnected adapter remained editable.');
+      await clients[selected]!.close();
       const disconnectedDeadline = Date.now() + 5_000;
-      while (Number(((await waitForReady(base, adminCookie)).soak as Record<string, unknown>).connections) !== 56) {
+      for (;;) {
+        const health = await probe.sample('soak-disconnect');
+        if (health.connections === clients.length - 1) break;
         if (Date.now() >= disconnectedDeadline) throw new Error('Disconnected adapter was not released by the runtime.');
         await sleep(25);
       }
@@ -1331,12 +1395,12 @@ const runSoak = async (base: string, boards: BoardAccess[], options: ReleaseGate
         if (!beforeRestart.has(client.boardId)) beforeRestart.set(client.boardId, { digest: client.digest(), drawings: (client.snapshot().drawings as unknown[]).length });
       }
       const recoveryStarted = performance.now();
-      clients.forEach((client) => client.expectDisconnect());
+      clients.forEach((client) => client.expectOutage());
       await restart(async () => {
         if (clients.some((client) => client.isEditable())) throw new Error('A production client remained editable during backend drain.');
         // Dispose every local Y.Doc before the server starts. A surviving client
         // could resend its document and conceal missing durable state.
-        closeClients(clients);
+        await closeClients(clients);
       });
       const freshClients = await connectClients(base, boards, studentCounts);
       clients.splice(0, clients.length, ...freshClients);
@@ -1352,18 +1416,22 @@ const runSoak = async (base: string, boards: BoardAccess[], options: ReleaseGate
       const restartCheckpoint = await assertSoakCheckpoint(clients, boards);
       digestMismatches += restartCheckpoint.digestMismatches;
       crossBoardLeaks += restartCheckpoint.crossBoardLeaks;
+      if (digestMismatches || crossBoardLeaks) throw new Error('Soak restart checkpoint found divergent or cross-board state.');
       reconnects += clients.length;
-      restarts += 1;
       restarted = true;
     }
     if (Date.now() - lastProgressAt >= 60_000) {
-      console.log(`VVE-109 soak progress elapsedMs=${Date.now() - started} samples=${samples} clients=${clients.length} acknowledged=${acknowledged} reconnects=${reconnects} blockers=${blockerEvents}`);
+      console.log(`VVE-109 soak progress elapsedMs=${Date.now() - started} samples=${probe.totals.samples} clients=${clients.length} acknowledged=${acknowledged} reconnects=${reconnects}`);
       lastProgressAt = Date.now();
     }
     await sleep(options.smoke ? 500 : 1_000);
   }
+  const activeDurationMs = Date.now() - started;
+  // Final sample while every client is still connected: the last interval's
+  // server errors and connection count count as much as the first.
+  await sampleRuntime('soak-final');
+  assertNoClientErrors('Soak final');
   const digestByBoard = new Map<string, string>();
-  assertClientHealth();
   for (const client of clients) {
     const existing = digestByBoard.get(client.boardId);
     const digest = client.digest();
@@ -1381,14 +1449,15 @@ const runSoak = async (base: string, boards: BoardAccess[], options: ReleaseGate
     }
   }
   if (crossBoardLeaks) throw new Error(`Detected ${crossBoardLeaks} cross-board object leak(s).`);
-  closeClients(clients);
+  const clientCount = clients.length;
+  await closeClients(clients);
   const p95 = (values: number[]): number => values.sort((a, b) => a - b)[Math.max(0, Math.ceil(values.length * 0.95) - 1)] ?? 0;
   const details: SoakDetails = {
-    activeDurationMs: Date.now() - started, studentCounts, injectedReconnects, adapterReloads,
-    maxHeapUsedBytes, writeToPeerP95Ms: p95(propagationSamples), openingP95Ms: p95(openingSamples),
+    activeDurationMs, studentCounts, injectedReconnects, adapterReloads,
+    maxHeapUsedBytes: probe.totals.maxHeapUsedBytes, writeToPeerP95Ms: p95(propagationSamples), openingP95Ms: p95(openingSamples),
     restartRecoveryMs, freshRestartClients, roomDigests: Object.fromEntries(digestByBoard)
   };
-  return { details, clients: 57, acknowledged, reconnects, restarts, maxRssBytes, maxEventLoopDelayMs, samples, blockerEvents, digestMismatches, crossBoardLeaks, clientErrors };
+  return { details, clients: clientCount, acknowledged, reconnects, digestMismatches, crossBoardLeaks };
 };
 
 const reportJson = (report: GateReport): string => `${JSON.stringify(report, null, 2)}\n`;
@@ -1397,6 +1466,13 @@ export const assertGateReport = (report: GateReport): void => {
   if (!report.passed) throw new Error('Release gate report is not passing.');
   if (report.metrics.blockerEvents || report.metrics.clientErrors || report.metrics.digestMismatches || report.metrics.crossBoardLeaks) {
     throw new Error('Release gate reported blocker, client, digest, or cross-board failures.');
+  }
+  // One runtime sample before and after every restart plus a final one.
+  if (report.metrics.samples < 1 + 2 * report.backendRestarts || report.metrics.maxRssBytes <= 0) {
+    throw new Error('Release gate report lacks authenticated runtime samples around every restart and at the end.');
+  }
+  if (report.notCovered?.artifactImportExport !== PROTOCOL_GATE_NOT_COVERED.artifactImportExport) {
+    throw new Error('Release gate report must declare artifact import/export as browser-owned.');
   }
   if (report.profile === 'soak' && !report.smoke && report.durationMs < SOAK_MS) {
     throw new Error('A non-smoke soak report shorter than three hours cannot pass.');
@@ -1424,6 +1500,9 @@ export const main = async (argv = process.argv.slice(2)): Promise<GateReport> =>
   const options = parseReleaseGateArgs(argv);
   const startedAt = new Date().toISOString();
   const started = Date.now();
+  clientErrorLog.length = 0;
+  ackDigestReloadChecks = 0;
+  const backendBlockers: string[] = [];
   let stopPostgres: (() => Promise<void>) | null = null;
   let backend: RunningBackend | null = null;
   let backendRestarts = 0;
@@ -1432,14 +1511,10 @@ export const main = async (argv = process.argv.slice(2)): Promise<GateReport> =>
   let boardCount = 0;
   let reconnects = 0;
   let fixtures: { pdfBytes: number; imageBytes: number } | null = null;
-  let soakSamples = 0;
-  let maxRssBytes = 0;
-  let maxEventLoopDelayMs = 0;
-  let blockerEvents = 0;
-  let clientErrors = 0;
   let digestMismatches = 0;
   let crossBoardLeaks = 0;
   let soakDetails: SoakDetails | undefined;
+  let mature: GateReport['mature'];
   let backendStarting: ChildProcess | null = null;
   let postgresOwned = false;
   let cleanupPromise: Promise<void> | null = null;
@@ -1471,11 +1546,21 @@ export const main = async (argv = process.argv.slice(2)): Promise<GateReport> =>
     return [signal, handler];
   });
   const startOwnedBackend = async (): Promise<RunningBackend> => {
-    const launched = await startBackend(options.backendPort, options.pgPort, (child) => {
-      backendStarting = child;
+    const launched = await startBackend(options.backendPort, options.pgPort, {
+      onSpawn: (child) => {
+        backendStarting = child;
+      },
+      onBlocker: (description) => backendBlockers.push(description)
     });
     backendStarting = null;
     return launched;
+  };
+  const stopOwnedBackend = async (label: string): Promise<void> => {
+    const running = backend;
+    backend = null;
+    if (!running) throw new Error(`No backend is running at ${label}.`);
+    assertCleanExit(await running.stop(), label);
+    assertNoBackendBlockers(backendBlockers, label);
   };
   let finalDigests: string[] | undefined;
   let destructive: GateReport['destructive'] | undefined;
@@ -1487,18 +1572,23 @@ export const main = async (argv = process.argv.slice(2)): Promise<GateReport> =>
     stopPostgres = await startPostgres(options.pgPort);
     const base = `http://127.0.0.1:${options.backendPort}`;
     backend = await startOwnedBackend();
-    const restart = async (afterStop?: () => Promise<void>): Promise<void> => {
-      await backend?.stop();
-      backend = null;
-      await afterStop?.();
-      backend = await startOwnedBackend();
-      backendRestarts += 1;
-    };
     const admin = await fetchJson<{ ok: boolean }>(base, '/api/admin/session', {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ passphrase: TEST_PASS })
     });
     if (admin.status !== 200) throw new Error(`Administrator test login failed with HTTP ${admin.status}.`);
     const adminCookie = cookieOf(admin.headers);
+    const probe = createRuntimeProbe(base, adminCookie, backendBlockers);
+    await probe.sample('start');
+    const restart: Restart = async (afterStop) => {
+      // Shutdown errors are invisible to HTTP sampling; the clean exit and the
+      // backend log scan in stopOwnedBackend cover the drain itself.
+      await probe.sample('before-restart');
+      await stopOwnedBackend('restart');
+      await afterStop?.();
+      backend = await startOwnedBackend();
+      backendRestarts += 1;
+      await probe.sample('after-restart');
+    };
     const boardCountTarget = options.profile === 'soak' || options.profile === 'stress' ? 22 : 1;
     const boards: BoardAccess[] = [];
     for (let index = 0; index < boardCountTarget; index += 1) {
@@ -1509,31 +1599,31 @@ export const main = async (argv = process.argv.slice(2)): Promise<GateReport> =>
     boardCount = boards.length;
 
     if (options.profile === 'change') {
-      const result = await runChangeGate(base, boards, options, restart, adminCookie);
+      const result = await runChangeGate(base, boards[0]!, options, restart);
       clientCount = result.clients; acknowledgedOperations = result.acknowledged; reconnects = result.reconnects;
-      digestMismatches = result.digestMismatches; blockerEvents = result.blockerEvents;
-      clientErrors = result.clientErrors;
-      maxRssBytes = result.maxRssBytes; maxEventLoopDelayMs = result.maxEventLoopDelayMs; finalDigests = result.finalDigests;
+      finalDigests = result.finalDigests;
     } else if (options.profile === 'mature') {
-      const result = await runMatureGate(base, boards, options, restart);
-      clientCount = result.clients; acknowledgedOperations = result.acknowledged; clientErrors = result.clientErrors; fixtures = result.fixtures;
+      const result = await runMatureGate(base, boards[0]!, restart);
+      clientCount = result.clients; acknowledgedOperations = result.acknowledged; fixtures = result.fixtures;
+      mature = { reloadOpenMs: result.openMs.reload, restartOpenMs: result.openMs.restart };
     } else if (options.profile === 'destructive') {
       destructive = await runDestructiveGate(base, boards[0]!, options, restart);
       clientCount = 1;
       acknowledgedOperations = destructive.validOperations;
-      clientErrors = destructive.clientErrors;
     } else if (options.profile === 'soak') {
-      const result = await runSoak(base, boards, options, restart, adminCookie);
+      const result = await runSoak(base, boards, options, restart, probe);
       soakDetails = result.details;
       clientCount = result.clients; acknowledgedOperations = result.acknowledged; reconnects = result.reconnects;
-      soakSamples = result.samples; maxRssBytes = result.maxRssBytes; maxEventLoopDelayMs = result.maxEventLoopDelayMs; blockerEvents = result.blockerEvents; digestMismatches = result.digestMismatches; crossBoardLeaks = result.crossBoardLeaks;
-      clientErrors = result.clientErrors;
+      digestMismatches = result.digestMismatches; crossBoardLeaks = result.crossBoardLeaks;
     } else {
       const studentCounts = boards.map(() => 3);
       const clients = await connectClients(base, boards, studentCounts);
       clientCount = clients.length;
-      closeClients(clients);
+      await closeClients(clients);
     }
+    await probe.sample('final');
+    await stopOwnedBackend('final shutdown');
+    assertNoClientErrors('Final');
     const report: GateReport = {
       profile: options.profile,
       smoke: options.smoke,
@@ -1545,10 +1635,21 @@ export const main = async (argv = process.argv.slice(2)): Promise<GateReport> =>
       acknowledgedOperations,
       reconnects,
       backendRestarts,
-      metrics: { samples: options.profile === 'soak' ? soakSamples : 1, maxRssBytes, maxEventLoopDelayMs, blockerEvents, clientErrors, digestMismatches, crossBoardLeaks },
+      metrics: {
+        samples: probe.totals.samples,
+        maxRssBytes: probe.totals.maxRssBytes,
+        maxEventLoopDelayMs: probe.totals.maxEventLoopDelayMs,
+        blockerEvents: backendBlockers.length,
+        clientErrors: clientErrorLog.length,
+        digestMismatches,
+        crossBoardLeaks,
+        ackDigestReloadChecks
+      },
+      coverage: 'protocol',
+      notCovered: PROTOCOL_GATE_NOT_COVERED,
       fixtures,
+      ...(mature ? { mature } : {}),
       ...(soakDetails ? { soakDetails } : {}),
-      coverage: 'protocol-complete',
       ...(finalDigests ? { finalDigests } : {}),
       ...(destructive ? { destructive } : {}),
       passed: true
@@ -1562,7 +1663,10 @@ export const main = async (argv = process.argv.slice(2)): Promise<GateReport> =>
 };
 
 if (require.main === module) {
+  // main() has already cleaned up the backend and PostgreSQL. Exit explicitly:
+  // a client left open by a failed run keeps reconnect timers alive and would
+  // otherwise hang an unattended gate forever.
   main()
-    .then((report) => { assertGateReport(report); console.log(JSON.stringify(report, null, 2)); })
-    .catch((error) => { console.error(`VVE-109 release gate failed: ${(error as Error).stack ?? (error as Error).message}`); process.exitCode = 1; });
+    .then((report) => { assertGateReport(report); console.log(JSON.stringify(report, null, 2)); process.exit(0); })
+    .catch((error) => { console.error(`VVE-109 release gate failed: ${(error as Error).stack ?? (error as Error).message}`); process.exit(1); });
 }

@@ -1,39 +1,62 @@
-version: "3.9"
+# LOCAL DEVELOPMENT ONLY — never a production template.
+#
+# The backend image runs with NODE_ENV=production and fails closed without
+# real secrets, so compose refuses to start until you export them:
+#
+#   export ADMIN_PASSPHRASE=... TEACHER_SESSION_SECRET=...
+#   docker compose up --build
+#
+# The PostgreSQL password is a local placeholder for a database that is only
+# published on 127.0.0.1. See RAILWAY_CONFIG.md for the production setup.
 
 services:
+  postgres:
+    image: postgres:17-alpine
+    ports:
+      - "127.0.0.1:5432:5432"
+    environment:
+      POSTGRES_USER: vve
+      POSTGRES_PASSWORD: local-only-not-a-secret
+      POSTGRES_DB: vve
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vve -d vve"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
   backend:
     build:
       context: ./server
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     environment:
       HOST: 0.0.0.0
       PORT: 8000
       DATA_DIR: /data
+      DATABASE_URL: postgresql://vve:local-only-not-a-secret@postgres:5432/vve
+      ADMIN_PASSPHRASE: ${ADMIN_PASSPHRASE:?export ADMIN_PASSPHRASE first}
+      TEACHER_SESSION_SECRET: ${TEACHER_SESSION_SECRET:?export TEACHER_SESSION_SECRET first}
+      ADMIN_SESSION_SECRET: ${ADMIN_SESSION_SECRET:-}
+      BOARD_WS_SECRET: ${BOARD_WS_SECRET:-}
+      TEACHER_APP_BASE_URL: http://localhost:4173
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
-      OCR_MODEL: ${OCR_MODEL:-}
-      SOLVER_MODEL: ${SOLVER_MODEL:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
     volumes:
       - backend_data:/data
 
-  postgres:
-    image: postgres:15-alpine
-    ports:
-      - "5432:5432"
-    environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres_password
-      POSTGRES_DB: whitevue
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-
   frontend:
     build:
-      context: ./frontend
-      args:
-        VITE_BACKEND_URL: ${VITE_BACKEND_URL:-http://localhost:8000}
+      # Repository root: the frontend imports the shared server/src/pilot modules.
+      context: .
+      dockerfile: frontend/Dockerfile
     ports:
-      - "4173:80"
+      - "127.0.0.1:4173:80"
+    environment:
+      BACKEND_URL: http://backend:8000
     depends_on:
       - backend
 

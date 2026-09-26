@@ -10,7 +10,9 @@ nginx and proxies `/api/`, `/ws/`, and `/teacher/login` to the backend.
 Create the service from `server/` with `server/Dockerfile`. Railway supplies
 `PORT`; the image listens on `HOST=0.0.0.0` and runs `node dist/src/server.js`.
 The process owns startup, migrations, liveness, readiness, and bounded shutdown.
-Do not replace its command with a second migration or listener process.
+Leave the Railway start command empty: an override such as `npm run start:prod`
+adds a second, CLI-driven migration run before the process that already
+migrates. Attach a volume at `/data` for the file-backed rooms.
 
 Set these production variables in the backend service:
 
@@ -36,16 +38,21 @@ and `VVE_*` resource-limit variables are accepted only when an operator has
 measured a reason to override the code defaults. Never put secrets in frontend
 build arguments, `VITE_*` variables, URLs, or query strings.
 
-The local `.env.example` and `docker-compose.yml` contain placeholder
-passwords and `change-me` values for development only. Replace every secret
+The local `server/.env.example` and `docker-compose.yml` are for development
+only: compose refuses to start until `ADMIN_PASSPHRASE` and
+`TEACHER_SESSION_SECRET` are exported, and its database password is a
+loopback-only placeholder. Replace every secret
 before a production start; RuntimeControl fails closed when required values are
 missing or still use a production fallback.
 
 ## Frontend service
 
-Create the service from `frontend/` with `frontend/Dockerfile`. Set the runtime
-`BACKEND_URL` to the backend's private Railway URL (including the scheme and
-port when required). The image listens on the Railway-provided `PORT` and nginx
+Build the service with `frontend/Dockerfile` from the **repository root**
+(Railway root directory `/`, Dockerfile path `frontend/Dockerfile`): the
+frontend imports the shared `server/src/pilot` modules through the `@pilot`
+alias, so a `frontend/`-only build context cannot compile. Set the runtime
+`BACKEND_URL` to the backend URL (its private `http://<service>.railway.internal:<port>`
+address, or its public HTTPS domain). The image listens on the Railway-provided `PORT` and nginx
 uses `BACKEND_URL` for API, WebSocket, and Teacher-login proxying.
 
 `VITE_BACKEND_URL` is an optional build argument for local/static builds. It is
@@ -69,7 +76,8 @@ administrator session guard.
 
 ## Operational checklist
 
-- [ ] Backend service uses `server/Dockerfile` and the image command remains `node dist/src/server.js`.
+- [ ] Backend service uses `server/Dockerfile`, has no start-command override, and mounts a volume at `/data`.
+- [ ] Frontend service builds `frontend/Dockerfile` from the repository root.
 - [ ] `DATABASE_URL`, `ADMIN_PASSPHRASE`, and `TEACHER_SESSION_SECRET` are set to high-entropy production values.
 - [ ] `ADMIN_SESSION_SECRET` and `BOARD_WS_SECRET` are set separately where operationally possible.
 - [ ] `TEACHER_APP_BASE_URL` matches the public frontend origin.

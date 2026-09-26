@@ -400,7 +400,9 @@ const startBackend = async (port: number, pgPort: number, hooks: BackendHooks): 
   };
   const earlyExit = new Promise<never>((_, reject) => {
     child.once('error', (error) => reject(error));
-    child.once('exit', (code) => reject(new Error(`Backend exited before readiness (${code ?? 'signal'}).`)));
+    child.once('exit', (code) => reject(new Error(
+      `Backend exited before readiness (${code ?? 'signal'}). Last scrubbed output:\n${output.join('\n')}`
+    )));
   });
   // The race below settles as soon as readiness succeeds; keep the exit
   // sentinel observed so a later normal shutdown cannot become an unhandled

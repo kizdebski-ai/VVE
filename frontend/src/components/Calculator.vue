@@ -387,7 +387,7 @@ onMounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: all 0.2s;
+  transition: background-color 0.2s, border-color 0.2s, color 0.2s, box-shadow 0.2s, opacity 0.2s, transform 0.2s;
 }
 .internal-close-btn:hover {
   background: rgba(0,0,0,0.05);
@@ -451,7 +451,12 @@ onMounted(() => {
   padding: 20px;
   flex-grow: 1;
   grid-template-columns: repeat(4, 1fr);
-  background: rgba(255, 255, 255, 0.3);
+  margin: 0 12px 12px;
+  padding: 12px;
+  border-radius: 18px;
+  /* The keypad is a recessed well; every key is raised out of it. */
+  background: var(--surface-pressed);
+  box-shadow: inset 2px 2px 6px rgba(159, 173, 198, 0.45), inset -2px -2px 6px rgba(255, 255, 255, 0.8);
 }
 /* Basic mode rows */
 .buttons:not(.scientific-mode) {
@@ -465,25 +470,26 @@ onMounted(() => {
 .buttons button {
   font-size: 20px;
   font-weight: 500;
-  border: none;
-  border-radius: 16px;
-  color: #1f2937;
+  border: 1px solid var(--border-subtle);
+  border-radius: 14px;
+  color: var(--text-primary);
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: background-color 150ms ease, color 150ms ease, box-shadow 150ms ease, transform var(--motion-press) ease;
   display: flex;
   align-items: center;
   justify-content: center;
   min-height: 50px;
-  background: rgba(255, 255, 255, 0.6);
-  box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+  background: var(--surface-raised);
+  box-shadow: 3px 3px 7px var(--surface-dark), -3px -3px 7px var(--surface-light);
 }
-.buttons button:hover {
-  background: rgba(255, 255, 255, 0.9);
-  transform: translateY(-1px);
-  box-shadow: 0 4px 8px rgba(0,0,0,0.08);
+@media (hover: hover) {
+  .buttons button:hover {
+    background: var(--glass-highlight);
+  }
 }
 .buttons button:active {
-  transform: scale(0.98);
+  transform: scale(0.97);
+  box-shadow: var(--shadow-pressed);
 }
 
 .buttons button:focus-visible,
@@ -500,10 +506,9 @@ onMounted(() => {
 /* Show scientific buttons and assign grid positions in scientific mode */
 .buttons.scientific-mode .btn-sci {
   display: flex;
-  background-color: rgba(243, 244, 246, 0.8);
   font-size: 13px;
   font-weight: 600;
-  color: #4b5563;
+  color: var(--text-secondary);
 }
 /* Smaller buttons in scientific mode to fit more rows */
 .buttons.scientific-mode button {
@@ -513,8 +518,7 @@ onMounted(() => {
 .buttons.scientific-mode .mem-store,
 .buttons.scientific-mode .mem-recall,
 .buttons.scientific-mode .mem-add {
-  background-color: rgba(219, 234, 254, 0.8);
-  color: #1d4ed8;
+  color: var(--accent-primary);
 }
 
 /* Scientific Grid Positions (Rows 1-5) */
@@ -540,27 +544,28 @@ onMounted(() => {
 .buttons.scientific-mode .toggle-basic { grid-column: 4 / 5; grid-row: 5 / 6; }
 
 
-/* Button Colors */
-.buttons .btn-digit { background-color: rgba(255, 255, 255, 0.8); }
-.buttons .btn-op { 
-    background-color: #fef3c7; 
-    color: #d97706;
+/* Key roles are carried by ink colour on one material; only "=" is solid. */
+.buttons .btn-op {
+  color: var(--accent-primary);
+  font-weight: 600;
 }
-.buttons .btn-equal { 
-    background-color: #3b82f6; 
-    color: white;
+.buttons .btn-equal {
+  background: var(--accent-primary);
+  border-color: var(--accent-primary);
+  color: #fff;
 }
-.buttons .btn-equal:hover {
-    background-color: #2563eb;
+@media (hover: hover) {
+  .buttons .btn-equal:hover {
+    background: var(--accent-hover);
+  }
 }
-.buttons .ac { 
-    background-color: #fee2e2; 
-    color: #dc2626;
+.buttons .ac {
+  color: var(--danger);
+  font-weight: 600;
 }
-.buttons .sci-toggle { 
-    background-color: #f3f4f6; 
-    color: #4b5563;
-    font-size: 16px; 
+.buttons .sci-toggle {
+  color: var(--text-secondary);
+  font-size: 16px;
 }
 
 /* Basic Button Grid Positions (When NOT in scientific mode) */

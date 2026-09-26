@@ -53,16 +53,27 @@
   --shadow-pressed: inset 4px 4px 8px rgba(159, 173, 198, 0.5), inset -4px -4px 8px rgba(255, 255, 255, 0.85);
   --focus-ring: #2563eb;
 
-  /* 3.1: Unified z-index system */
+  /* Layer scale: one ordered source for every floating surface.
+     board chrome (toolbar, properties well, presence, zoom)
+       < lesson panels < menus and popovers < artifact progress
+       < toasts < modals. */
   --z-canvas: 1;
   --z-grid: 10;
   --z-floating-options: 1001;
-  --z-panel: 1010;
-  --z-toolbar: 3000;
-  --z-user-info: 3000;
+  --z-chrome: 3000;
+  --z-toolbar: var(--z-chrome);
+  --z-user-info: var(--z-chrome);
+  --z-panel: 3100;
+  --z-menu: 3200;
+  --z-artifact: 3300;
   --z-toast: 5000;
   --z-modal: 8000;
   --z-error-overlay: 9999;
+
+  /* Motion: short, interruptible, transform/opacity only. */
+  --motion-press: 120ms;
+  --motion-surface: 180ms;
+  --ease-out-soft: cubic-bezier(0.22, 1, 0.36, 1);
 
   /* --- Missing variables --- */
   --radius-xl: 16px;
@@ -124,34 +135,116 @@ body {
   font-weight: 700;
 }
 
-/* --- Inputs --- */
-input,
+/* --- Inputs ---
+   Text entry is a recessed well in the same material as the surfaces around
+   it. Range, colour, checkbox, radio and file inputs keep their own controls. */
+input:where(:not([type="range"], [type="color"], [type="checkbox"], [type="radio"], [type="file"])),
 select,
 textarea {
-  background: #ffffff;
-  border: 1px solid var(--border-strong);
+  background: var(--surface-pressed);
+  border: 1px solid var(--border-subtle);
+  box-shadow: inset 2px 2px 5px rgba(159, 173, 198, 0.45), inset -2px -2px 5px rgba(255, 255, 255, 0.8);
   color: var(--text-primary);
   padding: 10px 14px;
-  border-radius: 6px;
+  border-radius: 10px;
   font-size: 14px;
   width: 100%;
+  min-height: 44px;
   outline: none;
-  transition: border-color 0.2s;
+  transition: border-color 150ms ease, box-shadow 150ms ease;
 }
 
-input:focus,
-select:focus {
+textarea {
+  min-height: 88px;
+  resize: vertical;
+}
+
+input:where(:not([type="range"], [type="color"], [type="checkbox"], [type="radio"], [type="file"])):focus,
+select:focus,
+textarea:focus {
   border-color: var(--accent-primary);
-  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+  box-shadow: inset 2px 2px 5px rgba(159, 173, 198, 0.45), inset -2px -2px 5px rgba(255, 255, 255, 0.8), 0 0 0 3px rgba(37, 99, 235, 0.14);
 }
 
-button:focus-visible,
-input:focus-visible,
-select:focus-visible,
-textarea:focus-visible,
-[tabindex]:focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 2px;
+/* Range: a recessed track with a raised thumb, 44 px tall hit area. */
+input:where([type="range"]) {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 44px;
+  min-width: 96px;
+  padding: 0;
+  margin: 0;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  touch-action: pan-x;
+}
+
+input[type="range"]::-webkit-slider-runnable-track {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--surface-pressed);
+  box-shadow: inset 1px 1px 3px rgba(112, 130, 159, 0.55), inset -1px -1px 2px rgba(255, 255, 255, 0.9);
+}
+
+input[type="range"]::-moz-range-track {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--surface-pressed);
+  box-shadow: inset 1px 1px 3px rgba(112, 130, 159, 0.55), inset -1px -1px 2px rgba(255, 255, 255, 0.9);
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 20px;
+  height: 20px;
+  margin-top: -7px;
+  border-radius: 50%;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-strong);
+  box-shadow: 2px 2px 5px var(--surface-dark), -2px -2px 5px var(--surface-light);
+}
+
+input[type="range"]::-moz-range-thumb {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-strong);
+  box-shadow: 2px 2px 5px var(--surface-dark), -2px -2px 5px var(--surface-light);
+}
+
+input[type="range"]:active::-webkit-slider-thumb {
+  box-shadow: var(--shadow-pressed);
+}
+
+/* Colour: a round raised swatch, never a full-width bar. */
+input:where([type="color"]) {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 44px;
+  height: 44px;
+  padding: 6px;
+  border-radius: 50%;
+  border: 1px solid var(--border-subtle);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-raised-sm);
+  cursor: pointer;
+}
+
+input[type="color"]::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+input[type="color"]::-webkit-color-swatch {
+  border: none;
+  border-radius: 50%;
+}
+
+input[type="color"]::-moz-color-swatch {
+  border: none;
+  border-radius: 50%;
 }
 
 input::placeholder {
@@ -164,7 +257,7 @@ button {
   font-family: inherit;
   font-size: 14px;
   font-weight: 600;
-  transition: background-color 150ms ease, color 150ms ease, border-color 150ms ease, box-shadow 150ms ease, transform 120ms ease;
+  transition: background-color 150ms ease, color 150ms ease, border-color 150ms ease, box-shadow 150ms ease, transform var(--motion-press) ease;
   border-radius: 6px;
 }
 
@@ -349,9 +442,11 @@ h1 {
   color: #64748b;
 }
 
-.tool-btn:hover {
-  color: var(--text-primary);
-  background: var(--glass-highlight);
+@media (hover: hover) {
+  .tool-btn:not(.active):hover {
+    color: var(--text-primary);
+    background: var(--glass-highlight);
+  }
 }
 
 .tool-btn.active {
@@ -394,6 +489,17 @@ h1 {
     backdrop-filter: none !important;
     -webkit-backdrop-filter: none !important;
     background: var(--surface-raised) !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+    scroll-behavior: auto !important;
   }
 }
 

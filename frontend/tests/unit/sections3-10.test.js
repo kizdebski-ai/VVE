@@ -170,9 +170,11 @@ describe('8.3: Dark mode uses @media instead of :deep(.dark-mode)', () => {
     expect(src).not.toContain('prefers-color-scheme: dark');
   });
 
-  it('ZoomPanControls.vue uses @media prefers-color-scheme', () => {
+  it('ZoomPanControls.vue uses the shared tactile material tokens', () => {
     const src = readSrc('components/ZoomPanControls.vue');
-    expect(src).toContain('prefers-color-scheme: dark');
+    expect(src).toContain('var(--surface-raised');
+    expect(src).toContain('var(--shadow-raised-sm');
+    expect(src).not.toContain('prefers-color-scheme: dark');
     expect(src).not.toContain(':deep(.dark-mode)');
   });
 

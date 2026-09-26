@@ -7,7 +7,7 @@
     @close="$emit('close')"
   >
     <template #header>
-      <Calculator :size="18" />
+      <LineChart :size="18" />
       <span>Wykres funkcji</span>
     </template>
 
@@ -25,9 +25,9 @@
 
       <div class="input-group">
         <label for="math-color">Kolor wykresu</label>
-        <div class="color-picker-wrapper">
-            <input id="math-color" type="color" v-model="color" class="color-input" />
-            <span class="color-preview" :style="{ backgroundColor: color }"></span>
+        <div class="color-field">
+          <input id="math-color" type="color" v-model="color" />
+          <span class="color-value">{{ color }}</span>
         </div>
       </div>
 
@@ -55,7 +55,7 @@
 
 <script setup>
 import { ref, computed } from 'vue';
-import { Calculator, LineChart } from 'lucide-vue-next';
+import { LineChart } from 'lucide-vue-next';
 import { compile } from 'mathjs';
 import DraggablePanel from './DraggablePanel.vue';
 import { LESSON_OBJECT_DEFAULTS } from '../utils/lessonObjectDefaults.js';
@@ -119,31 +119,16 @@ const plot = () => {
   color: var(--text-secondary);
 }
 
-.color-picker-wrapper {
-    position: relative;
-    width: 100%;
-    height: 36px;
-    border-radius: 8px;
-    overflow: hidden;
-    border: 1px solid var(--input-border);
-    background: var(--input-bg);
+.color-field {
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 
-.color-input {
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    opacity: 0;
-    cursor: pointer;
-}
-
-.color-preview {
-    display: block;
-    width: 100%;
-    height: 100%;
-    pointer-events: none;
+.color-value {
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
 }
 
 .range-inputs {

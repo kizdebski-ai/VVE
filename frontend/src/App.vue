@@ -181,7 +181,7 @@
           D
         </button>
 
-        <button class="minimize-btn" @click="toggleUserInfoPanel" title="Ukryj">
+        <button type="button" class="minimize-btn" @click="toggleUserInfoPanel" title="Ukryj" aria-label="Ukryj panel obecności">
            <component :is="ChevronRightIcon" :size="18" />
         </button>
       </div>
@@ -1634,29 +1634,50 @@ body {
   pointer-events: none;
 }
 
+/* Collapse sits under the tool rail, centred on it, never over the
+   properties well: a 44 px target carrying a 36 px raised puck. */
 .toolbar-collapse-btn {
   position: absolute;
-  top: 4px;
-  right: -12px;
-  width: 24px;
-  height: 24px;
+  top: calc(100% + 6px);
+  left: 7px;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: none;
   border-radius: 50%;
-  border: 1px solid var(--border-subtle, #e2e8f0);
-  background: var(--bg-surface, white);
+  background: transparent;
   color: var(--text-secondary);
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 1;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
   pointer-events: auto;
-  transition: background-color 140ms ease, color 140ms ease, box-shadow 140ms ease;
+  isolation: isolate;
+  transition: color 140ms ease;
 }
 
-.toolbar-collapse-btn:hover {
-  background: var(--bg-base, #f1f5f9);
-  color: var(--text-primary);
+.toolbar-collapse-btn::before {
+  content: '';
+  position: absolute;
+  inset: 4px;
+  z-index: -1;
+  border-radius: 50%;
+  border: 1px solid var(--border-subtle);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-raised-sm);
+  transition: box-shadow 140ms ease;
+}
+
+.toolbar-collapse-btn:active::before,
+.toolbar-expand-btn:active {
+  box-shadow: var(--shadow-pressed);
+}
+
+@media (hover: hover) {
+  .toolbar-collapse-btn:hover,
+  .toolbar-expand-btn:hover {
+    color: var(--text-primary);
+  }
 }
 
 .toolbar-expand-btn {
@@ -1664,8 +1685,9 @@ body {
   left: 8px;
   top: 50%;
   transform: translateY(-50%);
-  width: 36px;
-  height: 36px;
+  width: 44px;
+  height: 44px;
+  padding: 0;
   border-radius: 50%;
   border: 1px solid var(--border-subtle, #e2e8f0);
   cursor: pointer;
@@ -1674,12 +1696,7 @@ body {
   justify-content: center;
   z-index: var(--z-toolbar, 3000);
   color: var(--text-secondary);
-  transition: transform 140ms var(--ease-fluid), background-color 140ms ease, color 140ms ease;
-}
-
-.toolbar-expand-btn:hover {
-  transform: translateY(-50%) scale(1.1);
-  color: var(--text-primary);
+  transition: background-color 140ms ease, color 140ms ease, box-shadow 140ms ease;
 }
 
 /* Floating User Info */
@@ -1740,8 +1757,11 @@ body {
   border-color: rgba(255, 255, 255, 0.1);
 }
 
+.user-info-toggle-btn:active {
+  box-shadow: var(--shadow-pressed);
+}
+
 .user-info-toggle-btn:hover {
-  transform: scale(1.05);
   background: var(--glass-highlight);
 }
 
@@ -1841,13 +1861,17 @@ body {
   border: none;
   color: var(--text-secondary);
   cursor: pointer;
-  padding: 6px;
+  width: 44px;
+  height: 44px;
+  padding: 0;
   border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: background-color 140ms ease, color 140ms ease, box-shadow 140ms ease, transform 120ms ease;
-  margin-left: 4px;
+  transition: background-color 140ms ease, color 140ms ease, box-shadow 140ms ease;
+  /* 44 px target without growing the pill: the overhang is hit area only. */
+  margin: -8px -6px -8px 0;
+  flex-shrink: 0;
 }
 
 .minimize-btn:hover {
@@ -1890,7 +1914,7 @@ body {
   width: 420px;
   max-width: 92vw;
 
-  z-index: var(--z-panel, 1010);
+  z-index: var(--z-panel);
 
   display: flex;
 

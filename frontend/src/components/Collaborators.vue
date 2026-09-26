@@ -273,7 +273,6 @@ export default {
 }
 
 .user-avatar:hover {
-   transform: scale(1.1); /* Slight zoom on hover */
    z-index: 1011; /* Bring hovered avatar to front */
 }
 

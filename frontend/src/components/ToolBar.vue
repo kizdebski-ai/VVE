@@ -42,7 +42,7 @@
             @click.stop="toggleShapesMenu"
             title="Kształty"
           >
-            <component :is="currentShapeIcon" :size="20" />
+            <ShapeIcon :shape="currentShapeKey" :size="20" />
             <ChevronDown :size="12" class="dropdown-arrow" />
           </button>
           
@@ -67,14 +67,14 @@
                       @click="selectShape(shape)"
                       :title="shape.label"
                     >
-                    <component :is="shape.icon" :size="18" />
+                    <ShapeIcon :shape="shape.tool" :size="22" />
                   </button>
                 </div>
               </div>
 
               <div class="popover-section">
                 <div class="section-title">Styl linii</div>
-                <div class="option-row">
+                <div class="option-row" role="group" aria-label="Styl linii">
                   <button
                     v-for="style in lineStyleOptions"
                     :key="style.value"
@@ -91,7 +91,7 @@
 
               <div class="popover-section">
                 <div class="section-title">Wygląd kreski</div>
-                <div class="option-row">
+                <div class="option-row" role="group" aria-label="Wygląd kreski">
                   <button
                     v-for="option in roughnessOptions"
                     :key="option.value"
@@ -108,7 +108,7 @@
 
               <div class="popover-section">
                 <div class="section-title">Groty</div>
-                <div class="option-row">
+                <div class="option-row" role="group" aria-label="Groty">
                   <button
                     v-for="style in arrowStyleOptions"
                     :key="style.value"
@@ -298,34 +298,38 @@
       </div>
     </div>
 
-    <!-- Properties Bar (Contextual) -->
+    <!-- Properties well: only the controls the active tool actually uses. -->
     <div
       class="properties-bar glass-panel"
       v-if="shouldShowProperties"
       :class="orientation"
+      role="group"
+      :aria-label="currentTool === 'eraser' ? 'Ustawienia gumki' : 'Ustawienia narzędzia'"
       @pointerenter="handleHoverEnter"
       @pointerleave="handleHoverLeave"
     >
-      <!-- Color Picker + Quick Swatches -->
-      <div class="property-group color-group">
-        <button
-          type="button"
-          class="color-preview"
-          :aria-label="`Wybierz kolor linii ${currentColor}`"
-          title="Wybierz kolor linii"
-          @click="toggleColorPicker"
-        >
-          <span class="color-preview-dot" :style="{ backgroundColor: currentColor }" aria-hidden="true"></span>
-        </button>
-        <input
-          type="color"
-          ref="colorInput"
-          v-model="currentColor"
-          @input="updateColor"
-          aria-label="Kolor linii"
-          tabindex="-1"
-          class="hidden-color-input"
-        >
+      <div v-if="currentTool !== 'eraser'" class="property-well color-well">
+        <span class="color-picker-anchor">
+          <button
+            type="button"
+            class="color-preview"
+            :aria-label="`Wybierz kolor linii ${currentColor}`"
+            title="Wybierz kolor linii"
+            @click="toggleColorPicker"
+          >
+            <span class="color-preview-dot" :style="{ backgroundColor: currentColor }" aria-hidden="true"></span>
+          </button>
+          <input
+            type="color"
+            ref="colorInput"
+            v-model="currentColor"
+            @input="updateColor"
+            aria-label="Kolor linii"
+            tabindex="-1"
+            class="hidden-color-input"
+          >
+        </span>
+        <span class="well-divider" aria-hidden="true"></span>
         <div class="quick-swatches">
           <button
             v-for="swatch in quickSwatches"
@@ -342,34 +346,45 @@
         </div>
       </div>
 
-      <!-- Line Width Slider -->
-      <div class="property-group slider-group">
-        <Circle :size="12" :fill="currentColor" :stroke-width="0" />
-        <input 
-          type="range" 
-          min="1" 
-          max="20" 
-          v-model.number="currentLineWidth" 
-          @input="updateLineWidth"
-          aria-label="Grubość linii"
+      <label v-if="currentTool === 'eraser'" class="property-well slider-well">
+        <span class="property-label">Rozmiar</span>
+        <input
+          type="range"
+          min="10"
+          max="100"
+          v-model.number="currentEraserSize"
+          @input="updateEraserSize"
+          aria-label="Rozmiar gumki"
           class="width-slider"
         >
-        <Circle :size="20" :fill="currentColor" :stroke-width="0" />
-      </div>
-      
-      <!-- Eraser Size (if eraser selected) -->
-       <div class="property-group" v-if="currentTool === 'eraser'">
-          <span class="label">Rozmiar:</span>
-           <input 
-            type="range" 
-            min="10" 
-            max="100" 
-            v-model.number="currentEraserSize" 
-            @input="updateEraserSize"
-            aria-label="Rozmiar gumki"
-            class="width-slider"
-          >
-       </div>
+        <span class="size-preview" aria-hidden="true">
+          <span class="size-preview-ring" :style="{ width: `${eraserPreviewSize}px`, height: `${eraserPreviewSize}px` }"></span>
+        </span>
+      </label>
+      <label v-else class="property-well slider-well">
+        <span class="property-label">{{ currentTool === 'text' ? 'Rozmiar' : 'Grubość' }}</span>
+        <input
+          type="range"
+          min="1"
+          max="20"
+          v-model.number="currentLineWidth"
+          @input="updateLineWidth"
+          :aria-label="currentTool === 'text' ? 'Rozmiar tekstu' : 'Grubość linii'"
+          class="width-slider"
+        >
+        <span class="size-preview" aria-hidden="true">
+          <span
+            v-if="currentTool === 'text'"
+            class="size-preview-glyph"
+            :style="{ color: currentColor, fontSize: `${textPreviewSize}px` }"
+          >A</span>
+          <span
+            v-else
+            class="size-preview-dot"
+            :style="{ backgroundColor: currentColor, width: `${strokePreviewSize}px`, height: `${strokePreviewSize}px` }"
+          ></span>
+        </span>
+      </label>
     </div>
   </div>
 </template>
@@ -378,16 +393,13 @@
 import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue';
 import { featureAvailable } from '../services/pilotSurface';
 import { PANEL_SHORTCUTS } from '../utils/lessonObjectDefaults.js';
+import ShapeIcon from './ShapeIcon.vue';
 import {
   Pencil,
   Eraser,
   Type,
   MousePointer2,
   Hand,
-  Square,
-  Circle as CircleIcon,
-  Triangle,
-  Minus,
   Undo2,
   Redo2,
   Trash2,
@@ -396,16 +408,8 @@ import {
   Activity,
   Axis3d,
   LineChart,
-  Diamond,
-  Octagon,
   GitBranch,
   Bug,
-  Circle,
-  Box,
-  Cylinder,
-  Cone,
-  Pyramid,
-  Globe,
   FlaskConical
 } from 'lucide-vue-next';
 
@@ -463,21 +467,21 @@ const mainTools = [
 const visibleMainTools = computed(() => mainTools.filter((tool) => can(tool.feature)));
 
 const shapeOptions = [
-  { tool: 'rectangle', label: 'Prostokąt', icon: Square },
-  { tool: 'circle', label: 'Okrąg', icon: CircleIcon },
-  { tool: 'triangle', label: 'Trójkąt', icon: Triangle },
-  { tool: 'square', label: 'Kwadrat', icon: Square },
-  { tool: 'trapezoid', label: 'Trapez', icon: Diamond },
-  { tool: 'parallelogram', label: 'Równoległobok', icon: Diamond },
-  { tool: 'deltoid', label: 'Deltoid', icon: Diamond },
-  { tool: 'cube', label: 'Sześcian', icon: Box },
-  { tool: 'cuboid', label: 'Prostopadłościan', icon: Box },
-  { tool: 'sphere', label: 'Kula', icon: Globe },
-  { tool: 'cylinder', label: 'Walec', icon: Cylinder },
-  { tool: 'cone', label: 'Stożek', icon: Cone },
-  { tool: 'pyramid', label: 'Ostrosłup', icon: Pyramid },
-  { tool: 'tetrahedron', label: 'Czworościan', icon: Pyramid },
-  { tool: 'line', label: 'Linia', icon: Minus, toolType: 'lines' }
+  { tool: 'rectangle', label: 'Prostokąt' },
+  { tool: 'circle', label: 'Okrąg' },
+  { tool: 'triangle', label: 'Trójkąt' },
+  { tool: 'square', label: 'Kwadrat' },
+  { tool: 'trapezoid', label: 'Trapez' },
+  { tool: 'parallelogram', label: 'Równoległobok' },
+  { tool: 'deltoid', label: 'Deltoid' },
+  { tool: 'cube', label: 'Sześcian' },
+  { tool: 'cuboid', label: 'Prostopadłościan' },
+  { tool: 'sphere', label: 'Kula' },
+  { tool: 'cylinder', label: 'Walec' },
+  { tool: 'cone', label: 'Stożek' },
+  { tool: 'pyramid', label: 'Ostrosłup' },
+  { tool: 'tetrahedron', label: 'Czworościan' },
+  { tool: 'line', label: 'Linia', toolType: 'lines' }
 ];
 
 const lineStyleOptions = [
@@ -493,10 +497,10 @@ const roughnessOptions = [
 ];
 
 const arrowStyleOptions = [
-  { value: 'none', label: 'Bez grotów' },
-  { value: 'start', label: 'Na początku' },
-  { value: 'end', label: 'Na końcu' },
-  { value: 'both', label: 'Po obu stronach' }
+  { value: 'none', label: 'Brak' },
+  { value: 'start', label: 'Początek' },
+  { value: 'end', label: 'Koniec' },
+  { value: 'both', label: 'Oba końce' }
 ];
 
 const colorSwatches = [
@@ -603,14 +607,14 @@ watch(currentTool, () => {
   }
 });
 
-const currentShapeIcon = computed(() => {
-  if (currentTool.value === 'lines') {
-    const lineOption = shapeOptions.find(opt => opt.toolType === 'lines');
-    return lineOption?.icon || Minus;
-  }
-  const activeShape = shapeOptions.find(opt => opt.tool === props.currentShape);
-  return activeShape?.icon || Square;
-});
+const currentShapeKey = computed(() =>
+  currentTool.value === 'lines' ? 'line' : props.currentShape
+);
+
+// Previews stay inside the 24 px well slot whatever the chosen size.
+const strokePreviewSize = computed(() => Math.min(22, Math.max(3, currentLineWidth.value + 2)));
+const textPreviewSize = computed(() => 11 + Math.round(currentLineWidth.value * 0.6));
+const eraserPreviewSize = computed(() => 6 + Math.round((currentEraserSize.value - 10) * 0.18));
 
 const selectTool = (tool) => {
   currentTool.value = tool;
@@ -819,9 +823,8 @@ onBeforeUnmount(() => {
 <style scoped>
 .toolbar-container {
   display: flex;
-  align-items: flex-start; /* Align to top */
+  align-items: flex-start;
   gap: 12px;
-  z-index: 100;
   pointer-events: none;
 }
 
@@ -886,8 +889,8 @@ onBeforeUnmount(() => {
   margin: 4px 0;
 }
 
+/* Tools: flat until chosen; the active tool sits pressed into the rail. */
 .tool-btn {
-  /* Base styles matching icon-btn global class but specific to toolbar sizing */
   display: flex;
   align-items: center;
   justify-content: center;
@@ -896,30 +899,23 @@ onBeforeUnmount(() => {
   flex-shrink: 0;
   border: 1px solid transparent;
   background: transparent;
-  border-radius: var(--radius-sm);
+  border-radius: 10px;
   color: var(--text-secondary);
   cursor: pointer;
-  transition: all 0.2s var(--ease-fluid);
   position: relative;
+  transition: background-color 150ms ease, color 150ms ease, box-shadow 150ms ease, transform var(--motion-press) ease;
 }
 
-.tool-btn:hover {
-  background: var(--glass-highlight);
-  color: var(--text-primary);
-  transform: scale(1.05);
+.tool-btn:active {
+  transform: scale(0.94);
+  box-shadow: var(--shadow-pressed);
 }
 
-.tool-btn.active {
-  background: rgba(59, 130, 246, 0.2);
-  color: var(--accent-primary);
-  border-color: rgba(59, 130, 246, 0.3);
-  box-shadow: 0 0 10px rgba(59, 130, 246, 0.2);
-}
-
-.tool-btn.danger:hover {
-  background: rgba(239, 68, 68, 0.2);
-  color: var(--danger-color);
-  border-color: rgba(239, 68, 68, 0.3);
+@media (hover: hover) {
+  .tool-btn.danger:hover {
+    background: rgba(220, 38, 38, 0.1);
+    color: var(--danger);
+  }
 }
 
 .dropdown-trigger {
@@ -931,39 +927,49 @@ onBeforeUnmount(() => {
   bottom: 2px;
   right: 2px;
   opacity: 0.6;
-  font-size: 10px;
 }
 
-/* Popovers */
+/* Popovers sit on the menu layer: above board chrome and lesson panels. */
 .toolbar-popover {
   position: fixed;
-  padding: 16px;
+  padding: 14px;
   min-width: 240px;
-  z-index: 4000;
+  z-index: var(--z-menu);
   display: flex;
   flex-direction: column;
-  gap: 16px;
-  /* Global glass-panel style applies background/blur */
+  gap: 14px;
+  animation: popover-in var(--motion-surface) var(--ease-out-soft);
+}
+
+@keyframes popover-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .shapes-popover {
-  box-sizing: border-box;
-  width: 320px;
+  width: 324px;
   min-width: min(280px, calc(100vw - 24px));
   max-width: calc(100vw - 24px);
-  max-height: calc(100vh - 40px);
+  max-height: calc(100dvh - 24px);
   overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .coordinate-menu {
-  min-width: 200px;
-  gap: 8px;
+  min-width: 220px;
+  gap: 6px;
 }
 
 .popover-section {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
 }
 
 .section-title {
@@ -971,94 +977,61 @@ onBeforeUnmount(() => {
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--text-secondary);
-  font-weight: 600;
+  font-weight: 700;
 }
 
+/* Segmented choices: a recessed track; the chosen segment is raised. */
 .option-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 12px;
+  background: var(--surface-pressed);
+  box-shadow: inset 2px 2px 5px rgba(159, 173, 198, 0.45), inset -2px -2px 5px rgba(255, 255, 255, 0.8);
 }
 
 .option-pill {
+  flex: 1 1 auto;
   min-width: 44px;
   min-height: 44px;
-  border: 1px solid var(--glass-border);
-  background: rgba(255, 255, 255, 0.05);
-  border-radius: 9999px;
-  padding: 10px 12px;
+  border: 1px solid transparent;
+  background: transparent;
+  border-radius: 9px;
+  padding: 6px 10px;
   font-size: 12px;
+  font-weight: 600;
   color: var(--text-secondary);
   cursor: pointer;
-  transition: all 0.2s;
-}
-
-.option-pill:hover {
-  border-color: var(--accent-primary);
-  color: var(--text-primary);
-  background: rgba(59, 130, 246, 0.1);
 }
 
 .option-pill.active {
-  background: var(--accent-primary);
-  color: white;
-  border-color: var(--accent-primary);
-  box-shadow: 0 2px 8px rgba(59, 130, 246, 0.4);
+  background: var(--surface-raised);
+  color: var(--accent-primary);
+  border-color: var(--border-subtle);
+  box-shadow: 2px 2px 5px var(--surface-dark), -2px -2px 5px var(--surface-light);
+}
+
+.option-pill:active {
+  transform: scale(0.97);
+}
+
+@media (hover: hover) {
+  .option-pill:not(.active):hover {
+    color: var(--text-primary);
+  }
 }
 
 .color-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
-}
-
-.color-swatch {
-  box-sizing: border-box;
-  width: 44px;
-  height: 44px;
-  padding: 8px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 50%;
-  border: 2px solid transparent;
-  background: transparent;
-  cursor: pointer;
-  transition: box-shadow 0.2s ease;
-}
-
-.color-swatch-dot {
-  display: block;
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
-  border: 2px solid transparent;
-  transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1), border-color 0.2s ease;
-}
-
-.color-swatch:hover .color-swatch-dot {
-  transform: scale(1.2);
-  border-color: white;
-}
-
-.color-swatch.active {
-  border-color: white;
-  box-shadow: 0 0 0 2px var(--accent-primary);
-}
-
-.color-swatch-dot.fill-none-dot {
-  background: linear-gradient(135deg, #fff 45%, #ef4444 45%, #ef4444 55%, #fff 55%);
-  border: 2px solid var(--glass-border);
-}
-
-.color-swatch-dot.fill-none-dot .no-fill-x {
-  display: none;
+  gap: 0;
 }
 
 .shapes-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 8px;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 4px;
 }
 
 .shape-btn {
@@ -1069,22 +1042,27 @@ onBeforeUnmount(() => {
   min-height: 44px;
   aspect-ratio: 1;
   border: 1px solid transparent;
-  background: rgba(255, 255, 255, 0.03);
-  border-radius: var(--radius-sm);
+  background: transparent;
+  border-radius: 10px;
   color: var(--text-secondary);
   cursor: pointer;
-  transition: all 0.2s;
 }
 
-.shape-btn:hover {
-  background: rgba(255, 255, 255, 0.1);
-  color: var(--text-primary);
+.shape-btn:active {
+  transform: scale(0.94);
 }
 
 .shape-btn.active {
-  background: rgba(59, 130, 246, 0.2);
+  background: #e7efff;
   color: var(--accent-primary);
-  border-color: rgba(59, 130, 246, 0.3);
+  box-shadow: var(--shadow-pressed);
+}
+
+@media (hover: hover) {
+  .shape-btn:not(.active):hover {
+    background: var(--glass-highlight);
+    color: var(--text-primary);
+  }
 }
 
 .coordinate-btn {
@@ -1092,69 +1070,76 @@ onBeforeUnmount(() => {
   aspect-ratio: auto;
   padding: 8px 12px;
   font-size: 13px;
+  color: var(--text-primary);
 }
 
-/* Properties Bar */
+/* Properties: a raised strip holding recessed wells, one per concern. */
 .properties-bar {
   display: flex;
   align-items: center;
-  gap: 16px;
-  padding: 8px 16px;
-  pointer-events: auto; /* allow interaction inside while container is non-interactive */
+  gap: 6px;
+  padding: 6px;
+  pointer-events: auto;
+  animation: popover-in var(--motion-surface) var(--ease-out-soft);
 }
 
 .properties-bar.vertical {
-  max-width: min(360px, calc(100vw - 88px));
   flex-wrap: wrap;
-  overflow-x: hidden;
+  max-width: calc(100vw - 100px);
 }
 
-.properties-bar.vertical .property-group,
-.properties-bar.vertical .quick-swatches {
-  min-width: 0;
-  max-width: 100%;
-}
-
-.property-group {
+.property-well {
   display: flex;
   align-items: center;
-  gap: 10px;
-  position: relative;
+  min-height: 52px;
+  padding: 4px;
+  border-radius: 14px;
+  background: var(--surface-pressed);
+  box-shadow: inset 2px 2px 5px rgba(159, 173, 198, 0.45), inset -2px -2px 5px rgba(255, 255, 255, 0.8);
 }
 
+.color-well {
+  gap: 2px;
+}
+
+.well-divider {
+  width: 1px;
+  height: 28px;
+  margin: 0 4px;
+  background: var(--border-subtle);
+}
+
+.color-picker-anchor {
+  position: relative;
+  display: inline-flex;
+}
+
+/* The current colour is the one raised puck in the well. */
 .color-preview {
-  box-sizing: border-box;
   width: 44px;
   height: 44px;
-  padding: 8px;
+  padding: 0;
   border-radius: 50%;
-  border: 2px solid transparent;
-  background: transparent;
+  border: 1px solid var(--border-subtle);
+  background: var(--surface-raised);
+  box-shadow: 2px 2px 5px var(--surface-dark), -2px -2px 5px var(--surface-light);
   cursor: pointer;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  transition: box-shadow 0.2s ease;
 }
 
 .color-preview-dot {
   display: block;
-  width: 24px;
-  height: 24px;
+  width: 26px;
+  height: 26px;
   border-radius: 50%;
-  border: 2px solid rgba(255, 255, 255, 0.2);
-  box-shadow: 0 2px 4px rgba(0,0,0,0.2);
-  transition: transform 0.2s ease;
-}
-
-.color-preview:hover .color-preview-dot {
-  transform: scale(1.1);
+  border: 1px solid rgba(15, 23, 42, 0.18);
 }
 
 .hidden-color-input {
   position: absolute;
-  top: 0;
-  left: 0;
+  inset: 0;
   width: 44px;
   height: 44px;
   opacity: 0;
@@ -1162,93 +1147,102 @@ onBeforeUnmount(() => {
   /* pointer-events enabled so iOS Safari can open the native picker on tap */
 }
 
-.slider-group {
+.quick-swatches {
+  display: flex;
+  flex-wrap: wrap;
+}
+
+.quick-swatch,
+.color-swatch {
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+}
+
+.quick-swatch-dot,
+.color-swatch-dot {
+  display: block;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1px solid rgba(15, 23, 42, 0.18);
+  transition: box-shadow 150ms ease, transform var(--motion-press) ease;
+}
+
+.quick-swatch:active .quick-swatch-dot,
+.color-swatch:active .color-swatch-dot {
+  transform: scale(0.88);
+}
+
+.quick-swatch.active .quick-swatch-dot,
+.color-swatch.active .color-swatch-dot {
+  box-shadow: 0 0 0 3px var(--surface-pressed), 0 0 0 5px var(--accent-primary);
+}
+
+.popover-section .color-swatch.active .color-swatch-dot {
+  box-shadow: 0 0 0 3px var(--surface-raised), 0 0 0 5px var(--accent-primary);
+}
+
+.color-swatch-dot.fill-none-dot {
+  background: linear-gradient(135deg, #fff 45%, #dc2626 45%, #dc2626 55%, #fff 55%);
+}
+
+.color-swatch-dot.fill-none-dot .no-fill-x {
+  display: none;
+}
+
+.slider-well {
+  gap: 8px;
+  padding: 4px 8px 4px 14px;
+  cursor: pointer;
+}
+
+.property-label {
+  min-width: 52px;
+  font-size: 12px;
+  font-weight: 600;
   color: var(--text-secondary);
 }
 
 .width-slider {
-  width: 100px;
-  height: 44px;
-  background: transparent;
-  border-radius: 2px;
-  appearance: none;
-  outline: none;
+  width: 112px;
+  min-width: 0;
 }
 
-.width-slider::-webkit-slider-runnable-track {
-  height: 4px;
-  background: rgba(255, 255, 255, 0.1);
-  border-radius: 2px;
+.size-preview {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
 }
 
-.width-slider::-moz-range-track {
-  height: 4px;
-  background: rgba(255, 255, 255, 0.1);
-  border-radius: 2px;
-}
-
-.width-slider::-webkit-slider-thumb {
-  appearance: none;
-  width: 16px;
-  height: 16px;
-  background: var(--accent-primary);
-  border-radius: 50%;
-  cursor: pointer;
-  border: 2px solid var(--bg-color);
-  box-shadow: 0 0 0 2px var(--glass-border);
-  transition: transform 0.2s;
-}
-
-.width-slider::-webkit-slider-thumb:hover {
-  transform: scale(1.2);
-}
-
-.label {
-    font-size: 12px;
-    color: var(--text-secondary);
-    font-weight: 500;
-}
-
-/* Quick color swatches in properties bar */
-.color-group {
-  flex-wrap: wrap;
-}
-
-.quick-swatches {
-  display: flex;
-  gap: 4px;
-  flex-wrap: wrap;
-}
-
-.quick-swatch {
-  box-sizing: border-box;
-  width: 44px;
-  height: 44px;
-  border-radius: 50%;
-  border: 2px solid transparent;
-  background: transparent;
-  cursor: pointer;
-  transition: box-shadow 0.15s;
-  padding: 11px;
-}
-
-.quick-swatch-dot {
-  box-sizing: border-box;
+.size-preview-dot,
+.size-preview-ring {
   display: block;
-  width: 18px;
-  height: 18px;
   border-radius: 50%;
-  border: 2px solid transparent;
-  transition: transform 0.15s;
 }
 
-.quick-swatch:hover .quick-swatch-dot {
-  transform: scale(1.2);
-  border-color: rgba(255, 255, 255, 0.5);
+.size-preview-dot {
+  border: 1px solid rgba(15, 23, 42, 0.18);
 }
 
-.quick-swatch.active {
-  border-color: var(--accent-primary);
-  box-shadow: 0 0 0 1px var(--accent-primary);
+.size-preview-ring {
+  border: 1.5px solid var(--text-secondary);
 }
+
+.size-preview-glyph {
+  font-family: "Kalam", cursive;
+  font-weight: 700;
+  line-height: 1;
+}
+
 </style>

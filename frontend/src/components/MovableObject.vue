@@ -1608,7 +1608,6 @@ onUnmounted(() => {
 }
 
 .resize-handle:hover {
-  transform: scale(1.2);
   background-color: #2563eb; /* Fill on hover */
 }
 

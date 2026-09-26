@@ -106,7 +106,8 @@ describe('Pilot surface: manifest-driven UI enumeration', () => {
     expect(labels).toContain('Pełny ekran');
     expect(labels).toContain('Skróty');
     expect(labels).toContain('Wyczyść'); // teacher may clear the board
-    expect(labels).toContain('PDF'); // PDF import + export entries
+    expect(labels).toContain('Importuj PDF');
+    expect(labels).toContain('Eksportuj PDF');
     expect(labels).toContain('Styl'); // Input Style panel
     expect(labels).not.toContain('Pokoje'); // legacy peer rooms
     expect(labels).not.toContain('Eksport'); // raw JSON board export

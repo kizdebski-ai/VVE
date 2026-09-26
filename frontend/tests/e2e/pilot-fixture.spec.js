@@ -370,7 +370,7 @@ test.describe('Pilot fixture: Administrator, Teacher, Student browser contexts',
     await expect(second.locator('[data-object-type="triangle"]')).toBeVisible({ timeout: 5_000 });
 
     await first.locator('[data-tool-id="tool.shapes"]').click();
-    await first.getByRole('button', { name: 'Po obu stronach' }).click();
+    await first.getByRole('button', { name: 'Oba końce' }).click();
     await first.getByRole('button', { name: 'Linia' }).click();
     await drawOnCanvas({ x: canvasBox.x + 180, y: gestureTop + 160 }, { x: canvasBox.x + 340, y: gestureTop + 240 });
     await expect(second.locator('[data-object-type="line"]')).toBeVisible({ timeout: 5_000 });

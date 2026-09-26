@@ -133,7 +133,7 @@ onUnmounted(() => {
   flex-direction: column;
   /* Lesson dialogs must remain interactive above the touch toolbar and its
      always-visible properties strip. */
-  z-index: calc(var(--z-toolbar, 3000) + 1);
+  z-index: var(--z-panel);
   /* Glass styles are inherited from global .glass-panel */
   padding: 0; /* Content handles padding */
   max-height: calc(100dvh - 24px);
@@ -168,12 +168,15 @@ onUnmounted(() => {
   background: transparent;
   border: none;
   color: var(--text-secondary);
-  padding: 4px;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  margin: -10px -10px -10px 0;
   border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: all 0.2s;
+  transition: background-color 150ms ease, color 150ms ease;
   cursor: pointer;
 }
 

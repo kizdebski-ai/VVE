@@ -2,7 +2,7 @@
   <DraggablePanel
     v-if="isVisible"
     :initial-x="windowWidth - 364"
-    :initial-y="64"
+    :initial-y="84"
     width="340px"
     aria-label="Kalkulator naukowy"
     @close="closeModal"

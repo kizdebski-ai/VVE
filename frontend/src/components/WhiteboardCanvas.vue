@@ -2938,7 +2938,7 @@ export default {
   border-radius: 4px;
   font-size: 14px;
   pointer-events: auto;
-  transition: all 0.3s ease;
+  transition: background-color 0.3s ease, border-color 0.3s ease, color 0.3s ease, box-shadow 0.3s ease, opacity 0.3s ease, transform 0.3s ease;
 }
 
 .notification.info { background: rgba(33, 150, 243, 0.9); }
@@ -3085,7 +3085,7 @@ export default {
   font-size: 14px;
   opacity: 0;
   transform: translateY(-20px);
-  transition: all 0.3s ease;
+  transition: background-color 0.3s ease, border-color 0.3s ease, color 0.3s ease, box-shadow 0.3s ease, opacity 0.3s ease, transform 0.3s ease;
   max-width: 300px;
   text-align: center;
 }

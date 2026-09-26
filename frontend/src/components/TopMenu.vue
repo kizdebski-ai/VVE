@@ -51,7 +51,7 @@
         </button>
         <button v-if="can('panel.pdfImport')" class="menu-btn" data-testid="pdf-import-button" @click="triggerPdfImport" title="Zaimportuj PDF lub obraz">
           <FileUp :size="18" />
-          <span>PDF</span>
+          <span>Importuj PDF</span>
         </button>
 
         <div class="divider-vertical"></div>
@@ -86,7 +86,7 @@
             title="Eksportuj do PDF (A4)"
           >
             <FileDown :size="18" />
-            <span>PDF</span>
+            <span>Eksportuj PDF</span>
           </button>
           <div v-if="showPdfMenu" class="pdf-dropdown glass-panel" role="menu" aria-label="Opcje eksportu PDF">
             <button class="pdf-option" type="button" role="menuitem" data-testid="pdf-export-single" @click="emitPdfExport('single')">Cała tablica (1 strona)</button>
@@ -370,7 +370,7 @@ const openRoomManager = () => {
   top: max(8px, env(safe-area-inset-top, 0px));
   left: 0;
   width: 100%;
-  z-index: 1001;
+  z-index: var(--z-menu);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -398,7 +398,6 @@ const openRoomManager = () => {
 .gear-btn:hover, .gear-btn.active {
   background: var(--glass-highlight);
   color: var(--accent-primary);
-  transform: scale(1.04);
   box-shadow: 0 0 15px rgba(59, 130, 246, 0.3);
   border-color: rgba(59, 130, 246, 0.3);
 }
@@ -532,7 +531,7 @@ const openRoomManager = () => {
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
-  z-index: 2000; /* Higher than everything */
+  z-index: var(--z-modal);
   max-width: 400px;
   width: 90%;
   max-height: 85vh;

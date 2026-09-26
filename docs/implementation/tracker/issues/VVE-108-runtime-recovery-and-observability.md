@@ -41,10 +41,11 @@ Delivered `OperationalSignals` and `RuntimeControl` (Modules 10 and 11) so the P
 ### HTTP contracts
 
 - `GET /live` — 200 `{ live: true }` while the process is serving HTTP (including drain).
-- `GET /ready` — 200 only when database + collaboration persistence probes pass; body includes content-free `soak`. 503 during drain and before ready.
+- `GET /ready` — 200 only when database + collaboration persistence probes pass; the public body contains only liveness, readiness, status, and boolean checks. 503 during drain and before ready.
+- `GET /api/admin/runtime` — protected by the administrator HttpOnly session; returns the content-free `soak` snapshot with `Cache-Control: no-store` for operator diagnostics.
 - `GET /health` — Railway/Playwright wait target; 200 iff ready (`status: "ok"`). The previous `rooms` count is gone.
 
-Example `/ready` (trimmed): `{ "live": true, "ready": true, "status": "ready", "checks": { "database": true, "persistence": true }, "soak": { "eventLoopDelayMs": { "p95": 20.2 }, "memory": { "rssBytes": 150462464 }, "connections": 0, "boards": 0, "errors": { "persistence": 0, "unhandled": 0 } } }`.
+Example `/ready` (trimmed): `{ "live": true, "ready": true, "status": "ready", "checks": { "database": true, "persistence": true } }`. Runtime metrics belong to the protected `/api/admin/runtime` response and are never exposed by public readiness.
 
 Redacted event example: `{ "name": "access.decision", "dimensions": { "action": "board.edit", "granted": false, "reason": "revoked", "credentialKind": "boardWs", "passphrase": "[redacted]" } }`.
 

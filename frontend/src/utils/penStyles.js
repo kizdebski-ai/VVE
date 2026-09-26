@@ -88,9 +88,68 @@ export const DEFAULT_PEN_PRESETS = {
     maxWidth: 5,
     nibAngle: -0.35, // radians
     variation: 0.65,
+    shadowAlpha: 0.07,
+    shadowOffset: 0.25,
+    shadowInflate: 0.5,
     smoothing: 0.2
   }
 };
+
+export const getPenWidthScale = (style = 'technical', lineWidth = 2) => {
+  const min = style === 'gel' ? 0.35 : 0.5;
+  const max = style === 'gel' ? 4 : 3;
+  return clamp(lineWidth / 2, min, max);
+};
+
+const finiteOr = (value, fallback) => (typeof value === 'number' && Number.isFinite(value) ? value : fallback);
+
+/**
+ * Largest distance from the stroke centerline that the renderer paints:
+ * half the widest ink or shadow stroke plus the diagonal shadow offset.
+ */
+export const getPenInkExtent = ({ style = 'technical', lineWidth = 2, config = {}, hasPressure = false } = {}) => {
+  const preset = { ...(DEFAULT_PEN_PRESETS[style] || {}), ...(config || {}) };
+  const scale = getPenWidthScale(style, lineWidth);
+  let maxWidth;
+  if (style === 'marker') {
+    maxWidth = finiteOr(preset.width, 14) * scale;
+  } else if (style === 'gel') {
+    maxWidth = finiteOr(preset.maxWidth, 3.4) * scale * (hasPressure ? 2.2 : 1);
+  } else if (style === 'technical') {
+    maxWidth = finiteOr(preset.lineWidth, 2.4) * scale * (hasPressure ? 2.5 : 1);
+  } else if (style === 'calligraphy') {
+    maxWidth = finiteOr(preset.maxWidth, 5) * scale;
+  } else {
+    maxWidth = lineWidth * (hasPressure ? 2.5 : 1);
+  }
+  const shadowInflate = Math.max(finiteOr(preset.shadowInflate, 0), 0);
+  // The technical renderer paints its shadow without an offset.
+  const shadowOffset = style === 'technical' ? 0 : Math.abs(finiteOr(preset.shadowOffset, 0));
+  return (maxWidth + shadowInflate) / 2 + shadowOffset * Math.SQRT2;
+};
+
+export const getPenInkHalfWidth = (element = {}) => {
+  const lineWidth = typeof element.lineWidth === 'number' && Number.isFinite(element.lineWidth) && element.lineWidth > 0
+    ? element.lineWidth
+    : 2;
+  const style = typeof element.penStyle === 'string' ? element.penStyle : 'technical';
+  const points = Array.isArray(element.points) ? element.points : [];
+  const hasPressure = points.some((point) => {
+    if (Array.isArray(point)) return typeof point[2] === 'number' || typeof point[3] === 'number';
+    return typeof point?.p === 'number' || typeof point?.pressure === 'number';
+  });
+  const config = element.penConfig && typeof element.penConfig === 'object' ? element.penConfig : {};
+  return getPenInkExtent({ style, lineWidth, config, hasPressure });
+};
+
+// The spatial candidate query must expand before it knows which pen is under
+// the pointer. This is the largest width of the shipped presets at their
+// renderer scale; the per-element filter still uses the exact pen config.
+export const MAX_PEN_INK_HALF_WIDTH = Math.max(
+  ...Object.keys(DEFAULT_PEN_PRESETS).map((style) => (
+    getPenInkExtent({ style, lineWidth: 8, hasPressure: true })
+  ))
+);
 
 const catmullRomStroke = (ctx, pts) => {
   ctx.beginPath();
@@ -116,7 +175,7 @@ const drawGelStroke = (ctx, points, { color, lineWidth, config, globalSmoothing 
   const hasPressure = points.some((p) => typeof (p.pressure ?? p.p) === 'number');
   const smoothing = (hasPressure || config.disableSmoothing) ? 0 : (config.smoothing ?? globalSmoothing ?? 0);
   const pts = smoothPoints(points, smoothing);
-  const scale = clamp(lineWidth / 2, 0.35, 4);
+  const scale = getPenWidthScale('gel', lineWidth);
   const minWidth = (config.minWidth ?? 1.6) * scale;
   const maxWidth = (config.maxWidth ?? 3.4) * scale;
   const velocityK = config.velocityK ?? 0.045;
@@ -173,7 +232,7 @@ const drawTechnicalStroke = (ctx, points, { color, lineWidth, config, globalSmoo
   const hasPressure = points.some((p) => typeof (p.pressure ?? p.p) === 'number');
   const smoothing = (hasPressure || config.disableSmoothing) ? 0 : (config.smoothing ?? globalSmoothing ?? 0);
   const pts = smoothPoints(points, smoothing);
-  const baseWidth = (config.lineWidth ?? lineWidth ?? 2.4) * clamp(lineWidth / 2, 0.5, 3);
+  const baseWidth = (config.lineWidth ?? lineWidth ?? 2.4) * getPenWidthScale('technical', lineWidth);
 
   ctx.save();
   ctx.lineCap = 'round';
@@ -218,7 +277,7 @@ const drawTechnicalStroke = (ctx, points, { color, lineWidth, config, globalSmoo
 const drawMarkerStroke = (ctx, points, { color, lineWidth, config, globalSmoothing }) => {
   if (points.length < 2) return;
   const pts = smoothPoints(points, config.smoothing ?? globalSmoothing ?? 0);
-  const widthScale = clamp(lineWidth / 2, 0.5, 3);
+  const widthScale = getPenWidthScale('marker', lineWidth);
   const width = (config.width ?? 14) * widthScale;
   const shadowWidth = width + (config.shadowInflate ?? 1);
 
@@ -251,7 +310,7 @@ const drawMarkerStroke = (ctx, points, { color, lineWidth, config, globalSmoothi
 const drawCalligraphyStroke = (ctx, points, { color, lineWidth, config, globalSmoothing }) => {
   if (points.length < 2) return;
   const pts = smoothPoints(points, config.smoothing ?? globalSmoothing ?? 0);
-  const widthScale = clamp(lineWidth / 2, 0.5, 3);
+  const widthScale = getPenWidthScale('calligraphy', lineWidth);
   const minWidth = (config.minWidth ?? 2.2) * widthScale;
   const maxWidth = (config.maxWidth ?? 5) * widthScale;
   const nibAngle = config.nibAngle ?? -0.35;

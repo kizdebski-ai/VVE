@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import * as Y from 'yjs';
 import { ref } from 'vue';
 import { distanceToSegment, isPointInElement } from '../../src/utils/canvasDrawing.js';
+import { DEFAULT_PEN_PRESETS, drawStyledPen, getPenInkExtent, MAX_PEN_INK_HALF_WIDTH } from '../../src/utils/penStyles.js';
 import { normalizeBoardObject, validateBoardObject } from '@pilot/boardScene';
 import { createWhiteboardSession } from '@/board/whiteboardSession';
 import { useDrawingEngine } from '@/composables/useDrawingEngine';
@@ -81,6 +82,41 @@ describe('Geometry: distanceToSegment', () => {
   it('handles zero-length segment (point)', () => {
     const dist = distanceToSegment({ x: 3, y: 4 }, { x: 0, y: 0 }, { x: 0, y: 0 });
     expect(dist).toBeCloseTo(5, 5);
+  });
+});
+
+describe('Pen renderer bounds', () => {
+  const recordStroke = (style, lineWidth, points) => {
+    const widths = [];
+    let maxOffset = 0;
+    const track = (_x, y) => { maxOffset = Math.max(maxOffset, Math.abs(y)); };
+    const context = {
+      save: () => {},
+      restore: () => {},
+      beginPath: () => {},
+      moveTo: track,
+      lineTo: track,
+      bezierCurveTo: (_a, _b, _c, _d, x, y) => track(x, y),
+      stroke: () => {},
+      set lineWidth(value) { widths.push(value); },
+    };
+    drawStyledPen(context, points, { style, lineWidth });
+    return Math.max(...widths) / 2 + maxOffset * Math.SQRT2;
+  };
+  const line = (pressure) => [0, 1, 2, 3].map((x) => (
+    pressure === undefined ? { x: x * 4, y: 0, t: x * 16 } : { x: x * 4, y: 0, t: x * 16, p: pressure }
+  ));
+
+  it.each(Object.keys(DEFAULT_PEN_PRESETS))('bounds every painted pixel of a %s stroke', (style) => {
+    for (const lineWidth of [1, 2, 6, 8]) {
+      for (const pressure of [undefined, 1]) {
+        const painted = recordStroke(style, lineWidth, line(pressure));
+        const bound = getPenInkExtent({ style, lineWidth, hasPressure: pressure !== undefined });
+        expect(painted).toBeGreaterThan(0);
+        expect(painted).toBeLessThanOrEqual(bound + 1e-9);
+        expect(bound).toBeLessThanOrEqual(MAX_PEN_INK_HALF_WIDTH);
+      }
+    }
   });
 });
 

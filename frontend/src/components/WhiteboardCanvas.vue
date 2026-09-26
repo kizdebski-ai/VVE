@@ -186,6 +186,7 @@ import { resolveBackendBaseUrl } from '../services/backendUrl';
 import { connectToYjs } from '../services/connectToYjs';
 import { fetchServerResourceLimits } from '../services/resourceLimitsClient';
 import { drawElement, throttle, isPointInElement, distanceToSegment } from '../utils/canvasDrawing.js';
+import { getPenInkHalfWidth, MAX_PEN_INK_HALF_WIDTH } from '../utils/penStyles.js';
 import { isPointInRotatedRectangle } from '../utils/geometry.js';
 import {
   getCursorStyle,
@@ -1799,10 +1800,12 @@ export default {
     const hitTestAt = (world) => {
       const radius = Math.max(eraserSize.value / 2, 8);
       const candidates = session.value
-        ? session.value.queryObjectsNear(world, radius)
+        ? session.value.queryObjectsNear(world, radius + MAX_PEN_INK_HALF_WIDTH)
         : [];
       for (const element of candidates) {
-        const hitPadding = Math.max((element.lineWidth || 2) / 2 + 5, eraserSize.value / 2);
+        const hitPadding = element.type === 'pen'
+          ? radius + getPenInkHalfWidth(element)
+          : Math.max((element.lineWidth || 2) / 2 + 5, eraserSize.value / 2);
         if (isPointInElement(world, element, hitPadding)) return element;
       }
       return null;

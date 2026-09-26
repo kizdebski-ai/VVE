@@ -280,7 +280,7 @@ export default {
   align-items: center;
   justify-content: center;
   gap: 10px;
-  transition: all 0.2s var(--ease-fluid);
+  transition: background-color 0.2s var(--ease-fluid), border-color 0.2s var(--ease-fluid), color 0.2s var(--ease-fluid), box-shadow 0.2s var(--ease-fluid), opacity 0.2s var(--ease-fluid), transform 0.2s var(--ease-fluid);
   box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
 }
 
@@ -331,7 +331,7 @@ export default {
   border-radius: var(--radius-md);
   font-weight: 600;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: background-color 0.2s, border-color 0.2s, color 0.2s, box-shadow 0.2s, opacity 0.2s, transform 0.2s;
 }
 
 .btn-secondary:hover:not(:disabled) {
@@ -405,7 +405,7 @@ export default {
   border: 1px solid transparent;
   border-radius: var(--radius-md);
   cursor: pointer;
-  transition: all 0.2s;
+  transition: background-color 0.2s, border-color 0.2s, color 0.2s, box-shadow 0.2s, opacity 0.2s, transform 0.2s;
 }
 
 .room-item:hover {

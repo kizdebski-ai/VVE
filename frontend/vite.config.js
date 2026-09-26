@@ -40,6 +40,11 @@ export default defineConfig({
       }
     }
   },
+  optimizeDeps: {
+    // pdf.js ships its own module worker; pre-bundling breaks the `?url`
+    // worker asset resolution (empty workerSrc) in linked workspaces.
+    exclude: ['pdfjs-dist'],
+  },
   server: {
     proxy: {
       '/api': {

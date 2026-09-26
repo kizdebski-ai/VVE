@@ -78,7 +78,7 @@ onBeforeUnmount(() => {
   padding: 0 16px; /* Horizontal padding */
   border-radius: 20px; /* Match zoom controls */
   z-index: 850;
-  transition: all 0.3s ease;
+  transition: background-color 0.3s ease, border-color 0.3s ease, color 0.3s ease, box-shadow 0.3s ease, opacity 0.3s ease, transform 0.3s ease;
   /* Glass panel styles are inherited but we override some */
   background: rgba(255, 255, 255, 0.9); /* Slightly more opaque to match zoom */
   border: 1px solid rgba(255, 255, 255, 0.3);
@@ -107,7 +107,7 @@ onBeforeUnmount(() => {
   height: 8px;
   border-radius: 50%;
   background: #cbd5e1;
-  transition: all 0.3s ease;
+  transition: background-color 0.3s ease, border-color 0.3s ease, color 0.3s ease, box-shadow 0.3s ease, opacity 0.3s ease, transform 0.3s ease;
 }
 
 .indicator.active {

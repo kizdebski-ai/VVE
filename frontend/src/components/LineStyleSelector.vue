@@ -67,7 +67,7 @@ const selectLineStyle = (style) => {
   justify-content: center;
   border-radius: 6px;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease, box-shadow 0.2s ease, opacity 0.2s ease, transform 0.2s ease;
   background-color: var(--btn-bg, #f0f0f0);
   color: var(--btn-color, #333);
   border: 1px solid transparent;

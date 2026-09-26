@@ -35,8 +35,8 @@
           </div>
 
           <div class="actions">
-            <div v-if="connectionStatus === 'reconnecting' || connectionStatus === 'disconnected'" class="status-msg">
-              Łączenie...
+            <div v-if="connectionStatus === 'reconnecting' || connectionStatus === 'disconnected' || connectionStatus === 'draining'" class="status-msg">
+              {{ connectionStatus === 'draining' ? 'Serwer jest restartowany. Twoja praca zostanie przywrócona.' : 'Łączenie...' }}
             </div>
             <button class="btn-primary full-width big-btn" :disabled="loading || !boardInfo" @click="startBoard">
               {{ isTeacher ? 'Otwórz tablicę' : 'Dołącz do lekcji' }}
@@ -125,12 +125,20 @@ const handleStatus = (s) => connectionStatus.value = s;
 .student-shell {
   min-height: 100vh;
   display: flex; align-items: center; justify-content: center;
-  padding: 20px;
-  background-color: var(--bg-base);
+  padding: max(20px, env(safe-area-inset-top, 0px)) 20px max(20px, env(safe-area-inset-bottom, 0px));
+  background: var(--bg-base);
+  color: var(--text-primary);
 }
 .center-content { width: 100%; max-width: 420px; text-align: center; }
 
-.entry-card { text-align: left; background: var(--bg-surface); padding: 40px; box-shadow: 0 10px 40px -10px rgba(0,0,0,0.1); border-radius: 16px; border: 1px solid var(--border-subtle); }
+.entry-card {
+  text-align: left;
+  background: var(--surface-raised);
+  padding: 40px;
+  box-shadow: var(--shadow-raised);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-subtle);
+}
 
 .card-header { margin-bottom: 24px; text-align: center; }
 .eyebrow { font-size: 11px; text-transform: uppercase; letter-spacing: 0.15em; color: var(--accent-primary); font-weight: 700; margin-bottom: 8px; }
@@ -151,12 +159,32 @@ h1 { font-size: 26px; margin: 0; color: var(--text-primary); font-weight: 700; }
 .label-sm { font-size: 13px; color: var(--text-secondary); }
 .value-mono { font-family: monospace; color: var(--text-primary); font-size: 14px; font-weight: 500; }
 
-.big-btn { height: 48px; font-size: 16px; font-weight: 600; }
+.big-btn {
+  height: 48px;
+  font-size: 16px;
+  font-weight: 700;
+  border-radius: 14px;
+  box-shadow: var(--shadow-raised-sm);
+}
 .full-width { width: 100%; }
 
 .footer-brand { margin-top: 24px; font-size: 12px; color: var(--text-tertiary); }
 
-.state-box { padding: 24px; text-align: center; background: var(--bg-surface-hover); border-radius: 8px; color: var(--text-secondary); font-size: 14px; }
-.state-box.error { color: var(--danger); background: #fef2f2; border: 1px solid #fee2e2; }
+.state-box { padding: 24px; text-align: center; background: var(--surface-pressed); box-shadow: var(--shadow-pressed); border-radius: 14px; color: var(--text-secondary); font-size: 14px; }
+.state-box.error { color: var(--danger); background: #fcebed; border: 1px solid rgba(194, 59, 78, 0.34); }
 .hidden-canvas { display: none; }
+
+@media (max-width: 520px) {
+  .entry-card { padding: 28px 22px; }
+  .meta-grid { gap: 14px; }
+  .value { max-width: 48vw; overflow-wrap: anywhere; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fade-in { animation: none; }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .entry-card { box-shadow: var(--shadow-raised-sm); }
+}
 </style>

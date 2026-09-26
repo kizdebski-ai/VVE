@@ -1,13 +1,23 @@
 <template>
-  <div class="calculator glass-panel" :class="{ 'scientific-mode-active': isScientificMode }" @keydown="handleKeydown" tabindex="0" ref="calculatorRef">
+  <div class="calculator" :class="{ 'scientific-mode-active': isScientificMode }" @keydown="handleKeydown" tabindex="0" ref="calculatorRef">
      <!-- Integrated Close Button -->
-     <button class="internal-close-btn" @click="$emit('close')">
+     <button v-if="showClose" type="button" class="internal-close-btn" aria-label="Zamknij kalkulator" @click="$emit('close')">
        <X :size="20" />
      </button>
 
     <div class="display">
       <div class="expression">{{ currentExpression || '&nbsp;' }}</div>
-      <div class="result">{{ result || '0' }}</div>
+      <div class="result" aria-live="polite">{{ result || '0' }}</div>
+      <button
+        v-if="result && !result.startsWith('Błąd')"
+        type="button"
+        class="copy-result"
+        @click="copyResult"
+      >
+        <Copy :size="15" />
+        Kopiuj wynik
+      </button>
+      <span v-if="statusMessage" class="copy-status" role="status">{{ statusMessage }}</span>
     </div>
 
     <!-- Combined Buttons Container -->
@@ -37,10 +47,10 @@
         <button @click="inputParenthesis(')')" class="btn-sci paren-r">)</button>
 
         <!-- Scientific Buttons Row 5: memory -->
-        <button @click="memoryStore" class="btn-sci mem-store" title="Memory Store">MS</button>
-        <button @click="memoryRecall" class="btn-sci mem-recall" title="Memory Recall">MR</button>
-        <button @click="memoryAdd" class="btn-sci mem-add" title="Memory Add">M+</button>
-        <button @click="toggleScientificMode" class="btn-sci toggle-basic">Basic</button>
+        <button @click="memoryStore" class="btn-sci mem-store" title="Zapisz w pamięci">MS</button>
+        <button @click="memoryRecall" class="btn-sci mem-recall" title="Przywołaj z pamięci">MR</button>
+        <button @click="memoryAdd" class="btn-sci mem-add" title="Dodaj do pamięci">M+</button>
+        <button @click="toggleScientificMode" class="btn-sci toggle-basic">Podst.</button>
 
         <!-- Basic Buttons (Always Rendered, position adjusted by CSS) -->
         <button @click="clearAll" class="btn-op ac">AC</button>
@@ -65,7 +75,7 @@
         <button @click="inputDigit('3')" class="btn-digit three">3</button>
         <button @click="calculate" class="btn-equal">=</button>
 
-        <button @click="toggleScientificMode" class="btn-op sci-toggle">Sci</button>
+        <button @click="toggleScientificMode" class="btn-op sci-toggle" title="Tryb naukowy">Nauk.</button>
         <button @click="inputDigit('0')" class="btn-digit btn-zero">0</button>
         <button @click="inputDecimal" class="btn-digit decimal">.</button>
     </div>
@@ -75,8 +85,12 @@
 <script setup>
 import { ref, onMounted, nextTick } from 'vue';
 import { create, all } from 'mathjs';
-import { copyToClipboard } from '../utils/fileUtils';
 import { X, Copy, Delete } from 'lucide-vue-next';
+
+const props = defineProps({
+  showClose: { type: Boolean, default: true }
+});
+const emit = defineEmits(['close']);
 
 // Configure mathjs
 const math = create(all, {
@@ -248,8 +262,7 @@ const calculate = () => {
             result.value = simplifiedResult.toString();
             return;
         }
-    } catch (simplifyError) {
-        console.warn("Simplification failed, falling back to fraction evaluation:", simplifyError);
+    } catch {
         // Proceed to fraction evaluation if simplification fails
     }
 
@@ -258,15 +271,14 @@ const calculate = () => {
     result.value = math.format(evalResult, { fraction: 'ratio' }); // Format as fraction
 
   } catch (error) {
-    console.error("Calculator error:", error);
-    result.value = 'Error: ' + error.message; // Provide more error info
+    result.value = 'Błąd: sprawdź działanie';
   }
 };
 
 
 // 7.3: Clipboard with fallback + toast feedback
 const copyResult = () => {
-  if (!result.value || result.value.startsWith('Error')) return;
+  if (!result.value || result.value.startsWith('Błąd')) return;
   const text = result.value;
   const fallbackCopy = () => {
     try {
@@ -283,19 +295,19 @@ const copyResult = () => {
   };
   if (navigator.clipboard?.writeText) {
     navigator.clipboard.writeText(text)
-      .then(() => { statusMessage.value = 'Copied!'; setTimeout(() => statusMessage.value = '', 1500); })
+      .then(() => { statusMessage.value = 'Skopiowano.'; setTimeout(() => statusMessage.value = '', 1500); })
       .catch(() => {
-        if (fallbackCopy()) { statusMessage.value = 'Copied!'; setTimeout(() => statusMessage.value = '', 1500); }
-        else { statusMessage.value = 'Copy failed'; setTimeout(() => statusMessage.value = '', 2000); }
+        if (fallbackCopy()) { statusMessage.value = 'Skopiowano.'; setTimeout(() => statusMessage.value = '', 1500); }
+        else { statusMessage.value = 'Nie udało się skopiować wyniku.'; setTimeout(() => statusMessage.value = '', 2000); }
       });
   } else {
-    if (fallbackCopy()) { statusMessage.value = 'Copied!'; setTimeout(() => statusMessage.value = '', 1500); }
-    else { statusMessage.value = 'Copy failed'; setTimeout(() => statusMessage.value = '', 2000); }
+    if (fallbackCopy()) { statusMessage.value = 'Skopiowano.'; setTimeout(() => statusMessage.value = '', 1500); }
+    else { statusMessage.value = 'Nie udało się skopiować wyniku.'; setTimeout(() => statusMessage.value = '', 2000); }
   }
 };
 
 const getNumericResult = () => {
-  if (!result.value || result.value.startsWith('Error')) return 0;
+  if (!result.value || result.value.startsWith('Błąd')) return 0;
   try {
     const tempMath = create(all, { number: 'number' });
     return tempMath.evaluate(result.value) || 0;
@@ -334,7 +346,9 @@ const handleKeydown = (event) => {
          currentExpression.value = expr.slice(0, -1); // Remove last char
      }
   } else if (key === 'Escape') {
-    clearAll();
+    event.preventDefault();
+    event.stopPropagation();
+    emit('close');
   }
 };
 
@@ -347,15 +361,10 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.glass-panel {
-  width: 320px; /* Fixed width */
-  border-radius: 24px;
+.calculator {
+  width: 100%;
   overflow: hidden;
-  background: rgba(255, 255, 255, 0.8);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  box-shadow: 0 12px 35px rgba(0, 0, 0, 0.15);
-  border: 1px solid rgba(255, 255, 255, 0.5);
+  background: transparent;
   font-family: 'Inter', sans-serif;
   display: flex;
   flex-direction: column;
@@ -378,7 +387,7 @@ onMounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: all 0.2s;
+  transition: background-color 0.2s, border-color 0.2s, color 0.2s, box-shadow 0.2s, opacity 0.2s, transform 0.2s;
 }
 .internal-close-btn:hover {
   background: rgba(0,0,0,0.05);
@@ -414,6 +423,27 @@ onMounted(() => {
   line-height: 1.1;
 }
 
+.copy-result {
+  align-self: flex-end;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 6px 10px;
+  border: 1px solid rgba(37, 99, 235, 0.25);
+  border-radius: 10px;
+  background: rgba(219, 234, 254, 0.7);
+  color: #1d4ed8;
+  cursor: pointer;
+}
+
+.copy-status {
+  min-height: 18px;
+  margin-top: 4px;
+  color: #166534;
+  font-size: 12px;
+}
+
 /* Combined Buttons Container */
 .buttons {
   display: grid;
@@ -421,7 +451,12 @@ onMounted(() => {
   padding: 20px;
   flex-grow: 1;
   grid-template-columns: repeat(4, 1fr);
-  background: rgba(255, 255, 255, 0.3);
+  margin: 0 12px 12px;
+  padding: 12px;
+  border-radius: 18px;
+  /* The keypad is a recessed well; every key is raised out of it. */
+  background: var(--surface-pressed);
+  box-shadow: inset 2px 2px 6px rgba(159, 173, 198, 0.45), inset -2px -2px 6px rgba(255, 255, 255, 0.8);
 }
 /* Basic mode rows */
 .buttons:not(.scientific-mode) {
@@ -435,25 +470,33 @@ onMounted(() => {
 .buttons button {
   font-size: 20px;
   font-weight: 500;
-  border: none;
-  border-radius: 16px;
-  color: #1f2937;
+  border: 1px solid var(--border-subtle);
+  border-radius: 14px;
+  color: var(--text-primary);
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: background-color 150ms ease, color 150ms ease, box-shadow 150ms ease, transform var(--motion-press) ease;
   display: flex;
   align-items: center;
   justify-content: center;
   min-height: 50px;
-  background: rgba(255, 255, 255, 0.6);
-  box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+  background: var(--surface-raised);
+  box-shadow: 3px 3px 7px var(--surface-dark), -3px -3px 7px var(--surface-light);
 }
-.buttons button:hover {
-  background: rgba(255, 255, 255, 0.9);
-  transform: translateY(-1px);
-  box-shadow: 0 4px 8px rgba(0,0,0,0.08);
+@media (hover: hover) {
+  .buttons button:hover {
+    background: var(--glass-highlight);
+  }
 }
 .buttons button:active {
-  transform: scale(0.98);
+  transform: scale(0.97);
+  box-shadow: var(--shadow-pressed);
+}
+
+.buttons button:focus-visible,
+.copy-result:focus-visible,
+.internal-close-btn:focus-visible {
+  outline: 3px solid rgba(37, 99, 235, 0.45);
+  outline-offset: 2px;
 }
 
 /* Hide scientific buttons by default */
@@ -463,10 +506,9 @@ onMounted(() => {
 /* Show scientific buttons and assign grid positions in scientific mode */
 .buttons.scientific-mode .btn-sci {
   display: flex;
-  background-color: rgba(243, 244, 246, 0.8);
   font-size: 13px;
   font-weight: 600;
-  color: #4b5563;
+  color: var(--text-secondary);
 }
 /* Smaller buttons in scientific mode to fit more rows */
 .buttons.scientific-mode button {
@@ -476,8 +518,7 @@ onMounted(() => {
 .buttons.scientific-mode .mem-store,
 .buttons.scientific-mode .mem-recall,
 .buttons.scientific-mode .mem-add {
-  background-color: rgba(219, 234, 254, 0.8);
-  color: #1d4ed8;
+  color: var(--accent-hover);
 }
 
 /* Scientific Grid Positions (Rows 1-5) */
@@ -503,27 +544,28 @@ onMounted(() => {
 .buttons.scientific-mode .toggle-basic { grid-column: 4 / 5; grid-row: 5 / 6; }
 
 
-/* Button Colors */
-.buttons .btn-digit { background-color: rgba(255, 255, 255, 0.8); }
-.buttons .btn-op { 
-    background-color: #fef3c7; 
-    color: #d97706;
+/* Key roles are carried by ink colour on one material; only "=" is solid. */
+.buttons .btn-op {
+  color: var(--accent-primary);
+  font-weight: 600;
 }
-.buttons .btn-equal { 
-    background-color: #3b82f6; 
-    color: white;
+.buttons .btn-equal {
+  background: var(--accent-primary);
+  border-color: var(--accent-primary);
+  color: #fff;
 }
-.buttons .btn-equal:hover {
-    background-color: #2563eb;
+@media (hover: hover) {
+  .buttons .btn-equal:hover {
+    background: var(--accent-hover);
+  }
 }
-.buttons .ac { 
-    background-color: #fee2e2; 
-    color: #dc2626;
+.buttons .ac {
+  color: var(--danger);
+  font-weight: 600;
 }
-.buttons .sci-toggle { 
-    background-color: #f3f4f6; 
-    color: #4b5563;
-    font-size: 16px; 
+.buttons .sci-toggle {
+  color: var(--text-secondary);
+  font-size: 16px;
 }
 
 /* Basic Button Grid Positions (When NOT in scientific mode) */
@@ -567,5 +609,22 @@ onMounted(() => {
 .buttons.scientific-mode .sci-toggle { display: none; }
 .buttons.scientific-mode .btn-zero { grid-column: 2 / 3; grid-row: 10 / 11; }
 .buttons.scientific-mode .decimal { grid-column: 3 / 4; grid-row: 10 / 11; }
+
+@media (max-height: 760px) {
+  .display {
+    min-height: 100px;
+    padding-block: 24px 12px;
+  }
+
+  .result {
+    min-height: 44px;
+    font-size: 36px;
+  }
+
+  .buttons {
+    gap: 7px;
+    padding: 14px;
+  }
+}
 
 </style>

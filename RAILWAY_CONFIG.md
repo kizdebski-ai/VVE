@@ -1,92 +1,86 @@
-# Railway Deployment Configuration
+# Railway deployment configuration
 
-## Environment Variables
+The Pilot deployment has one backend service and one static frontend service. The
+backend Dockerfile runs the RuntimeControl process directly; it applies the
+PostgreSQL migrations before it reports readiness. The frontend Dockerfile runs
+nginx and proxies `/api/`, `/ws/`, and `/teacher/login` to the backend.
 
-### Backend (Server)
+## Backend service
 
-These environment variables must be set in the **server** service on Railway:
+Create the service from `server/` with `server/Dockerfile`. Railway supplies
+`PORT`; the image listens on `HOST=0.0.0.0` and runs `node dist/src/server.js`.
+The process owns startup, migrations, liveness, readiness, and bounded shutdown.
+Leave the Railway start command empty: an override such as `npm run start:prod`
+adds a second, CLI-driven migration run before the process that already
+migrates. Attach a volume at `/data` for the file-backed rooms.
 
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `DATABASE_URL` | ✅ | PostgreSQL connection string (Railway provides this automatically) |
-| `ADMIN_SECRET` | ✅ | Secret key for admin API authentication (must match `VITE_ADMIN_SECRET`) |
-| `OPENROUTER_API_KEY` | ⚠️ | API key for OpenRouter AI services (required for AI features) |
-| `NODE_ENV` | ⚠️ | Set to `production` for production deployments |
-| `PORT` | ❌ | Automatically provided by Railway |
-| `TEACHER_APP_BASE_URL` | ⚠️ | Base URL for teacher magic links (e.g., `https://your-app.up.railway.app`) |
+Set these production variables in the backend service:
 
-### Frontend
+| Variable | Required | Purpose |
+| --- | --- | --- |
+| `NODE_ENV=production` | yes | Selects the fail-closed Pilot surface and production secret checks. |
+| `DATABASE_URL` | yes | Railway PostgreSQL connection string. |
+| `ADMIN_PASSPHRASE` | yes | Shared administrator passphrase exchanged for a signed HttpOnly session. It is accepted only in `POST /api/admin/session`. |
+| `TEACHER_SESSION_SECRET` | yes | Signs Teacher sessions and is also the fallback for board credentials. Use a high-entropy value. |
+| `ADMIN_SESSION_SECRET` | recommended | Signs administrator sessions with a separate key. If omitted, the configured Teacher session secret is used. |
+| `BOARD_WS_SECRET` | recommended | Signs scoped board WebSocket credentials. If omitted, the Teacher session secret is used. |
+| `TEACHER_APP_BASE_URL` | yes for public links | Public frontend origin used when generating Teacher and Board links. |
+| `CORS_ORIGIN` | when frontend is a different origin | Exact frontend origin allowed by the backend. Leave unset when nginx proxies same-origin requests. |
 
-These environment variables must be set in the **frontend** service on Railway.
+Railway also supplies `PORT`. `HOST` defaults to `0.0.0.0` and `DATA_DIR`
+defaults to the process data directory; the managed-board path persists in
+PostgreSQL. `VVE_PILOT_SURFACE` is only a local-pilot override and should not
+be set in production.
 
-⚠️ **IMPORTANT**: `VITE_*` variables are **compiled at build time**, not runtime! After changing them, you MUST trigger a new deployment/rebuild.
+`OPENROUTER_API_KEY` is optional. Without it, AI routes remain unavailable;
+the Pilot surface does not require an AI credential. Optional `AI_BOARD_ASSISTANT_ENABLED`
+and `VVE_*` resource-limit variables are accepted only when an operator has
+measured a reason to override the code defaults. Never put secrets in frontend
+build arguments, `VITE_*` variables, URLs, or query strings.
 
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `VITE_ADMIN_SECRET` | ✅ | Must match `ADMIN_SECRET` on server |
-| `VITE_BACKEND_URL` | ⚠️ | Backend URL (e.g., `https://server.up.railway.app`). Often not needed if nginx proxies to same domain. |
+The local `server/.env.example` and `docker-compose.yml` are for development
+only: compose refuses to start until `ADMIN_PASSPHRASE` and
+`TEACHER_SESSION_SECRET` are exported, and its database password is a
+loopback-only placeholder. Replace every secret
+before a production start; RuntimeControl fails closed when required values are
+missing or still use a production fallback.
 
-## Troubleshooting
+## Frontend service
 
-### 401 Unauthorized on Admin Panel
+Build the service with `frontend/Dockerfile` from the **repository root**
+(Railway root directory `/`, Dockerfile path `frontend/Dockerfile`): the
+frontend imports the shared `server/src/pilot` modules through the `@pilot`
+alias, so a `frontend/`-only build context cannot compile. Set the runtime
+`BACKEND_URL` to the backend URL (its private `http://<service>.railway.internal:<port>`
+address, or its public HTTPS domain). The image listens on the Railway-provided `PORT` and nginx
+uses `BACKEND_URL` for API, WebSocket, and Teacher-login proxying.
 
-If you see `401 Unauthorized` errors when accessing `/api/admin/teachers`:
+`VITE_BACKEND_URL` is an optional build argument for local/static builds. It is
+not a credential and must not contain an administrator or session secret. No
+administrator secret is built into the frontend.
 
-1. **Check Backend logs** - Look for messages like:
-   - `"Admin request blocked because ADMIN_SECRET env var is not configured"` → Set `ADMIN_SECRET` on server
-   - `"Admin auth failed - secret mismatch"` → Secrets don't match
+## Health and administration endpoints
 
-2. **Check Browser console** - Look for:
-   - `"Admin secret status: { isSet: false }"` → `VITE_ADMIN_SECRET` not set during build
-   - `"prefix: 'NOT_SET'"` → Secret is empty
+Configure the Railway health check against `GET /health`. It returns 200 only
+after the database and collaboration persistence probes pass, and 503 during
+startup, failed probes, or drain. `GET /live` is the liveness check and remains
+available while the process drains. `GET /ready` is public and returns only
+`live`, `ready`, `status`, and boolean `checks`; it never exposes runtime
+metrics.
 
-3. **Fix the issue:**
-   ```bash
-   # On Railway:
-   # 1. Set ADMIN_SECRET on server service
-   # 2. Set VITE_ADMIN_SECRET on frontend service (SAME VALUE!)
-   # 3. IMPORTANT: Trigger a new frontend deployment (VITE_ vars need rebuild)
-   ```
+Runtime metrics are available only at `GET /api/admin/runtime` after the
+administrator has exchanged the passphrase for the HttpOnly session cookie. The
+response is `no-store` and contains the content-free `soak` snapshot. Teacher
+management endpoints under `/api/admin/teachers` use the same server-side
+administrator session guard.
 
-### UUID Error: "invalid input syntax for type uuid"
+## Operational checklist
 
-If you see errors like:
-```
-invalid input syntax for type uuid: "rnYnlKN4enl94DUfgkgqi1"
-```
-
-This happens when:
-- A non-UUID room ID (like nanoid) is treated as a database board
-- **Fix applied**: `boardYjsPersistence.ts` now validates UUID format before querying
-
-Non-UUID room IDs work fine - they're just treated as ephemeral rooms (not persisted to DB).
-
-### Database Migrations
-
-Migrations run automatically on server start. If they fail:
-
-```bash
-# Check logs for migration errors
-# Tables might already exist - that's usually OK
-```
-
-## Service Dependencies
-
-```
-┌─────────────┐      ┌─────────────┐
-│  Frontend   │ ──→  │   Server    │ ──→  PostgreSQL
-│   (Vite)    │      │  (Node.js)  │
-└─────────────┘      └─────────────┘
-      ↓
-  nginx proxy at /api/* → server
-```
-
-## Quick Setup Checklist
-
-- [ ] PostgreSQL database created (Railway provides this)
-- [ ] `DATABASE_URL` set on server
-- [ ] `ADMIN_SECRET` set on server
-- [ ] `VITE_ADMIN_SECRET` set on frontend (same as `ADMIN_SECRET`)
-- [ ] Frontend rebuilt after setting `VITE_*` variables
-- [ ] `OPENROUTER_API_KEY` set on server (for AI features)
-- [ ] `TEACHER_APP_BASE_URL` set on server
+- [ ] Backend service uses `server/Dockerfile`, has no start-command override, and mounts a volume at `/data`.
+- [ ] Frontend service builds `frontend/Dockerfile` from the repository root.
+- [ ] `DATABASE_URL`, `ADMIN_PASSPHRASE`, and `TEACHER_SESSION_SECRET` are set to high-entropy production values.
+- [ ] `ADMIN_SESSION_SECRET` and `BOARD_WS_SECRET` are set separately where operationally possible.
+- [ ] `TEACHER_APP_BASE_URL` matches the public frontend origin.
+- [ ] Frontend `BACKEND_URL` points to the backend service; no secret is passed as a `VITE_*` value.
+- [ ] Railway health check uses `/health`, not the protected admin metrics route.
+- [ ] A controlled restart is performed outside an active lesson and the acknowledged-change recovery gate is recorded.

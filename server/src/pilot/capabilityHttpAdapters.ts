@@ -32,11 +32,12 @@ export const readCookie = (cookieHeader: string | undefined, name: string): stri
 };
 
 export const clientIpOf = (req: Request): string => {
-  const forwarded = req.headers['x-forwarded-for'];
-  if (typeof forwarded === 'string' && forwarded.length > 0) {
-    return forwarded.split(',')[0]?.trim() || req.ip || 'unknown';
-  }
-  return req.ip || 'unknown';
+  // Express owns proxy interpretation. Reading the raw header here lets a
+  // caller rotate a forged X-Forwarded-For value and bypass IP keyed limits.
+  // `req.ip` only reflects forwarded addresses when the app explicitly trusts
+  // a proxy; otherwise it is the peer address. Keep the socket as a final
+  // fallback for test adapters and malformed requests.
+  return req.ip || req.socket?.remoteAddress || 'unknown';
 };
 
 /**

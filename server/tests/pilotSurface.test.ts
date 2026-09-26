@@ -107,8 +107,10 @@ describe('Pilot surface: excluded HTTP paths are uncallable in pilot mode', () =
       aiSolver: new SpySolver(),
       environment: 'pilot'
     });
+    // /health fails closed without a health gateway; helmet CSP is set on
+    // every response regardless of status.
     const res = await request(app).get('/health');
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(503);
     expect(res.headers['content-security-policy']).not.toContain('openrouter.ai');
   });
 
@@ -120,8 +122,8 @@ describe('Pilot surface: excluded HTTP paths are uncallable in pilot mode', () =
       environment: 'pilot'
     });
 
-    const health = await request(app).get('/health');
-    expect(health.status).toBe(200);
+    const live = await request(app).get('/live');
+    expect(live.status).toBe(200);
 
     const root = await request(app).get('/');
     expect(root.status).toBe(200);

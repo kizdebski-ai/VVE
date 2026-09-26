@@ -1,0 +1,297 @@
+merge: +108 (d8c829ba13ce9bea5a1535e673791b3e1c7537a3)
+subject: integrate: VVE-108 (RuntimeControl composition, readiness, shutdown deadline, governor wiring)
+
+diff --cc frontend/src/components/WhiteboardCanvas.vue
+index 717aabb,e310632..dad6f96
+--- a/frontend/src/components/WhiteboardCanvas.vue
++++ b/frontend/src/components/WhiteboardCanvas.vue
+@@@ -475,6 -460,21 +475,21 @@@ export default 
+      const collaborationReadOnly = computed(() =>
+        Boolean(props.wsToken) && connectionStatus.value !== 'connected'
+      );
++     const RESTART_BANNER_PL = 'Serwer jest restartowany. Twoja praca zostanie przywrócona.';
++     const connectionBanner = computed(() =>
++       connectionStatus.value === 'draining'
++         ? RESTART_BANNER_PL
+ -        : 'Łączenie...'
+++        : 'Łączenie…'
++     );
++     const readOnlyBanner = computed(() => {
++       if (connectionStatus.value === 'draining') {
++         return RESTART_BANNER_PL;
++       }
++       if (connectionStatus.value === 'disconnected' || connectionStatus.value === 'reconnecting') {
++         return 'Tylko podgląd — brak połączenia';
++       }
++       return 'Tylko podgląd — czekamy na bezpieczną synchronizację';
++     });
+      const canMutateDocument = () =>
+        !props.wsToken || yjsConnection.value?.isEditable?.() === true;
+      const denyReadOnlyMutation = () => {
+diff --cc frontend/src/services/connectToYjs.ts
+index e837cc8,d88a55e..0557a86
+--- a/frontend/src/services/connectToYjs.ts
++++ b/frontend/src/services/connectToYjs.ts
+@@@ -490,25 -313,18 +504,34 @@@ export function connectToYjs(roomId: st
+        socket = null;
+        editable = false;
+        clearRemoteAwareness('collaborationRemote');
+-       setStatus('disconnected');
++       if (event?.code === 1012 || event?.code === 4012 || (event?.code === 1013 && isDraining)) {
++         isDraining = true;
++       }
++       if (isDraining) {
++         setStatus('draining');
++       } else {
++         setStatus('disconnected');
++       }
+ +      if (event?.code === 1009) {
+ +        const maxPayload = options?.maxPayloadBytes ?? 10_485_760;
+ +        for (const [id, frame] of pending.entries()) {
+ +          if (frame.byteLength > maxPayload) {
+ +            pending.delete(id);
+ +            pendingUpdates.delete(id);
+ +            sendFullStateNextMutation = true;
+ +            options?.onMutationDenied?.({
+ +              reason: 'resource',
+ +              operationId: id,
+ +              messageKey: 'resource.updateTooLarge'
+ +            });
+ +          }
+ +        }
+ +        reconcileWithAuthoritative();
+ +      }
+        if (!explicitlyDisconnected) {
+-         setStatus('reconnecting');
++         if (!isDraining) {
++           setStatus('reconnecting');
++         }
+          reconnectTimer = window.setTimeout(setupWebSocket, reconnectTimeout);
+          reconnectTimeout = Math.min(reconnectTimeout * 2, reconnectTimeoutMax);
+        }
+diff --cc frontend/tests/unit/audit2.test.js
+index be5f815,edc0902..b5665b2
+--- a/frontend/tests/unit/audit2.test.js
++++ b/frontend/tests/unit/audit2.test.js
+@@@ -211,33 -136,39 +211,56 @@@ describe('H3: withAiMutex handles rejec
+  
+  // ─── H8: Per-IP WebSocket connection limiting ────────────────────────────────
+  
+ -describe('H8: Per-IP WebSocket connection limiting', () => {
+ +describe('H8: ResourceGovernor owns WebSocket occupancy', () => {
+ +  const src = readServer('server.ts');
+ +
+ +  it('constructs ResourceGovernor and passes it to collaboration', () => {
+ +    expect(src).toContain('createResourceGovernor');
+ +    expect(src).toContain('resourceGovernor');
+ +  });
+ +
+ +  it('maps connection overload to a bounded Polish connection close', () => {
+ +    const mapping = mapGovernorDenialToSocketClose({
+ +      decision: 'reject',
+ +      reason: 'ipConnectionLimit',
+ +      messageKey: 'resource.connectionLimit'
+ +    });
+ +    expect(mapping.code).toBe(1013);
+ +    expect(mapping.reason).toContain('Zbyt wiele połączeń');
+ +  });
+ +});
+ +
+++describe('H8b: realtime listener composition reads the shared governor', () => {
++   const src = readServer('pilot/realtimeListener.ts');
++ 
++   // 108-I1: the per-IP cap is owned by ResourceGovernor (VVE-107 policy,
++   // composed by RuntimeControl). The listener reads the limit through
++   // governor.limits() instead of declaring a hardcoded product constant.
++   it('derives the per-IP cap from the shared ResourceGovernor, not a hardcoded constant', () => {
++     expect(src).toContain('governor.limits().maxConnectionsPerIp');
++     expect(src).not.toMatch(/MAX_CONNECTIONS_PER_IP\s*=\s*\d+/);
++   });
++ 
++   it('implements trackIpConnect and trackIpDisconnect', () => {
++     expect(src).toContain('trackIpConnect');
++     expect(src).toContain('trackIpDisconnect');
++   });
++ 
++   it('denies over-limit connections with the typed Polish resource message', () => {
++     expect(src).toContain("polishResourceMessage('resource.connectionLimit')");
++   });
+ -
+ -  // Connection release is now idempotent through one local releaseIp()
+ -  // closure. Counting source occurrences would reward duplicated cleanup;
+ -  // runtime connection behavior is covered at the CollaborationRuntime seam.
+++});
+++  });
++ });
++ 
+  // ─── Canvas memory cleanup in PDF export ─────────────────────────────────────
+  
+ -describe('Canvas memory cleanup in usePdfExport', () => {
+ -  const src = readSrc('composables/usePdfExport.js');
+ +describe('Canvas memory cleanup in ArtifactPipeline export', () => {
+ +  const src = readSrc('board/artifactPipeline.ts');
+  
+    it('resets offscreen canvas dimensions to release memory', () => {
+ -    expect(src).toContain('off.width = 0');
+ -    expect(src).toContain('offscreen.width = 0');
+ +    expect(src).toContain('canvas.width = 0');
+ +    expect(src).toContain('canvas.height = 0');
+    });
+  });
+  
+diff --cc frontend/tests/unit/components/WhiteboardCanvas.spec.js
+index 7f3af58,26c0ed9..5ff8eda
+--- a/frontend/tests/unit/components/WhiteboardCanvas.spec.js
++++ b/frontend/tests/unit/components/WhiteboardCanvas.spec.js
+@@@ -331,43 -287,33 +331,70 @@@ describe('WhiteboardCanvas.vue', () => 
+        await nextTick();
+        expect(wrapper.find('[data-testid="collaboration-read-only"]').exists()).toBe(true);
+      });
++ 
++     it('shows Polish restart copy while the server is draining', async () => {
++       wrapper.unmount();
++       let connectionOptions;
++       connectToYjs.mockImplementation((_roomId, options) => {
++         connectionOptions = options;
++         return {
++           ydoc: mockYDoc,
++           yDrawings: mockYDrawings,
++           awareness: mockAwareness,
++           disconnect: vi.fn(),
++           isEditable: () => false,
++         };
++       });
++       wrapper = mount(WhiteboardCanvas, {
++         props: { roomId: 'managed-board', wsToken: 'managed-token', role: 'student' },
++       });
++       await nextTick();
++       connectionOptions.onStatus('draining');
++       await nextTick();
++       expect(wrapper.find('[data-testid="connection-loading"]').text()).toContain(
++         'Serwer jest restartowany'
++       );
++       expect(wrapper.find('[data-testid="collaboration-read-only"]').text()).toContain(
++         'Twoja praca zostanie przywrócona'
++       );
++     });
+    });
+  
+ +  describe('Pointer Event pipeline', () => {
+ +    it('exposes Pointer Event handlers and not mouse/touch drawing handlers', () => {
+ +      expect(typeof wrapper.vm.handlePointerDown).toBe('function');
+ +      expect(wrapper.vm.handleMouseDown).toBeUndefined();
+ +      expect(wrapper.vm.handleTouchStart).toBeUndefined();
+ +    });
+ +
+ +    it('cancels an in-progress stroke on pointercancel instead of committing', async () => {
+ +      wrapper.vm.setTool('pen');
+ +      await nextTick();
+ +      const canvas = wrapper.find('.whiteboard-canvas.draw-layer');
+ +      const before = mockYDrawings.length;
+ +      await canvas.trigger('pointerdown', {
+ +        clientX: 20, clientY: 20, button: 0, pointerId: 9,
+ +        pointerType: 'pen', isPrimary: true, buttons: 1, pressure: 0.4
+ +      });
+ +      await canvas.trigger('pointermove', {
+ +        clientX: 48, clientY: 36, pointerId: 9,
+ +        pointerType: 'pen', isPrimary: true, buttons: 1, pressure: 0.6
+ +      });
+ +      await canvas.trigger('pointercancel', {
+ +        clientX: 48, clientY: 36, pointerId: 9,
+ +        pointerType: 'pen', isPrimary: true, buttons: 0, pressure: 0
+ +      });
+ +      await nextTick();
+ +      expect(mockYDrawings.length).toBe(before);
+ +      expect(wrapper.vm.isDrawing).toBe(false);
+ +    });
+ +  });
+ +  describe('ArtifactPipeline overlay', () => {
+ +    it('keeps progress hidden until import starts and exposes importArtifactFile', () => {
+ +      expect(wrapper.find('[data-testid="artifact-progress"]').exists()).toBe(false);
+ +      expect(typeof wrapper.vm.importArtifactFile).toBe('function');
+ +      expect(typeof wrapper.vm.exportBoardAsPdf).toBe('function');
+ +    });
+ +  });
+ +
+  });
+diff --cc server/src/httpApp.ts
+index e52d0d6,095ffea..138f467
+--- a/server/src/httpApp.ts
++++ b/server/src/httpApp.ts
+@@@ -16,6 -16,7 +16,8 @@@ import { createCapabilityAccess } from 
+  import { createBoardLifecycle, type BoardLifecycle } from './pilot/boardLifecycle';
+  import { requireAdminCapability } from './pilot/capabilityHttpAdapters';
+  import { config } from './config';
++ import { createResourceGovernor, type ResourceGovernor } from './pilot/resourceGovernor';
+++import { resourceLimitsFromEnv } from './pilot/resourceLimits';
+  
+  import { createRateLimiter } from './middleware/rateLimiter';
+  import { createAiRoutesRouter } from './routes/aiRoutes';
+@@@ -50,8 -59,9 +60,9 @@@ export interface CreateAppOptions 
+    resourceGovernor?: ResourceGovernor;
+  }
+  
+- export const createHttpApp = ({ roomManager, aiSolver, environment, devSurface, capabilityAccess, boardLifecycle, resourceGovernor }: CreateAppOptions) => {
++ export const createHttpApp = ({ roomManager, aiSolver, environment, devSurface, capabilityAccess, boardLifecycle, health, signals, resourceGovernor }: CreateAppOptions) => {
+    const app = express();
+ -  const governor = resourceGovernor ?? createResourceGovernor();
+++  const governor = resourceGovernor ?? createResourceGovernor({ limits: resourceLimitsFromEnv() });
+  
+    const resolvedEnvironment: RuntimeEnvironment = environment ?? config.pilotEnvironment;
+    const resolvedDevSurface: boolean = devSurface ?? config.devSurface;
+diff --cc server/src/pilot/collaborationRuntime.ts
+index 6fea851,d692a43..3f63693
+--- a/server/src/pilot/collaborationRuntime.ts
++++ b/server/src/pilot/collaborationRuntime.ts
+@@@ -39,7 -41,7 +41,7 @@@ export type ServerFrame 
+    | { kind: 'update'; operationId: string; update: Uint8Array }
+    | { kind: 'acknowledgement'; operationId: string; digest: string; duplicate: boolean }
+    | { kind: 'awareness'; update: Uint8Array }
+-   | { kind: 'denial'; reason: CollaborationDenial; operationId?: string; messageKey?: string; digest?: string }
+ -  | { kind: 'denial'; reason: CollaborationDenial; operationId?: string; messageKey?: ResourceMessageKey }
+++  | { kind: 'denial'; reason: CollaborationDenial; operationId?: string; messageKey?: ResourceMessageKey; digest?: string }
+    | { kind: 'serverDraining'; reason: string };
+  
+  export interface CollaborationTransport {
+diff --cc server/tests/httpApp.test.ts
+index ae9ffdb,5fb4e72..612a9fb
+--- a/server/tests/httpApp.test.ts
++++ b/server/tests/httpApp.test.ts
+@@@ -39,22 -39,25 +39,34 @@@ const createTestApp = (solver?: Equatio
+    });
+  
+  describe('HTTP API', () => {
+-   it('exposes health endpoint', async () => {
++   it('fails /health closed when no RuntimeControl gateway is injected', async () => {
+      const app = createTestApp();
+      const res = await request(app).get('/health');
+-     expect(res.status).toBe(200);
+-     expect(res.body.status).toBe('ok');
++     expect(res.status).toBe(503);
++     expect(res.body.status).toBe('not-ready');
++     expect(res.body.ready).toBe(false);
++   });
++ 
++   it('separates liveness from readiness when no RuntimeControl gateway is injected', async () => {
++     const app = createTestApp();
++     const live = await request(app).get('/live');
++     expect(live.status).toBe(200);
++     expect(live.body.live).toBe(true);
++     // Fail closed: without a health owner, readiness cannot be proven.
++     const ready = await request(app).get('/ready');
++     expect(ready.status).toBe(503);
++     expect(ready.body.ready).toBe(false);
+    });
+  
+ +  it('exposes live resource governor limits for client policy adoption (VVE-107)', async () => {
+ +    const app = createTestApp();
+ +    const res = await request(app).get('/api/resource-limits');
+ +    expect(res.status).toBe(200);
+ +    expect(res.body.maxWebsocketPayloadBytes).toBeGreaterThan(0);
+ +    expect(res.body.maxImageDataUrlChars).toBeLessThanOrEqual(res.body.maxWebsocketPayloadBytes);
+ +    expect(res.body.maxEncodedImageBytes).toBeGreaterThan(0);
+ +  });
+ +
+    it('creates and retrieves rooms (development dev surface only)', async () => {
+      const app = createTestApp();
+      const createRes = await request(app).post('/api/rooms/').send({ roomId: 'demo', displayName: 'Demo' });

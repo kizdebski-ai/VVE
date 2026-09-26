@@ -141,7 +141,7 @@ export default {
   align-items: center;
   justify-content: center;
   border-radius: 8px;
-  transition: all 0.2s;
+  transition: background-color 0.2s, border-color 0.2s, color 0.2s, box-shadow 0.2s, opacity 0.2s, transform 0.2s;
 }
 
 .close-btn:hover {
@@ -176,7 +176,7 @@ export default {
   cursor: pointer;
   font-size: 14px;
   font-weight: 600;
-  transition: all 0.2s;
+  transition: background-color 0.2s, border-color 0.2s, color 0.2s, box-shadow 0.2s, opacity 0.2s, transform 0.2s;
 }
 
 .action-button:hover {

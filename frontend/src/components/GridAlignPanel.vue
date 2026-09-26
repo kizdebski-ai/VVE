@@ -221,7 +221,7 @@ export default {
   border: 2px solid rgba(0,0,0,0.2);
   border-radius: 6px;
   position: relative;
-  transition: all 0.2s;
+  transition: background-color 0.2s, border-color 0.2s, color 0.2s, box-shadow 0.2s, opacity 0.2s, transform 0.2s;
   background: rgba(255,255,255,0.5);
 }
 

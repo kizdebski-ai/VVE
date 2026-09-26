@@ -5,11 +5,117 @@
  */
 
 import rough from 'roughjs';
-import * as math from 'mathjs';
+import { sampleMathFunction } from './mathPlotSampling.js';
 import { drawStyledPen } from './penStyles';
+import { imageDimensions } from '../board/imageDimensions';
 
 // 1.2: Cache Rough.js instance per canvas (avoid recreating on every drawElement call)
 const roughCanvasCache = new WeakMap();
+const imageSourcesIn = (elements) => [...new Set(
+  elements
+    .filter((element) => element?.type === 'image' && typeof element.src === 'string')
+    .map((element) => element.src)
+)];
+
+const headerDimensionsFor = (src) => {
+  const match = /^data:([^;,]+);base64,(.*)$/s.exec(src);
+  if (!match) return null;
+  try {
+    const binary = atob(match[2]);
+    const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+    const dimensions = imageDimensions(bytes, match[1]);
+    return dimensions;
+  } catch {
+    return null;
+  }
+};
+
+export class CanvasImagePreloadError extends Error {
+  constructor(code, message) {
+    super(message);
+    this.name = 'CanvasImagePreloadError';
+    this.code = code;
+  }
+}
+
+const loadCanvasImage = (src, cache, signal, timeoutMs) => {
+  const cached = cache.get(src);
+  if (cached?.complete && cached.naturalWidth > 0) return Promise.resolve(cached);
+  return new Promise((resolve, reject) => {
+    const image = cached || new Image();
+    let timer;
+    const cleanup = () => {
+      window.clearTimeout(timer);
+      signal?.removeEventListener('abort', onAbort);
+      image.onload = null;
+      image.onerror = null;
+    };
+    const fail = (error) => {
+      cleanup();
+      cache.delete(src);
+      if (!image.complete) image.src = '';
+      reject(error);
+    };
+    const onAbort = () => fail(new DOMException('Image preload cancelled.', 'AbortError'));
+    timer = window.setTimeout(() => fail(new Error('Image preload timed out.')), timeoutMs);
+    image.onload = () => {
+      cleanup();
+      cache.set(src, image);
+      resolve(image);
+    };
+    image.onerror = () => fail(new Error('Image preload failed.'));
+    signal?.addEventListener('abort', onAbort, { once: true });
+    if (!cached) {
+      cache.set(src, image);
+      image.src = src;
+    }
+  });
+};
+
+/** Warm the same image cache used by drawElement before synchronous export. */
+export const preloadCanvasImages = async (elements, cache, options = {}) => {
+  if (!(cache instanceof Map)) throw new TypeError('Image preload requires an export-owned cache.');
+  const sources = imageSourcesIn(elements);
+  let totalPixels = 0;
+  for (const src of sources) {
+    if (options.signal?.aborted) {
+      throw new DOMException('Image preload cancelled.', 'AbortError');
+    }
+    if (typeof options.maxImageDataUrlChars === 'number' && src.length > options.maxImageDataUrlChars) {
+      throw new CanvasImagePreloadError('resource.imageTooLarge', 'Image data exceeds the export budget.');
+    }
+    const header = headerDimensionsFor(src);
+    if (header) {
+      const headerPixels = header.width * header.height;
+      if (!Number.isFinite(headerPixels) || headerPixels > (options.maxDecodedPixels ?? Infinity)) {
+        throw new CanvasImagePreloadError('resource.imageTooLarge', 'Image header exceeds the decoded pixel budget.');
+      }
+      if (headerPixels + totalPixels > (options.maxTotalPixels ?? Infinity)) {
+        throw new CanvasImagePreloadError('resource.imageTooLarge', 'Image headers exceed the aggregate export budget.');
+      }
+    }
+    const image = await loadCanvasImage(src, cache, options.signal, options.timeoutMs ?? 12_000);
+    const width = image.naturalWidth || image.width;
+    const height = image.naturalHeight || image.height;
+    const pixels = width * height;
+    if (!Number.isFinite(pixels) || width <= 0 || height <= 0 || pixels > (options.maxDecodedPixels ?? Infinity)) {
+      throw new CanvasImagePreloadError('resource.imageTooLarge', 'Decoded image exceeds the export budget.');
+    }
+    totalPixels += pixels;
+    if (totalPixels > (options.maxTotalPixels ?? Infinity)) {
+      throw new CanvasImagePreloadError('resource.imageTooLarge', 'Decoded images exceed the aggregate export budget.');
+    }
+  }
+};
+
+export const releaseCanvasImageCache = (cache) => {
+  for (const image of cache.values()) {
+    image.onload = null;
+    image.onerror = null;
+    image.src = '';
+  }
+  cache.clear();
+};
 
 // Throttle function to limit the rate of function calls
 export const throttle = (fn, delay) => {
@@ -58,7 +164,8 @@ export const drawElement = (
     typeof element.y === 'number' &&
     typeof element.width === 'number' &&
     typeof element.height === 'number' &&
-    type !== 'pen' && type !== 'line' && type !== 'text' && type !== 'image'
+    type !== 'pen' && type !== 'line' && type !== 'text' && type !== 'image' &&
+    !['coordinateSystem2D', 'coordinateSystem3D', 'mathFunctionPlot', 'physicsDataPlot'].includes(type)
   ) {
     element = {
       ...element,
@@ -123,30 +230,21 @@ export const drawElement = (
 
   switch (type) {
     case 'pen': {
-      // --- OPTIMIZATION: Use Cached Path2D ---
-      // Uses the pre-calculated Path2D from the local scene cache if available.
-      // To DISABLE: Comment out this 'if' block to force re-rendering from points.
-      if (element.cachedPath) {
-        context.save();
-        context.strokeStyle = element.color || color;
-        context.lineWidth = lw;
-        context.lineCap = 'round';
-        context.lineJoin = 'round';
-        context.stroke(element.cachedPath);
-        context.restore();
-        break;
-      }
-      // --- END OPTIMIZATION ---
-
       const points = element.points || [];
       if (points.length === 0) break;
-      // P0-FIX: Render single-point strokes as dots
+      // Single-point strokes render as dots scaled by pressure
       if (points.length === 1) {
-        const pt = Array.isArray(points[0]) ? { x: points[0][0], y: points[0][1] } : points[0];
+        const rawPt = points[0];
+        const pt = Array.isArray(rawPt)
+          ? { x: rawPt[0], y: rawPt[1], pressure: typeof rawPt[2] === 'number' && rawPt[2] <= 1 ? rawPt[2] : undefined }
+          : rawPt;
+        const pVal = typeof (pt.pressure ?? pt.p) === 'number' ? (pt.pressure ?? pt.p) : 0.5;
+        const pressureScale = Math.max(0.3, Math.min(2.0, 0.35 + pVal * 1.3));
+        const dotRadius = Math.max((lw / 2) * pressureScale, 1.0);
         context.save();
         context.fillStyle = element.color || color;
         context.beginPath();
-        context.arc(pt.x, pt.y, Math.max(lw / 2, 1.5), 0, Math.PI * 2);
+        context.arc(pt.x, pt.y, dotRadius, 0, Math.PI * 2);
         context.fill();
         context.restore();
         break;
@@ -527,19 +625,19 @@ export const drawElement = (
     // --- Advanced Shapes (RoughJS Implementation) ---
 
     case 'coordinateSystem2D':
-      if (element.position) drawCoordinateSystem2D(rc, context, element, options, isClean);
+      drawCoordinateSystem2D(rc, context, element, options, isClean);
       break;
 
     case 'mathFunctionPlot':
-      if (element.position && element.expression) drawMathFunctionPlot(rc, context, element, options, isClean);
+      if (element.expression) drawMathFunctionPlot(rc, context, element, options, isClean);
       break;
 
     case 'physicsDataPlot':
-      if (element.position) drawPhysicsDataPlot(rc, context, element, options, isClean);
+      drawPhysicsDataPlot(rc, context, element, options, isClean);
       break;
 
     case 'coordinateSystem3D':
-      if (element.position) drawCoordinateSystem3D(rc, context, element, options, isClean);
+      drawCoordinateSystem3D(rc, context, element, options, isClean);
       break;
 
     // --- 3D Primitives (2D Projection) ---
@@ -618,7 +716,7 @@ const drawImage = (context, element, imageCache, requestRedraw) => {
 
   if (!src || (posX === undefined || posY === undefined)) return;
 
-  let img = imageCache.get(src);
+  let img = imageCache?.get(src);
   if (img) {
     if (img.complete && img.naturalWidth > 0) {
       context.drawImage(img, posX, posY, width, height);
@@ -627,15 +725,15 @@ const drawImage = (context, element, imageCache, requestRedraw) => {
     img = new Image();
     img.onload = () => requestRedraw && requestRedraw();
     img.src = src;
-    imageCache.set(src, img);
+    imageCache?.set(src, img);
   }
 };
 
 // --- Graph & Plot Implementations ---
 
 const drawCoordinateSystem2D = (rc, context, element, options, isClean) => {
-  const { x, y } = element.position;
-  const { width, height, xLabel, yLabel } = element;
+  const { x, y, width, height, xLabel = 'x', yLabel = 'y' } = element;
+  if (![x, y, width, height].every(Number.isFinite)) return;
 
   // Axes
   if (isClean) {
@@ -657,60 +755,58 @@ const drawCoordinateSystem2D = (rc, context, element, options, isClean) => {
   // Labels
   context.fillStyle = options.stroke;
   context.font = '16px sans-serif';
-  context.fillText(xLabel || 'x', x + width - 15, y + height / 2 + 10);
-  context.fillText(yLabel || 'y', x + width / 2 + 10, y);
+  context.fillText(xLabel, x + width - 15, y + height / 2 + 18);
+  context.fillText(yLabel, x + width / 2 + 10, y + 16);
 };
 
 const drawMathFunctionPlot = (rc, context, element, options, isClean) => {
-  const { x: plotX, y: plotY } = element.position;
-  const { width, height, expression } = element;
+  const { x: plotX, y: plotY, width, height, expression } = element;
+  if (![plotX, plotY, width, height].every(Number.isFinite) || !expression) return;
+  const [xMin, xMax] = Array.isArray(element.xRange) ? element.xRange : [-10, 10];
+  const xRange = xMax - xMin;
+  if (!Number.isFinite(xRange) || xRange <= 0) return;
 
   // Draw axes first
-  drawCoordinateSystem2D(rc, context, { ...element, xLabel: 'x', yLabel: 'f(x)' }, { ...options, stroke: '#666' }, isClean);
+  drawCoordinateSystem2D(
+    rc,
+    context,
+    { ...element, xLabel: element.xLabel || 'x', yLabel: element.yLabel || 'f(x)' },
+    { ...options, stroke: '#666' },
+    isClean
+  );
 
-  // Plot function
-  try {
-    const compiled = math.compile(expression || 'x');
-    const points = [];
-    const steps = 100;
-    const xMin = -10, xMax = 10;
-    const yMin = -10, yMax = 10;
+  const { branches, error } = sampleMathFunction({
+    expression,
+    xRange: [xMin, xMax],
+    yRange: element.yRange || null,
+    width,
+    height
+  });
 
-    for (let i = 0; i <= steps; i++) {
-      const xVal = xMin + (xMax - xMin) * (i / steps);
-      const scope = { x: xVal };
-      const yVal = compiled.evaluate(scope);
+  if (error) {
+    context.fillText('Nie można narysować funkcji', plotX + 12, plotY + 24);
+    return;
+  }
 
-      if (typeof yVal === 'number' && isFinite(yVal)) {
-        const canvasX = plotX + ((xVal - xMin) / (xMax - xMin)) * width;
-        const canvasY = plotY + height - ((yVal - yMin) / (yMax - yMin)) * height;
+  const strokeColor = element.color || '#007bff';
+  const lineWidth = element.lineWidth || 3;
 
-        if (canvasY >= plotY && canvasY <= plotY + height) {
-          points.push([canvasX, canvasY]);
-        } else {
-          if (points.length > 1) {
-            if (isClean) drawCleanCurve(context, points, element.color || '#007bff');
-            else rc.curve(points, { ...options, stroke: element.color || '#007bff', strokeWidth: 3 });
-          }
-          points.length = 0;
-        }
-      }
+  for (const branch of branches) {
+    if (branch.length < 2) continue;
+    const points = branch.map(([bx, by]) => [plotX + bx, plotY + by]);
+    if (isClean) {
+      drawCleanCurve(context, points, strokeColor, lineWidth);
+    } else {
+      rc.curve(points, { ...options, stroke: strokeColor, strokeWidth: lineWidth });
     }
-    if (points.length > 1) {
-      if (isClean) drawCleanCurve(context, points, element.color || '#007bff');
-      else rc.curve(points, { ...options, stroke: element.color || '#007bff', strokeWidth: 3 });
-    }
-
-  } catch (e) {
-    context.fillText('Error', plotX, plotY);
   }
 };
 
-const drawCleanCurve = (context, points, color) => {
+const drawCleanCurve = (context, points, color, lineWidth = 3) => {
   if (points.length < 2) return;
   context.save();
   context.strokeStyle = color;
-  context.lineWidth = 3;
+  context.lineWidth = lineWidth;
   context.beginPath();
   context.moveTo(points[0][0], points[0][1]);
   for (let i = 1; i < points.length; i++) {
@@ -721,22 +817,38 @@ const drawCleanCurve = (context, points, color) => {
 };
 
 const drawPhysicsDataPlot = (rc, context, element, options, isClean) => {
-  const { x: plotX, y: plotY } = element.position;
-  const { width, height, xData, yData } = element;
+  const {
+    x: plotX,
+    y: plotY,
+    width,
+    height,
+    points: dataPoints,
+    xLabel = 't',
+    yLabel = 'v'
+  } = element;
+  if (![plotX, plotY, width, height].every(Number.isFinite)) return;
 
   // Axes
-  drawCoordinateSystem2D(rc, context, { ...element, xLabel: 't', yLabel: 'v' }, { ...options, stroke: '#666' }, isClean);
+  drawCoordinateSystem2D(
+    rc,
+    context,
+    { ...element, xLabel, yLabel },
+    { ...options, stroke: '#666' },
+    isClean
+  );
 
-  if (!xData || !yData || xData.length === 0) return;
+  if (!Array.isArray(dataPoints) || dataPoints.length < 2) return;
 
-  const xMin = Math.min(...xData), xMax = Math.max(...xData);
-  const yMin = Math.min(...yData), yMax = Math.max(...yData);
+  const xMin = Math.min(...dataPoints.map((point) => point.x));
+  const xMax = Math.max(...dataPoints.map((point) => point.x));
+  const yMin = Math.min(...dataPoints.map((point) => point.y));
+  const yMax = Math.max(...dataPoints.map((point) => point.y));
   const xRange = xMax - xMin || 1;
   const yRange = yMax - yMin || 1;
 
-  const points = xData.map((val, i) => {
-    const cx = plotX + ((val - xMin) / xRange) * width;
-    const cy = plotY + height - ((yData[i] - yMin) / yRange) * height;
+  const points = dataPoints.map((point) => {
+    const cx = plotX + ((point.x - xMin) / xRange) * width;
+    const cy = plotY + height - ((point.y - yMin) / yRange) * height;
     return [cx, cy];
   });
 
@@ -758,17 +870,19 @@ const drawPhysicsDataPlot = (rc, context, element, options, isClean) => {
 };
 
 const drawCoordinateSystem3D = (rc, context, element, options, isClean) => {
-  const { x, y } = element.position;
-  const size = element.size || 200;
-  const half = size / 2;
+  const { x, y, width, height, xLabel = 'x', yLabel = 'y', zLabel = 'z' } = element;
+  if (![x, y, width, height].every(Number.isFinite)) return;
+  const halfWidth = width / 2;
+  const halfHeight = height / 2;
 
   // Center
-  const cx = x, cy = y;
+  const cx = x + halfWidth;
+  const cy = y + halfHeight;
 
   // Axes (Isometric-ish)
-  const xEnd = { x: cx + half, y: cy + half * 0.5 };
-  const yEnd = { x: cx - half, y: cy + half * 0.5 };
-  const zEnd = { x: cx, y: cy - half };
+  const xEnd = { x: x + width, y: cy + halfHeight * 0.45 };
+  const yEnd = { x, y: cy + halfHeight * 0.45 };
+  const zEnd = { x: cx, y };
 
   if (isClean) {
     context.beginPath();
@@ -782,9 +896,9 @@ const drawCoordinateSystem3D = (rc, context, element, options, isClean) => {
     rc.line(cx, cy, zEnd.x, zEnd.y, options);
   }
 
-  context.fillText('x', xEnd.x, xEnd.y);
-  context.fillText('y', yEnd.x, yEnd.y);
-  context.fillText('z', zEnd.x, zEnd.y);
+  context.fillText(xLabel, xEnd.x - 12, xEnd.y - 8);
+  context.fillText(yLabel, yEnd.x + 8, yEnd.y - 8);
+  context.fillText(zLabel, zEnd.x + 8, zEnd.y + 16);
 };
 
 // --- 3D Shapes ---

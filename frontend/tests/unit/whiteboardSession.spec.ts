@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import * as Y from 'yjs';
 
 import { createWhiteboardSession } from '@/board/whiteboardSession';
+import { splitPenStroke } from '@pilot/boardScene';
 
 const rectangle = (id: string, x = 0) => ({
   id,
@@ -25,8 +26,9 @@ describe('WhiteboardSession Interface', () => {
       object: {
         ...rectangle('image-1'),
         type: 'image',
-        dataUrl: 'data:image/png;base64,iVBORw0KGgo=',
-        position: { x: 25, y: 35 }
+        src: 'data:image/png;base64,iVBORw0KGgo=',
+        x: 25,
+        y: 35
       }
     })).toEqual({ ok: true });
 
@@ -35,12 +37,30 @@ describe('WhiteboardSession Interface', () => {
         id: 'image-1',
         type: 'image',
         src: 'data:image/png;base64,iVBORw0KGgo=',
-        x: 0,
-        y: 10
+        x: 25,
+        y: 35
       })
     ]);
     expect(session.snapshot()[0]).not.toHaveProperty('dataUrl');
     expect(session.snapshot()[0]).not.toHaveProperty('position');
+    session.dispose();
+  });
+
+  it('keeps the spatial index aligned with Y.Array insertion and deletion order', () => {
+    const ydoc = new Y.Doc();
+    const session = createWhiteboardSession({ ydoc, role: 'student' });
+    expect(session.execute({ kind: 'add', object: rectangle('first', 0) })).toEqual({ ok: true });
+    expect(session.execute({ kind: 'add', object: rectangle('last', 200) })).toEqual({ ok: true });
+
+    const inserted = new Y.Map<unknown>();
+    for (const [key, value] of Object.entries(rectangle('inserted', 100))) inserted.set(key, value);
+    const drawings = ydoc.getArray<Y.Map<unknown>>('drawings');
+    ydoc.transact(() => drawings.insert(0, [inserted]), 'remote-import');
+    expect(session.queryObjectsNear({ x: 110, y: 40 }, 5).map((object) => object.id)).toContain('inserted');
+
+    ydoc.transact(() => drawings.delete(0, 1), 'remote-delete');
+    expect(session.queryObjectsNear({ x: 110, y: 40 }, 5).map((object) => object.id)).not.toContain('inserted');
+    expect(session.queryObjectsNear({ x: 10, y: 40 }, 5).map((object) => object.id)).toContain('first');
     session.dispose();
   });
 
@@ -152,6 +172,193 @@ describe('WhiteboardSession Interface', () => {
     expect(session.resetViewport()).toEqual({ zoom: 1, panX: 0, panY: 0 });
     expect(Y.encodeStateAsUpdate(ydoc)).toEqual(before);
     expect(session.canUndo()).toBe(false);
+    session.dispose();
+  });
+
+  it('provides bounded spatial candidate queries that update with document mutations', () => {
+    const ydoc = new Y.Doc();
+    const session = createWhiteboardSession({ ydoc, role: 'teacher' });
+
+    session.execute({ kind: 'add', object: rectangle('spatial-target') });
+    // Candidate near object
+    const hits = session.queryObjectsNear({ x: 50, y: 50 }, 10);
+    expect(hits.map((h) => h.id)).toEqual(['spatial-target']);
+
+    // Empty area query returns empty
+    const emptyHits = session.queryObjectsNear({ x: 5000, y: 5000 }, 10);
+    expect(emptyHits).toHaveLength(0);
+
+    // Move object to (5000, 5000)
+    session.execute({ kind: 'move', id: 'spatial-target', x: 5000, y: 5000 });
+    expect(session.queryObjectsNear({ x: 50, y: 50 }, 10)).toHaveLength(0);
+    expect(session.queryObjectsNear({ x: 5020, y: 5020 }, 10).map((h) => h.id)).toEqual(['spatial-target']);
+
+    // Delete object
+    session.execute({ kind: 'delete', ids: ['spatial-target'] });
+    expect(session.queryObjectsNear({ x: 5020, y: 5020 }, 10)).toHaveLength(0);
+
+    session.dispose();
+  });
+  it('preserves pen pressure through commit, snapshot reload and spatial index queries', () => {
+    const ydoc = new Y.Doc();
+    const session = createWhiteboardSession({ ydoc, role: 'teacher' });
+
+    const penStroke = {
+      id: 'pen-1',
+      type: 'pen',
+      x: 0,
+      y: 0,
+      width: 100,
+      height: 10,
+      color: '#111827',
+      lineWidth: 3,
+      penStyle: 'gel',
+      points: [
+        { x: 0, y: 0, t: 0, p: 0.15 },
+        { x: 50, y: 5, t: 40, p: 0.9 },
+        { x: 100, y: 10, t: 80, p: 0.45 }
+      ]
+    };
+    expect(session.execute({ kind: 'add', object: penStroke })).toEqual({ ok: true });
+
+    // Reload path: the committed snapshot keeps pressure in canonical points.
+    const reloaded = session.snapshot().find((object) => object.id === 'pen-1');
+    expect(reloaded).toBeTruthy();
+    expect(reloaded.points.map((point: { p?: number }) => point.p)).toEqual([0.15, 0.9, 0.45]);
+
+    // Hit testing still finds the committed pressure stroke.
+    expect(session.queryObjectsNear({ x: 50, y: 5 }, 8).map((object) => object.id))
+      .toContain('pen-1');
+
+    session.dispose();
+  });
+
+  it('treats partial erasing as one undoable command and keeps delete mode whole-object', () => {
+    const ydoc = new Y.Doc();
+    const session = createWhiteboardSession({ ydoc, role: 'teacher' });
+    const stroke = {
+      id: 'eraser-stroke',
+      type: 'pen',
+      color: '#7c3aed',
+      lineWidth: 4,
+      penStyle: 'gel',
+      points: [
+        { x: 0, y: 0, t: 0, p: 0.2 },
+        { x: 50, y: 0, t: 50, p: 0.8 },
+        { x: 100, y: 0, t: 100, p: 0.4 }
+      ]
+    };
+    expect(session.execute({ kind: 'add', object: stroke })).toEqual({ ok: true });
+    const segments = splitPenStroke(stroke.points, { x: 50, y: 0 }, 10);
+    expect(segments).toHaveLength(2);
+    expect(session.execute({
+      kind: 'erasePen',
+      id: stroke.id,
+      segments: segments.map((points, index) => ({
+        id: index === 0 ? stroke.id : 'eraser-stroke-right',
+        points
+      }))
+    })).toEqual({ ok: true });
+    expect(session.snapshot()).toHaveLength(2);
+    expect(session.snapshot().every((object) => object.color === stroke.color)).toBe(true);
+    expect(session.undo()).toBe(true);
+    expect(session.snapshot()).toHaveLength(1);
+    expect(session.snapshot()[0].id).toBe(stroke.id);
+    expect(session.redo()).toBe(true);
+    expect(session.snapshot()).toHaveLength(2);
+
+    expect(session.execute({ kind: 'delete', ids: [stroke.id, 'eraser-stroke-right'] })).toEqual({ ok: true });
+    expect(session.snapshot()).toEqual([]);
+    expect(session.execute({ kind: 'delete', ids: [] })).toMatchObject({ ok: false });
+    session.dispose();
+  });
+
+  it('owns exclusive lesson-panel state without touching the shared document', () => {
+    const ydoc = new Y.Doc();
+    const changes: Array<string | null> = [];
+    const session = createWhiteboardSession({
+      ydoc,
+      role: 'student',
+      onPanelChange: (panel) => changes.push(panel)
+    });
+    const before = Y.encodeStateAsUpdate(ydoc);
+
+    expect(session.togglePanel('calculator')).toBe('calculator');
+    expect(session.togglePanel('mathGraph')).toBe('mathGraph');
+    expect(session.activePanel()).toBe('mathGraph');
+    expect(session.togglePanel('mathGraph')).toBeNull();
+    expect(session.setActivePanel('physicsGraph')).toBe('physicsGraph');
+    expect(session.setActivePanel(null)).toBeNull();
+    expect(changes).toEqual(['calculator', 'mathGraph', null, 'physicsGraph', null]);
+    expect(Y.encodeStateAsUpdate(ydoc)).toEqual(before);
+    expect(session.canUndo()).toBe(false);
+    session.dispose();
+  });
+
+  it('creates, transforms, undoes, and redoes canonical math and physics objects', () => {
+    const ydoc = new Y.Doc();
+    const session = createWhiteboardSession({ ydoc, role: 'student' });
+
+    expect(session.execute({
+      kind: 'add',
+      object: {
+        id: 'math',
+        type: 'mathFunctionPlot',
+        x: 20,
+        y: 30,
+        width: 400,
+        height: 300,
+        expression: 'x^2',
+        xRange: [-5, 5],
+        color: '#2563eb',
+        lineWidth: 3
+      }
+    })).toEqual({ ok: true });
+    expect(session.execute({
+      kind: 'add',
+      object: {
+        id: 'physics',
+        type: 'physicsDataPlot',
+        x: 60,
+        y: 70,
+        width: 400,
+        height: 300,
+        points: [{ x: 0, y: 0 }, { x: 1, y: 9.8 }],
+        xLabel: 't',
+        yLabel: 'v',
+        color: '#f59e0b',
+        lineWidth: 2
+      }
+    })).toEqual({ ok: true });
+    expect(session.execute({
+      kind: 'resize',
+      id: 'math',
+      x: 100,
+      y: 120,
+      width: 500,
+      height: 360
+    })).toEqual({ ok: true });
+    expect(session.snapshot().find((object) => object.id === 'math')).toMatchObject({
+      x: 100,
+      y: 120,
+      width: 500,
+      height: 360
+    });
+
+    expect(session.undo()).toBe(true);
+    expect(session.snapshot().find((object) => object.id === 'math')).toMatchObject({
+      x: 20,
+      y: 30,
+      width: 400,
+      height: 300
+    });
+    expect(session.redo()).toBe(true);
+    expect(session.snapshot()).toHaveLength(2);
+    for (const object of session.snapshot()) {
+      expect(object).not.toHaveProperty('position');
+      expect(object).not.toHaveProperty('xData');
+      expect(object).not.toHaveProperty('yData');
+    }
     session.dispose();
   });
 });

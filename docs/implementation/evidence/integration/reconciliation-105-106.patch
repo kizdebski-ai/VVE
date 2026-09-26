@@ -1,0 +1,421 @@
+merge: 105+106 (6a7ef583bb2fd4e4249c3769f131ec5d662b0de7)
+subject: integrate: VVE-106 (canonical semantics, plots, panels)
+
+diff --cc frontend/src/App.vue
+index e9f28f7,72cbd48..88c444d
+--- a/frontend/src/App.vue
++++ b/frontend/src/App.vue
+@@@ -40,8 -38,8 +40,9 @@@
+          @update:has-char-groups="hasCharGroups = $event"
+          @update:has-stylized-strokes="hasStylizedStrokes = $event"
+          @update:active-users="handleActiveUsers"
++         @update:lesson-panel="activeLessonPanel = $event"
+ -        @select-pen-preset="selectPenPreset"
+ +        @select-pen-preset="selectInputProfile"
+ +        @pointer-observed="handlePointerObserved"
+        />
+        <AIChatPanel
+          v-if="can('experiment.ai')"
+@@@ -241,9 -248,10 +244,10 @@@ import AIChatPanel from './components/A
+  import ChemistryPanel from './components/ChemistryPanel.vue';
+  import EncryptionStatus from './components/EncryptionStatus.vue';
+  import GridAlignPanel from './components/GridAlignPanel.vue';
+ -import HandwritingStylerPanel from './components/HandwritingStylerPanel.vue';
+ +import InputStyleControl from './components/InputStyleControl.vue';
+  import * as Y from 'yjs';
+  import { undoRedoState as globalUndoRedoState } from './utils/undoRedoState';
++ import { LESSON_OBJECT_DEFAULTS, PANEL_SHORTCUTS } from './utils/lessonObjectDefaults.js';
+  
+  import katex from 'katex';
+  import { buildRoomHash, parseRoomHash } from './lib/roomLink';
+diff --cc frontend/src/board/whiteboardSession.ts
+index 0bfa64f,cb50c6f..8a736f5
+--- a/frontend/src/board/whiteboardSession.ts
++++ b/frontend/src/board/whiteboardSession.ts
+@@@ -100,72 -102,8 +107,73 @@@ export const createWhiteboardSession = 
+    undoManager.on('stack-cleared', notifyHistory);
+    let selection: string | null = null;
+    let viewport: SessionViewport = options.initialViewport ?? { zoom: 1, panX: 0, panY: 0 };
++   let activePanel: LessonPanel | null = null;
+  
+ +  // Incremental spatial index. Per-map observers catch field mutations
+ +  // (points appended, move/resize fields); the array observer replays its
+ +  // delta so insertions and deletions update the index without ever
+ +  // rebuilding the whole scene per document change or pointer sample.
+ +  const spatialIndex = createBoardSpatialIndex();
+ +  const mapObservers = new WeakMap<Y.Map<unknown>, () => void>();
+ +  const trackedMaps = new Map<string, Y.Map<unknown>>();
+ +  const orderedIds: string[] = [];
+ +  const toSceneObject = (map: Y.Map<unknown>): SceneObject | null => {
+ +    const object = normalizeBoardObject(map.toJSON() as SceneObject);
+ +    return object && typeof object.id === 'string' && object.id ? object : null;
+ +  };
+ +  const trackMap = (map: Y.Map<unknown>): void => {
+ +    if (mapObservers.has(map)) return;
+ +    const handler = () => {
+ +      const object = toSceneObject(map);
+ +      if (object) spatialIndex.update(object);
+ +    };
+ +    mapObservers.set(map, handler);
+ +    map.observe(handler);
+ +    const object = toSceneObject(map);
+ +    if (object) {
+ +      trackedMaps.set(object.id, map);
+ +      orderedIds.push(object.id);
+ +      spatialIndex.insert(object);
+ +    }
+ +  };
+ +  const untrackMap = (map: Y.Map<unknown>): void => {
+ +    const handler = mapObservers.get(map);
+ +    if (handler) {
+ +      map.unobserve(handler);
+ +      mapObservers.delete(map);
+ +    }
+ +    const object = toSceneObject(map);
+ +    if (object) trackedMaps.delete(object.id);
+ +  };
+ +  const syncSpatialIndexArray = (event: Y.YArrayEvent<unknown>): void => {
+ +    let offset = 0;
+ +    for (const deltaItem of event.delta) {
+ +      if (typeof deltaItem.retain === 'number') {
+ +        offset += deltaItem.retain;
+ +      } else if (Array.isArray(deltaItem.insert)) {
+ +        for (const item of deltaItem.insert) {
+ +          if (item instanceof Y.Map) {
+ +            trackMap(item);
+ +            offset++;
+ +          } else {
+ +            offset++;
+ +          }
+ +        }
+ +      } else if (typeof deltaItem.delete === 'number') {
+ +        const removedIds = orderedIds.splice(offset, deltaItem.delete);
+ +        for (const id of removedIds) {
+ +          const map = trackedMaps.get(id);
+ +          if (map) untrackMap(map);
+ +          spatialIndex.remove(id);
+ +        }
+ +      }
+ +    }
+ +  };
+ +  for (const map of drawings.toArray()) {
+ +    if (map instanceof Y.Map) trackMap(map);
+ +  }
+ +  drawings.observe(syncSpatialIndexArray);
+ +
+    const commitViewport = (next: SessionViewport): Readonly<SessionViewport> => {
+      if (
+        Number.isFinite(next.zoom) && next.zoom > 0 &&
+@@@ -248,9 -195,7 +267,10 @@@
+      role,
+      dispose: () => {
+        selection = null;
+ +      drawings.unobserve(syncSpatialIndexArray);
+ +      for (const map of Array.from(trackedMaps.values())) untrackMap(map);
+ +      spatialIndex.clear();
++       activePanel = null;
+        undoManager.off('stack-item-added', notifyHistory);
+        undoManager.off('stack-item-popped', notifyHistory);
+        undoManager.off('stack-cleared', notifyHistory);
+diff --cc frontend/src/components/MovableObject.vue
+index 6c284dd,44d5255..767f438
+--- a/frontend/src/components/MovableObject.vue
++++ b/frontend/src/components/MovableObject.vue
+@@@ -4,8 -4,10 +4,10 @@@
+      class="movable-object"
+      :class="{ 'is-selected': isSelected, 'is-line-type': isLineType }"
+      :style="objectStyle"
++     :data-object-id="String(objectData.id)"
++     :data-object-type="objectData.type"
+      @pointerdown.stop="handleLeftClickOnObject" 
+ -    @dblclick.stop="handleDoubleClick" touch-action="none"
+ +    @dblclick.stop="handleDoubleClick"
+    >
+      <!-- Rotation Handle -->
+      <div
+@@@ -1292,10 -1138,10 +1303,9 @@@ const stopResize = () => 
+    currentResizeHandle.value = null;
+    currentLineHandle.value = null;
+  
+ -  document.removeEventListener('pointermove', handleResize);
+ -  document.removeEventListener('pointerup', stopResize);
+ +  cleanupResizeListeners();
+  
+-   // The resize command scales pen points and mirrors position/size fields
+-   // inside the shared command layer.
++   // The resize command updates canonical bounds inside the shared command layer.
+    emit('commit-transform', {
+      kind: 'resize',
+      id: objectData.id,
+diff --cc frontend/src/components/WhiteboardCanvas.vue
+index ab8841b,67635d9..2c57a57
+--- a/frontend/src/components/WhiteboardCanvas.vue
++++ b/frontend/src/components/WhiteboardCanvas.vue
+@@@ -79,8 -78,8 +79,8 @@@
+        @blur="finalizeInlineText"
+        @keydown.enter.stop="handleInlineTextEnter"
+        @keydown.stop
+ -      @mousedown.stop
+ +      @pointerdown.stop
+-       placeholder="Type here..."
++       placeholder="Wpisz tekst…"
+      ></textarea>
+  
+      <!-- Zoom and pan controls -->
+@@@ -265,8 -267,8 +265,9 @@@ export default 
+      'update:has-char-groups',
+      'update:has-stylized-strokes',
+      'update:active-users',
++     'update:lesson-panel',
+ -    'select-pen-preset'
+ +    'select-pen-preset',
+ +    'pointer-observed'
+    ],
+    setup(props, { emit, expose }) {
+      const devicePixelRatio = ref(clampDevicePixelRatio());
+@@@ -2109,11 -2135,8 +2134,12 @@@
+        endTouchGesture,
+        applyMathAnswer,
+        selectPenPreset: (presetKey) => emit('select-pen-preset', presetKey),
++       deleteSelection: deleteSelectedObject,
+      });
+ +    const onWindowBlur = () => {
+ +      handleWindowBlur();
+ +      cancelPipeline('blur');
+ +    };
+  
+      // --- Other Actions ---
+      const handlePaste = (event) => {
+diff --cc frontend/src/composables/useKeyboardShortcuts.js
+index aa08246,368aa57..b405006
+--- a/frontend/src/composables/useKeyboardShortcuts.js
++++ b/frontend/src/composables/useKeyboardShortcuts.js
+@@@ -81,12 -82,14 +82,14 @@@ export function useKeyboardShortcuts(
+        if (lowerKey === 'p') { setTool('pen'); return; }
+        if (lowerKey === 't') { setTool('text'); return; }
+        if (lowerKey === 'e') { setTool('eraser'); return; }
++       if (lowerKey === 's') { setTool('shapes'); return; }
++       if (lowerKey === 'l') { setTool('lines'); return; }
+  
+ -      // 10.1: Pen preset shortcuts 1-4
+ +      // 10.1: Input Style shortcuts — 1 Mysz, 2 Pióro
+        if (selectPenPreset) {
+ -        const presetMap = { '1': 'gel', '2': 'technical', '3': 'marker', '4': 'calligraphy' };
+ -        if (presetMap[event.key]) {
+ -          selectPenPreset(presetMap[event.key]);
+ +        const profileMap = { '1': 'mouse', '2': 'pen' };
+ +        if (profileMap[event.key]) {
+ +          selectPenPreset(profileMap[event.key]);
+            return;
+          }
+        }
+diff --cc frontend/tests/unit/sections3-10.test.js
+index b2af0be,3791324..bc200d8
+--- a/frontend/tests/unit/sections3-10.test.js
++++ b/frontend/tests/unit/sections3-10.test.js
+@@@ -273,29 -277,6 +273,28 @@@ describe('9.8: Unused CSS variables rem
+  
+  // ─── Section 10: Missing Features ────────────────────────────────────────────
+  
+ +describe('10.1: Input Style keyboard shortcuts', () => {
+ +  it('useKeyboardShortcuts.js maps 1/2 to Mysz/Pióro Input Style', () => {
+ +    const src = readSrc('composables/useKeyboardShortcuts.js');
+ +    expect(src).toContain('selectPenPreset');
+ +    expect(src).toContain("'1': 'mouse'");
+ +    expect(src).toContain("'2': 'pen'");
+ +    expect(src).not.toContain("'1': 'gel'");
+ +  });
+ +
+ +  it('WhiteboardCanvas.vue wires up useKeyboardShortcuts composable', () => {
+ +    const src = readSrc('components/WhiteboardCanvas.vue');
+ +    expect(src).toContain('useKeyboardShortcuts({');
+ +    expect(src).toContain("emit('select-pen-preset'");
+ +  });
+ +
+ +  it('App.vue auto-selects Input Style from observed pointer type until override', () => {
+ +    const src = readSrc('App.vue');
+ +    expect(src).toContain('@pointer-observed="handlePointerObserved"');
+ +    expect(src).toContain('handlePointerObserved,');
+ +    expect(src).toContain('suggestProfile');
+ +  });
+ +});
+- 
+  describe('10.3: Extended color palette (20+ colors)', () => {
+    it('ColorPicker.vue has 20+ basic colors', () => {
+      const src = readSrc('components/ColorPicker.vue');
+diff --cc frontend/tests/unit/whiteboardSession.spec.ts
+index 4eef246,cac2192..e523bd5
+--- a/frontend/tests/unit/whiteboardSession.spec.ts
++++ b/frontend/tests/unit/whiteboardSession.spec.ts
+@@@ -155,61 -155,92 +155,150 @@@ describe('WhiteboardSession Interface'
+      session.dispose();
+    });
+  
+ +  it('provides bounded spatial candidate queries that update with document mutations', () => {
+ +    const ydoc = new Y.Doc();
+ +    const session = createWhiteboardSession({ ydoc, role: 'teacher' });
+ +
+ +    session.execute({ kind: 'add', object: rectangle('spatial-target') });
+ +    // Candidate near object
+ +    const hits = session.queryObjectsNear({ x: 50, y: 50 }, 10);
+ +    expect(hits.map((h) => h.id)).toEqual(['spatial-target']);
+ +
+ +    // Empty area query returns empty
+ +    const emptyHits = session.queryObjectsNear({ x: 5000, y: 5000 }, 10);
+ +    expect(emptyHits).toHaveLength(0);
+ +
+ +    // Move object to (5000, 5000)
+ +    session.execute({ kind: 'move', id: 'spatial-target', x: 5000, y: 5000 });
+ +    expect(session.queryObjectsNear({ x: 50, y: 50 }, 10)).toHaveLength(0);
+ +    expect(session.queryObjectsNear({ x: 5020, y: 5020 }, 10).map((h) => h.id)).toEqual(['spatial-target']);
+ +
+ +    // Delete object
+ +    session.execute({ kind: 'delete', ids: ['spatial-target'] });
+ +    expect(session.queryObjectsNear({ x: 5020, y: 5020 }, 10)).toHaveLength(0);
+ +
+ +    session.dispose();
+ +  });
+ +  it('preserves pen pressure through commit, snapshot reload and spatial index queries', () => {
+ +    const ydoc = new Y.Doc();
+ +    const session = createWhiteboardSession({ ydoc, role: 'teacher' });
+ +
+ +    const penStroke = {
+ +      id: 'pen-1',
+ +      type: 'pen',
+ +      x: 0,
+ +      y: 0,
+ +      width: 100,
+ +      height: 10,
+ +      color: '#111827',
+ +      lineWidth: 3,
+ +      penStyle: 'gel',
+ +      points: [
+ +        { x: 0, y: 0, t: 0, p: 0.15 },
+ +        { x: 50, y: 5, t: 40, p: 0.9 },
+ +        { x: 100, y: 10, t: 80, p: 0.45 }
+ +      ]
+ +    };
+ +    expect(session.execute({ kind: 'add', object: penStroke })).toEqual({ ok: true });
+ +
+ +    // Reload path: the committed snapshot keeps pressure in canonical points.
+ +    const reloaded = session.snapshot().find((object) => object.id === 'pen-1');
+ +    expect(reloaded).toBeTruthy();
+ +    expect(reloaded.points.map((point: { p?: number }) => point.p)).toEqual([0.15, 0.9, 0.45]);
+ +
+ +    // Hit testing still finds the committed pressure stroke.
+ +    expect(session.queryObjectsNear({ x: 50, y: 5 }, 8).map((object) => object.id))
+ +      .toContain('pen-1');
+ +
+ +    session.dispose();
+ +  });
+++
++   it('owns exclusive lesson-panel state without touching the shared document', () => {
++     const ydoc = new Y.Doc();
++     const changes: Array<string | null> = [];
++     const session = createWhiteboardSession({
++       ydoc,
++       role: 'student',
++       onPanelChange: (panel) => changes.push(panel)
++     });
++     const before = Y.encodeStateAsUpdate(ydoc);
++ 
++     expect(session.togglePanel('calculator')).toBe('calculator');
++     expect(session.togglePanel('mathGraph')).toBe('mathGraph');
++     expect(session.activePanel()).toBe('mathGraph');
++     expect(session.togglePanel('mathGraph')).toBeNull();
++     expect(session.setActivePanel('physicsGraph')).toBe('physicsGraph');
++     expect(session.setActivePanel(null)).toBeNull();
++     expect(changes).toEqual(['calculator', 'mathGraph', null, 'physicsGraph', null]);
++     expect(Y.encodeStateAsUpdate(ydoc)).toEqual(before);
++     expect(session.canUndo()).toBe(false);
++     session.dispose();
++   });
++ 
++   it('creates, transforms, undoes, and redoes canonical math and physics objects', () => {
++     const ydoc = new Y.Doc();
++     const session = createWhiteboardSession({ ydoc, role: 'student' });
++ 
++     expect(session.execute({
++       kind: 'add',
++       object: {
++         id: 'math',
++         type: 'mathFunctionPlot',
++         x: 20,
++         y: 30,
++         width: 400,
++         height: 300,
++         expression: 'x^2',
++         xRange: [-5, 5],
++         color: '#2563eb',
++         lineWidth: 3
++       }
++     })).toEqual({ ok: true });
++     expect(session.execute({
++       kind: 'add',
++       object: {
++         id: 'physics',
++         type: 'physicsDataPlot',
++         x: 60,
++         y: 70,
++         width: 400,
++         height: 300,
++         points: [{ x: 0, y: 0 }, { x: 1, y: 9.8 }],
++         xLabel: 't',
++         yLabel: 'v',
++         color: '#f59e0b',
++         lineWidth: 2
++       }
++     })).toEqual({ ok: true });
++     expect(session.execute({
++       kind: 'resize',
++       id: 'math',
++       x: 100,
++       y: 120,
++       width: 500,
++       height: 360
++     })).toEqual({ ok: true });
++     expect(session.snapshot().find((object) => object.id === 'math')).toMatchObject({
++       x: 100,
++       y: 120,
++       width: 500,
++       height: 360
++     });
++ 
++     expect(session.undo()).toBe(true);
++     expect(session.snapshot().find((object) => object.id === 'math')).toMatchObject({
++       x: 20,
++       y: 30,
++       width: 400,
++       height: 300
++     });
++     expect(session.redo()).toBe(true);
++     expect(session.snapshot()).toHaveLength(2);
++     for (const object of session.snapshot()) {
++       expect(object).not.toHaveProperty('position');
++       expect(object).not.toHaveProperty('xData');
++       expect(object).not.toHaveProperty('yData');
++     }
++     session.dispose();
++   });
+  });
+diff --cc server/tests/boardScene.test.ts
+index ef82fdd,0e98ab8..7f96d81
+--- a/server/tests/boardScene.test.ts
++++ b/server/tests/boardScene.test.ts
+@@@ -3,14 -3,12 +3,15 @@@ import * as Y from 'yjs'
+  
+  import {
+    applyBoardCommand,
++   canonicalObjectBounds,
+    collectUpdateEffects,
+ +  createBoardSpatialIndex,
++   LESSON_OBJECT_DEFAULTS,
+    normalizeBoardObject,
+ +  queryObjectsNear,
+-   sceneObjectBounds,
+    sceneClearEpoch,
+    sceneDrawings,
+ +  sceneObjectBounds,
+    validateBoardObject,
+    SCENE_LIMITS,
+    SHAPE_TYPES,

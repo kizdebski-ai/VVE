@@ -1,0 +1,29 @@
+{
+  "profile": "change",
+  "smoke": false,
+  "startedAt": "2026-09-18T23:56:48.311Z",
+  "finishedAt": "2026-09-19T00:05:25.560Z",
+  "durationMs": 517249,
+  "clients": 4,
+  "boards": 1,
+  "acknowledgedOperations": 2000,
+  "reconnects": 3,
+  "backendRestarts": 1,
+  "metrics": {
+    "samples": 1,
+    "maxRssBytes": 173785088,
+    "maxEventLoopDelayMs": 0,
+    "blockerEvents": 0,
+    "digestMismatches": 0,
+    "crossBoardLeaks": 0
+  },
+  "fixtures": null,
+  "coverage": "complete",
+  "finalDigests": [
+    "f47d2151e37a697901918e638c11049f097ec5baccbd75b062cfda952c056b37",
+    "f47d2151e37a697901918e638c11049f097ec5baccbd75b062cfda952c056b37",
+    "f47d2151e37a697901918e638c11049f097ec5baccbd75b062cfda952c056b37",
+    "f47d2151e37a697901918e638c11049f097ec5baccbd75b062cfda952c056b37"
+  ],
+  "passed": true
+}

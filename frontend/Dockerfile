@@ -1,21 +1,23 @@
+# Build context is the repository root: the frontend consumes the shared
+# PilotAvailability/board modules from server/src/pilot through the `@pilot`
+# alias, so both trees must be in the image. Build with
+#   docker build -f frontend/Dockerfile .
 # Build stage
 FROM node:20-slim AS builder
-WORKDIR /app
+WORKDIR /app/frontend
 
-ARG VITE_BACKEND_URL=http://vve.railway.internal:8000
-ARG VITE_ADMIN_SECRET
+# Optional and never a credential. Empty means same-origin requests through
+# the nginx proxy below, which also keeps the HttpOnly session cookies first-party.
+ARG VITE_BACKEND_URL=
 ENV VITE_BACKEND_URL=$VITE_BACKEND_URL
-ENV VITE_ADMIN_SECRET=$VITE_ADMIN_SECRET
 
 # Install dependencies
-COPY package*.json ./
+COPY frontend/package*.json ./
 RUN npm ci
 
-# Copy sources
-COPY . .
-
-# Debug: Show which VITE_ vars are set during build
-RUN echo "Build-time VITE_ADMIN_SECRET is set: $([ -n \"$VITE_ADMIN_SECRET\" ] && echo 'YES' || echo 'NO')"
+# Copy sources: the frontend plus the shared pilot modules it imports
+COPY frontend/ ./
+COPY server/src/pilot /app/server/src/pilot
 
 # Build static assets
 RUN npm run build
@@ -29,10 +31,10 @@ ENV BACKEND_URL=http://vve.railway.internal:8000
 ENV PORT=80
 
 # Copy built assets
-COPY --from=builder /app/dist ./
+COPY --from=builder /app/frontend/dist ./
 
 # Copy nginx template
-COPY nginx.conf.template /etc/nginx/templates/default.conf.template
+COPY frontend/nginx.conf.template /etc/nginx/templates/default.conf.template
 
 # Pre-generate nginx config so it works even if a custom start command bypasses our entrypoint.
 RUN envsubst "\$BACKEND_URL \$PORT" < /etc/nginx/templates/default.conf.template > /etc/nginx/conf.d/default.conf

@@ -1,0 +1,26 @@
+{
+  "profile": "mature",
+  "smoke": false,
+  "startedAt": "2026-09-18T23:55:42.964Z",
+  "finishedAt": "2026-09-18T23:56:03.153Z",
+  "durationMs": 20188,
+  "clients": 4,
+  "boards": 1,
+  "acknowledgedOperations": 472,
+  "reconnects": 0,
+  "backendRestarts": 1,
+  "metrics": {
+    "samples": 1,
+    "maxRssBytes": 0,
+    "maxEventLoopDelayMs": 0,
+    "blockerEvents": 0,
+    "digestMismatches": 0,
+    "crossBoardLeaks": 0
+  },
+  "fixtures": {
+    "pdfBytes": 3373,
+    "imageBytes": 70
+  },
+  "coverage": "complete",
+  "passed": true
+}

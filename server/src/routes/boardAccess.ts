@@ -72,6 +72,13 @@ export const createBoardAccessRouter = (access: CapabilityAccess, lifecycle: Boa
       res.status(503).json({ error: 'Usługa chwilowo niedostępna. Spróbuj ponownie za chwilę.' });
       return;
     }
+    // The capability decision and lifecycle view are separate reads. End Board
+    // Access may commit between them; never turn that race into a successful
+    // HTTP entry or issue a token for a board whose durable view is ended.
+    if (boardFacts.state !== 'active') {
+      res.status(401).json({ error: 'Dostęp do tej tablicy został zakończony.', reason: 'revoked' });
+      return;
+    }
 
     await logBoardAccess({
       boardId,
@@ -94,7 +101,7 @@ export const createBoardAccessRouter = (access: CapabilityAccess, lifecycle: Boa
       role: decision.role,
       publicSlug: resolveById ? null : slug,
       title: boardFacts.title,
-      studentLabel: boardFacts.studentLabel,
+      ...(decision.role === 'teacher' ? { studentLabel: boardFacts.studentLabel } : {}),
       teacherName: PUBLIC_TEACHER_IDENTITY,
       validUntil: boardFacts.validUntil,
       wsToken,

@@ -177,7 +177,7 @@ const applyToBoard = () => {
   font-weight: 500;
   color: var(--text-secondary);
   cursor: pointer;
-  transition: all 0.2s;
+  transition: background-color 0.2s, border-color 0.2s, color 0.2s, box-shadow 0.2s, opacity 0.2s, transform 0.2s;
 }
 
 .mode-selector button.active {
@@ -202,7 +202,7 @@ const applyToBoard = () => {
   border-radius: 12px;
   border: 1px solid rgba(0,0,0,0.1);
   background: rgba(255,255,255,0.5);
-  transition: all 0.2s;
+  transition: background-color 0.2s, border-color 0.2s, color 0.2s, box-shadow 0.2s, opacity 0.2s, transform 0.2s;
 }
 
 .styled-textarea:focus {
@@ -244,7 +244,7 @@ const applyToBoard = () => {
   color: var(--text-secondary);
   border-radius: 10px;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: background-color 0.2s, border-color 0.2s, color 0.2s, box-shadow 0.2s, opacity 0.2s, transform 0.2s;
 }
 
 .btn-secondary:hover {

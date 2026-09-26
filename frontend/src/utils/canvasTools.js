@@ -4,6 +4,7 @@
  */
 
 import { v4 as uuidv4 } from 'uuid';
+import { LESSON_OBJECT_DEFAULTS } from './lessonObjectDefaults.js';
 
 /**
  * Create a new element based on the selected tool and initial position
@@ -98,18 +99,25 @@ export const createNewElement = (tool, coords, color, lineWidth, extraData = {})
  * @param {Number} lineWidth - Axis line width
  * @returns {Object} - CoordinateSystem2D element
  */
-export const createCoordinateSystem2DElement = (position, width = 300, height = 200, color = '#000000', lineWidth = 1) => {
+export const createCoordinateSystem2DElement = (
+  position,
+  width = LESSON_OBJECT_DEFAULTS.coordinateSystem2D.width,
+  height = LESSON_OBJECT_DEFAULTS.coordinateSystem2D.height,
+  color = LESSON_OBJECT_DEFAULTS.coordinateSystem2D.color,
+  lineWidth = LESSON_OBJECT_DEFAULTS.coordinateSystem2D.lineWidth
+) => {
   return {
     id: uuidv4(),
     type: 'coordinateSystem2D',
-    position,
+    x: position.x,
+    y: position.y,
     width,
     height,
     color,
     lineWidth,
-    grid: true,
-    xLabel: 'x',
-    yLabel: 'y',
+    grid: LESSON_OBJECT_DEFAULTS.coordinateSystem2D.grid,
+    xLabel: LESSON_OBJECT_DEFAULTS.coordinateSystem2D.xLabel,
+    yLabel: LESSON_OBJECT_DEFAULTS.coordinateSystem2D.yLabel,
     timestamp: Date.now()
   };
 };
@@ -124,45 +132,61 @@ export const createCoordinateSystem2DElement = (position, width = 300, height = 
  * @param {Number} lineWidth - Plot line width
  * @returns {Object} - MathFunctionPlot element
  */
-export const createMathFunctionPlotElement = (position, expression = 'x', width = 300, height = 200, color = '#007bff', lineWidth = 2) => {
+export const createMathFunctionPlotElement = (
+  position,
+  expression = LESSON_OBJECT_DEFAULTS.mathFunctionPlot.expression,
+  width = LESSON_OBJECT_DEFAULTS.mathFunctionPlot.width,
+  height = LESSON_OBJECT_DEFAULTS.mathFunctionPlot.height,
+  color = LESSON_OBJECT_DEFAULTS.mathFunctionPlot.color,
+  lineWidth = LESSON_OBJECT_DEFAULTS.mathFunctionPlot.lineWidth
+) => {
   return {
     id: uuidv4(),
     type: 'mathFunctionPlot',
-    position,
+    x: position.x,
+    y: position.y,
     width,
     height,
     expression,
+    xRange: [...LESSON_OBJECT_DEFAULTS.mathFunctionPlot.xRange],
+    xLabel: LESSON_OBJECT_DEFAULTS.mathFunctionPlot.xLabel,
+    yLabel: LESSON_OBJECT_DEFAULTS.mathFunctionPlot.yLabel,
     color,
     lineWidth,
     timestamp: Date.now()
-    // domain: [-10, 10] // Optional: Add later if needed
   };
 };
 
 /**
  * Create a Physics Data Plot element
  * @param {Object} position - Top-left corner {x, y}
- * @param {Array<Number>} xData - Array of x-coordinates
- * @param {Array<Number>} yData - Array of y-coordinates
+ * @param {Array<{x: Number, y: Number}>} points - Canonical data points
  * @param {Number} width - Plot width
  * @param {Number} height - Plot height
  * @param {String} color - Plot color
  * @param {Number} lineWidth - Plot line width
- * @param {String} mode - Plot mode ('lines', 'markers', 'lines+markers')
  * @returns {Object} - PhysicsDataPlot element
  */
-export const createPhysicsDataPlotElement = (position, xData = [], yData = [], width = 300, height = 200, color = '#dc3545', lineWidth = 1, mode = 'lines+markers') => {
+export const createPhysicsDataPlotElement = (
+  position,
+  points = [],
+  width = LESSON_OBJECT_DEFAULTS.physicsDataPlot.width,
+  height = LESSON_OBJECT_DEFAULTS.physicsDataPlot.height,
+  color = LESSON_OBJECT_DEFAULTS.physicsDataPlot.color,
+  lineWidth = LESSON_OBJECT_DEFAULTS.physicsDataPlot.lineWidth
+) => {
   return {
     id: uuidv4(),
     type: 'physicsDataPlot',
-    position,
+    x: position.x,
+    y: position.y,
     width,
     height,
-    xData,
-    yData,
+    points,
     color,
     lineWidth,
-    mode,
+    xLabel: LESSON_OBJECT_DEFAULTS.physicsDataPlot.xLabel,
+    yLabel: LESSON_OBJECT_DEFAULTS.physicsDataPlot.yLabel,
     timestamp: Date.now()
   };
 };
@@ -170,24 +194,32 @@ export const createPhysicsDataPlotElement = (position, xData = [], yData = [], w
 /**
  * Create a 3D Coordinate System element (basic projection)
  * @param {Object} position - Center position {x, y}
- * @param {Number} size - Size of the axes
+ * @param {Number} width - Width of the 3D axes
+ * @param {Number} height - Height of the 3D axes
  * @param {String} color - Axis color
  * @param {Number} lineWidth - Axis line width
  * @returns {Object} - CoordinateSystem3D element
  */
-export const createCoordinateSystem3DElement = (position, size = 150, color = '#000000', lineWidth = 1) => {
+export const createCoordinateSystem3DElement = (
+  position,
+  width = LESSON_OBJECT_DEFAULTS.coordinateSystem3D.width,
+  height = LESSON_OBJECT_DEFAULTS.coordinateSystem3D.height,
+  color = LESSON_OBJECT_DEFAULTS.coordinateSystem3D.color,
+  lineWidth = LESSON_OBJECT_DEFAULTS.coordinateSystem3D.lineWidth
+) => {
   return {
     id: uuidv4(),
     type: 'coordinateSystem3D',
-    position, // Center position for 3D projection
-    size,
-    width: size * 1.2,
-    height: size * 1.2,
+    x: position.x,
+    y: position.y,
+    width,
+    height,
     color,
     lineWidth,
-    xLabel: 'x',
-    yLabel: 'y',
-    zLabel: 'z',
+    grid: LESSON_OBJECT_DEFAULTS.coordinateSystem3D.grid,
+    xLabel: LESSON_OBJECT_DEFAULTS.coordinateSystem3D.xLabel,
+    yLabel: LESSON_OBJECT_DEFAULTS.coordinateSystem3D.yLabel,
+    zLabel: LESSON_OBJECT_DEFAULTS.coordinateSystem3D.zLabel,
     timestamp: Date.now()
   };
 };

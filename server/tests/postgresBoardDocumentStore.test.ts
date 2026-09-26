@@ -169,4 +169,66 @@ describe.skipIf(!hasPostgres)('PostgreSQL BoardDocument store', () => {
       .where({ board_id: BOARD_ID, operation_id: 'pg-before-cutoff' });
     expect(replayRows).toHaveLength(0);
   });
+
+  it('rolls back compaction when cancellation arrives while PostgreSQL waits on its first write', async () => {
+    const store = createPostgresBoardDocumentStore({ db });
+    const operationId = `pg-abort-${process.pid}`;
+    const appended = await store.append(BOARD_ID, operationId, update('must survive abort'));
+    const before = await db('board_yjs_state')
+      .where({ board_id: BOARD_ID })
+      .first('snapshot_cutoff', 'ydoc_state');
+    const locker = new pg.Client({ connectionString: databaseUrl });
+    await locker.connect();
+    await locker.query('BEGIN');
+    await locker.query('SELECT board_id FROM board_yjs_state WHERE board_id = $1 FOR UPDATE', [BOARD_ID]);
+
+    const controller = new AbortController();
+    const compacting = store.compact(
+      BOARD_ID,
+      Y.encodeStateAsUpdate(new Y.Doc()),
+      appended.sequence,
+      controller.signal
+    );
+    // Attach the rejection handler before releasing the row lock; PostgreSQL
+    // can finish the blocked statement in the same turn as the rollback.
+    const compactingResult = compacting.then(
+      () => undefined,
+      (error: unknown) => error as Error
+    );
+    const waitDeadline = Date.now() + 2_000;
+    let blocked = false;
+    try {
+      while (Date.now() < waitDeadline) {
+        const activity = await admin.query<{ query: string }>(
+          `SELECT query
+             FROM pg_stat_activity
+            WHERE pid <> pg_backend_pid()
+              AND wait_event_type = 'Lock'
+              AND query ILIKE '%board_yjs_state%'`
+        );
+        if (activity.rows.length > 0) {
+          blocked = true;
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      expect(blocked).toBe(true);
+      controller.abort();
+    } finally {
+      await locker.query('ROLLBACK').catch(() => undefined);
+      await locker.end().catch(() => undefined);
+    }
+
+    const compactError = await compactingResult;
+    expect(compactError).toBeInstanceOf(Error);
+    expect((compactError as Error).message).toContain('Compact aborted before commit');
+    const after = await db('board_yjs_state')
+      .where({ board_id: BOARD_ID })
+      .first('snapshot_cutoff', 'ydoc_state');
+    expect(String(after.snapshot_cutoff)).toBe(String(before.snapshot_cutoff));
+    expect(Buffer.compare(after.ydoc_state, before.ydoc_state)).toBe(0);
+    await expect(
+      db('board_yjs_updates').where({ board_id: BOARD_ID, operation_id: operationId }).first()
+    ).resolves.toBeTruthy();
+  });
 });

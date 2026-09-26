@@ -1,7 +1,10 @@
 <template>
   <div
+    ref="toolbarContainerRef"
     class="toolbar-container"
     :class="orientation"
+    @focusin="handleHoverEnter"
+    @focusout="handleHoverLeave"
   >
     <!-- Main Toolbar -->
     <div
@@ -14,6 +17,7 @@
         <button
           v-for="tool in visibleMainTools"
           :key="tool.name"
+          type="button"
           class="tool-btn"
           :data-tool-id="tool.feature"
           :class="{ active: currentTool === tool.name }"
@@ -38,7 +42,7 @@
             @click.stop="toggleShapesMenu"
             title="Kształty"
           >
-            <component :is="currentShapeIcon" :size="20" />
+            <ShapeIcon :shape="currentShapeKey" :size="20" />
             <ChevronDown :size="12" class="dropdown-arrow" />
           </button>
           
@@ -51,29 +55,33 @@
               ref="shapesMenuRef"
             >
               <div class="popover-section">
-                <div class="section-title">Shapes</div>
+                <div class="section-title">Kształty</div>
                 <div class="shapes-grid">
                     <button
                       v-for="shape in shapeOptions"
                       :key="shape.tool"
+                      type="button"
                       class="shape-btn"
                       :class="{ active: isShapeActive(shape) }"
+                      :aria-label="shape.label"
                       @click="selectShape(shape)"
                       :title="shape.label"
                     >
-                    <component :is="shape.icon" :size="18" />
+                    <ShapeIcon :shape="shape.tool" :size="22" />
                   </button>
                 </div>
               </div>
 
               <div class="popover-section">
-                <div class="section-title">Line style</div>
-                <div class="option-row">
+                <div class="section-title">Styl linii</div>
+                <div class="option-row" role="group" aria-label="Styl linii">
                   <button
                     v-for="style in lineStyleOptions"
                     :key="style.value"
+                    type="button"
                     class="option-pill"
                     :class="{ active: currentLineStyle === style.value }"
+                    :aria-pressed="currentLineStyle === style.value"
                     @click="selectLineStyle(style.value)"
                   >
                     {{ style.label }}
@@ -82,13 +90,15 @@
               </div>
 
               <div class="popover-section">
-                <div class="section-title">Roughness</div>
-                <div class="option-row">
+                <div class="section-title">Wygląd kreski</div>
+                <div class="option-row" role="group" aria-label="Wygląd kreski">
                   <button
                     v-for="option in roughnessOptions"
                     :key="option.value"
+                    type="button"
                     class="option-pill"
                     :class="{ active: currentRoughness === option.value }"
+                    :aria-pressed="currentRoughness === option.value"
                     @click="selectRoughness(option.value)"
                   >
                     {{ option.label }}
@@ -97,13 +107,15 @@
               </div>
 
               <div class="popover-section">
-                <div class="section-title">Arrowheads</div>
-                <div class="option-row">
+                <div class="section-title">Groty</div>
+                <div class="option-row" role="group" aria-label="Groty">
                   <button
                     v-for="style in arrowStyleOptions"
                     :key="style.value"
+                    type="button"
                     class="option-pill"
                     :class="{ active: currentArrowStyle === style.value }"
+                    :aria-pressed="currentArrowStyle === style.value"
                     @click="selectArrowStyle(style.value)"
                   >
                     {{ style.label }}
@@ -112,38 +124,49 @@
               </div>
 
               <div class="popover-section">
-                <div class="section-title">Quick colors</div>
+                <div class="section-title">Kolor linii</div>
                 <div class="color-row">
                   <button
                     v-for="swatch in colorSwatches"
                     :key="swatch"
+                    type="button"
                     class="color-swatch"
-                    :style="{ backgroundColor: swatch }"
                     :class="{ active: currentColor === swatch }"
+                    :aria-label="`Kolor linii ${swatch}`"
+                    :aria-pressed="currentColor === swatch"
                     @click="selectColorSwatch(swatch)"
-                  ></button>
+                  >
+                    <span class="color-swatch-dot" :style="{ backgroundColor: swatch }" aria-hidden="true"></span>
+                  </button>
                 </div>
               </div>
 
               <div class="popover-section">
-                <div class="section-title">Fill color</div>
+                <div class="section-title">Kolor wypełnienia</div>
                 <div class="color-row">
                   <button
+                    type="button"
                     class="color-swatch fill-none"
                     :class="{ active: currentFillColor === null }"
+                    :aria-pressed="currentFillColor === null"
                     @click="selectFillColor(null)"
-                    title="No fill"
+                    title="Brak wypełnienia"
+                    aria-label="Brak wypełnienia"
                   >
-                    <span class="no-fill-x">✕</span>
+                    <span class="color-swatch-dot fill-none-dot" aria-hidden="true"><span class="no-fill-x">✕</span></span>
                   </button>
                   <button
                     v-for="swatch in fillColorSwatches"
                     :key="swatch"
+                    type="button"
                     class="color-swatch"
-                    :style="{ backgroundColor: swatch }"
                     :class="{ active: currentFillColor === swatch }"
+                    :aria-label="`Kolor wypełnienia ${swatch}`"
+                    :aria-pressed="currentFillColor === swatch"
                     @click="selectFillColor(swatch)"
-                  ></button>
+                  >
+                    <span class="color-swatch-dot" :style="{ backgroundColor: swatch }" aria-hidden="true"></span>
+                  </button>
                 </div>
               </div>
             </div>
@@ -174,30 +197,40 @@
              enumeration test asserts this group equals manifest.tools. -->
         <button
           v-if="can('panel.calculator')"
+          type="button"
           class="tool-btn"
           data-tool-id="panel.calculator"
+          :class="{ active: isCalculatorOpen }"
+          :aria-pressed="isCalculatorOpen"
+          :aria-keyshortcuts="PANEL_SHORTCUTS.calculator.shortcut"
           @click="$emit('toggle-calculator')"
-          title="Kalkulator naukowy"
+          :title="`${PANEL_SHORTCUTS.calculator.label} (${PANEL_SHORTCUTS.calculator.shortcut})`"
         >
           <Calculator :size="20" />
         </button>
         <button
           v-if="can('panel.mathGraph')"
+          type="button"
           class="tool-btn"
           data-tool-id="panel.mathGraph"
           :class="{ active: isMathPanelOpen }"
+          :aria-pressed="isMathPanelOpen"
+          :aria-keyshortcuts="PANEL_SHORTCUTS.mathGraph.shortcut"
           @click="$emit('toggle-math-panel')"
-          title="Wykres funkcji"
+          :title="`${PANEL_SHORTCUTS.mathGraph.label} (${PANEL_SHORTCUTS.mathGraph.shortcut})`"
         >
           <LineChart :size="20" />
         </button>
         <button
           v-if="can('panel.physicsGraph')"
+          type="button"
           class="tool-btn"
           data-tool-id="panel.physicsGraph"
           :class="{ active: isPhysicsPanelOpen }"
+          :aria-pressed="isPhysicsPanelOpen"
+          :aria-keyshortcuts="PANEL_SHORTCUTS.physicsGraph.shortcut"
           @click="$emit('toggle-physics-panel')"
-          title="Wykres fizyczny"
+          :title="`${PANEL_SHORTCUTS.physicsGraph.label} (${PANEL_SHORTCUTS.physicsGraph.shortcut})`"
         >
           <Activity :size="20" />
         </button>
@@ -222,9 +255,12 @@
         </button>
         <div v-if="can('panel.coordinateSystem')" class="dropdown-trigger coordinate-trigger" ref="coordinateTriggerRef">
           <button
+            type="button"
             class="tool-btn"
             data-tool-id="panel.coordinateSystem"
             :class="{ active: showCoordinateMenu }"
+            :aria-expanded="showCoordinateMenu"
+            aria-haspopup="menu"
             @click.stop="toggleCoordinateMenu"
             title="Dodaj układ współrzędnych"
           >
@@ -241,6 +277,7 @@
               <button
                 v-for="option in coordinateOptions"
                 :key="option.type"
+                type="button"
                 class="shape-btn coordinate-btn"
                 @click="selectCoordinateSystem(option.type)"
               >
@@ -261,66 +298,93 @@
       </div>
     </div>
 
-    <!-- Properties Bar (Contextual) -->
+    <!-- Properties well: only the controls the active tool actually uses. -->
     <div
       class="properties-bar glass-panel"
       v-if="shouldShowProperties"
       :class="orientation"
+      role="group"
+      :aria-label="currentTool === 'eraser' ? 'Ustawienia gumki' : 'Ustawienia narzędzia'"
       @pointerenter="handleHoverEnter"
       @pointerleave="handleHoverLeave"
     >
-      <!-- Color Picker + Quick Swatches -->
-      <div class="property-group color-group">
-        <div
-          class="color-preview"
-          :style="{ backgroundColor: currentColor }"
-          @click="toggleColorPicker"
-        ></div>
-        <input
-          type="color"
-          ref="colorInput"
-          v-model="currentColor"
-          @input="updateColor"
-          class="hidden-color-input"
-        >
+      <div v-if="currentTool !== 'eraser'" class="property-well color-well">
+        <span class="color-picker-anchor">
+          <button
+            type="button"
+            class="color-preview"
+            :aria-label="`Wybierz kolor linii ${currentColor}`"
+            title="Wybierz kolor linii"
+            @click="toggleColorPicker"
+          >
+            <span class="color-preview-dot" :style="{ backgroundColor: currentColor }" aria-hidden="true"></span>
+          </button>
+          <input
+            type="color"
+            ref="colorInput"
+            v-model="currentColor"
+            @input="updateColor"
+            aria-label="Kolor linii"
+            tabindex="-1"
+            class="hidden-color-input"
+          >
+        </span>
+        <span class="well-divider" aria-hidden="true"></span>
         <div class="quick-swatches">
           <button
             v-for="swatch in quickSwatches"
             :key="swatch"
+            type="button"
             class="quick-swatch"
-            :style="{ backgroundColor: swatch }"
             :class="{ active: currentColor === swatch }"
+            :aria-label="`Szybki kolor linii ${swatch}`"
+            :aria-pressed="currentColor === swatch"
             @click="selectColorSwatch(swatch)"
-          ></button>
+          >
+            <span class="quick-swatch-dot" :style="{ backgroundColor: swatch }" aria-hidden="true"></span>
+          </button>
         </div>
       </div>
 
-      <!-- Line Width Slider -->
-      <div class="property-group slider-group">
-        <Circle :size="12" :fill="currentColor" :stroke-width="0" />
-        <input 
-          type="range" 
-          min="1" 
-          max="20" 
-          v-model.number="currentLineWidth" 
-          @input="updateLineWidth"
+      <label v-if="currentTool === 'eraser'" class="property-well slider-well">
+        <span class="property-label">Rozmiar</span>
+        <input
+          type="range"
+          min="10"
+          max="100"
+          v-model.number="currentEraserSize"
+          @input="updateEraserSize"
+          aria-label="Rozmiar gumki"
           class="width-slider"
         >
-        <Circle :size="20" :fill="currentColor" :stroke-width="0" />
-      </div>
-      
-      <!-- Eraser Size (if eraser selected) -->
-       <div class="property-group" v-if="currentTool === 'eraser'">
-          <span class="label">Size:</span>
-           <input 
-            type="range" 
-            min="10" 
-            max="100" 
-            v-model.number="currentEraserSize" 
-            @input="updateEraserSize"
-            class="width-slider"
-          >
-       </div>
+        <span class="size-preview" aria-hidden="true">
+          <span class="size-preview-ring" :style="{ width: `${eraserPreviewSize}px`, height: `${eraserPreviewSize}px` }"></span>
+        </span>
+      </label>
+      <label v-else class="property-well slider-well">
+        <span class="property-label">{{ currentTool === 'text' ? 'Rozmiar' : 'Grubość' }}</span>
+        <input
+          type="range"
+          min="1"
+          max="20"
+          v-model.number="currentLineWidth"
+          @input="updateLineWidth"
+          :aria-label="currentTool === 'text' ? 'Rozmiar tekstu' : 'Grubość linii'"
+          class="width-slider"
+        >
+        <span class="size-preview" aria-hidden="true">
+          <span
+            v-if="currentTool === 'text'"
+            class="size-preview-glyph"
+            :style="{ color: currentColor, fontSize: `${textPreviewSize}px` }"
+          >A</span>
+          <span
+            v-else
+            class="size-preview-dot"
+            :style="{ backgroundColor: currentColor, width: `${strokePreviewSize}px`, height: `${strokePreviewSize}px` }"
+          ></span>
+        </span>
+      </label>
     </div>
   </div>
 </template>
@@ -328,16 +392,14 @@
 <script setup>
 import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue';
 import { featureAvailable } from '../services/pilotSurface';
+import { PANEL_SHORTCUTS } from '../utils/lessonObjectDefaults.js';
+import ShapeIcon from './ShapeIcon.vue';
 import {
   Pencil,
   Eraser,
   Type,
   MousePointer2,
   Hand,
-  Square,
-  Circle as CircleIcon,
-  Triangle,
-  Minus,
   Undo2,
   Redo2,
   Trash2,
@@ -346,16 +408,8 @@ import {
   Activity,
   Axis3d,
   LineChart,
-  Diamond,
-  Octagon,
   GitBranch,
   Bug,
-  Circle,
-  Box,
-  Cylinder,
-  Cone,
-  Pyramid,
-  Globe,
   FlaskConical
 } from 'lucide-vue-next';
 
@@ -369,6 +423,7 @@ const props = defineProps({
   arrowStyle: { type: String, default: 'none' },
   roughness: { type: Number, default: 1 },
   currentShape: { type: String, default: 'rectangle' },
+  isCalculatorOpen: Boolean,
   isMathPanelOpen: Boolean,
   isPhysicsPanelOpen: Boolean,
   isDiagramPanelOpen: Boolean,
@@ -412,40 +467,40 @@ const mainTools = [
 const visibleMainTools = computed(() => mainTools.filter((tool) => can(tool.feature)));
 
 const shapeOptions = [
-  { tool: 'rectangle', label: 'Rectangle', icon: Square },
-  { tool: 'circle', label: 'Circle', icon: CircleIcon },
-  { tool: 'triangle', label: 'Triangle', icon: Triangle },
-  { tool: 'square', label: 'Square', icon: Square },
-  { tool: 'trapezoid', label: 'Trapezoid', icon: Diamond },
-  { tool: 'parallelogram', label: 'Parallelogram', icon: Diamond },
-  { tool: 'deltoid', label: 'Kite', icon: Diamond },
-  { tool: 'cube', label: 'Cube', icon: Box },
-  { tool: 'cuboid', label: 'Cuboid', icon: Box },
-  { tool: 'sphere', label: 'Sphere', icon: Globe },
-  { tool: 'cylinder', label: 'Cylinder', icon: Cylinder },
-  { tool: 'cone', label: 'Cone', icon: Cone },
-  { tool: 'pyramid', label: 'Pyramid', icon: Pyramid },
-  { tool: 'tetrahedron', label: 'Tetrahedron', icon: Pyramid },
-  { tool: 'line', label: 'Line', icon: Minus, toolType: 'lines' }
+  { tool: 'rectangle', label: 'Prostokąt' },
+  { tool: 'circle', label: 'Okrąg' },
+  { tool: 'triangle', label: 'Trójkąt' },
+  { tool: 'square', label: 'Kwadrat' },
+  { tool: 'trapezoid', label: 'Trapez' },
+  { tool: 'parallelogram', label: 'Równoległobok' },
+  { tool: 'deltoid', label: 'Deltoid' },
+  { tool: 'cube', label: 'Sześcian' },
+  { tool: 'cuboid', label: 'Prostopadłościan' },
+  { tool: 'sphere', label: 'Kula' },
+  { tool: 'cylinder', label: 'Walec' },
+  { tool: 'cone', label: 'Stożek' },
+  { tool: 'pyramid', label: 'Ostrosłup' },
+  { tool: 'tetrahedron', label: 'Czworościan' },
+  { tool: 'line', label: 'Linia', toolType: 'lines' }
 ];
 
 const lineStyleOptions = [
-  { value: 'solid', label: 'Solid' },
-  { value: 'dashed', label: 'Dashed' },
-  { value: 'dotted', label: 'Dotted' }
+  { value: 'solid', label: 'Ciągła' },
+  { value: 'dashed', label: 'Kreskowana' },
+  { value: 'dotted', label: 'Kropkowana' }
 ];
 
 const roughnessOptions = [
-  { value: 0, label: 'Clean' },
-  { value: 1, label: 'Sketchy' },
-  { value: 2, label: 'Rough' }
+  { value: 0, label: 'Gładka' },
+  { value: 1, label: 'Szkicowa' },
+  { value: 2, label: 'Odręczna' }
 ];
 
 const arrowStyleOptions = [
-  { value: 'none', label: 'None' },
-  { value: 'start', label: 'Start' },
-  { value: 'end', label: 'End' },
-  { value: 'both', label: 'Both' }
+  { value: 'none', label: 'Brak' },
+  { value: 'start', label: 'Początek' },
+  { value: 'end', label: 'Koniec' },
+  { value: 'both', label: 'Oba końce' }
 ];
 
 const colorSwatches = [
@@ -485,8 +540,8 @@ const quickSwatches = [
 ];
 
 const coordinateOptions = [
-  { type: '2d', label: '2D Coordinate System' },
-  { type: '3d', label: '3D Coordinate System' }
+  { type: '2d', label: 'Układ współrzędnych 2D' },
+  { type: '3d', label: 'Układ współrzędnych 3D' }
 ];
 
 const currentTool = ref(props.activeTool);
@@ -507,6 +562,7 @@ const shapesMenuStyle = ref({});
 const coordinateMenuStyle = ref({});
 
 const dropdownTriggerRef = ref(null);
+const toolbarContainerRef = ref(null);
 const shapesTriggerRef = ref(null);
 const shapesMenuRef = ref(null);
 const coordinateTriggerRef = ref(null);
@@ -534,6 +590,7 @@ const startHideTimer = () => {
   if (isTouchDevice.value) return; // P0-FIX: Never auto-hide properties on touch devices
   clearTimeout(hideTimer);
   hideTimer = setTimeout(() => {
+    if (toolbarContainerRef.value?.contains(document.activeElement)) return;
     propertiesVisible.value = false;
   }, 2000);
 };
@@ -550,19 +607,23 @@ watch(currentTool, () => {
   }
 });
 
-const currentShapeIcon = computed(() => {
-  if (currentTool.value === 'lines') {
-    const lineOption = shapeOptions.find(opt => opt.toolType === 'lines');
-    return lineOption?.icon || Minus;
-  }
-  const activeShape = shapeOptions.find(opt => opt.tool === props.currentShape);
-  return activeShape?.icon || Square;
-});
+const currentShapeKey = computed(() =>
+  currentTool.value === 'lines' ? 'line' : props.currentShape
+);
+
+// Previews stay inside the 24 px well slot whatever the chosen size.
+const strokePreviewSize = computed(() => Math.min(22, Math.max(3, currentLineWidth.value + 2)));
+const textPreviewSize = computed(() => 11 + Math.round(currentLineWidth.value * 0.6));
+const eraserPreviewSize = computed(() => 6 + Math.round((currentEraserSize.value - 10) * 0.18));
 
 const selectTool = (tool) => {
   currentTool.value = tool;
   emit('update:activeTool', tool);
   showShapesMenu.value = false;
+  if (showProperties.value) {
+    showPropertiesBar();
+    startHideTimer();
+  }
 };
 
 const isShapeTool = (tool) => tool === 'shapes' || tool === 'lines';
@@ -577,25 +638,33 @@ const isShapeActive = (shape) => {
 const toggleShapesMenu = () => {
   showShapesMenu.value = !showShapesMenu.value;
   if (showShapesMenu.value) {
-    nextTick(() => positionShapesMenu());
+    showCoordinateMenu.value = false;
+    nextTick(() => {
+      positionShapesMenu();
+      shapesMenuRef.value?.querySelector('button')?.focus();
+    });
   }
+};
+
+const clampPopoverPosition = (top, left, element, fallbackWidth) => {
+  const viewportWidth = window.visualViewport?.width || window.innerWidth;
+  const viewportHeight = window.visualViewport?.height || window.innerHeight;
+  const width = element?.offsetWidth || fallbackWidth;
+  const height = element?.offsetHeight || 200;
+  const margin = 12;
+  return {
+    top: `${Math.max(margin, Math.min(top, viewportHeight - height - margin))}px`,
+    left: `${Math.max(margin, Math.min(left, viewportWidth - width - margin))}px`
+  };
 };
 
 const positionShapesMenu = () => {
   const trigger = shapesTriggerRef.value;
   if (!trigger) return;
   const rect = trigger.getBoundingClientRect();
-  if (props.orientation === 'vertical') {
-    shapesMenuStyle.value = {
-      top: `${rect.top}px`,
-      left: `${rect.right + 8}px`
-    };
-  } else {
-    shapesMenuStyle.value = {
-      top: `${rect.bottom + 8}px`,
-      left: `${rect.left}px`
-    };
-  }
+  const top = props.orientation === 'vertical' ? rect.top : rect.bottom + 8;
+  const left = props.orientation === 'vertical' ? rect.right + 8 : rect.left;
+  shapesMenuStyle.value = clampPopoverPosition(top, left, shapesMenuRef.value, 280);
 };
 
 const selectShape = (shape) => {
@@ -606,6 +675,7 @@ const selectShape = (shape) => {
     emit('update:shape', shape.tool);
   }
   showShapesMenu.value = false;
+  shapesTriggerRef.value?.focus();
 };
 
 const selectLineStyle = (style) => {
@@ -636,7 +706,11 @@ const selectFillColor = (color) => {
 const toggleCoordinateMenu = () => {
   showCoordinateMenu.value = !showCoordinateMenu.value;
   if (showCoordinateMenu.value) {
-    nextTick(() => positionCoordinateMenu());
+    showShapesMenu.value = false;
+    nextTick(() => {
+      positionCoordinateMenu();
+      coordinateMenuRef.value?.querySelector('button')?.focus();
+    });
   }
 };
 
@@ -644,22 +718,15 @@ const positionCoordinateMenu = () => {
   const trigger = coordinateTriggerRef.value;
   if (!trigger) return;
   const rect = trigger.getBoundingClientRect();
-  if (props.orientation === 'vertical') {
-    coordinateMenuStyle.value = {
-      top: `${rect.top}px`,
-      left: `${rect.right + 8}px`
-    };
-  } else {
-    coordinateMenuStyle.value = {
-      top: `${rect.bottom + 8}px`,
-      left: `${rect.left}px`
-    };
-  }
+  const top = props.orientation === 'vertical' ? rect.top : rect.bottom + 8;
+  const left = props.orientation === 'vertical' ? rect.right + 8 : rect.left;
+  coordinateMenuStyle.value = clampPopoverPosition(top, left, coordinateMenuRef.value, 220);
 };
 
 const selectCoordinateSystem = (type) => {
   emit('add-coordinate-system', type);
   showCoordinateMenu.value = false;
+  coordinateTriggerRef.value?.querySelector('button')?.focus();
 };
 
 const toggleColorPicker = () => {
@@ -714,6 +781,18 @@ const handleResize = () => {
   if (showCoordinateMenu.value) positionCoordinateMenu();
 };
 
+const handleEscape = (event) => {
+  if (event.key !== 'Escape') return;
+  if (showShapesMenu.value) {
+    showShapesMenu.value = false;
+    shapesTriggerRef.value?.focus();
+  }
+  if (showCoordinateMenu.value) {
+    showCoordinateMenu.value = false;
+    coordinateTriggerRef.value?.querySelector('button')?.focus();
+  }
+};
+
 watch(() => props.orientation, () => {
   nextTick(() => {
     if (showShapesMenu.value) positionShapesMenu();
@@ -723,6 +802,7 @@ watch(() => props.orientation, () => {
 
 onMounted(() => {
   document.addEventListener('click', handleClickOutside);
+  document.addEventListener('keydown', handleEscape);
   window.addEventListener('resize', handleResize);
   // P0-FIX: Detect touch device and keep properties bar always visible
   isTouchDevice.value = window.matchMedia('(hover: none)').matches || navigator.maxTouchPoints > 0;
@@ -732,7 +812,9 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  clearTimeout(hideTimer);
   document.removeEventListener('click', handleClickOutside);
+  document.removeEventListener('keydown', handleEscape);
   window.removeEventListener('resize', handleResize);
 });
 
@@ -741,9 +823,8 @@ onBeforeUnmount(() => {
 <style scoped>
 .toolbar-container {
   display: flex;
-  align-items: flex-start; /* Align to top */
+  align-items: flex-start;
   gap: 12px;
-  z-index: 100;
   pointer-events: none;
 }
 
@@ -767,8 +848,12 @@ onBeforeUnmount(() => {
 
 .toolbar-container.vertical .toolbar {
   flex-direction: column;
+  justify-content: flex-start;
   min-width: 56px;
   padding: 12px 6px;
+  max-height: calc(100dvh - 120px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .toolbar-container.horizontal .toolbar {
@@ -778,6 +863,7 @@ onBeforeUnmount(() => {
 
 .tool-group {
   display: flex;
+  flex-shrink: 0;
   align-items: center;
   gap: 4px;
 }
@@ -787,6 +873,7 @@ onBeforeUnmount(() => {
 }
 
 .divider {
+  flex-shrink: 0;
   background-color: var(--glass-border);
   margin: 0 4px;
 }
@@ -802,39 +889,33 @@ onBeforeUnmount(() => {
   margin: 4px 0;
 }
 
+/* Tools: flat until chosen; the active tool sits pressed into the rail. */
 .tool-btn {
-  /* Base styles matching icon-btn global class but specific to toolbar sizing */
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 40px;
-  height: 40px;
+  width: 44px;
+  height: 44px;
+  flex-shrink: 0;
   border: 1px solid transparent;
   background: transparent;
-  border-radius: var(--radius-sm);
+  border-radius: 10px;
   color: var(--text-secondary);
   cursor: pointer;
-  transition: all 0.2s var(--ease-fluid);
   position: relative;
+  transition: background-color 150ms ease, color 150ms ease, box-shadow 150ms ease, transform var(--motion-press) ease;
 }
 
-.tool-btn:hover {
-  background: var(--glass-highlight);
-  color: var(--text-primary);
-  transform: scale(1.05);
+.tool-btn:active {
+  transform: scale(0.94);
+  box-shadow: var(--shadow-pressed);
 }
 
-.tool-btn.active {
-  background: rgba(59, 130, 246, 0.2);
-  color: var(--accent-primary);
-  border-color: rgba(59, 130, 246, 0.3);
-  box-shadow: 0 0 10px rgba(59, 130, 246, 0.2);
-}
-
-.tool-btn.danger:hover {
-  background: rgba(239, 68, 68, 0.2);
-  color: var(--danger-color);
-  border-color: rgba(239, 68, 68, 0.3);
+@media (hover: hover) {
+  .tool-btn.danger:hover {
+    background: rgba(220, 38, 38, 0.1);
+    color: var(--danger);
+  }
 }
 
 .dropdown-trigger {
@@ -846,36 +927,49 @@ onBeforeUnmount(() => {
   bottom: 2px;
   right: 2px;
   opacity: 0.6;
-  font-size: 10px;
 }
 
-/* Popovers */
+/* Popovers sit on the menu layer: above board chrome and lesson panels. */
 .toolbar-popover {
   position: fixed;
-  padding: 16px;
+  padding: 14px;
   min-width: 240px;
-  z-index: 4000;
+  z-index: var(--z-menu);
   display: flex;
   flex-direction: column;
-  gap: 16px;
-  /* Global glass-panel style applies background/blur */
+  gap: 14px;
+  animation: popover-in var(--motion-surface) var(--ease-out-soft);
+}
+
+@keyframes popover-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .shapes-popover {
-  min-width: 280px;
-  max-height: calc(100vh - 40px);
+  width: 324px;
+  min-width: min(280px, calc(100vw - 24px));
+  max-width: calc(100vw - 24px);
+  max-height: calc(100dvh - 24px);
   overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .coordinate-menu {
-  min-width: 200px;
-  gap: 8px;
+  min-width: 220px;
+  gap: 6px;
 }
 
 .popover-section {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
 }
 
 .section-title {
@@ -883,78 +977,61 @@ onBeforeUnmount(() => {
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--text-secondary);
-  font-weight: 600;
+  font-weight: 700;
 }
 
+/* Segmented choices: a recessed track; the chosen segment is raised. */
 .option-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 12px;
+  background: var(--surface-pressed);
+  box-shadow: inset 2px 2px 5px rgba(159, 173, 198, 0.45), inset -2px -2px 5px rgba(255, 255, 255, 0.8);
 }
 
 .option-pill {
-  border: 1px solid var(--glass-border);
-  background: rgba(255, 255, 255, 0.05);
-  border-radius: 9999px;
-  padding: 6px 12px;
+  flex: 1 1 auto;
+  min-width: 44px;
+  min-height: 44px;
+  border: 1px solid transparent;
+  background: transparent;
+  border-radius: 9px;
+  padding: 6px 10px;
   font-size: 12px;
+  font-weight: 600;
   color: var(--text-secondary);
   cursor: pointer;
-  transition: all 0.2s;
-}
-
-.option-pill:hover {
-  border-color: var(--accent-primary);
-  color: var(--text-primary);
-  background: rgba(59, 130, 246, 0.1);
 }
 
 .option-pill.active {
-  background: var(--accent-primary);
-  color: white;
-  border-color: var(--accent-primary);
-  box-shadow: 0 2px 8px rgba(59, 130, 246, 0.4);
+  background: var(--surface-raised);
+  color: var(--accent-hover); /* 5.7:1 on the raised surface for 12 px text */
+  border-color: var(--border-subtle);
+  box-shadow: 2px 2px 5px var(--surface-dark), -2px -2px 5px var(--surface-light);
+}
+
+.option-pill:active {
+  transform: scale(0.97);
+}
+
+@media (hover: hover) {
+  .option-pill:not(.active):hover {
+    color: var(--text-primary);
+  }
 }
 
 .color-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
-}
-
-.color-swatch {
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
-  border: 2px solid transparent;
-  cursor: pointer;
-  transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
-}
-
-.color-swatch:hover {
-  transform: scale(1.2);
-  border-color: white;
-}
-
-.color-swatch.active {
-  border-color: white;
-  box-shadow: 0 0 0 2px var(--accent-primary);
-  transform: scale(1.1);
-}
-
-.color-swatch.fill-none {
-  background: linear-gradient(135deg, #fff 45%, #ef4444 45%, #ef4444 55%, #fff 55%);
-  border: 2px solid var(--glass-border);
-}
-
-.color-swatch.fill-none .no-fill-x {
-  display: none;
+  gap: 0;
 }
 
 .shapes-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 8px;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 4px;
 }
 
 .shape-btn {
@@ -962,24 +1039,30 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: center;
   width: 100%;
+  min-height: 44px;
   aspect-ratio: 1;
   border: 1px solid transparent;
-  background: rgba(255, 255, 255, 0.03);
-  border-radius: var(--radius-sm);
+  background: transparent;
+  border-radius: 10px;
   color: var(--text-secondary);
   cursor: pointer;
-  transition: all 0.2s;
 }
 
-.shape-btn:hover {
-  background: rgba(255, 255, 255, 0.1);
-  color: var(--text-primary);
+.shape-btn:active {
+  transform: scale(0.94);
 }
 
 .shape-btn.active {
-  background: rgba(59, 130, 246, 0.2);
+  background: #e7efff;
   color: var(--accent-primary);
-  border-color: rgba(59, 130, 246, 0.3);
+  box-shadow: var(--shadow-pressed);
+}
+
+@media (hover: hover) {
+  .shape-btn:not(.active):hover {
+    background: var(--glass-highlight);
+    color: var(--text-primary);
+  }
 }
 
 .coordinate-btn {
@@ -987,118 +1070,179 @@ onBeforeUnmount(() => {
   aspect-ratio: auto;
   padding: 8px 12px;
   font-size: 13px;
+  color: var(--text-primary);
 }
 
-/* Properties Bar */
+/* Properties: a raised strip holding recessed wells, one per concern. */
 .properties-bar {
   display: flex;
   align-items: center;
-  gap: 16px;
-  padding: 8px 16px;
-  pointer-events: auto; /* allow interaction inside while container is non-interactive */
+  gap: 6px;
+  padding: 6px;
+  pointer-events: auto;
+  animation: popover-in var(--motion-surface) var(--ease-out-soft);
 }
 
-.property-group {
+.properties-bar.vertical {
+  flex-wrap: wrap;
+  max-width: calc(100vw - 100px);
+}
+
+.property-well {
   display: flex;
   align-items: center;
-  gap: 10px;
-  position: relative;
+  min-height: 52px;
+  padding: 4px;
+  border-radius: 14px;
+  background: var(--surface-pressed);
+  box-shadow: inset 2px 2px 5px rgba(159, 173, 198, 0.45), inset -2px -2px 5px rgba(255, 255, 255, 0.8);
 }
 
-.color-preview {
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
-  border: 2px solid rgba(255, 255, 255, 0.2);
-  cursor: pointer;
-  box-shadow: 0 2px 4px rgba(0,0,0,0.2);
-  transition: transform 0.2s;
+.color-well {
+  gap: 2px;
 }
-.color-preview:hover {
-  transform: scale(1.1);
+
+.well-divider {
+  width: 1px;
+  height: 28px;
+  margin: 0 4px;
+  background: var(--border-subtle);
+}
+
+.color-picker-anchor {
+  position: relative;
+  display: inline-flex;
+}
+
+/* The current colour is the one raised puck in the well. */
+.color-preview {
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--border-subtle);
+  background: var(--surface-raised);
+  box-shadow: 2px 2px 5px var(--surface-dark), -2px -2px 5px var(--surface-light);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.color-preview-dot {
+  display: block;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 1px solid rgba(15, 23, 42, 0.18);
 }
 
 .hidden-color-input {
   position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
+  inset: 0;
+  width: 44px;
+  height: 44px;
   opacity: 0;
   cursor: pointer;
   /* pointer-events enabled so iOS Safari can open the native picker on tap */
 }
 
-.slider-group {
+.quick-swatches {
+  display: flex;
+  flex-wrap: wrap;
+}
+
+.quick-swatch,
+.color-swatch {
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+}
+
+.quick-swatch-dot,
+.color-swatch-dot {
+  display: block;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1px solid rgba(15, 23, 42, 0.18);
+  transition: box-shadow 150ms ease, transform var(--motion-press) ease;
+}
+
+.quick-swatch:active .quick-swatch-dot,
+.color-swatch:active .color-swatch-dot {
+  transform: scale(0.88);
+}
+
+.quick-swatch.active .quick-swatch-dot,
+.color-swatch.active .color-swatch-dot {
+  box-shadow: 0 0 0 3px var(--surface-pressed), 0 0 0 5px var(--accent-primary);
+}
+
+.popover-section .color-swatch.active .color-swatch-dot {
+  box-shadow: 0 0 0 3px var(--surface-raised), 0 0 0 5px var(--accent-primary);
+}
+
+.color-swatch-dot.fill-none-dot {
+  background: linear-gradient(135deg, #fff 45%, #dc2626 45%, #dc2626 55%, #fff 55%);
+}
+
+.color-swatch-dot.fill-none-dot .no-fill-x {
+  display: none;
+}
+
+.slider-well {
+  gap: 8px;
+  padding: 4px 8px 4px 14px;
+  cursor: pointer;
+}
+
+.property-label {
+  min-width: 52px;
+  font-size: 12px;
+  font-weight: 600;
   color: var(--text-secondary);
 }
 
 .width-slider {
-  width: 100px;
-  height: 4px;
-  background: rgba(255, 255, 255, 0.1);
-  border-radius: 2px;
-  appearance: none;
-  outline: none;
+  width: 112px;
+  min-width: 0;
 }
 
-.width-slider::-webkit-slider-thumb {
-  appearance: none;
-  width: 16px;
-  height: 16px;
-  background: var(--accent-primary);
+.size-preview {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+}
+
+.size-preview-dot,
+.size-preview-ring {
+  display: block;
   border-radius: 50%;
-  cursor: pointer;
-  border: 2px solid var(--bg-color);
-  box-shadow: 0 0 0 2px var(--glass-border);
-  transition: transform 0.2s;
 }
 
-.width-slider::-webkit-slider-thumb:hover {
-  transform: scale(1.2);
+.size-preview-dot {
+  border: 1px solid rgba(15, 23, 42, 0.18);
 }
 
-.label {
-    font-size: 12px;
-    color: var(--text-secondary);
-    font-weight: 500;
+.size-preview-ring {
+  border: 1.5px solid var(--text-secondary);
 }
 
-/* Quick color swatches in properties bar */
-.color-group {
-  flex-wrap: wrap;
+.size-preview-glyph {
+  font-family: "Kalam", cursive;
+  font-weight: 700;
+  line-height: 1;
 }
 
-.quick-swatches {
-  display: flex;
-  gap: 4px;
-  flex-wrap: wrap;
-}
-
-.quick-swatch {
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  border: 2px solid transparent;
-  cursor: pointer;
-  transition: transform 0.15s;
-  padding: 0;
-}
-
-.quick-swatch:hover {
-  transform: scale(1.2);
-  border-color: rgba(255, 255, 255, 0.5);
-}
-
-.quick-swatch.active {
-  border-color: var(--accent-primary);
-  box-shadow: 0 0 0 1px var(--accent-primary);
-}
 </style>
-
-
-
-
-
-
-

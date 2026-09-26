@@ -1,0 +1,10 @@
+{
+  "capture": "ZCode built-in browser (GUI), capture-boundary redaction: query strings stripped from URLs",
+  "url": "http://127.0.0.1:5188/ (board canvas, redacted query)",
+  "viewport": {
+    "width": 768,
+    "height": 1024
+  },
+  "errors": [],
+  "notes": "Portrait 768x1024 client: zero horizontal overflow (scrollWidth 768 = clientWidth 768), awareness shows 2 Online."
+}

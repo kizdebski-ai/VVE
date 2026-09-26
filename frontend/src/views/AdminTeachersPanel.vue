@@ -490,6 +490,8 @@ const formatDate = (value) => {
 
 /* ---- Buttons: raised tactile pills -------------------------------------- */
 .soft-btn {
+  min-height: 44px;
+  min-width: 44px;
   display: inline-flex;
   align-items: center;
   justify-content: center;

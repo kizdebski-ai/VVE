@@ -1,0 +1,23 @@
+[
+ {
+  "expression": "1/x",
+  "pathCommands": 2,
+  "maxJumpPx": 33.3,
+  "branchesOk": true,
+  "noVerticalBridge": true
+ },
+ {
+  "expression": "tan(x)",
+  "pathCommands": 7,
+  "maxJumpPx": 39.6,
+  "branchesOk": true,
+  "noVerticalBridge": true
+ },
+ {
+  "expression": "sin(x)",
+  "pathCommands": 1,
+  "maxJumpPx": 1,
+  "branchesOk": true,
+  "noVerticalBridge": true
+ }
+]

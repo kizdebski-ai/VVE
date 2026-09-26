@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
+import * as Y from 'yjs';
+import { ref } from 'vue';
 import { distanceToSegment, isPointInElement } from '../../src/utils/canvasDrawing.js';
+import { DEFAULT_PEN_PRESETS, drawStyledPen, getPenInkExtent, MAX_PEN_INK_HALF_WIDTH } from '../../src/utils/penStyles.js';
 import { normalizeBoardObject, validateBoardObject } from '@pilot/boardScene';
+import { createWhiteboardSession } from '@/board/whiteboardSession';
+import { useDrawingEngine } from '@/composables/useDrawingEngine';
 
 describe('1.1: Grid snap uses correct function name', () => {
   it('useDrawingEngine source does not reference _getSnapSettingsInternal', async () => {
@@ -45,16 +50,16 @@ describe('1.8: Coordinate validation', () => {
 });
 
 describe('1.10: Image loading timeout', () => {
-  it('createImageElement source has timeout', async () => {
+  it('ArtifactPipeline decode path times out and releases the object URL', async () => {
     const fs = await import('fs');
     const path = await import('path');
     const source = fs.readFileSync(
-      path.resolve(__dirname, '../../src/utils/canvasTools.js'),
+      path.resolve(__dirname, '../../src/board/artifactCodecs.ts'),
       'utf-8'
     );
     expect(source).toContain('setTimeout');
-    expect(source).toContain('10_000');
-    expect(source).toContain('clearTimeout');
+    expect(source).toContain('12_000');
+    expect(source).toContain('revokeObjectURL');
   });
 });
 
@@ -77,6 +82,41 @@ describe('Geometry: distanceToSegment', () => {
   it('handles zero-length segment (point)', () => {
     const dist = distanceToSegment({ x: 3, y: 4 }, { x: 0, y: 0 }, { x: 0, y: 0 });
     expect(dist).toBeCloseTo(5, 5);
+  });
+});
+
+describe('Pen renderer bounds', () => {
+  const recordStroke = (style, lineWidth, points) => {
+    const widths = [];
+    let maxOffset = 0;
+    const track = (_x, y) => { maxOffset = Math.max(maxOffset, Math.abs(y)); };
+    const context = {
+      save: () => {},
+      restore: () => {},
+      beginPath: () => {},
+      moveTo: track,
+      lineTo: track,
+      bezierCurveTo: (_a, _b, _c, _d, x, y) => track(x, y),
+      stroke: () => {},
+      set lineWidth(value) { widths.push(value); },
+    };
+    drawStyledPen(context, points, { style, lineWidth });
+    return Math.max(...widths) / 2 + maxOffset * Math.SQRT2;
+  };
+  const line = (pressure) => [0, 1, 2, 3].map((x) => (
+    pressure === undefined ? { x: x * 4, y: 0, t: x * 16 } : { x: x * 4, y: 0, t: x * 16, p: pressure }
+  ));
+
+  it.each(Object.keys(DEFAULT_PEN_PRESETS))('bounds every painted pixel of a %s stroke', (style) => {
+    for (const lineWidth of [1, 2, 6, 8]) {
+      for (const pressure of [undefined, 1]) {
+        const painted = recordStroke(style, lineWidth, line(pressure));
+        const bound = getPenInkExtent({ style, lineWidth, hasPressure: pressure !== undefined });
+        expect(painted).toBeGreaterThan(0);
+        expect(painted).toBeLessThanOrEqual(bound + 1e-9);
+        expect(bound).toBeLessThanOrEqual(MAX_PEN_INK_HALF_WIDTH);
+      }
+    }
   });
 });
 
@@ -110,5 +150,73 @@ describe('Geometry: isPointInElement', () => {
   it('returns false for null/undefined element', () => {
     expect(isPointInElement({ x: 0, y: 0 }, null)).toBe(false);
     expect(isPointInElement({ x: 0, y: 0 }, undefined)).toBe(false);
+  });
+});
+
+describe('Eraser command wiring', () => {
+  const makeEngine = (mode, eraserRadius = 10) => {
+    const ydoc = new Y.Doc();
+    const session = createWhiteboardSession({ ydoc, role: 'teacher' });
+    const yDrawings = ref(ydoc.getArray('drawings'));
+    const engine = useDrawingEngine({
+      isDrawing: ref(true),
+      currentTool: ref('eraser'),
+      currentColor: ref('#111827'),
+      currentLineWidth: ref(3),
+      zoomLevel: ref(1),
+      panOffset: ref({ x: 0, y: 0 }),
+      ydoc,
+      yDrawings,
+      yjsConnection: ref(null),
+      session: ref(session),
+      smoothingFactor: ref(0.5),
+      getEraserMode: () => mode.value,
+      getEraserRadius: () => eraserRadius,
+      refreshMovableElements: vi.fn(),
+      updateGlobalState: vi.fn()
+    });
+    return { session, engine };
+  };
+
+  it('uses the bounded hit object for partial erase and whole-object delete', () => {
+    const mode = ref('erase');
+    const { session, engine } = makeEngine(mode);
+    const stroke = {
+      id: 'wired-pen',
+      type: 'pen',
+      color: '#7c3aed',
+      lineWidth: 3,
+      points: [{ x: 0, y: 0, p: 0.2 }, { x: 50, y: 0, p: 0.8 }, { x: 100, y: 0, p: 0.4 }]
+    };
+    expect(session.execute({ kind: 'add', object: stroke })).toEqual({ ok: true });
+    const hit = session.snapshot()[0];
+    engine.eraseElement(hit.id, { x: 50, y: 0 }, hit);
+    expect(session.snapshot()).toHaveLength(2);
+
+    mode.value = 'delete';
+    const remaining = session.snapshot()[0];
+    engine.eraseElement(remaining.id, { x: remaining.points[0].x, y: remaining.points[0].y }, remaining);
+    expect(session.snapshot()).toHaveLength(1);
+    expect(session.snapshot()[0].id).not.toBe('wired-pen');
+    session.dispose();
+  });
+
+  it('clips visible thick marker ink even when the eraser misses its centerline', () => {
+    const mode = ref('erase');
+    const { session, engine } = makeEngine(mode, 2);
+    const stroke = {
+      id: 'thick-marker',
+      type: 'pen',
+      penStyle: 'marker',
+      penConfig: { width: 14 },
+      color: '#7c3aed',
+      lineWidth: 2,
+      points: [{ x: 0, y: 0 }, { x: 100, y: 0 }]
+    };
+    expect(session.execute({ kind: 'add', object: stroke })).toEqual({ ok: true });
+    const hit = session.snapshot()[0];
+    engine.eraseElement(hit.id, { x: 50, y: 8 }, hit);
+    expect(session.snapshot()).toHaveLength(2);
+    session.dispose();
   });
 });

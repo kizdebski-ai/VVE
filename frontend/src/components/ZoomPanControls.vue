@@ -1,9 +1,9 @@
 <template>
   <div class="zoom-controls">
-    <button class="zoom-btn" @click="$emit('zoom-out')" title="Zoom Out">−</button>
+    <button type="button" class="zoom-btn" @click="$emit('zoom-out')" title="Pomniejsz" aria-label="Pomniejsz">−</button>
     <div class="zoom-level">{{ Math.round(zoomLevel * 100) }}%</div>
-    <button class="zoom-btn" @click="$emit('zoom-in')" title="Zoom In">+</button>
-    <button class="zoom-btn" @click="$emit('reset-zoom')" title="Reset View">⟲</button>
+    <button type="button" class="zoom-btn" @click="$emit('zoom-in')" title="Powiększ" aria-label="Powiększ">+</button>
+    <button type="button" class="zoom-btn" @click="$emit('reset-zoom')" title="Resetuj widok" aria-label="Resetuj widok">⟲</button>
   </div>
 </template>
 
@@ -20,15 +20,20 @@ export default {
 </script>
 
 <style scoped>
+/* Board chrome in the shared material; the app has one light theme, so the
+   control does not follow the OS colour scheme on its own. */
 .zoom-controls {
   position: absolute;
   bottom: 20px;
   right: 20px;
   display: flex;
-  background-color: white;
-  border-radius: 20px;
-  padding: 5px;
-  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+  align-items: center;
+  gap: 2px;
+  padding: 4px;
+  border-radius: 16px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+  box-shadow: var(--shadow-raised-sm);
   z-index: 10;
 }
 
@@ -41,44 +46,39 @@ export default {
 }
 
 .zoom-btn {
-  width: 30px;
-  height: 30px;
-  background: none;
+  width: 44px;
+  height: 44px;
+  flex-shrink: 0;
+  background: transparent;
   border: none;
+  border-radius: 12px;
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  color: #333;
-  font-weight: bold;
+  color: var(--text-secondary);
+  font-weight: 700;
 }
 
-.zoom-btn:hover {
-  color: var(--accent-primary, #2563eb);
+.zoom-btn:active {
+  box-shadow: var(--shadow-pressed);
+}
+
+@media (hover: hover) {
+  .zoom-btn:hover {
+    color: var(--text-primary);
+    background: var(--glass-highlight);
+  }
 }
 
 .zoom-level {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 0 10px;
+  min-width: 52px;
+  padding: 0 6px;
   font-size: 12px;
-  color: #333;
-}
-
-@media (prefers-color-scheme: dark) {
-  .zoom-controls {
-    background-color: #333;
-    color: white;
-    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.4);
-  }
-
-  .zoom-btn {
-    color: #f0f0f0;
-  }
-
-  .zoom-level {
-    color: #f0f0f0;
-  }
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
 }
 </style>

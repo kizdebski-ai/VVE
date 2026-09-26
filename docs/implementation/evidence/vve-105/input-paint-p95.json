@@ -1,0 +1,9 @@
+{
+  "viewport": "1440x900",
+  "p95Ms": 28.57499998807907,
+  "samples": 225,
+  "targetMs": 50,
+  "adapter": "Playwright mouse Pointer Events",
+  "hardware": "Cloud Agent Linux VM, Google Chrome 148 headless",
+  "note": "Apple Pencil and graphics-tablet feel remain Kordian's external confirmation."
+}

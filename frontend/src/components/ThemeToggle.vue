@@ -54,7 +54,7 @@ export default {
   justify-content: center;
   color: #fff;
   padding: 0;
-  transition: all 0.3s ease;
+  transition: background-color 0.3s ease, border-color 0.3s ease, color 0.3s ease, box-shadow 0.3s ease, opacity 0.3s ease, transform 0.3s ease;
 }
 
 .theme-btn:hover {

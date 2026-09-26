@@ -89,9 +89,30 @@ export class RoomManager {
   private rooms = new Map<string, RoomContext>();
   private persistence: PersistenceLayer;
 
+  private diskHydration: Promise<void> | null = null;
+  private saveDebounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
   constructor(persistence?: PersistenceLayer) {
     this.persistence = persistence ?? new InMemoryPersistence();
-    this.loadFromPersistence();
+  }
+
+  /** Owned by RuntimeControl.start — constructor no longer starts I/O. */
+  async hydrateFromDisk(): Promise<void> {
+    if (!this.diskHydration) {
+      this.diskHydration = this.loadFromPersistence();
+    }
+    await this.diskHydration;
+  }
+
+  async flushPending(): Promise<void> {
+    const pending = Array.from(this.saveDebounceTimers.entries());
+    this.saveDebounceTimers.clear();
+    for (const [, timer] of pending) {
+      clearTimeout(timer);
+    }
+    for (const room of this.rooms.values()) {
+      await this.saveRoom(room);
+    }
   }
 
   private async loadFromPersistence() {
@@ -163,8 +184,6 @@ export class RoomManager {
     };
   }
 
-  private saveDebounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
-
   private bumpActivity(room: RoomContext) {
     const timestamp = now();
     room.lastActive = timestamp;
@@ -202,6 +221,7 @@ export class RoomManager {
   }
 
   async get(roomId: string): Promise<RoomLookup> {
+    await this.hydrateFromDisk();
     let room = this.rooms.get(roomId);
     let created = false;
 

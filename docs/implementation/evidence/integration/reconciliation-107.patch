@@ -1,0 +1,533 @@
+merge: +107 (2773f6ddc8f8afc4623d93a49b5700ff69ab4a2a)
+subject: integrate: VVE-107 (artifact pipeline, resource governor, denial reconciliation)
+
+diff --cc frontend/src/App.vue
+index 88c444d,5c936e7..e46a5bc
+--- a/frontend/src/App.vue
++++ b/frontend/src/App.vue
+@@@ -499,36 -549,13 +499,37 @@@ export default 
+        }
+      };
+  
+ +    const handlePlotElement = (panel, elementData) => {
+ +      const added = handleAddElement(elementData);
+ +      if (added) requestLessonPanel(null);
+ +      return added;
+ +    };
+ +
+ +    const handleAddCoordinateSystem = (type = '2d') => {
+ +      const is3d = type === '3d';
+ +      const defaults = is3d
+ +        ? LESSON_OBJECT_DEFAULTS.coordinateSystem3D
+ +        : LESSON_OBJECT_DEFAULTS.coordinateSystem2D;
+ +      return handleAddElement({
+ +        type: is3d ? 'coordinateSystem3D' : 'coordinateSystem2D',
+ +        width: defaults.width,
+ +        height: defaults.height,
+ +        color: defaults.color,
+ +        lineWidth: defaults.lineWidth,
+ +        grid: defaults.grid,
+ +        xLabel: defaults.xLabel,
+ +        yLabel: defaults.yLabel,
+ +        ...(is3d ? { zLabel: defaults.zLabel } : {})
+ +      });
+ +    };
+ +
+-     const { importPdfFile } = usePdfImport({
+-       addElementFromPanel: (data) => handleAddElement(data),
+-       showToast: (msg, type, dur) => showNotification(msg, type),
+-       debugLog: appDebugLog,
+-     });
+-     const handleImportPdf = (file) => importPdfFile(file);
++     const handleImportPdf = (file) => {
++       if (whiteboard.value?.importArtifactFile) {
++         whiteboard.value.importArtifactFile(file);
++         return;
++       }
++       showNotification('Tablica nie jest jeszcze gotowa do importu.', 'warning');
++     };
+  
+      const handleDiagramApply = (diagramData) => {
+        if (!diagramData?.nodes?.length) return;
+diff --cc frontend/src/components/WhiteboardCanvas.vue
+index 2c57a57,f410c5b..717aabb
+--- a/frontend/src/components/WhiteboardCanvas.vue
++++ b/frontend/src/components/WhiteboardCanvas.vue
+@@@ -180,14 -189,11 +190,18 @@@ import { drawGrid as drawUtilGrid, comp
+  import MovableObject from './MovableObject.vue';
+  import { useNotifications } from '../composables/useNotifications';
+  import { createWhiteboardSession } from '../board/whiteboardSession';
+ +import { createInputPipeline } from '../board/inputPipeline';
+ +import {
+ +  batchFromPointerEvent,
+ +  prefersReducedMotion,
+ +  viewportFromElement
+ +} from '../board/pointerEventAdapter';
+ +import { suggestProfile } from '../board/inputStyle';
++ import { createArtifactPipeline, deliverPdfArtifact } from '../board/artifactPipeline';
++ import { ArtifactCodecError } from '../board/artifactCodecs';
++ import { polishArtifactMessage } from '@pilot/artifactContract';
++ import { createResourceGovernor } from '@pilot/resourceGovernor';
+ -import { normalizeBoardObject } from '@pilot/boardScene';
+ +import { normalizeBoardObject, queryObjectsNear } from '@pilot/boardScene';
+  import { undoRedoState } from '../utils/undoRedoState';
+  import { useLineBindings } from '../composables/useLineBindings';
+  import { usePdfExport } from '../composables/usePdfExport';
+diff --cc frontend/tests/e2e/pilot-fixture.spec.js
+index dbb9880,823d240..9e1d091
+--- a/frontend/tests/e2e/pilot-fixture.spec.js
++++ b/frontend/tests/e2e/pilot-fixture.spec.js
+@@@ -698,306 -459,88 +698,391 @@@ test.describe('Pilot fixture: Administr
+      await adminContext.close();
+    });
+  
+ +  test('Pointer pipeline: Input Style Mysz/Pióro, drawing, pinch does not scroll the page', async ({ browser }) => {
+ +    const context = await browser.newContext();
+ +    const page = await context.newPage();
+ +    const errors = [];
+ +    page.on('pageerror', (err) => errors.push(err.message));
+ +
+ +    await page.goto(fixture.boardAccessLink);
+ +    await page.getByRole('button', { name: 'Dołącz do lekcji' }).click();
+ +    await expect(page.locator('canvas.draw-layer')).toBeVisible({ timeout: 20_000 });
+ +    await expect(page.getByTestId('collaboration-read-only')).toBeHidden({ timeout: 5_000 });
+ +
+ +    const control = page.getByTestId('input-style-control');
+ +    await expect(control).toBeVisible();
+ +    await expect(control.getByRole('radio', { name: 'Mysz' })).toBeVisible();
+ +    await expect(control.getByRole('radio', { name: 'Pióro' })).toBeVisible();
+ +    await expect(control.getByRole('radio', { name: 'Mysz' })).toHaveAttribute('aria-checked', 'true');
+ +
+ +    await control.getByRole('radio', { name: 'Pióro' }).click();
+ +    await expect(control.getByRole('radio', { name: 'Pióro' })).toHaveAttribute('aria-checked', 'true');
+ +
+ +    const staticCanvas = page.locator('canvas.static-layer');
+ +    const before = await staticCanvas.evaluate((canvas) => canvas.toDataURL());
+ +    const box = await page.locator('canvas.draw-layer').boundingBox();
+ +    expect(box).not.toBeNull();
+ +    const x = box.x + box.width * 0.45;
+ +    const y = box.y + box.height * 0.4;
+ +    await page.mouse.move(x, y);
+ +    await page.mouse.down();
+ +    await page.mouse.move(x + 90, y + 40, { steps: 12 });
+ +    await page.mouse.up();
+ +    await expect.poll(
+ +      () => staticCanvas.evaluate((canvas) => canvas.toDataURL()),
+ +      { timeout: 5_000 }
+ +    ).not.toBe(before);
+ +
+ +    const scrollBefore = await page.evaluate(() => window.scrollY);
+ +    await page.locator('canvas.draw-layer').evaluate((canvas) => {
+ +      canvas.dispatchEvent(new PointerEvent('pointerdown', {
+ +        bubbles: true, cancelable: true, pointerId: 21, pointerType: 'touch',
+ +        isPrimary: true, clientX: 200, clientY: 240, buttons: 1, button: 0, pressure: 1
+ +      }));
+ +      canvas.dispatchEvent(new PointerEvent('pointerdown', {
+ +        bubbles: true, cancelable: true, pointerId: 22, pointerType: 'touch',
+ +        isPrimary: false, clientX: 280, clientY: 240, buttons: 1, button: 0, pressure: 1
+ +      }));
+ +      canvas.dispatchEvent(new PointerEvent('pointermove', {
+ +        bubbles: true, cancelable: true, pointerId: 21, pointerType: 'touch',
+ +        isPrimary: true, clientX: 180, clientY: 250, buttons: 1, pressure: 1
+ +      }));
+ +      canvas.dispatchEvent(new PointerEvent('pointermove', {
+ +        bubbles: true, cancelable: true, pointerId: 22, pointerType: 'touch',
+ +        isPrimary: false, clientX: 320, clientY: 250, buttons: 1, pressure: 1
+ +      }));
+ +      canvas.dispatchEvent(new PointerEvent('pointerup', {
+ +        bubbles: true, cancelable: true, pointerId: 21, pointerType: 'touch',
+ +        isPrimary: true, clientX: 180, clientY: 250, buttons: 0, button: 0
+ +      }));
+ +      canvas.dispatchEvent(new PointerEvent('pointerup', {
+ +        bubbles: true, cancelable: true, pointerId: 22, pointerType: 'touch',
+ +        isPrimary: false, clientX: 320, clientY: 250, buttons: 0, button: 0
+ +      }));
+ +    });
+ +    expect(await page.evaluate(() => window.scrollY)).toBe(scrollBefore);
+ +
+ +    await page.emulateMedia({ reducedMotion: 'reduce' });
+ +    await expect(control).toBeVisible();
+ +    await control.getByRole('radio', { name: 'Mysz' }).click();
+ +    await expect(control.getByRole('radio', { name: 'Mysz' })).toHaveAttribute('aria-checked', 'true');
+ +
+ +    const critical = errors.filter(
+ +      (message) => message.includes('is not defined') || message.includes('is not a function')
+ +    );
+ +    expect(critical).toHaveLength(0);
+ +    await context.close();
+ +  });
+ +
+ +  test('Pointer pipeline: persistence, cancel, p95, desktop and iPad layout', async ({ browser }) => {
+ +    test.setTimeout(90_000);
+ +    const evidenceDir = path.resolve(
+ +      path.dirname(fileURLToPath(import.meta.url)),
+ +      '..',
+ +      '..',
+ +      '..',
+ +      'docs',
+ +      'implementation',
+ +      'evidence',
+ +      'vve-105'
+ +    );
+ +    const shouldCapture = Boolean(process.env.VVE_CAPTURE_VISUALS || process.env.CAPTURE_EVIDENCE);
+ +    if (shouldCapture) {
+ +      mkdirSync(evidenceDir, { recursive: true });
+ +    }
+ +
+ +    const assertNoPageOverflow = async (page) => {
+ +      const box = await page.evaluate(() => ({
+ +        scrollWidth: document.documentElement.scrollWidth,
+ +        clientWidth: document.documentElement.clientWidth,
+ +        scrollX: window.scrollX
+ +      }));
+ +      expect(box.scrollWidth).toBeLessThanOrEqual(box.clientWidth + 1);
+ +      expect(box.scrollX).toBe(0);
+ +    };
+ +
+ +    const joinBoard = async (page) => {
+ +      await page.goto(fixture.boardAccessLink);
+ +      const join = page.getByRole('button', { name: 'Dołącz do lekcji' });
+ +      if (await join.count()) {
+ +        await join.click();
+ +      }
+ +      await expect(page.locator('canvas.draw-layer')).toBeVisible({ timeout: 20_000 });
+ +      await expect(page.getByTestId('collaboration-read-only')).toBeHidden({ timeout: 5_000 });
+ +    };
+ +
+ +    const desktop = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+ +    const page = await desktop.newPage();
+ +    const consoleErrors = [];
+ +    page.on('pageerror', (err) => consoleErrors.push(err.message));
+ +    page.on('console', (msg) => {
+ +      if (msg.type() === 'error') consoleErrors.push(msg.text());
+ +    });
+ +
+ +    await joinBoard(page);
+ +    const control = page.getByTestId('input-style-control');
+ +    await expect(control).toBeVisible();
+ +    await assertNoPageOverflow(page);
+ +    const desktopControlBox = await control.boundingBox();
+ +    expect(desktopControlBox).not.toBeNull();
+ +    expect(desktopControlBox.x).toBeGreaterThanOrEqual(0);
+ +    expect(desktopControlBox.y).toBeGreaterThanOrEqual(0);
+ +    expect(desktopControlBox.x + desktopControlBox.width).toBeLessThanOrEqual(1440 + 1);
+ +    expect(desktopControlBox.y + desktopControlBox.height).toBeLessThanOrEqual(900 + 1);
+ +
+ +    if (shouldCapture) {
+ +      await page.screenshot({
+ +        path: path.join(evidenceDir, 'desktop-1440x900-input-style.png'),
+ +        fullPage: false
+ +      });
+ +    }
+ +
+ +    await page.keyboard.press('2');
+ +    await expect(control.getByRole('radio', { name: 'Pióro' })).toHaveAttribute('aria-checked', 'true');
+ +    await control.getByRole('radio', { name: 'Pióro' }).focus();
+ +    await expect(control.getByRole('radio', { name: 'Pióro' })).toBeFocused();
+ +    await page.keyboard.press('ArrowRight');
+ +    await expect(control.getByRole('radio', { name: 'Mysz' })).toHaveAttribute('aria-checked', 'true');
+ +    await page.keyboard.press('1');
+ +    await expect(control.getByRole('radio', { name: 'Mysz' })).toHaveAttribute('aria-checked', 'true');
+ +
+ +    await control.getByRole('radio', { name: 'Pióro' }).click();
+ +    const stored = JSON.parse(await page.evaluate(() => localStorage.getItem('vve.inputStyle.v1')));
+ +    expect(stored.profile).toBe('pen');
+ +    expect(stored.overridden).toBe(true);
+ +
+ +    const staticCanvas = page.locator('canvas.static-layer');
+ +    const beforeCancel = await staticCanvas.evaluate((canvas) => canvas.toDataURL());
+ +    const box = await page.locator('canvas.draw-layer').boundingBox();
+ +    expect(box).not.toBeNull();
+ +    const cancelX = box.x + box.width * 0.3;
+ +    const cancelY = box.y + box.height * 0.3;
+ +    await page.mouse.move(cancelX, cancelY);
+ +    await page.mouse.down();
+ +    await page.mouse.move(cancelX + 70, cancelY + 24, { steps: 8 });
+ +    await page.evaluate(() => window.dispatchEvent(new Event('blur')));
+ +    await page.mouse.up();
+ +    await page.waitForTimeout(250);
+ +    expect(await staticCanvas.evaluate((canvas) => canvas.toDataURL())).toBe(beforeCancel);
+ +
+ +    const paintX = box.x + box.width * 0.55;
+ +    const paintY = box.y + box.height * 0.45;
+ +    await page.mouse.move(paintX, paintY);
+ +    await page.mouse.down();
+ +    await page.mouse.move(paintX + 160, paintY + 70, { steps: 40 });
+ +    await page.mouse.up();
+ +    await expect.poll(
+ +      () => page.locator('[data-input-paint-samples]').getAttribute('data-input-paint-samples'),
+ +      { timeout: 5_000 }
+ +    ).not.toBe('0');
+ +
+ +    const p95Raw = await page.locator('[data-input-paint-p95]').getAttribute('data-input-paint-p95');
+ +    const sampleCount = await page.locator('[data-input-paint-samples]').getAttribute('data-input-paint-samples');
+ +    const p95 = Number(p95Raw);
+ +    expect(Number.isFinite(p95)).toBe(true);
+ +    expect(p95).toBeGreaterThanOrEqual(0);
+ +    expect(p95).toBeLessThanOrEqual(50);
+ +
+ +    const dispatchRaw = await page.locator('[data-input-dispatch-p95]').getAttribute('data-input-dispatch-p95');
+ +    const dispatchP95 = Number(dispatchRaw);
+ +    expect(Number.isFinite(dispatchP95)).toBe(true);
+ +    expect(dispatchP95).toBeLessThanOrEqual(50);
+ +
+ +    // Injected delay test: simulated slow frame presentation must fail the paint latency gate (> 50ms) while dispatch latency stays <= 50ms
+ +    await page.evaluate(() => {
+ +      window.__vve_injected_presentation_delay_ms = 80;
+ +    });
+ +    const delayStartX = box.x + box.width * 0.35;
+ +    const delayStartY = box.y + box.height * 0.55;
+ +    await page.mouse.move(delayStartX, delayStartY);
+ +    await page.mouse.down();
+ +    await page.mouse.move(delayStartX + 120, delayStartY + 50, { steps: 25 });
+ +    await page.mouse.up();
+ +    await page.waitForTimeout(200);
+ +
+ +    const delayedPaintRaw = await page.locator('[data-input-paint-p95]').getAttribute('data-input-paint-p95');
+ +    const delayedDispatchRaw = await page.locator('[data-input-dispatch-p95]').getAttribute('data-input-dispatch-p95');
+ +    const delayedPaintP95 = Number(delayedPaintRaw);
+ +    const delayedDispatchP95 = Number(delayedDispatchRaw);
+ +    expect(delayedPaintP95).toBeGreaterThan(50);
+ +    expect(delayedDispatchP95).toBeLessThanOrEqual(50);
+ +
+ +    // Reset injected delay
+ +    await page.evaluate(() => {
+ +      window.__vve_injected_presentation_delay_ms = 0;
+ +    });
+ +
+ +    if (shouldCapture) {
+ +      await page.screenshot({
+ +        path: path.join(evidenceDir, 'desktop-1440x900-after-stroke.png'),
+ +        fullPage: false
+ +      });
+ +
+ +      writeFileSync(
+ +        path.join(evidenceDir, 'input-paint-p95.json'),
+ +        JSON.stringify(
+ +          {
+ +            viewport: '1440x900',
+ +            p95Ms: p95,
+ +            samples: Number(sampleCount),
+ +            targetMs: 50,
+ +            adapter: 'Playwright mouse Pointer Events',
+ +            hardware: 'Cloud Agent Linux VM, Google Chrome 148 headless',
+ +            note: "Apple Pencil and graphics-tablet feel remain Kordian's external confirmation."
+ +          },
+ +          null,
+ +          2
+ +        )
+ +      );
+ +    }
+ +
+ +    await page.reload({ waitUntil: 'domcontentloaded' });
+ +    await joinBoard(page);
+ +    await expect(page.getByTestId('input-style-control').getByRole('radio', { name: 'Pióro' }))
+ +      .toHaveAttribute('aria-checked', 'true');
+ +
+ +    const blockingErrors = consoleErrors.filter(
+ +      (message) =>
+ +        message.includes('is not defined') ||
+ +        message.includes('is not a function') ||
+ +        message.includes('Failed to fetch')
+ +    );
+ +    expect(blockingErrors).toHaveLength(0);
+ +    await desktop.close();
+ +
+ +    const ipad = await browser.newContext({
+ +      viewport: { width: 768, height: 1024 },
+ +      hasTouch: true,
+ +      isMobile: true
+ +    });
+ +    const ipadPage = await ipad.newPage();
+ +    await ipadPage.emulateMedia({ reducedMotion: 'reduce' });
+ +    await joinBoard(ipadPage);
+ +    const ipadControl = ipadPage.getByTestId('input-style-control');
+ +    await expect(ipadControl).toBeVisible();
+ +    await assertNoPageOverflow(ipadPage);
+ +    const ipadBox = await ipadControl.boundingBox();
+ +    expect(ipadBox).not.toBeNull();
+ +    expect(ipadBox.x).toBeGreaterThanOrEqual(0);
+ +    expect(ipadBox.y).toBeGreaterThanOrEqual(0);
+ +    expect(ipadBox.x + ipadBox.width).toBeLessThanOrEqual(768 + 1);
+ +    expect(ipadBox.y + ipadBox.height).toBeLessThanOrEqual(1024 + 1);
+ +    await ipadControl.getByRole('radio', { name: 'Pióro' }).click();
+ +    await expect(ipadControl.getByRole('radio', { name: 'Pióro' })).toHaveAttribute('aria-checked', 'true');
+ +    if (shouldCapture) {
+ +      await ipadPage.screenshot({
+ +        path: path.join(evidenceDir, 'ipad-768x1024-input-style.png'),
+ +        fullPage: false
+ +      });
+ +    }
+ +    await ipad.close();
+ +
+ +    const autoContext = await browser.newContext();
+ +    const autoPage = await autoContext.newPage();
+ +    await joinBoard(autoPage);
+ +    await autoPage.locator('canvas.draw-layer').evaluate((canvas) => {
+ +      canvas.dispatchEvent(new PointerEvent('pointerdown', {
+ +        bubbles: true,
+ +        cancelable: true,
+ +        pointerId: 7,
+ +        pointerType: 'pen',
+ +        isPrimary: true,
+ +        clientX: 220,
+ +        clientY: 260,
+ +        buttons: 1,
+ +        button: 0,
+ +        pressure: 0.42
+ +      }));
+ +    });
+ +    await expect.poll(async () => {
+ +      return autoPage.getByTestId('input-style-control').getByRole('radio', { name: 'Pióro' })
+ +        .getAttribute('aria-checked');
+ +    }, { timeout: 5_000 }).toBe('true');
+ +    await autoContext.close();
+ +  });
+++
++   test('PDF import collaborates, reloads, and exports from the synchronized board', async ({ browser }) => {
++     test.setTimeout(120_000);
++     const teacherContext = await browser.newContext();
++     const teacher = await teacherContext.newPage();
++     await teacher.goto(fixture.teacherAccessLink);
++     await expect(teacher.getByRole('heading', { name: 'Moje tablice' })).toBeVisible({ timeout: 15_000 });
++ 
++     const boardLabel = `E2E PDF ${Date.now()}`;
++     await teacher.getByRole('button', { name: 'Nowa tablica ucznia' }).click();
++     await teacher.getByLabel('Etykieta ucznia / grupy').fill(boardLabel);
++     await teacher.getByLabel('Temat lekcji (opcjonalnie)').fill('Import PDF');
++     await teacher.getByRole('button', { name: 'Utwórz tablicę' }).click();
++     const freshLink = teacher.locator('.modal-panel .keyway.fresh .keyway-channel');
++     await expect(freshLink).toBeVisible({ timeout: 10_000 });
++     const boardAccessLink = (await freshLink.innerText()).trim();
++     await teacher.locator('.modal-foot').getByRole('button', { name: 'Zamknij' }).click();
++ 
++     const firstContext = await browser.newContext();
++     const secondContext = await browser.newContext();
++     const first = await firstContext.newPage();
++     const second = await secondContext.newPage();
++     const join = async (page) => {
++       await page.goto(boardAccessLink);
++       await page.getByRole('button', { name: 'Dołącz do lekcji' }).click();
++       await expect(page.locator('canvas.static-layer')).toBeVisible({ timeout: 20_000 });
++       await expect(page.getByTestId('collaboration-read-only')).toBeHidden({ timeout: 5_000 });
++     };
++     await join(first);
++     await join(second);
++ 
++     const evidenceDir = path.resolve(
++       path.dirname(fileURLToPath(import.meta.url)),
++       '../../../docs/implementation/evidence/vve-107'
++     );
++     const pdfBytes = readFileSync(
++       path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'fixtures', 'artifacts', 'lesson-2page.pdf')
++     );
++     const before = await second.locator('canvas.static-layer').evaluate((canvas) => canvas.toDataURL());
++     await first.locator('[data-testid="artifact-file-input"]').setInputFiles({
++       name: 'karta.pdf',
++       mimeType: 'application/pdf',
++       buffer: pdfBytes
++     });
++     await expect(first.getByText(/Zaimportowano 2 strony z PDF/)).toBeVisible({ timeout: 25_000 });
++     await expect.poll(
++       () => second.locator('canvas.static-layer').evaluate((canvas) => canvas.toDataURL()),
++       { timeout: 20_000 }
++     ).not.toBe(before);
++     const imported = await second.locator('canvas.static-layer').evaluate((canvas) => canvas.toDataURL());
++ 
++     await first.setViewportSize({ width: 1440, height: 900 });
++     await first.screenshot({ path: path.join(evidenceDir, 'desktop-1440x900.png'), fullPage: true });
++     const desktopOverflow = await first.evaluate(
++       () => document.documentElement.scrollWidth - document.documentElement.clientWidth
++     );
++     expect(desktopOverflow).toBeLessThanOrEqual(1);
++ 
++     await first.setViewportSize({ width: 768, height: 1024 });
++     await first.screenshot({ path: path.join(evidenceDir, 'ipad-768x1024.png'), fullPage: true });
++     const ipadOverflow = await first.evaluate(
++       () => document.documentElement.scrollWidth - document.documentElement.clientWidth
++     );
++     expect(ipadOverflow).toBeLessThanOrEqual(1);
++     await first.setViewportSize({ width: 1280, height: 720 });
++ 
++     await second.reload();
++     await expect(second.locator('canvas.static-layer')).toBeVisible({ timeout: 20_000 });
++     await expect(second.getByTestId('collaboration-read-only')).toBeHidden({ timeout: 5_000 });
++     await expect.poll(
++       () => second.locator('canvas.static-layer').evaluate((canvas) => canvas.toDataURL()),
++       { timeout: 8_000 }
++     ).toBe(imported);
++ 
++     const downloadPromise = first.waitForEvent('download', { timeout: 20_000 });
++     await first.locator('.hover-trigger-area').hover({ force: true });
++     await first.locator('.gear-btn').click({ force: true });
++     await first.getByTitle('Eksportuj do PDF (A4)').click();
++     const download = await downloadPromise;
++     expect(download.suggestedFilename()).toMatch(/\.pdf$/i);
++ 
++     await firstContext.close();
++     await secondContext.close();
++     await teacherContext.close();
++   });
+  });
+diff --cc frontend/tests/unit/audit2.test.js
+index e9c49dd,c93b17b..be5f815
+--- a/frontend/tests/unit/audit2.test.js
++++ b/frontend/tests/unit/audit2.test.js
+@@@ -1,10 -1,7 +1,11 @@@
+  import { describe, expect, it } from 'vitest';
+  import { readFileSync } from 'fs';
+  import { resolve } from 'path';
+ +import { ref } from 'vue';
+ +import * as Y from 'yjs';
+ +import { useDrawingEngine } from '../../src/composables/useDrawingEngine.js';
+ +import { createInputPipeline } from '../../src/board/inputPipeline';
++ import { mapGovernorDenialToSocketClose } from '@pilot/resourceGovernor';
+  
+  const readSrc = (relativePath) =>
+    readFileSync(resolve(__dirname, '../../src', relativePath), 'utf-8');
+diff --cc frontend/tests/unit/components/WhiteboardCanvas.spec.js
+index d18b217,c17df3a..7f3af58
+--- a/frontend/tests/unit/components/WhiteboardCanvas.spec.js
++++ b/frontend/tests/unit/components/WhiteboardCanvas.spec.js
+@@@ -323,34 -299,12 +333,41 @@@ describe('WhiteboardCanvas.vue', () => 
+      });
+    });
+  
+ +  describe('Pointer Event pipeline', () => {
+ +    it('exposes Pointer Event handlers and not mouse/touch drawing handlers', () => {
+ +      expect(typeof wrapper.vm.handlePointerDown).toBe('function');
+ +      expect(wrapper.vm.handleMouseDown).toBeUndefined();
+ +      expect(wrapper.vm.handleTouchStart).toBeUndefined();
+ +    });
+ +
+ +    it('cancels an in-progress stroke on pointercancel instead of committing', async () => {
+ +      wrapper.vm.setTool('pen');
+ +      await nextTick();
+ +      const canvas = wrapper.find('.whiteboard-canvas.draw-layer');
+ +      const before = mockYDrawings.length;
+ +      await canvas.trigger('pointerdown', {
+ +        clientX: 20, clientY: 20, button: 0, pointerId: 9,
+ +        pointerType: 'pen', isPrimary: true, buttons: 1, pressure: 0.4
+ +      });
+ +      await canvas.trigger('pointermove', {
+ +        clientX: 48, clientY: 36, pointerId: 9,
+ +        pointerType: 'pen', isPrimary: true, buttons: 1, pressure: 0.6
+ +      });
+ +      await canvas.trigger('pointercancel', {
+ +        clientX: 48, clientY: 36, pointerId: 9,
+ +        pointerType: 'pen', isPrimary: true, buttons: 0, pressure: 0
+ +      });
+ +      await nextTick();
+ +      expect(mockYDrawings.length).toBe(before);
+ +      expect(wrapper.vm.isDrawing).toBe(false);
+ +    });
+ +  });
++   describe('ArtifactPipeline overlay', () => {
++     it('keeps progress hidden until import starts and exposes importArtifactFile', () => {
++       expect(wrapper.find('[data-testid="artifact-progress"]').exists()).toBe(false);
++       expect(typeof wrapper.vm.importArtifactFile).toBe('function');
++       expect(typeof wrapper.vm.exportBoardAsPdf).toBe('function');
++     });
++   });
+  
+  });

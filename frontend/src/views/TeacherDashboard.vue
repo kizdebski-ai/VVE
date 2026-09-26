@@ -479,6 +479,8 @@ const confirmAction = async () => {
 .soft-input::placeholder { color: var(--soft-ink-3); }
 
 .soft-btn {
+  min-height: 44px;
+  min-width: 44px;
   display: inline-flex;
   align-items: center;
   justify-content: center;

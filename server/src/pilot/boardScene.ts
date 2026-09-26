@@ -1663,6 +1663,7 @@ export const applyBoardCommand = (
           // is still part of the visible transform, so bake the requested
           // absolute angle before clearing the metadata.
           result = rotatePenObjectMap(entry.map, command.rotation);
+          if (result.ok) followBindingsForTarget(doc, command.id);
         }, context.origin);
         return result;
       }

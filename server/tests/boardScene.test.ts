@@ -10,6 +10,7 @@ import {
   normalizeBoardObject,
   normalizeImportedBoardObject,
   queryObjectsNear,
+  resolveBindingPoint,
   sceneClearEpoch,
   sceneDrawings,
   sceneObjectBounds,
@@ -20,6 +21,7 @@ import {
   type BoardCommand,
   type BoardRole,
   type BoardSpatialIndex,
+  type LineBinding,
   type SceneObject
 } from '../src/pilot/boardScene';
 
@@ -799,6 +801,32 @@ describe('board commands', () => {
     expect(rotated.points[0]).toMatchObject({ x: 50, y: -50 });
     expect(rotated.points[1]).toMatchObject({ x: 50, y: 50 });
     expect(splitPenStroke(rotated.points, { x: 50, y: 0 }, 10)).toHaveLength(2);
+  });
+
+  it('re-anchors lines bound to a pen when its rotation is baked', () => {
+    const doc = new Y.Doc();
+    addAll(doc, [{ ...pen('bound-pen'), points: [{ x: 0, y: 0 }, { x: 100, y: 0 }] }, line()]);
+    expect(
+      applyBoardCommand(
+        doc,
+        {
+          kind: 'setLineEndpoints',
+          id: 'line-1',
+          start: { x: -50, y: 0 },
+          end: { x: 0, y: 0 },
+          endBinding: { elementId: 'bound-pen', ratioX: 0, ratioY: 0.5, normalLocal: { x: -1, y: 0 }, gap: 0 }
+        },
+        student
+      )
+    ).toEqual({ ok: true });
+    expect(applyBoardCommand(doc, { kind: 'rotate', id: 'bound-pen', rotation: 90 }, student))
+      .toEqual({ ok: true });
+    const boundLine = sceneJson(doc).find((object) => object.id === 'line-1') as {
+      end: { x: number; y: number };
+      endBinding: LineBinding;
+    };
+    expect(boundLine.end).toEqual(resolveBindingPoint(doc, boundLine.endBinding));
+    expect(boundLine.end.x).toBeCloseTo(50);
   });
 
   it('applies successive pen rotation gestures as relative turns', () => {

@@ -354,21 +354,25 @@ test.describe('Pilot fixture: Administrator, Teacher, Student browser contexts',
     await first.getByRole('button', { name: 'Kreskowana' }).click();
     await first.getByRole('button', { name: 'Trójkąt' }).click();
     const canvasBox = await first.locator('canvas.draw-layer').boundingBox();
-    // Stay below the floating properties bar so the real canvas receives the
-    // complete direct-manipulation gesture.
-    await first.mouse.move(canvasBox.x + 180, canvasBox.y + 320);
-    await first.mouse.down();
-    await first.mouse.move(canvasBox.x + 300, canvasBox.y + 420, { steps: 6 });
-    await first.mouse.up();
+    // Start below the floating properties bar so the real canvas receives the
+    // complete direct-manipulation gesture, and prove the hit target.
+    const propertiesBox = await first.locator('.properties-bar').boundingBox();
+    const gestureTop = Math.max(canvasBox.y + 320, propertiesBox ? propertiesBox.y + propertiesBox.height + 32 : 0);
+    const drawOnCanvas = async (from, to) => {
+      const target = await first.evaluate(([x, y]) => document.elementFromPoint(x, y)?.className, [from.x, from.y]);
+      expect(String(target)).toContain('draw-layer');
+      await first.mouse.move(from.x, from.y);
+      await first.mouse.down();
+      await first.mouse.move(to.x, to.y, { steps: 6 });
+      await first.mouse.up();
+    };
+    await drawOnCanvas({ x: canvasBox.x + 180, y: gestureTop }, { x: canvasBox.x + 300, y: gestureTop + 100 });
     await expect(second.locator('[data-object-type="triangle"]')).toBeVisible({ timeout: 5_000 });
 
     await first.locator('[data-tool-id="tool.shapes"]').click();
     await first.getByRole('button', { name: 'Po obu stronach' }).click();
     await first.getByRole('button', { name: 'Linia' }).click();
-    await first.mouse.move(canvasBox.x + 340, canvasBox.y + 220);
-    await first.mouse.down();
-    await first.mouse.move(canvasBox.x + 500, canvasBox.y + 300, { steps: 6 });
-    await first.mouse.up();
+    await drawOnCanvas({ x: canvasBox.x + 180, y: gestureTop + 160 }, { x: canvasBox.x + 340, y: gestureTop + 240 });
     await expect(second.locator('[data-object-type="line"]')).toBeVisible({ timeout: 5_000 });
 
     // Reload hydrates all acknowledged lesson objects from durable storage.
@@ -383,10 +387,11 @@ test.describe('Pilot fixture: Administrator, Teacher, Student browser contexts',
     await first.mouse.move(10, 5);
     await expect(first.locator('.gear-btn')).toBeVisible();
     await first.locator('.gear-btn').click();
-    const downloadPromise = first.waitForEvent('download');
     await first.locator('.pdf-menu-wrapper > button').click();
+    const downloadPromise = first.waitForEvent('download');
+    await first.getByTestId('pdf-export-single').click();
     const download = await downloadPromise;
-    expect(download.suggestedFilename()).toBe('whiteboard.pdf');
+    expect(download.suggestedFilename()).toBe('tablica.pdf');
 
     for (const hidden of ['experiment.ai', 'experiment.chemistry', 'experiment.gridAlign']) {
       await expect(first.locator(`[data-tool-id="${hidden}"]`)).toHaveCount(0);
@@ -1076,12 +1081,13 @@ test.describe('Pilot fixture: Administrator, Teacher, Student browser contexts',
       { timeout: 8_000 }
     ).toBe(imported);
 
-    const downloadPromise = first.waitForEvent('download', { timeout: 20_000 });
-    await first.locator('.hover-trigger-area').hover({ force: true });
-    await first.locator('.gear-btn').click({ force: true });
+    // The settings trigger and both export modes are explicit click targets.
+    await first.locator('.gear-btn').click();
     await first.getByTitle('Eksportuj do PDF (A4)').click();
+    const downloadPromise = first.waitForEvent('download', { timeout: 20_000 });
+    await first.getByTestId('pdf-export-paged').click();
     const download = await downloadPromise;
-    expect(download.suggestedFilename()).toMatch(/\.pdf$/i);
+    expect(download.suggestedFilename()).toBe('notatki.pdf');
 
     await firstContext.close();
     await secondContext.close();

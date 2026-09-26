@@ -401,6 +401,27 @@ describe('CollaborationRuntime acknowledgement oracle', () => {
     await restarted.connect(connection(), new MemoryTransport());
     expect((await restarted.inspect(BOARD_A)).digest).toBe(digest);
   });
+
+  it('acknowledges a durable operation when a closing peer cannot take the broadcast', async () => {
+    const store = new InMemoryBoardDocumentStore();
+    const runtime = createCollaborationRuntime({ store });
+    const author = new MemoryTransport();
+    const live = await runtime.connect(connection(), author);
+    const closing = new MemoryTransport();
+    await runtime.connect(connection(), closing);
+    const healthy = new MemoryTransport();
+    await runtime.connect(connection(), healthy);
+    closing.send = async () => {
+      throw new Error('WebSocket is not open.');
+    };
+
+    const result = await live.receive(mutation('peer-closing-op', 'note', 'kept'));
+
+    expect(result).toMatchObject({ accepted: true, operationId: 'peer-closing-op' });
+    expect(author.frames.some((frame) => frame.kind === 'acknowledgement')).toBe(true);
+    expect(healthy.frames.some((frame) => frame.kind === 'update')).toBe(true);
+    expect((await store.inspect(BOARD_A)).operationCount).toBe(1);
+  });
 });
 
 

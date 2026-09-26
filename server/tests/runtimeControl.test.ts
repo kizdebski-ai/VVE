@@ -358,6 +358,9 @@ describe('RuntimeControl process lifecycle', () => {
       migrate: async () => undefined,
       probe: async ({ signal }) => {
         if (!hang) return { database: true, persistence: true };
+        // One hanging probe only: an interval probe that starts before the
+        // recovery request must not hang the recovery too.
+        hang = false;
         resolveProbeStarted();
         try {
           await new Promise<never>((_, reject) => {
@@ -387,9 +390,7 @@ describe('RuntimeControl process lifecycle', () => {
     expect(res.body.checks.database).toBe(false);
     // A never-settling dependency is bounded by the 1s probe deadline.
     expect(Date.now() - t0).toBeLessThan(1_300);
-    hang = false;
-    // Release future interval probes immediately; the timed-out probe itself
-    // still settles through the abort path below.
+    // The timed-out probe settles through the abort path.
     await probeSettled;
     const recovered = await request(`http://127.0.0.1:${running.port}`).get('/ready');
     expect(recovered.status).toBe(200);

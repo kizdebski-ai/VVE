@@ -283,6 +283,19 @@ export const createCollaborationRuntime = (
   const hydration = new Map<string, Promise<LiveBoard>>();
   let draining = false;
 
+  // Delivery to a peer is best effort. A peer whose socket is closing or
+  // over its buffer budget fails its own send; its close handler removes it
+  // and it resynchronizes on reconnect. That failure must never fail the
+  // author's already durable operation.
+  const relay = async (peer: LiveConnection, frame: ServerFrame): Promise<void> => {
+    if (peer.closed) return;
+    try {
+      await peer.transport.send(frame);
+    } catch {
+      // The peer's own close path owns cleanup.
+    }
+  };
+
   const hydrate = async (boardId: string): Promise<LiveBoard> => {
     const current = rooms.get(boardId);
     if (current) return current;
@@ -455,15 +468,7 @@ export const createCollaborationRuntime = (
         const removed = Array.from(live.awarenessClientIds);
         removeAwarenessStates(room.awareness, removed, live);
         const removalUpdate = encodeAwarenessUpdate(room.awareness, removed);
-        for (const peer of room.connections) {
-          if (!peer.closed) {
-            try {
-              await peer.transport.send({ kind: 'awareness', update: removalUpdate });
-            } catch {
-              // The peer may have disconnected while the removal was being relayed.
-            }
-          }
-        }
+        for (const peer of room.connections) await relay(peer, { kind: 'awareness', update: removalUpdate });
         live.awarenessClientIds.clear();
       }
       return room.connections.size === 0;
@@ -513,7 +518,7 @@ export const createCollaborationRuntime = (
         changed.added.concat(changed.updated).forEach((id) => live.awarenessClientIds.add(id));
         changed.removed.forEach((id) => live.awarenessClientIds.delete(id));
         for (const peer of room.connections) {
-          if (peer !== live && !peer.closed) await peer.transport.send(frame);
+          if (peer !== live) await relay(peer, frame);
         }
         return { accepted: true };
       }
@@ -643,9 +648,7 @@ export const createCollaborationRuntime = (
               removeAwarenessStates(room.awareness, removed, peer);
               const removalUpdate = encodeAwarenessUpdate(room.awareness, removed);
               for (const remainingPeer of room.connections) {
-                if (!remainingPeer.closed) {
-                  await remainingPeer.transport.send({ kind: 'awareness', update: removalUpdate });
-                }
+                await relay(remainingPeer, { kind: 'awareness', update: removalUpdate });
               }
               peer.awarenessClientIds.clear();
             }
@@ -654,15 +657,19 @@ export const createCollaborationRuntime = (
               clientKey: peer.clientKey,
               boardId: input.boardId
             });
-            await peer.transport.send({
-              kind: 'denial',
-              reason: 'resource',
-              messageKey: 'resource.slowClient'
-            });
-            await peer.transport.close(1013, 'Slow consumer');
+            try {
+              await peer.transport.send({
+                kind: 'denial',
+                reason: 'resource',
+                messageKey: 'resource.slowClient'
+              });
+              await peer.transport.close(1013, 'Slow consumer');
+            } catch {
+              // Already removed from the room; the socket may be gone too.
+            }
             continue;
           }
-          await peer.transport.send({
+          await relay(peer, {
             kind: 'update',
             operationId: frame.operationId,
             update: frame.update

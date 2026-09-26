@@ -681,16 +681,23 @@ export const createRuntimeControl = (options: RuntimeControlOptions = {}): Runti
     const timersStopped = clearTimers();
     boardLifecycle?.stopDeletionSweep();
 
+    // A stage that times out has reached the deadline, even when the timer
+    // fires a millisecond before the wall clock passes it.
+    let deadlineReached = false;
+    const bounded = <T>(promise: Promise<T>, phaseName: string, onTimeout?: () => void) =>
+      withDeadline(promise, input.deadline, phaseName, now, () => {
+        deadlineReached = true;
+        onTimeout?.();
+      });
+
     let drain: ShutdownReport['drain'] = null;
     let flushed = false;
     let drainTimedOut = false;
     if (collaboration) {
       const drainAbort = new AbortController();
-      const drainResult = await withDeadline(
+      const drainResult = await bounded(
         collaboration.drain({ deadline: input.deadline, reason: input.reason, signal: drainAbort.signal }),
-        input.deadline,
         'collaboration-drain',
-        now,
         () => drainAbort.abort()
       );
       if (drainResult.completed) {
@@ -708,12 +715,7 @@ export const createRuntimeControl = (options: RuntimeControlOptions = {}): Runti
     }
 
     if (roomManager) {
-      const flushResult = await withDeadline(
-        roomManager.flushPending(),
-        input.deadline,
-        'legacy-room-flush',
-        now
-      );
+      const flushResult = await bounded(roomManager.flushPending(), 'legacy-room-flush');
       if (!flushResult.completed) {
         remaining.push('legacy-room-flush');
       }
@@ -721,12 +723,7 @@ export const createRuntimeControl = (options: RuntimeControlOptions = {}): Runti
 
     let listenersClosed = true;
     if (listener) {
-      const closeResult = await withDeadline(
-        listener.close(input.deadline),
-        input.deadline,
-        'http-listener',
-        now
-      );
+      const closeResult = await bounded(listener.close(input.deadline), 'http-listener');
       if (closeResult.completed) {
         listenersClosed = closeResult.value.listenersClosed;
         if (!closeResult.value.listenersClosed) remaining.push('http-listener');
@@ -744,7 +741,7 @@ export const createRuntimeControl = (options: RuntimeControlOptions = {}): Runti
         await destroyDb();
         boundDb = false;
       })();
-      const dbResult = await withDeadline(destroyPromise, input.deadline, 'postgres-pool', now);
+      const dbResult = await bounded(destroyPromise, 'postgres-pool');
       if (!dbResult.completed) {
         databaseClosed = false;
         remaining.push('postgres-pool');
@@ -762,7 +759,7 @@ export const createRuntimeControl = (options: RuntimeControlOptions = {}): Runti
     }
     db = null;
 
-    const deadlineExceeded = now() > input.deadline.getTime();
+    const deadlineExceeded = deadlineReached || now() >= input.deadline.getTime();
     if (deadlineExceeded && !remaining.includes('deadline')) {
       remaining.push('deadline');
     }

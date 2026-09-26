@@ -518,7 +518,7 @@ onMounted(() => {
 .buttons.scientific-mode .mem-store,
 .buttons.scientific-mode .mem-recall,
 .buttons.scientific-mode .mem-add {
-  color: var(--accent-primary);
+  color: var(--accent-hover);
 }
 
 /* Scientific Grid Positions (Rows 1-5) */

@@ -137,6 +137,8 @@
       ref="clipboardInput"
       type="text" 
       class="clipboard-input"
+      tabindex="-1"
+      aria-label="Wklejanie ze schowka"
       @paste="handlePaste"
     />
     <!-- Toast notifications -->

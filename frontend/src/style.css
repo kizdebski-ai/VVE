@@ -251,6 +251,21 @@ input::placeholder {
   color: var(--text-tertiary);
 }
 
+/* --- Focus ---
+   One keyboard focus signal everywhere: 2 px blue outline, 2 px offset.
+   Element + pseudo-class specificity beats component `outline: none` resets;
+   a component may still restyle focus with a more specific rule. */
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+[role="button"]:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
 /* --- Buttons --- */
 button {
   cursor: pointer;

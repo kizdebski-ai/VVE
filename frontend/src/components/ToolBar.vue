@@ -1007,7 +1007,7 @@ onBeforeUnmount(() => {
 
 .option-pill.active {
   background: var(--surface-raised);
-  color: var(--accent-primary);
+  color: var(--accent-hover); /* 5.7:1 on the raised surface for 12 px text */
   border-color: var(--border-subtle);
   box-shadow: 2px 2px 5px var(--surface-dark), -2px -2px 5px var(--surface-light);
 }
